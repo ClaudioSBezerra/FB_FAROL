@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo-fb.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SmartPick — Calibragem de Picking</title>
+    <meta name="app-version" content="1.0.1" />
+    <script>
+      // Remove qualquer service worker antigo (de deploys anteriores que
+      // ainda interceptam requests e servem HTML stale → 404 em assets).
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          if (regs && regs.length) {
+            Promise.all(regs.map(function (r) { return r.unregister(); }))
+              .then(function () {
+                if ('caches' in window) {
+                  caches.keys().then(function (keys) {
+                    return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+                  }).finally(function () { location.reload(); });
+                } else {
+                  location.reload();
+                }
+              });
+          }
+        }).catch(function () { /* ignore */ });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

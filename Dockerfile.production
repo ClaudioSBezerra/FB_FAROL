@@ -1,0 +1,64 @@
+# FB_FAROL — Dockerfile de Produção (Coolify / GHCR)
+# Imagem única: backend Go (porta 8082) + frontend React (servido como static)
+
+# ── Stage 1: build frontend ───────────────────────────────────────────────────
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app/frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+ARG CACHE_BUST=1
+RUN echo "cache bust: $CACHE_BUST"
+
+COPY frontend/ ./
+ARG VITE_APP_MODULE=smartpick
+ENV VITE_APP_MODULE=$VITE_APP_MODULE
+RUN npm run build
+
+# ── Stage 2: build backend ────────────────────────────────────────────────────
+FROM golang:1.26-alpine AS backend-builder
+WORKDIR /app/backend
+
+RUN apk add --no-cache git
+
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+COPY backend/ ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s" \
+    -o fb_farol main.go
+
+# ── Stage 3: imagem de produção ───────────────────────────────────────────────
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates curl tzdata && \
+    ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
+
+RUN addgroup -g 1001 -S appgroup && \
+    adduser  -u 1001 -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY --from=backend-builder  /app/backend/fb_farol .
+COPY --from=frontend-builder /app/frontend/dist        ./static
+COPY backend/migrations                                ./migrations
+
+RUN mkdir -p /app/uploads && chown -R appuser:appgroup /app
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8082/api/health || exit 1
+
+EXPOSE 8082
+
+ENV APP_MODULE=smartpick
+
+CMD ["./fb_farol"]
+
+LABEL maintainer="FortésBezerra Cloud"
+LABEL version="1.0.0"
+LABEL description="SmartPick — Gestão de calibragem de picking"
+LABEL com.coolify.image=true

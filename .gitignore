@@ -1,0 +1,38 @@
+# Backend
+backend/fb_farol
+backend/*.log
+backend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Vendor (regenerate with go mod vendor)
+backend/vendor/
+
+# Go
+*.exe
+*.test
+*.out
+
+# Environment
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+backend.log

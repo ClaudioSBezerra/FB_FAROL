@@ -1,0 +1,94 @@
+services:
+  # Backend (Go)
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: always
+    expose:
+      - "8082"
+    ports:
+      - "8082:8083"
+    environment:
+      - PORT=8082
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-fb_farol}?sslmode=disable
+      - REDIS_ADDR=redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - APP_MODULE=${APP_MODULE:-farol}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - APP_URL=${APP_URL:-https://farol.fbtax.cloud}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://farol.fbtax.cloud}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - api_uploads:/root/uploads
+    networks:
+      - fb_net
+
+  # Frontend (React/Nginx)
+  web:
+    build:
+      context: ./frontend
+      args:
+        - VITE_APP_MODULE=${VITE_APP_MODULE:-farol}
+    restart: always
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.farol.rule=Host(`farol.fbtax.cloud`)"
+      - "traefik.http.routers.farol.entrypoints=https"
+      - "traefik.http.routers.farol.tls=true"
+      - "traefik.http.routers.farol.tls.certresolver=letsencrypt"
+      - "traefik.http.services.farol.loadbalancer.server.port=80"
+    depends_on:
+      - api
+    networks:
+      - fb_net
+      - coolify
+
+  # Banco de Dados
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=${DB_NAME:-fb_farol}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fb_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-fb_farol}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:alpine
+    restart: always
+    sysctls:
+      - net.core.somaxconn=1024
+    networks:
+      - fb_net
+
+networks:
+  fb_net:
+    driver: bridge
+  coolify:
+    external: true
+
+volumes:
+  postgres_data:
+  api_uploads:
