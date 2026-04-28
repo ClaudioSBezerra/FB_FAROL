@@ -7,8 +7,6 @@ services:
     restart: always
     expose:
       - "8082"
-    ports:
-      - "8082:8083"
     environment:
       - PORT=8082
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-fb_farol}?sslmode=disable

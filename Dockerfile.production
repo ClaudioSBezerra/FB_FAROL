@@ -12,7 +12,7 @@ ARG CACHE_BUST=1
 RUN echo "cache bust: $CACHE_BUST"
 
 COPY frontend/ ./
-ARG VITE_APP_MODULE=smartpick
+ARG VITE_APP_MODULE=farol
 ENV VITE_APP_MODULE=$VITE_APP_MODULE
 RUN npm run build
 
@@ -54,11 +54,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8082
 
-ENV APP_MODULE=smartpick
+ENV APP_MODULE=farol
 
 CMD ["./fb_farol"]
 
 LABEL maintainer="FortésBezerra Cloud"
 LABEL version="1.0.0"
-LABEL description="SmartPick — Gestão de calibragem de picking"
+LABEL description="FB_FAROL — Gestão de RCAs e Metas de Vendas"
 LABEL com.coolify.image=true
