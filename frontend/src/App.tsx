@@ -143,7 +143,7 @@ function AppLayout() {
         <main className="flex-1 overflow-auto">
           <div className="p-4">
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard/ampliar" replace />} />
+              <Route path="/" element={<Navigate to="/cadastros/rcas" replace />} />
 
               {/* Painel de Calibragem */}
               <Route path="/dashboard/ampliar"    element={<ProtectedRoute><SpDashboard /></ProtectedRoute>} />

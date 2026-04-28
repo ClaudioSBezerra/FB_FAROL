@@ -13,7 +13,7 @@ const FEATURES = [
   { icon: Target,     text: "Objetivos de venda por fornecedor e período" },
   { icon: TrendingUp, text: "Acompanhamento de resultados em tempo real" },
   { icon: Users,      text: "Gestão hierárquica de RCAs e supervisores" },
-  { icon: Trophy,     text: "Rankings e metas por equipe e território" },
+  { icon: Trophy,     text: "Rankings e objetivos por equipe e território" },
 ];
 
 const Login = () => {
@@ -90,7 +90,7 @@ const Login = () => {
 
           {/* Título */}
           <h1 className="text-white text-4xl font-bold leading-tight mt-5">
-            Acompanhe metas.
+            Acompanhe objetivos.
             <br />
             <span style={{ color: "#60a5fa" }}>Acelere resultados.</span>
           </h1>

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Upload, Settings, LogOut, KeyRound, History, FileDown, Repeat2, Building2, TrendingUp } from 'lucide-react'
+import { Users, Settings, LogOut, KeyRound, Building2 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -32,14 +32,8 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 const mainItems = [
-  { id: 'dashboard',    icon: LayoutDashboard, label: 'Painel de Calibragem', path: '/dashboard/urgencia/falta' },
-  { id: 'upload',       icon: Upload,          label: 'Importação CSV',       path: '/upload/csv' },
-  { id: 'historico',    icon: History,         label: 'Histórico',            path: '/historico' },
-  { id: 'pdf',          icon: FileDown,        label: 'Gerar PDF',            path: '/pdf/gerar' },
-  { id: 'reincidencia', icon: Repeat2,         label: 'Reincidência',         path: '/reincidencia' },
-  { id: 'resultados',   icon: TrendingUp,      label: 'Painel de Resultados', path: '/resultados' },
-  // Administração: visível para todos (admin + gestores)
-  { id: 'gestao',       icon: Building2,       label: 'Administração',        path: '/gestao/filiais' },
+  { id: 'cadastros', icon: Users,     label: 'Cadastros',    path: '/cadastros/rcas' },
+  { id: 'gestao',    icon: Building2, label: 'Administração', path: '/gestao/filiais' },
 ] as const
 
 export function AppRail() {
@@ -49,8 +43,6 @@ export function AppRail() {
   // isAdmin: plataforma admin OU admin_fbtax Farol → acessa configurações e manutenção
   const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
   const active = getActiveModule(location.pathname)
-  // Optimistic: mostra enquanto spRole carrega (null); esconde apenas se confirmado somente_leitura
-  const canAccessResultados = spRole !== 'somente_leitura'
 
   const [pwDialog,  setPwDialog]  = useState(false)
   const [pwCurrent, setPwCurrent] = useState('')
@@ -102,7 +94,7 @@ export function AppRail() {
 
         {/* Nav principal */}
         <nav className="flex flex-col items-center gap-1 p-2 flex-1 pt-3">
-          {mainItems.filter(item => item.id !== 'resultados' || canAccessResultados).map(item => (
+          {mainItems.map(item => (
               <Tooltip key={item.id}>
                 <TooltipTrigger asChild>
                   <button
