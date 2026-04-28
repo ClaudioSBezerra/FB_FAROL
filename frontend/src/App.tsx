@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from '@/components/ui/sonner'
+import CadastroGestores from './pages/CadastroGestores'
+import CadastroRCAs from './pages/CadastroRCAs'
 import GestaoAmbiente from './pages/GestaoAmbiente'
 import AdminUsers from './pages/AdminUsers'
 import SpUsuarios from './pages/SpUsuarios'
@@ -175,6 +177,10 @@ function AppLayout() {
 
               {/* PDF (Epic 6) */}
               <Route path="/pdf/gerar" element={<ProtectedRoute><SpGerarPDF /></ProtectedRoute>} />
+
+              {/* Cadastros — Gestores e RCAs */}
+              <Route path="/cadastros/gestores" element={<ProtectedRoute><CadastroGestores /></ProtectedRoute>} />
+              <Route path="/cadastros/rcas"     element={<ProtectedRoute><CadastroRCAs /></ProtectedRoute>} />
 
               {/* Gestão de CD (gestor_filial+) */}
               <Route path="/gestao/filiais" element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />

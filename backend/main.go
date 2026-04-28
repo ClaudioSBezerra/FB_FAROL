@@ -338,6 +338,13 @@ func main() {
 	// ── Filiais (selector global) ─────────────────────────────────────────────
 	http.HandleFunc("/api/filiais", withAuth(handlers.GetFiliaisHandler, ""))
 
+	// ── Cadastros — Gestores, RCAs ────────────────────────────────────────────
+	http.HandleFunc("/api/cadastros/rcas/upload-csv", withAuth(handlers.UploadCadastrosCSVHandler, ""))
+	http.HandleFunc("/api/cadastros/gestores",        withAuth(handlers.CadastrosGestoresHandler, ""))
+	http.HandleFunc("/api/cadastros/gestores/",       withAuth(handlers.CadastrosGestoresHandler, ""))
+	http.HandleFunc("/api/cadastros/rcas",            withAuth(handlers.CadastrosRCAsHandler, ""))
+	http.HandleFunc("/api/cadastros/rcas/",           withAuth(handlers.CadastrosRCAsHandler, ""))
+
 	// ── Farol — Gestão de Usuários (RBAC) ────────────────────────────────
 	withSP := func(handlerFactory func(*sql.DB) http.HandlerFunc, requiredSpRole string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

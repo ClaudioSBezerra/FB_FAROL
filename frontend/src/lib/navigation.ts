@@ -58,6 +58,14 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Resumos Executivos (IA)',        path: '/resumos' },
     ],
   },
+  // ── Cadastros (todos os usuários autenticados) ───────────────────────────
+  cadastros: {
+    label: 'Cadastros',
+    tabs: [
+      { label: 'Gestores', path: '/cadastros/gestores' },
+      { label: 'RCAs',     path: '/cadastros/rcas' },
+    ],
+  },
   // ── Administração (gestor_filial+ — oculto para admin) ───────────────────
   gestao: {
     label: 'Administração',
@@ -92,6 +100,7 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/reincidencia')) return 'reincidencia'
   if (pathname.startsWith('/resultados')) return 'resultados'
   if (pathname.startsWith('/resumos'))    return 'resultados'
+  if (pathname.startsWith('/cadastros')) return 'cadastros'
   if (pathname.startsWith('/gestao')) return 'gestao'
   if (pathname.startsWith('/config')) return 'config'
   return 'dashboard'
