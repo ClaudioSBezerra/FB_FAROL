@@ -7,13 +7,13 @@ import { toast } from "sonner";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, BarChart3, FileUp, Zap, ShieldCheck } from "lucide-react";
+import { AlertCircle, Target, TrendingUp, Users, Trophy } from "lucide-react";
 
 const FEATURES = [
-  { icon: FileUp,    text: "Importação automática de dados WMS" },
-  { icon: Zap,       text: "Motor de calibragem por curva ABC" },
-  { icon: BarChart3, text: "Dashboard de urgência em tempo real" },
-  { icon: ShieldCheck, text: "Aprovação de propostas com rastreabilidade" },
+  { icon: Target,     text: "Objetivos de venda por fornecedor e período" },
+  { icon: TrendingUp, text: "Acompanhamento de resultados em tempo real" },
+  { icon: Users,      text: "Gestão hierárquica de RCAs e supervisores" },
+  { icon: Trophy,     text: "Rankings e metas por equipe e território" },
 ];
 
 const Login = () => {
@@ -44,7 +44,7 @@ const Login = () => {
 
       login(data);
       toast.success("Login realizado com sucesso!");
-      navigate("/dashboard/urgencia/falta");
+      navigate("/cadastros/rcas");
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : "Erro desconhecido";
       setErrorMsg(msg);
@@ -73,7 +73,7 @@ const Login = () => {
           <div className="flex items-center gap-3 mb-12">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center"
               style={{ background: "#2563eb" }}>
-              <BarChart3 className="w-6 h-6 text-white" />
+              <Target className="w-6 h-6 text-white" />
             </div>
             <span className="text-white text-xl font-bold tracking-tight">Farol</span>
           </div>
@@ -85,20 +85,20 @@ const Login = () => {
               color: "#93c5fd",
               border: "1px solid rgba(37,99,235,0.3)",
             }}>
-            Calibragem Inteligente de Picking
+            Gestão Inteligente de Vendas
           </span>
 
           {/* Título */}
           <h1 className="text-white text-4xl font-bold leading-tight mt-5">
-            Reduza rupturas.
+            Acompanhe metas.
             <br />
-            <span style={{ color: "#60a5fa" }}>Otimize seu CD.</span>
+            <span style={{ color: "#60a5fa" }}>Acelere resultados.</span>
           </h1>
 
           {/* Subtítulo */}
           <p className="mt-5 text-base leading-relaxed" style={{ color: "#94a3b8" }}>
-            O motor de calibragem transforma dados do WMS em propostas
-            inteligentes de capacidade — com aprovação rastreável e relatórios operacionais.
+            Gestão inteligente de objetivos de vendas e resultados — por RCA,
+            fornecedor e período — com visibilidade completa para toda a hierarquia comercial.
           </p>
         </div>
 
@@ -130,7 +130,7 @@ const Login = () => {
           <div className="flex lg:hidden items-center justify-center gap-2 mb-8">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center"
               style={{ background: "#2563eb" }}>
-              <BarChart3 className="w-5 h-5 text-white" />
+              <Target className="w-5 h-5 text-white" />
             </div>
             <span className="text-lg font-bold text-gray-900">Farol</span>
           </div>
