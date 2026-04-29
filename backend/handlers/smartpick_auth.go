@@ -167,6 +167,11 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 			return
 		}
 
+		// Admin global (role=admin / MASTER) equivale a admin_fbtax em todos os endpoints
+		if userRole == "admin" {
+			spRole = "admin_fbtax"
+		}
+
 		// Verifica perfil mínimo exigido pela rota
 		if requiredSpRole != "" && !hasSpRole(spRole, requiredSpRole) {
 			http.Error(w, "Forbidden: Farol role insuficiente", http.StatusForbidden)
@@ -192,7 +197,7 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 			}
 		}
 
-		// Monta FarolContext com escopo de filiais
+		// Monta FarolContext com escopo de filiais (spRole já pode ter sido elevado para admin_fbtax)
 		spCtx := &FarolContext{
 			UserID:    userID,
 			SpRole:    spRole,

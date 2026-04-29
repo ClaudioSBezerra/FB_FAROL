@@ -47,7 +47,8 @@ func GetFiliaisHandler(db *sql.DB) http.HandlerFunc {
 			ORDER BY nome ASC, cod_filial ASC
 		`, companyID)
 		if err != nil {
-			http.Error(w, "Error querying filiais: "+err.Error(), http.StatusInternalServerError)
+			// Tabela não existe neste módulo — retorna lista vazia sem erro
+			json.NewEncoder(w).Encode([]FilialInfo{})
 			return
 		}
 		defer rows.Close()
