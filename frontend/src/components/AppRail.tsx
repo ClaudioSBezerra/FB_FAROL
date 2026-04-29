@@ -1,4 +1,4 @@
-import { Users, Settings, LogOut, KeyRound } from 'lucide-react'
+import { Users, Target, Settings, LogOut, KeyRound } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -32,7 +32,8 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 const mainItems = [
-  { id: 'cadastros', icon: Users, label: 'Cadastros', path: '/cadastros/rcas' },
+  { id: 'cadastros', icon: Users,   label: 'Cadastros', path: '/cadastros/rcas'      },
+  { id: 'objetivos', icon: Target,  label: 'Objetivos', path: '/objetivos/importar'  },
 ] as const
 
 export function AppRail() {

@@ -2,7 +2,7 @@
 title: 'Módulo Cadastros — Gestores, RCAs e Relacionamento'
 type: 'feature'
 created: '2026-04-29'
-status: 'in-review'
+status: 'done'
 baseline_commit: '3b4f19a79434cf04bdd441cbd63a9d8cc6855d17'
 ---
 

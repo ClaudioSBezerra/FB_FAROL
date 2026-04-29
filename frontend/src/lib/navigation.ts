@@ -23,6 +23,13 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'RCAs',     path: '/cadastros/rcas' },
     ],
   },
+  // ── Objetivos (todos os usuários autenticados) ──────────────────────────
+  objetivos: {
+    label: 'Objetivos',
+    tabs: [
+      { label: 'Importar', path: '/objetivos/importar' },
+    ],
+  },
   // ── Administração ────────────────────────────────────────────────────────
   gestao: {
     label: 'Administração',
@@ -47,6 +54,7 @@ export const modules: Record<string, ModuleConfig> = {
 
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/cadastros')) return 'cadastros'
+  if (pathname.startsWith('/objetivos')) return 'objetivos'
   if (pathname.startsWith('/gestao'))    return 'gestao'
   if (pathname.startsWith('/config'))    return 'config'
   return 'cadastros'
