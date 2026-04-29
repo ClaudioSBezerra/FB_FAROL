@@ -187,6 +187,12 @@ func CadastrosGestoresHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func listGestores(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	uf := strings.TrimSpace(r.URL.Query().Get("uf"))
 	ativo := r.URL.Query().Get("ativo")
@@ -195,10 +201,10 @@ func listGestores(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		SELECT g.cod_supervisor, g.nome, g.uf, g.regiao, g.atuacao, g.ativo,
 		       COUNT(gr.cod_rca) AS qtd_rcas, g.created_at, g.updated_at
 		FROM gestores g
-		LEFT JOIN gestor_rca gr ON gr.cod_supervisor = g.cod_supervisor
-		WHERE 1=1`
-	args := []interface{}{}
-	idx := 1
+		LEFT JOIN gestor_rca gr ON gr.empresa_id = g.empresa_id AND gr.cod_supervisor = g.cod_supervisor
+		WHERE g.empresa_id = $1`
+	args := []interface{}{spCtx.EmpresaID}
+	idx := 2
 
 	if q != "" {
 		query += ` AND (g.nome ILIKE $` + strconv.Itoa(idx) + ` OR CAST(g.cod_supervisor AS TEXT) LIKE $` + strconv.Itoa(idx) + `)`
@@ -215,8 +221,9 @@ func listGestores(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	} else if ativo == "false" {
 		query += ` AND g.ativo = FALSE`
 	}
+	_ = idx
 
-	query += ` GROUP BY g.cod_supervisor ORDER BY g.nome ASC`
+	query += ` GROUP BY g.empresa_id, g.cod_supervisor ORDER BY g.nome ASC`
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -238,6 +245,15 @@ func listGestores(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func createGestor(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
 	var req struct {
 		CodSupervisor int     `json:"cod_supervisor"`
 		Nome          string  `json:"nome"`
@@ -252,10 +268,10 @@ func createGestor(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 	var g GestorRow
 	err := db.QueryRow(`
-		INSERT INTO gestores (cod_supervisor, nome, uf, regiao, ativo)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO gestores (empresa_id, cod_supervisor, nome, uf, regiao, ativo)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING cod_supervisor, nome, uf, regiao, atuacao, ativo, created_at, updated_at`,
-		req.CodSupervisor, req.Nome, req.UF, req.Regiao, req.Ativo,
+		spCtx.EmpresaID, req.CodSupervisor, req.Nome, req.UF, req.Regiao, req.Ativo,
 	).Scan(&g.CodSupervisor, &g.Nome, &g.UF, &g.Regiao, &g.Atuacao, &g.Ativo, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -266,6 +282,15 @@ func createGestor(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func updateGestor(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
 	var req struct {
 		Nome   string  `json:"nome"`
 		UF     *string `json:"uf"`
@@ -280,9 +305,9 @@ func updateGestor(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 	var g GestorRow
 	err := db.QueryRow(`
 		UPDATE gestores SET nome=$1, uf=$2, regiao=$3, ativo=$4, updated_at=NOW()
-		WHERE cod_supervisor=$5
+		WHERE empresa_id=$5 AND cod_supervisor=$6
 		RETURNING cod_supervisor, nome, uf, regiao, atuacao, ativo, created_at, updated_at`,
-		req.Nome, req.UF, req.Regiao, req.Ativo, id,
+		req.Nome, req.UF, req.Regiao, req.Ativo, spCtx.EmpresaID, id,
 	).Scan(&g.CodSupervisor, &g.Nome, &g.UF, &g.Regiao, &g.Atuacao, &g.Ativo, &g.CreatedAt, &g.UpdatedAt)
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -296,13 +321,22 @@ func updateGestor(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 }
 
 func deleteGestor(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM gestor_rca WHERE cod_supervisor=$1`, id).Scan(&count)
+	db.QueryRow(`SELECT COUNT(*) FROM gestor_rca WHERE empresa_id=$1 AND cod_supervisor=$2`, spCtx.EmpresaID, id).Scan(&count)
 	if count > 0 {
 		http.Error(w, `{"error":"gestor possui RCAs vinculados — remova os vínculos antes de excluir"}`, http.StatusConflict)
 		return
 	}
-	res, err := db.Exec(`DELETE FROM gestores WHERE cod_supervisor=$1`, id)
+	res, err := db.Exec(`DELETE FROM gestores WHERE empresa_id=$1 AND cod_supervisor=$2`, spCtx.EmpresaID, id)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -352,6 +386,12 @@ func CadastrosRCAsHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func listRCAs(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	uf := strings.TrimSpace(r.URL.Query().Get("uf"))
 	supStr := strings.TrimSpace(r.URL.Query().Get("cod_supervisor"))
@@ -362,11 +402,11 @@ func listRCAs(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		       g.cod_supervisor, g.nome, g.uf, g.regiao, g.atuacao,
 		       r.created_at, r.updated_at
 		FROM rcas r
-		LEFT JOIN gestor_rca gr ON gr.cod_rca = r.cod_rca
-		LEFT JOIN gestores g ON g.cod_supervisor = gr.cod_supervisor
-		WHERE 1=1`
-	args := []interface{}{}
-	idx := 1
+		LEFT JOIN gestor_rca gr ON gr.empresa_id = r.empresa_id AND gr.cod_rca = r.cod_rca
+		LEFT JOIN gestores g   ON g.empresa_id   = gr.empresa_id AND g.cod_supervisor = gr.cod_supervisor
+		WHERE r.empresa_id = $1`
+	args := []interface{}{spCtx.EmpresaID}
+	idx := 2
 
 	if q != "" {
 		query += ` AND (r.nome ILIKE $` + strconv.Itoa(idx) + ` OR CAST(r.cod_rca AS TEXT) LIKE $` + strconv.Itoa(idx) + `)`
@@ -390,6 +430,7 @@ func listRCAs(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	} else if ativo == "false" {
 		query += ` AND r.ativo = FALSE`
 	}
+	_ = idx
 
 	query += ` ORDER BY r.nome ASC`
 
@@ -416,6 +457,15 @@ func listRCAs(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func createRCA(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
 	var req struct {
 		CodRCA        int     `json:"cod_rca"`
 		Nome          string  `json:"nome"`
@@ -439,15 +489,15 @@ func createRCA(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO rcas (cod_rca, nome, cod_filial, tipo, ativo) VALUES ($1,$2,$3,$4,$5)`,
-		req.CodRCA, req.Nome, req.CodFilial, req.Tipo, req.Ativo)
+	_, err = tx.Exec(`INSERT INTO rcas (empresa_id, cod_rca, nome, cod_filial, tipo, ativo) VALUES ($1,$2,$3,$4,$5,$6)`,
+		spCtx.EmpresaID, req.CodRCA, req.Nome, req.CodFilial, req.Tipo, req.Ativo)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 	if req.CodSupervisor != nil {
-		tx.Exec(`INSERT INTO gestor_rca (cod_supervisor, cod_rca) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-			*req.CodSupervisor, req.CodRCA)
+		tx.Exec(`INSERT INTO gestor_rca (empresa_id, cod_supervisor, cod_rca) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+			spCtx.EmpresaID, *req.CodSupervisor, req.CodRCA)
 	}
 	if err := tx.Commit(); err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -458,6 +508,15 @@ func createRCA(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func updateRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
 	var req struct {
 		Nome          string  `json:"nome"`
 		CodFilial     *string `json:"cod_filial"`
@@ -473,8 +532,8 @@ func updateRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 	tx, _ := db.Begin()
 	defer tx.Rollback()
 
-	res, err := tx.Exec(`UPDATE rcas SET nome=$1, cod_filial=$2, tipo=$3, ativo=$4, updated_at=NOW() WHERE cod_rca=$5`,
-		req.Nome, req.CodFilial, req.Tipo, req.Ativo, id)
+	res, err := tx.Exec(`UPDATE rcas SET nome=$1, cod_filial=$2, tipo=$3, ativo=$4, updated_at=NOW() WHERE empresa_id=$5 AND cod_rca=$6`,
+		req.Nome, req.CodFilial, req.Tipo, req.Ativo, spCtx.EmpresaID, id)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -484,10 +543,10 @@ func updateRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 		return
 	}
 
-	tx.Exec(`DELETE FROM gestor_rca WHERE cod_rca=$1`, id)
+	tx.Exec(`DELETE FROM gestor_rca WHERE empresa_id=$1 AND cod_rca=$2`, spCtx.EmpresaID, id)
 	if req.CodSupervisor != nil {
-		tx.Exec(`INSERT INTO gestor_rca (cod_supervisor, cod_rca) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-			*req.CodSupervisor, id)
+		tx.Exec(`INSERT INTO gestor_rca (empresa_id, cod_supervisor, cod_rca) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+			spCtx.EmpresaID, *req.CodSupervisor, id)
 	}
 	tx.Commit()
 
@@ -495,7 +554,16 @@ func updateRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 }
 
 func deleteRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
-	res, err := db.Exec(`DELETE FROM rcas WHERE cod_rca=$1`, id)
+	spCtx := GetSpContext(r)
+	if spCtx == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if !RequireWrite(spCtx, w) {
+		return
+	}
+
+	res, err := db.Exec(`DELETE FROM rcas WHERE empresa_id=$1 AND cod_rca=$2`, spCtx.EmpresaID, id)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -509,8 +577,8 @@ func deleteRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 
 // ─── Limpar Cadastros ─────────────────────────────────────────────────────────
 
-// LimparCadastrosHandler apaga todos os registros de gestor_rca, rcas e gestores.
-// DELETE /api/cadastros/limpar  (admin only)
+// LimparCadastrosHandler apaga os registros de gestor_rca, rcas e gestores da empresa ativa.
+// DELETE /api/cadastros/limpar  (admin_fbtax only)
 func LimparCadastrosHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -518,6 +586,12 @@ func LimparCadastrosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
 
 		tx, err := db.Begin()
 		if err != nil {
@@ -529,13 +603,13 @@ func LimparCadastrosHandler(db *sql.DB) http.HandlerFunc {
 		// Ordem importa: gestor_rca → rcas → gestores (FKs)
 		var gestorRCA, rcas, gestores int64
 
-		res, _ := tx.Exec(`DELETE FROM gestor_rca`)
+		res, _ := tx.Exec(`DELETE FROM gestor_rca WHERE empresa_id=$1`, spCtx.EmpresaID)
 		gestorRCA, _ = res.RowsAffected()
 
-		res, _ = tx.Exec(`DELETE FROM rcas`)
+		res, _ = tx.Exec(`DELETE FROM rcas WHERE empresa_id=$1`, spCtx.EmpresaID)
 		rcas, _ = res.RowsAffected()
 
-		res, _ = tx.Exec(`DELETE FROM gestores`)
+		res, _ = tx.Exec(`DELETE FROM gestores WHERE empresa_id=$1`, spCtx.EmpresaID)
 		gestores, _ = res.RowsAffected()
 
 		if err := tx.Commit(); err != nil {
@@ -544,9 +618,9 @@ func LimparCadastrosHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(map[string]int64{
-			"gestores_removidos":   gestores,
-			"rcas_removidos":       rcas,
-			"vinculos_removidos":   gestorRCA,
+			"gestores_removidos": gestores,
+			"rcas_removidos":     rcas,
+			"vinculos_removidos": gestorRCA,
 		})
 	}
 }
@@ -562,6 +636,15 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !RequireWrite(spCtx, w) {
+			return
+		}
 
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			// fallback: try plain body
@@ -653,12 +736,12 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			// Upsert gestor
 			var wasNew bool
 			err = tx.QueryRow(`
-				INSERT INTO gestores (cod_supervisor, nome, uf, regiao, ativo)
-				VALUES ($1, $2, $3, $4, TRUE)
-				ON CONFLICT (cod_supervisor) DO UPDATE SET
+				INSERT INTO gestores (empresa_id, cod_supervisor, nome, uf, regiao, ativo)
+				VALUES ($1, $2, $3, $4, $5, TRUE)
+				ON CONFLICT (empresa_id, cod_supervisor) DO UPDATE SET
 				  nome = EXCLUDED.nome, uf = EXCLUDED.uf, regiao = EXCLUDED.regiao,
 				  updated_at = NOW()
-				RETURNING (xmax = 0)`, codSup, nomeSupv, ufPtr, regiaoPtr,
+				RETURNING (xmax = 0)`, spCtx.EmpresaID, codSup, nomeSupv, ufPtr, regiaoPtr,
 			).Scan(&wasNew)
 			if err != nil {
 				tx.Exec("ROLLBACK TO SAVEPOINT sp_row") //nolint
@@ -669,12 +752,12 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			if rowOk {
 				// Upsert RCA
 				err = tx.QueryRow(`
-					INSERT INTO rcas (cod_rca, nome, tipo, ativo)
-					VALUES ($1, $2, $3, $4)
-					ON CONFLICT (cod_rca) DO UPDATE SET
+					INSERT INTO rcas (empresa_id, cod_rca, nome, tipo, ativo)
+					VALUES ($1, $2, $3, $4, $5)
+					ON CONFLICT (empresa_id, cod_rca) DO UPDATE SET
 					  nome = EXCLUDED.nome,
 					  tipo = EXCLUDED.tipo, ativo = EXCLUDED.ativo, updated_at = NOW()
-					RETURNING (xmax = 0)`, codRCA, nomeRCA, tipo, ativo,
+					RETURNING (xmax = 0)`, spCtx.EmpresaID, codRCA, nomeRCA, tipo, ativo,
 				).Scan(&wasNew)
 				if err != nil {
 					tx.Exec("ROLLBACK TO SAVEPOINT sp_row") //nolint
@@ -685,8 +768,8 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 
 			if rowOk {
 				// Upsert vínculo
-				tx.Exec(`INSERT INTO gestor_rca (cod_supervisor, cod_rca) VALUES ($1, $2) ON CONFLICT DO NOTHING`, codSup, codRCA) //nolint
-				tx.Exec("RELEASE SAVEPOINT sp_row")                                                                                //nolint
+				tx.Exec(`INSERT INTO gestor_rca (empresa_id, cod_supervisor, cod_rca) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, spCtx.EmpresaID, codSup, codRCA) //nolint
+				tx.Exec("RELEASE SAVEPOINT sp_row")                                                                                                                  //nolint
 				if wasNew {
 					imported++
 				} else {

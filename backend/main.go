@@ -338,14 +338,6 @@ func main() {
 	// ── Filiais (selector global) ─────────────────────────────────────────────
 	http.HandleFunc("/api/filiais", withAuth(handlers.GetFiliaisHandler, ""))
 
-	// ── Cadastros — Gestores, RCAs ────────────────────────────────────────────
-	http.HandleFunc("/api/cadastros/limpar",          withAuth(handlers.LimparCadastrosHandler, "admin"))
-	http.HandleFunc("/api/cadastros/rcas/upload-csv", withAuth(handlers.UploadCadastrosCSVHandler, ""))
-	http.HandleFunc("/api/cadastros/gestores",        withAuth(handlers.CadastrosGestoresHandler, ""))
-	http.HandleFunc("/api/cadastros/gestores/",       withAuth(handlers.CadastrosGestoresHandler, ""))
-	http.HandleFunc("/api/cadastros/rcas",            withAuth(handlers.CadastrosRCAsHandler, ""))
-	http.HandleFunc("/api/cadastros/rcas/",           withAuth(handlers.CadastrosRCAsHandler, ""))
-
 	// ── Farol — Gestão de Usuários (RBAC) ────────────────────────────────
 	withSP := func(handlerFactory func(*sql.DB) http.HandlerFunc, requiredSpRole string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +349,14 @@ func main() {
 			handlers.FarolAuthMiddleware(database, handlerFactory(database), requiredSpRole)(w, r)
 		}
 	}
+
+	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
+	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
+	http.HandleFunc("/api/cadastros/rcas/upload-csv", withSP(handlers.UploadCadastrosCSVHandler, "gestor_filial"))
+	http.HandleFunc("/api/cadastros/gestores",        withSP(handlers.CadastrosGestoresHandler, "gestor_filial"))
+	http.HandleFunc("/api/cadastros/gestores/",       withSP(handlers.CadastrosGestoresHandler, "gestor_filial"))
+	http.HandleFunc("/api/cadastros/rcas",            withSP(handlers.CadastrosRCAsHandler, "gestor_filial"))
+	http.HandleFunc("/api/cadastros/rcas/",           withSP(handlers.CadastrosRCAsHandler, "gestor_filial"))
 
 	http.HandleFunc("/api/sp/usuarios", withSP(func(db *sql.DB) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
