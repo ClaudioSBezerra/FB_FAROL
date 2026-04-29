@@ -621,10 +621,7 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			nomeSupv := strings.TrimSpace(record[1])
 			codRCAStr := strings.TrimSpace(record[2])
 			nomeRCA := strings.TrimSpace(record[3])
-			codFilial := ""
-			if len(record) >= 5 {
-				codFilial = strings.TrimSpace(record[4])
-			}
+			// cod_filial ignorado — coluna pode existir no CSV mas não é usada no Farol
 
 			codSup, errSup := strconv.Atoi(codSupStr)
 			codRCA, errRCA := strconv.Atoi(codRCAStr)
@@ -637,15 +634,12 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			tipo := extractRCATipo(nomeRCA)
 			ativo := extractRCAAtivo(nomeRCA)
 
-			var ufPtr, regiaoPtr, filialPtr *string
+			var ufPtr, regiaoPtr *string
 			if uf != "" {
 				ufPtr = &uf
 			}
 			if regiao != "" {
 				regiaoPtr = &regiao
-			}
-			if codFilial != "" {
-				filialPtr = &codFilial
 			}
 
 			// Savepoint por linha — impede que erros individuais abortem toda a transação
@@ -675,12 +669,12 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			if rowOk {
 				// Upsert RCA
 				err = tx.QueryRow(`
-					INSERT INTO rcas (cod_rca, nome, cod_filial, tipo, ativo)
-					VALUES ($1, $2, $3, $4, $5)
+					INSERT INTO rcas (cod_rca, nome, tipo, ativo)
+					VALUES ($1, $2, $3, $4)
 					ON CONFLICT (cod_rca) DO UPDATE SET
-					  nome = EXCLUDED.nome, cod_filial = EXCLUDED.cod_filial,
+					  nome = EXCLUDED.nome,
 					  tipo = EXCLUDED.tipo, ativo = EXCLUDED.ativo, updated_at = NOW()
-					RETURNING (xmax = 0)`, codRCA, nomeRCA, filialPtr, tipo, ativo,
+					RETURNING (xmax = 0)`, codRCA, nomeRCA, tipo, ativo,
 				).Scan(&wasNew)
 				if err != nil {
 					tx.Exec("ROLLBACK TO SAVEPOINT sp_row") //nolint

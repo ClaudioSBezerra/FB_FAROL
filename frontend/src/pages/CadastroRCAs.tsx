@@ -33,7 +33,6 @@ interface Gestor {
 interface RCA {
   cod_rca: number
   nome: string
-  cod_filial: string | null
   tipo: string
   ativo: boolean
   cod_supervisor: number | null
@@ -48,7 +47,6 @@ const TIPOS = ['RCA', 'CRV', 'JUR', 'GGV', 'TELEVENDAS']
 const EMPTY_FORM = {
   cod_rca: 0,
   nome: '',
-  cod_filial: '',
   tipo: 'RCA',
   ativo: true,
   cod_supervisor: null as number | null,
@@ -194,7 +192,6 @@ export default function CadastroRCAs() {
     setForm({
       cod_rca: rc.cod_rca,
       nome: rc.nome,
-      cod_filial: rc.cod_filial ?? '',
       tipo: rc.tipo,
       ativo: rc.ativo,
       cod_supervisor: rc.cod_supervisor,
@@ -286,7 +283,6 @@ export default function CadastroRCAs() {
               <TableHead className="w-24">Cód.</TableHead>
               <TableHead>Nome</TableHead>
               <TableHead className="w-28">Tipo</TableHead>
-              <TableHead className="w-20 text-center">Filial</TableHead>
               <TableHead>Gestor / Atuação</TableHead>
               <TableHead className="w-20 text-center">Status</TableHead>
               <TableHead className="w-20" />
@@ -304,7 +300,6 @@ export default function CadastroRCAs() {
                 <TableCell className="font-mono text-sm">{rc.cod_rca}</TableCell>
                 <TableCell className="font-medium">{rc.nome}</TableCell>
                 <TableCell><TipoBadge tipo={rc.tipo} /></TableCell>
-                <TableCell className="text-center">{rc.cod_filial ?? '—'}</TableCell>
                 <TableCell>
                   {rc.atuacao
                     ? <><Badge variant="outline" className="text-xs mr-1">{rc.atuacao}</Badge><span className="text-xs text-muted-foreground">{rc.gestor_nome}</span></>
@@ -347,14 +342,6 @@ export default function CadastroRCAs() {
                   onChange={e => setForm(f => ({ ...f, cod_rca: Number(e.target.value) }))}
                   disabled={!!editTarget}
                   placeholder="Ex: 4623"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Filial</Label>
-                <Input
-                  value={form.cod_filial}
-                  onChange={e => setForm(f => ({ ...f, cod_filial: e.target.value }))}
-                  placeholder="Ex: 11"
                 />
               </div>
             </div>
