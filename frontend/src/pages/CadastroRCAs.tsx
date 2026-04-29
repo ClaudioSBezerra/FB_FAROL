@@ -18,8 +18,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Search, Upload } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, Upload, ChevronsUpDown, Check } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +105,7 @@ export default function CadastroRCAs() {
   const [filterUF, setFilterUF] = useState('')
   const [filterSup, setFilterSup] = useState('')
   const [filterAtivo, setFilterAtivo] = useState('')
+  const [gestorOpen, setGestorOpen] = useState(false)
 
   const [editTarget, setEditTarget] = useState<RCA | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<RCA | null>(null)
@@ -270,17 +273,41 @@ export default function CadastroRCAs() {
             {ufsDisponiveis.map(uf => <SelectItem key={uf} value={uf}>{uf}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterSup || '_all'} onValueChange={v => setFilterSup(v === '_all' ? '' : v)}>
-          <SelectTrigger className="w-64"><SelectValue placeholder="Gestor" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="_all">Todos os gestores</SelectItem>
-            {gestoresFiltrados.map(g => (
-              <SelectItem key={g.cod_supervisor} value={String(g.cod_supervisor)}>
-                {g.nome}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Popover open={gestorOpen} onOpenChange={setGestorOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" role="combobox" aria-expanded={gestorOpen} className="w-72 justify-between font-normal">
+              {filterSup
+                ? (() => { const g = gestores.find(g => String(g.cod_supervisor) === filterSup); return g ? `${g.cod_supervisor} – ${g.nome}` : 'Gestor' })()
+                : 'Todos os gestores'}
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Buscar por nome ou código..." />
+              <CommandList>
+                <CommandEmpty>Nenhum gestor encontrado.</CommandEmpty>
+                <CommandGroup>
+                  <CommandItem value="_all" onSelect={() => { setFilterSup(''); setGestorOpen(false) }}>
+                    <Check className={`mr-2 h-4 w-4 ${!filterSup ? 'opacity-100' : 'opacity-0'}`} />
+                    Todos os gestores
+                  </CommandItem>
+                  {gestoresFiltrados.map(g => (
+                    <CommandItem
+                      key={g.cod_supervisor}
+                      value={`${g.cod_supervisor} ${g.nome}`}
+                      onSelect={() => { setFilterSup(String(g.cod_supervisor)); setGestorOpen(false) }}
+                    >
+                      <Check className={`mr-2 h-4 w-4 ${filterSup === String(g.cod_supervisor) ? 'opacity-100' : 'opacity-0'}`} />
+                      <span className="font-mono text-xs text-muted-foreground w-10 shrink-0">{g.cod_supervisor}</span>
+                      <span className="truncate">{g.nome}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
         <Select value={filterAtivo || '_all'} onValueChange={v => setFilterAtivo(v === '_all' ? '' : v)}>
           <SelectTrigger className="w-28"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
@@ -316,11 +343,12 @@ export default function CadastroRCAs() {
                 <TableCell className="font-medium">{rc.nome}</TableCell>
                 <TableCell><TipoBadge tipo={rc.tipo} /></TableCell>
                 <TableCell>
-                  {rc.atuacao
-                    ? <><Badge variant="outline" className="text-xs mr-1">{rc.atuacao}</Badge><span className="text-xs text-muted-foreground">{rc.gestor_nome}</span></>
-                    : rc.gestor_nome
-                      ? <span className="text-sm">{rc.gestor_nome}</span>
-                      : <span className="text-muted-foreground">—</span>}
+                  {rc.cod_supervisor != null
+                    ? <span className="text-sm">
+                        <span className="font-mono text-xs text-muted-foreground mr-1.5">{rc.cod_supervisor}</span>
+                        {rc.gestor_nome ?? '—'}
+                      </span>
+                    : <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell className="text-center">
                   <Badge variant={rc.ativo ? 'default' : 'secondary'}>{rc.ativo ? 'Ativo' : 'Inativo'}</Badge>
