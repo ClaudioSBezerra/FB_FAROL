@@ -106,8 +106,6 @@ export default function SpAmbiente() {
   const [newCDDesc,      setNewCDDesc]      = useState('')
   const [dupNome,        setDupNome]        = useState('')
   const [editParams,     setEditParams]     = useState<Partial<SpMotorParams>>({})
-  const [limparDialog,        setLimparDialog]        = useState(false)
-  const [limparConfirm,       setLimparConfirm]        = useState('')
   const [limparCadDialog,     setLimparCadDialog]      = useState(false)
   const [limparCadConfirm,    setLimparCadConfirm]     = useState('')
 
@@ -278,27 +276,6 @@ export default function SpAmbiente() {
     onSuccess: () => {
       toast.success('Filial desativada')
       qc.invalidateQueries({ queryKey: ['sp-filiais'] })
-    },
-    onError: (e: Error) => toast.error(e.message),
-  })
-
-  const limparCalibragem = useMutation({
-    mutationFn: async () => {
-      const r = await fetch('/api/sp/admin/limpar-calibragem', {
-        method: 'DELETE', headers,
-      })
-      if (!r.ok) throw new Error(await r.text())
-      return r.json()
-    },
-    onSuccess: (data: Record<string, unknown>) => {
-      toast.success(`Limpeza concluída: ${data.sp_propostas ?? 0} propostas, ${data.sp_enderecos ?? 0} endereços, ${data.sp_csv_jobs ?? 0} jobs removidos`)
-      qc.invalidateQueries({ queryKey: ['sp-plano'] })
-      qc.invalidateQueries({ queryKey: ['sp-propostas'] })
-      qc.invalidateQueries({ queryKey: ['sp-propostas-resumo'] })
-      qc.invalidateQueries({ queryKey: ['sp-csv-jobs'] })
-      qc.invalidateQueries({ queryKey: ['sp-historico'] })
-      setLimparDialog(false)
-      setLimparConfirm('')
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -1003,70 +980,6 @@ export default function SpAmbiente() {
   // ── Render: Manutenção ───────────────────────────────────────────────────────
   if (isManutencao) return (
     <div className="space-y-4 max-w-lg">
-      <div className="border rounded-md p-4 space-y-3">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Limpar Dados de Calibragem</p>
-            <p className="text-xs text-muted-foreground">
-              Remove todos os imports de CSV, endereços, propostas e histórico de calibragem.
-              <strong> Preserva</strong> filiais, CDs, parâmetros do motor e usuários.
-            </p>
-          </div>
-        </div>
-        {spRole === 'admin_fbtax' && (
-          <Button variant="destructive" size="sm" onClick={() => setLimparDialog(true)}>
-            <Trash2 className="h-4 w-4 mr-1.5" />
-            Limpar dados de calibragem
-          </Button>
-        )}
-      </div>
-
-      <Dialog open={limparDialog} onOpenChange={v => { setLimparDialog(v); if (!v) setLimparConfirm('') }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
-              Limpar dados de calibragem
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Confirmação obrigatória para limpar todos os dados de calibragem da empresa.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <p className="text-sm text-muted-foreground">
-              Esta ação irá remover <strong>todos</strong> os imports, endereços, propostas e
-              histórico de calibragem da empresa. Os cadastros (filiais, CDs e parâmetros)
-              serão mantidos. <strong className="text-destructive">Essa operação é irreversível.</strong>
-            </p>
-            <div className="space-y-1.5">
-              <Label className="text-sm">
-                Digite <span className="font-mono font-bold text-destructive">CONFIRMO</span> para habilitar a limpeza
-              </Label>
-              <Input
-                value={limparConfirm}
-                onChange={e => setLimparConfirm(e.target.value)}
-                placeholder="CONFIRMO"
-                className="font-mono"
-                autoComplete="off"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setLimparDialog(false); setLimparConfirm('') }}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={limparConfirm !== 'CONFIRMO' || limparCalibragem.isPending}
-              onClick={() => limparCalibragem.mutate()}
-            >
-              {limparCalibragem.isPending ? 'Limpando...' : 'Confirmar limpeza'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* ── Limpeza de Cadastros ── */}
       <div className="border rounded-md p-4 space-y-3">
         <div className="flex items-start gap-3">
