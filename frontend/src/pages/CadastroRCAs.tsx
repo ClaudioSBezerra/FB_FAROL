@@ -206,7 +206,22 @@ export default function CadastroRCAs() {
   }
 
   // UFs únicas para filtro
-  const ufsDisponiveis = [...new Set(gestores.map(g => g.uf).filter(Boolean))] as string[]
+  const ufsDisponiveis = [...new Set(gestores.map(g => g.uf).filter(Boolean))].sort() as string[]
+
+  // Gestores filtrados pela UF selecionada (se houver), ordenados por nome
+  const gestoresFiltrados = gestores
+    .filter(g => !filterUF || g.uf === filterUF)
+    .sort((a, b) => a.nome.localeCompare(b.nome))
+
+  // Limpa filtro de gestor quando a UF muda e o gestor atual não pertence à nova UF
+  function handleUFChange(v: string) {
+    const uf = v === '_all' ? '' : v
+    setFilterUF(uf)
+    if (uf && filterSup) {
+      const gestor = gestores.find(g => String(g.cod_supervisor) === filterSup)
+      if (gestor && gestor.uf !== uf) setFilterSup('')
+    }
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -248,20 +263,20 @@ export default function CadastroRCAs() {
             onChange={e => handleSearchChange(e.target.value)}
           />
         </div>
-        <Select value={filterUF || '_all'} onValueChange={v => setFilterUF(v === '_all' ? '' : v)}>
+        <Select value={filterUF || '_all'} onValueChange={handleUFChange}>
           <SelectTrigger className="w-28"><SelectValue placeholder="UF" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="_all">Todas UFs</SelectItem>
-            {ufsDisponiveis.sort().map(uf => <SelectItem key={uf} value={uf}>{uf}</SelectItem>)}
+            {ufsDisponiveis.map(uf => <SelectItem key={uf} value={uf}>{uf}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={filterSup || '_all'} onValueChange={v => setFilterSup(v === '_all' ? '' : v)}>
-          <SelectTrigger className="w-52"><SelectValue placeholder="Gestor" /></SelectTrigger>
+          <SelectTrigger className="w-64"><SelectValue placeholder="Gestor" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="_all">Todos gestores</SelectItem>
-            {gestores.map(g => (
+            <SelectItem value="_all">Todos os gestores</SelectItem>
+            {gestoresFiltrados.map(g => (
               <SelectItem key={g.cod_supervisor} value={String(g.cod_supervisor)}>
-                {g.atuacao ?? g.nome}
+                {g.nome}
               </SelectItem>
             ))}
           </SelectContent>
