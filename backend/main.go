@@ -339,6 +339,7 @@ func main() {
 	http.HandleFunc("/api/filiais", withAuth(handlers.GetFiliaisHandler, ""))
 
 	// ── Cadastros — Gestores, RCAs ────────────────────────────────────────────
+	http.HandleFunc("/api/cadastros/limpar",          withAuth(handlers.LimparCadastrosHandler, "admin"))
 	http.HandleFunc("/api/cadastros/rcas/upload-csv", withAuth(handlers.UploadCadastrosCSVHandler, ""))
 	http.HandleFunc("/api/cadastros/gestores",        withAuth(handlers.CadastrosGestoresHandler, ""))
 	http.HandleFunc("/api/cadastros/gestores/",       withAuth(handlers.CadastrosGestoresHandler, ""))

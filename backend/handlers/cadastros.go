@@ -507,6 +507,50 @@ func deleteRCA(w http.ResponseWriter, r *http.Request, db *sql.DB, id int) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ─── Limpar Cadastros ─────────────────────────────────────────────────────────
+
+// LimparCadastrosHandler apaga todos os registros de gestor_rca, rcas e gestores.
+// DELETE /api/cadastros/limpar  (admin only)
+func LimparCadastrosHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		tx, err := db.Begin()
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		// Ordem importa: gestor_rca → rcas → gestores (FKs)
+		var gestorRCA, rcas, gestores int64
+
+		res, _ := tx.Exec(`DELETE FROM gestor_rca`)
+		gestorRCA, _ = res.RowsAffected()
+
+		res, _ = tx.Exec(`DELETE FROM rcas`)
+		rcas, _ = res.RowsAffected()
+
+		res, _ = tx.Exec(`DELETE FROM gestores`)
+		gestores, _ = res.RowsAffected()
+
+		if err := tx.Commit(); err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]int64{
+			"gestores_removidos":   gestores,
+			"rcas_removidos":       rcas,
+			"vinculos_removidos":   gestorRCA,
+		})
+	}
+}
+
 // ─── Upload CSV ───────────────────────────────────────────────────────────────
 
 // UploadCadastrosCSVHandler faz parse do CSV RCAS_ATIVOS (separador ;) e upsert
