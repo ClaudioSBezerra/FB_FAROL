@@ -106,6 +106,7 @@ export default function CadastroRCAs() {
   const [filterSup, setFilterSup] = useState('')
   const [filterAtivo, setFilterAtivo] = useState('')
   const [gestorOpen, setGestorOpen] = useState(false)
+  const [formGestorOpen, setFormGestorOpen] = useState(false)
 
   const [editTarget, setEditTarget] = useState<RCA | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<RCA | null>(null)
@@ -408,20 +409,41 @@ export default function CadastroRCAs() {
               </div>
               <div className="space-y-1">
                 <Label>Gestor</Label>
-                <Select
-                  value={form.cod_supervisor !== null ? String(form.cod_supervisor) : '_none'}
-                  onValueChange={v => setForm(f => ({ ...f, cod_supervisor: v === '_none' ? null : Number(v) }))}
-                >
-                  <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">Sem gestor</SelectItem>
-                    {gestores.map(g => (
-                      <SelectItem key={g.cod_supervisor} value={String(g.cod_supervisor)}>
-                        {g.atuacao ?? g.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={formGestorOpen} onOpenChange={setFormGestorOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="w-full justify-between font-normal truncate">
+                      {form.cod_supervisor != null
+                        ? (() => { const g = gestores.find(g => g.cod_supervisor === form.cod_supervisor); return g ? `${g.cod_supervisor} – ${g.nome}` : 'Selecionar...' })()
+                        : 'Selecionar...'}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Código ou nome do gestor..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhum gestor encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem value="_none" onSelect={() => { setForm(f => ({ ...f, cod_supervisor: null })); setFormGestorOpen(false) }}>
+                            <Check className={`mr-2 h-4 w-4 ${form.cod_supervisor == null ? 'opacity-100' : 'opacity-0'}`} />
+                            Sem gestor
+                          </CommandItem>
+                          {[...gestores].sort((a, b) => a.nome.localeCompare(b.nome)).map(g => (
+                            <CommandItem
+                              key={g.cod_supervisor}
+                              value={`${g.cod_supervisor} ${g.nome}`}
+                              onSelect={() => { setForm(f => ({ ...f, cod_supervisor: g.cod_supervisor })); setFormGestorOpen(false) }}
+                            >
+                              <Check className={`mr-2 h-4 w-4 ${form.cod_supervisor === g.cod_supervisor ? 'opacity-100' : 'opacity-0'}`} />
+                              <span className="font-mono text-xs text-muted-foreground w-10 shrink-0">{g.cod_supervisor}</span>
+                              <span className="truncate">{g.nome}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
             <div className="flex items-center gap-2">

@@ -205,7 +205,7 @@ function AppLayout() {
         </main>
       </div>
       <Toaster />
-      <AjudaChat />
+      {/* <AjudaChat /> */}
     </div>
   )
 }
