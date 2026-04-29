@@ -543,6 +543,17 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Verifica se as tabelas existem antes de iniciar o upload
+		var tablesOK bool
+		db.QueryRow(`SELECT EXISTS(
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema='public' AND table_name='gestores'
+		)`).Scan(&tablesOK)
+		if !tablesOK {
+			http.Error(w, `{"error":"tabelas de cadastro não encontradas — aguarde a migração do banco ou contate o suporte"}`, http.StatusInternalServerError)
+			return
+		}
+
 		tx, err := db.Begin()
 		if err != nil {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -593,6 +604,14 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 				filialPtr = &codFilial
 			}
 
+			// Savepoint por linha — impede que erros individuais abortem toda a transação
+			if _, err = tx.Exec("SAVEPOINT sp_row"); err != nil {
+				skipped++
+				continue
+			}
+
+			rowOk := true
+
 			// Upsert gestor
 			var wasNew bool
 			err = tx.QueryRow(`
@@ -604,33 +623,37 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 				RETURNING (xmax = 0)`, codSup, nomeSupv, ufPtr, regiaoPtr,
 			).Scan(&wasNew)
 			if err != nil {
+				tx.Exec("ROLLBACK TO SAVEPOINT sp_row") //nolint
 				skipped++
-				continue
+				rowOk = false
 			}
 
-			// Upsert RCA
-			err = tx.QueryRow(`
-				INSERT INTO rcas (cod_rca, nome, cod_filial, tipo, ativo)
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT (cod_rca) DO UPDATE SET
-				  nome = EXCLUDED.nome, cod_filial = EXCLUDED.cod_filial,
-				  tipo = EXCLUDED.tipo, ativo = EXCLUDED.ativo, updated_at = NOW()
-				RETURNING (xmax = 0)`, codRCA, nomeRCA, filialPtr, tipo, ativo,
-			).Scan(&wasNew)
-			if err != nil {
-				skipped++
-				continue
+			if rowOk {
+				// Upsert RCA
+				err = tx.QueryRow(`
+					INSERT INTO rcas (cod_rca, nome, cod_filial, tipo, ativo)
+					VALUES ($1, $2, $3, $4, $5)
+					ON CONFLICT (cod_rca) DO UPDATE SET
+					  nome = EXCLUDED.nome, cod_filial = EXCLUDED.cod_filial,
+					  tipo = EXCLUDED.tipo, ativo = EXCLUDED.ativo, updated_at = NOW()
+					RETURNING (xmax = 0)`, codRCA, nomeRCA, filialPtr, tipo, ativo,
+				).Scan(&wasNew)
+				if err != nil {
+					tx.Exec("ROLLBACK TO SAVEPOINT sp_row") //nolint
+					skipped++
+					rowOk = false
+				}
 			}
 
-			// Upsert vínculo
-			tx.Exec(`
-				INSERT INTO gestor_rca (cod_supervisor, cod_rca)
-				VALUES ($1, $2) ON CONFLICT DO NOTHING`, codSup, codRCA)
-
-			if wasNew {
-				imported++
-			} else {
-				updated++
+			if rowOk {
+				// Upsert vínculo
+				tx.Exec(`INSERT INTO gestor_rca (cod_supervisor, cod_rca) VALUES ($1, $2) ON CONFLICT DO NOTHING`, codSup, codRCA) //nolint
+				tx.Exec("RELEASE SAVEPOINT sp_row")                                                                                //nolint
+				if wasNew {
+					imported++
+				} else {
+					updated++
+				}
 			}
 		}
 
