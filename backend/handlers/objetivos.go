@@ -162,10 +162,6 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 		processed := 0
 		buf := make([]batchRow, 0, objetivosBatchSize)
 
-		// Registra todos os códigos vistos para auto-criar gestores/rcas ausentes
-		uniqueSups := make(map[int64]struct{})
-		uniqueRCAs := make(map[int64]struct{})
-
 		flushBatch := func() {
 			if len(buf) == 0 {
 				return
@@ -321,9 +317,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			var codSup int64 = -1
 			if cs, e := strconv.ParseInt(strings.TrimSpace(record[0]), 10, 64); e == nil {
 				codSup = cs
-				uniqueSups[codSup] = struct{}{}
 			}
-			uniqueRCAs[codRCA] = struct{}{}
 
 			qtdCli, _ := strconv.ParseInt(strings.TrimSpace(record[9]), 10, 64)
 			vlAnt, errA := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[10]), ",", "."), 64)
@@ -357,66 +351,20 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 		// flush do batch final
 		flushBatch()
 
-		// ── Auto-criar gestores ausentes ──────────────────────────────────────
-		var gestoresCriados, rcasCriados int64
-
-		if len(uniqueSups) > 0 {
-			supCodes := make([]int64, 0, len(uniqueSups))
-			supNomes := make([]string, 0, len(uniqueSups))
-			for code := range uniqueSups {
-				supCodes = append(supCodes, code)
-				supNomes = append(supNomes, fmt.Sprintf("Supervisor %d", code))
-			}
-			res, ierr := tx.Exec(`
-				INSERT INTO gestores (empresa_id, cod_supervisor, nome)
-				SELECT $1, unnest($2::bigint[])::int, unnest($3::text[])
-				ON CONFLICT (empresa_id, cod_supervisor) DO NOTHING`,
-				spCtx.EmpresaID, pq.Array(supCodes), pq.Array(supNomes),
-			)
-			if ierr != nil {
-				log.Printf("[ObjetivosImport] auto-insert gestores: %v", ierr)
-			} else {
-				gestoresCriados, _ = res.RowsAffected()
-			}
-		}
-
-		// ── Auto-criar RCAs ausentes ──────────────────────────────────────────
-		if len(uniqueRCAs) > 0 {
-			rcaCodes := make([]int64, 0, len(uniqueRCAs))
-			rcaNomes := make([]string, 0, len(uniqueRCAs))
-			for code := range uniqueRCAs {
-				rcaCodes = append(rcaCodes, code)
-				rcaNomes = append(rcaNomes, fmt.Sprintf("RCA %d", code))
-			}
-			res, ierr := tx.Exec(`
-				INSERT INTO rcas (empresa_id, cod_rca, nome)
-				SELECT $1, unnest($2::bigint[])::int, unnest($3::text[])
-				ON CONFLICT (empresa_id, cod_rca) DO NOTHING`,
-				spCtx.EmpresaID, pq.Array(rcaCodes), pq.Array(rcaNomes),
-			)
-			if ierr != nil {
-				log.Printf("[ObjetivosImport] auto-insert rcas: %v", ierr)
-			} else {
-				rcasCriados, _ = res.RowsAffected()
-			}
-		}
-
 		if err := tx.Commit(); err != nil {
 			log.Printf("[ObjetivosImport] commit erro: %v", err)
 			sendEvent(map[string]any{"error": err.Error()})
 			return
 		}
 
-		log.Printf("[ObjetivosImport] concluído: importados=%d atualizados=%d ignorados=%d gestores_criados=%d rcas_criados=%d",
-			imported, updated, skipped, gestoresCriados, rcasCriados)
+		log.Printf("[ObjetivosImport] concluído: importados=%d atualizados=%d ignorados=%d",
+			imported, updated, skipped)
 
 		sendEvent(map[string]any{
-			"done":              true,
-			"importados":        imported,
-			"atualizados":       updated,
-			"ignorados":         skipped,
-			"gestores_criados":  gestoresCriados,
-			"rcas_criados":      rcasCriados,
+			"done":        true,
+			"importados":  imported,
+			"atualizados": updated,
+			"ignorados":   skipped,
 		})
 	}
 }
