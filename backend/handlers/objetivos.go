@@ -197,6 +197,20 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				vlAnts[i]       = row.vlAnt
 				vlCors[i]       = row.vlCor
 			}
+
+			// SAVEPOINT por batch: evita que um erro aborte a transação inteira
+			if _, serr := tx.Exec("SAVEPOINT sp_batch"); serr != nil {
+				log.Printf("[ObjetivosImport] savepoint erro: %v", serr)
+				skipped += n
+				processed += n
+				buf = buf[:0]
+				sendEvent(map[string]any{"processed": processed, "importados": imported, "atualizados": updated, "ignorados": skipped})
+				return
+			}
+
+			// Usa FROM unnest(a1, a2, ...) AS t(...) — sintaxe correta para arrays
+			// de tipos diferentes; évita o comportamento indefinido de múltiplos
+			// unnest() no SELECT em versões anteriores ao PostgreSQL 10.
 			qrows, qerr := tx.Query(`
 				INSERT INTO objetivos_importados (
 				    empresa_id, tipo_periodo, ano, periodo_seq,
@@ -207,18 +221,24 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				)
 				SELECT
 				    $1, $2, $3, $4,
-				    NULLIF(unnest($5::bigint[]),  -1)::int,
-				    unnest($6::bigint[])::int,
-				    NULLIF(unnest($7::text[]),  ''),
-				    NULLIF(unnest($8::text[]),  ''),
-				    NULLIF(unnest($9::text[]),  ''),
-				    NULLIF(unnest($10::text[]), ''),
-				    unnest($11::text[]),
-				    NULLIF(unnest($12::text[]), ''),
-				    unnest($13::text[]),
-				    unnest($14::bigint[])::int,
-				    unnest($15::float8[]),
-				    unnest($16::float8[])
+				    NULLIF(t.csup, -1)::int,
+				    t.crca::int,
+				    NULLIF(t.cdep, ''),
+				    NULLIF(t.dep,  ''),
+				    NULLIF(t.csec, ''),
+				    NULLIF(t.sec,  ''),
+				    t.cforn,
+				    NULLIF(t.forn, ''),
+				    t.cprod,
+				    t.qcli::int,
+				    t.vant,
+				    t.vcor
+				FROM unnest(
+				    $5::bigint[], $6::bigint[],
+				    $7::text[], $8::text[], $9::text[], $10::text[],
+				    $11::text[], $12::text[], $13::text[],
+				    $14::bigint[], $15::float8[], $16::float8[]
+				) AS t(csup, crca, cdep, dep, csec, sec, cforn, forn, cprod, qcli, vant, vcor)
 				ON CONFLICT (empresa_id, tipo_periodo, ano, periodo_seq,
 				             cod_supervisor, cod_rca, cod_depto, cod_sec, cod_fornec, cod_prod)
 				DO UPDATE SET
@@ -238,9 +258,11 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				pq.Array(qtdClis), pq.Array(vlAnts), pq.Array(vlCors),
 			)
 			if qerr != nil {
-				log.Printf("[ObjetivosImport] batch erro: %v", qerr)
+				log.Printf("[ObjetivosImport] batch erro (n=%d): %v", n, qerr)
+				tx.Exec("ROLLBACK TO SAVEPOINT sp_batch") //nolint
 				skipped += n
 			} else {
+				tx.Exec("RELEASE SAVEPOINT sp_batch") //nolint
 				for qrows.Next() {
 					var isNew bool
 					qrows.Scan(&isNew) //nolint
