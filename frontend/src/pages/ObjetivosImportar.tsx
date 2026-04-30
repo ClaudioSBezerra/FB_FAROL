@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
@@ -27,6 +28,9 @@ const MESES = [
 const TRIMESTRES = ['T1 (Jan–Mar)', 'T2 (Abr–Jun)', 'T3 (Jul–Set)', 'T4 (Out–Dez)']
 const SEMESTRES  = ['S1 (Jan–Jun)', 'S2 (Jul–Dez)']
 
+type ImportResult = { importados: number; atualizados: number; ignorados: number }
+type ProgressState = { processed: number; total: number; importados: number; atualizados: number; ignorados: number }
+
 // ─── Componente ──────────────────────────────────────────────────────────────
 
 export default function ObjetivosImportar() {
@@ -36,9 +40,9 @@ export default function ObjetivosImportar() {
   const [ano,        setAno]        = useState<string>(String(new Date().getFullYear()))
   const [periodoSeq, setPeriodoSeq] = useState<string>('1')
   const [uploading,  setUploading]  = useState(false)
-  const [result,     setResult]     = useState<{ importados: number; atualizados: number; ignorados: number } | null>(null)
+  const [progress,   setProgress]   = useState<ProgressState | null>(null)
+  const [result,     setResult]     = useState<ImportResult | null>(null)
 
-  // Ao mudar o tipo, reseta periodo_seq para 1
   function handleTipoChange(v: TipoPeriodo) {
     setTipo(v)
     setPeriodoSeq('1')
@@ -58,6 +62,8 @@ export default function ObjetivosImportar() {
 
     setUploading(true)
     setResult(null)
+    setProgress(null)
+
     try {
       const form = new FormData()
       form.append('file', file)
@@ -73,13 +79,54 @@ export default function ObjetivosImportar() {
         body:   form,
       })
 
-      const data = await res.json()
       if (!res.ok) {
+        const data = await res.json()
         toast.error(data.error ?? 'Erro na importação')
         return
       }
-      setResult(data)
-      toast.success('Importação concluída')
+
+      // Lê stream SSE linha a linha
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        // Eventos SSE separados por \n\n
+        const events = buffer.split('\n\n')
+        buffer = events.pop() ?? ''
+
+        for (const event of events) {
+          const line = event.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+
+            if (data.error) {
+              toast.error(data.error)
+              return
+            }
+            if (data.total !== undefined && !data.done) {
+              setProgress({ processed: 0, total: data.total, importados: 0, atualizados: 0, ignorados: 0 })
+            } else if (data.done) {
+              setResult({ importados: data.importados, atualizados: data.atualizados, ignorados: data.ignorados })
+              setProgress(null)
+              toast.success('Importação concluída')
+            } else if (data.processed !== undefined) {
+              setProgress({
+                processed:  data.processed,
+                total:      data.total ?? 0,
+                importados: data.importados,
+                atualizados: data.atualizados,
+                ignorados:  data.ignorados,
+              })
+            }
+          } catch { /* ignora evento mal-formado */ }
+        }
+      }
     } catch {
       toast.error('Erro de conexão')
     } finally {
@@ -87,7 +134,6 @@ export default function ObjetivosImportar() {
     }
   }
 
-  // Label descritivo do período selecionado
   function periodoLabel(): string {
     const seq = parseInt(periodoSeq, 10)
     if (tipo === 'MENSAL')     return MESES[seq - 1] ?? ''
@@ -95,6 +141,10 @@ export default function ObjetivosImportar() {
     if (tipo === 'SEMESTRAL')  return SEMESTRES[seq - 1] ?? ''
     return ''
   }
+
+  const pct = progress && progress.total > 0
+    ? Math.round((progress.processed / progress.total) * 100)
+    : 0
 
   return (
     <div className="p-6 space-y-6 max-w-xl">
@@ -165,7 +215,7 @@ export default function ObjetivosImportar() {
           </div>
         </div>
 
-        {/* Resumo do período selecionado */}
+        {/* Resumo do período */}
         <p className="text-sm text-muted-foreground">
           Período: <strong>
             {tipo === 'ANUAL' ? `Ano ${ano}` : `${periodoLabel()} / ${ano}`}
@@ -192,7 +242,25 @@ export default function ObjetivosImportar() {
         </div>
       </div>
 
-      {/* Resultado */}
+      {/* Barra de progresso */}
+      {progress && (
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">
+              Processando linha <strong>{progress.processed}</strong> de <strong>{progress.total}</strong>
+            </span>
+            <span className="font-medium">{pct}%</span>
+          </div>
+          <Progress value={pct} className="h-2" />
+          <div className="flex gap-4 text-xs text-muted-foreground">
+            <span>✅ {progress.importados} novos</span>
+            <span>🔄 {progress.atualizados} atualizados</span>
+            {progress.ignorados > 0 && <span>⚠️ {progress.ignorados} ignorados</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Resultado final */}
       {result && (
         <div className="flex gap-6 p-4 bg-green-50 border border-green-200 rounded-lg text-sm">
           <span>✅ <strong>{result.importados}</strong> novos</span>
