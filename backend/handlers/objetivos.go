@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 	"strconv"
 	"strings"
 
@@ -121,6 +122,26 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				flusher.Flush()
 			}
 		}
+
+		// Heartbeat a cada 15s para evitar timeout do proxy reverso (nginx/Coolify)
+		// durante imports longos. Comentários SSE (": ping") são ignorados pelo cliente.
+		stopHeartbeat := make(chan struct{})
+		go func() {
+			t := time.NewTicker(15 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					fmt.Fprint(w, ": ping\n\n")
+					if canFlush {
+						flusher.Flush()
+					}
+				case <-stopHeartbeat:
+					return
+				}
+			}
+		}()
+		defer close(stopHeartbeat)
 
 		sendEvent(map[string]any{"total": estimatedRows})
 
@@ -276,7 +297,9 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				tx.Exec("ROLLBACK TO SAVEPOINT sp_batch") //nolint
 				skipped += n
 			} else {
-				tx.Exec("RELEASE SAVEPOINT sp_batch") //nolint
+				// Itera rows ANTES de liberar o savepoint.
+				// Em lib/pq os DataRows são lidos lazily pela conexão;
+				// chamar Exec() antes de Close() invalida o cursor silenciosamente.
 				for qrows.Next() {
 					var isNew bool
 					qrows.Scan(&isNew) //nolint
@@ -287,6 +310,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 					}
 				}
 				qrows.Close()
+				tx.Exec("RELEASE SAVEPOINT sp_batch") //nolint
 			}
 			processed += n
 			buf = buf[:0]
