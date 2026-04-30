@@ -4,6 +4,8 @@ import { Toaster } from '@/components/ui/sonner'
 import CadastroGestores from './pages/CadastroGestores'
 import CadastroRCAs from './pages/CadastroRCAs'
 import ObjetivosImportar from './pages/ObjetivosImportar'
+import ObjetivosRCA from './pages/ObjetivosRCA'
+import ObjetivosSupervisor from './pages/ObjetivosSupervisor'
 import GestaoAmbiente from './pages/GestaoAmbiente'
 import AdminUsers from './pages/AdminUsers'
 import SpUsuarios from './pages/SpUsuarios'
@@ -182,7 +184,9 @@ function AppLayout() {
               {/* Cadastros — Gestores e RCAs */}
               <Route path="/cadastros/gestores"  element={<ProtectedRoute><CadastroGestores /></ProtectedRoute>} />
               <Route path="/cadastros/rcas"      element={<ProtectedRoute><CadastroRCAs /></ProtectedRoute>} />
-              <Route path="/objetivos/importar"  element={<ProtectedRoute><ObjetivosImportar /></ProtectedRoute>} />
+              <Route path="/objetivos/rca"        element={<ProtectedRoute><ObjetivosRCA /></ProtectedRoute>} />
+              <Route path="/objetivos/supervisor" element={<ProtectedRoute><ObjetivosSupervisor /></ProtectedRoute>} />
+              <Route path="/objetivos/importar"   element={<ProtectedRoute><ObjetivosImportar /></ProtectedRoute>} />
 
               {/* Gestão de CD (gestor_filial+) */}
               <Route path="/gestao/filiais" element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />

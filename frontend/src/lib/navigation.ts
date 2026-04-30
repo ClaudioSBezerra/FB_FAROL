@@ -27,7 +27,9 @@ export const modules: Record<string, ModuleConfig> = {
   objetivos: {
     label: 'Objetivos',
     tabs: [
-      { label: 'Importar', path: '/objetivos/importar' },
+      { label: 'Por RCA',     path: '/objetivos/rca' },
+      { label: 'Supervisor',  path: '/objetivos/supervisor' },
+      { label: 'Importar',    path: '/objetivos/importar' },
     ],
   },
   // ── Administração ────────────────────────────────────────────────────────

@@ -393,6 +393,173 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ObjetivosRCAHandler retorna dados de vw_obj_rca_fornecedor filtrados por período.
+// GET /api/objetivos/rca-fornecedor?tipo_periodo=MENSAL&ano=2025&periodo_seq=1&q=texto
+func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		tipo := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_periodo")))
+		anoStr := strings.TrimSpace(r.URL.Query().Get("ano"))
+		seqStr := strings.TrimSpace(r.URL.Query().Get("periodo_seq"))
+		busca := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		if _, ok := periodoSeqMax[tipo]; !ok {
+			http.Error(w, `{"error":"tipo_periodo inválido"}`, http.StatusBadRequest)
+			return
+		}
+		ano, err := strconv.Atoi(anoStr)
+		if err != nil || ano < 2000 || ano > 2100 {
+			http.Error(w, `{"error":"ano inválido"}`, http.StatusBadRequest)
+			return
+		}
+		seq, err := strconv.Atoi(seqStr)
+		if err != nil || seq < 1 {
+			http.Error(w, `{"error":"periodo_seq inválido"}`, http.StatusBadRequest)
+			return
+		}
+
+		likeParam := "%" + busca + "%"
+		rows, err := db.Query(`
+			SELECT cod_supervisor, nome_supervisor, cod_rca, nome_rca,
+			       cod_fornec, fornecedor, qtd_produtos, qtd_clientes,
+			       vl_anterior, vl_corrente
+			FROM vw_obj_rca_fornecedor
+			WHERE empresa_id = $1
+			  AND tipo_periodo = $2
+			  AND ano = $3
+			  AND periodo_seq = $4
+			  AND ($5 = '%%' OR nome_rca ILIKE $5 OR nome_supervisor ILIKE $5 OR fornecedor ILIKE $5)
+			ORDER BY nome_supervisor, nome_rca, fornecedor`,
+			spCtx.EmpresaID, tipo, ano, seq, likeParam)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type row struct {
+			CodSupervisor int     `json:"cod_supervisor"`
+			NomeSupervisor string `json:"nome_supervisor"`
+			CodRCA         int     `json:"cod_rca"`
+			NomeRCA        string  `json:"nome_rca"`
+			CodFornec      string  `json:"cod_fornec"`
+			Fornecedor     string  `json:"fornecedor"`
+			QtdProdutos    int     `json:"qtd_produtos"`
+			QtdClientes    int     `json:"qtd_clientes"`
+			VlAnterior     float64 `json:"vl_anterior"`
+			VlCorrente     float64 `json:"vl_corrente"`
+		}
+		result := make([]row, 0)
+		for rows.Next() {
+			var rw row
+			var nomeSup, nomeRCA, fornec sql.NullString
+			if err := rows.Scan(&rw.CodSupervisor, &nomeSup, &rw.CodRCA, &nomeRCA,
+				&rw.CodFornec, &fornec, &rw.QtdProdutos, &rw.QtdClientes,
+				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				rw.NomeSupervisor = nomeSup.String
+				rw.NomeRCA = nomeRCA.String
+				rw.Fornecedor = fornec.String
+				result = append(result, rw)
+			}
+		}
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// ObjetivosSupervisorHandler retorna dados de vw_obj_supervisor filtrados por período.
+// GET /api/objetivos/supervisor?tipo_periodo=MENSAL&ano=2025&periodo_seq=1&q=texto
+func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		tipo := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_periodo")))
+		anoStr := strings.TrimSpace(r.URL.Query().Get("ano"))
+		seqStr := strings.TrimSpace(r.URL.Query().Get("periodo_seq"))
+		busca := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		if _, ok := periodoSeqMax[tipo]; !ok {
+			http.Error(w, `{"error":"tipo_periodo inválido"}`, http.StatusBadRequest)
+			return
+		}
+		ano, err := strconv.Atoi(anoStr)
+		if err != nil || ano < 2000 || ano > 2100 {
+			http.Error(w, `{"error":"ano inválido"}`, http.StatusBadRequest)
+			return
+		}
+		seq, err := strconv.Atoi(seqStr)
+		if err != nil || seq < 1 {
+			http.Error(w, `{"error":"periodo_seq inválido"}`, http.StatusBadRequest)
+			return
+		}
+
+		likeParam := "%" + busca + "%"
+		rows, err := db.Query(`
+			SELECT cod_supervisor, nome_supervisor,
+			       cod_fornec, fornecedor,
+			       qtd_rcas, qtd_produtos, qtd_clientes,
+			       vl_anterior, vl_corrente
+			FROM vw_obj_supervisor
+			WHERE empresa_id = $1
+			  AND tipo_periodo = $2
+			  AND ano = $3
+			  AND periodo_seq = $4
+			  AND ($5 = '%%' OR nome_supervisor ILIKE $5 OR fornecedor ILIKE $5)
+			ORDER BY nome_supervisor, fornecedor`,
+			spCtx.EmpresaID, tipo, ano, seq, likeParam)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type row struct {
+			CodSupervisor  int     `json:"cod_supervisor"`
+			NomeSupervisor string  `json:"nome_supervisor"`
+			CodFornec      string  `json:"cod_fornec"`
+			Fornecedor     string  `json:"fornecedor"`
+			QtdRCAs        int     `json:"qtd_rcas"`
+			QtdProdutos    int     `json:"qtd_produtos"`
+			QtdClientes    int     `json:"qtd_clientes"`
+			VlAnterior     float64 `json:"vl_anterior"`
+			VlCorrente     float64 `json:"vl_corrente"`
+		}
+		result := make([]row, 0)
+		for rows.Next() {
+			var rw row
+			var nomeSup, fornec sql.NullString
+			if err := rows.Scan(&rw.CodSupervisor, &nomeSup, &rw.CodFornec, &fornec,
+				&rw.QtdRCAs, &rw.QtdProdutos, &rw.QtdClientes,
+				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				rw.NomeSupervisor = nomeSup.String
+				rw.Fornecedor = fornec.String
+				result = append(result, rw)
+			}
+		}
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
 // ObjetivosPeriosHandler lista os períodos disponíveis para a empresa ativa.
 // GET /api/objetivos/periodos
 func ObjetivosPeriosHandler(db *sql.DB) http.HandlerFunc {
