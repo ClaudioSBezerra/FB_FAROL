@@ -28,7 +28,7 @@ const MESES = [
 const TRIMESTRES = ['T1 (Jan–Mar)', 'T2 (Abr–Jun)', 'T3 (Jul–Set)', 'T4 (Out–Dez)']
 const SEMESTRES  = ['S1 (Jan–Jun)', 'S2 (Jul–Dez)']
 
-type ImportResult = { importados: number; atualizados: number; ignorados: number }
+type ImportResult = { importados: number; atualizados: number; ignorados: number; gestores_criados?: number; rcas_criados?: number }
 type ProgressState = { processed: number; total: number; importados: number; atualizados: number; ignorados: number }
 
 // ─── Componente ──────────────────────────────────────────────────────────────
@@ -127,7 +127,8 @@ export default function ObjetivosImportar() {
           } catch { /* ignora evento mal-formado */ }
         }
       }
-    } catch {
+    } catch (e) {
+      console.error('[ObjetivosImportar] fetch error:', e)
       toast.error('Erro de conexão')
     } finally {
       setUploading(false)
@@ -262,11 +263,17 @@ export default function ObjetivosImportar() {
 
       {/* Resultado final */}
       {result && (
-        <div className="flex gap-6 p-4 bg-green-50 border border-green-200 rounded-lg text-sm">
+        <div className="flex flex-wrap gap-4 p-4 bg-green-50 border border-green-200 rounded-lg text-sm">
           <span>✅ <strong>{result.importados}</strong> novos</span>
           <span>🔄 <strong>{result.atualizados}</strong> atualizados</span>
           {result.ignorados > 0 && (
             <span>⚠️ <strong>{result.ignorados}</strong> ignorados</span>
+          )}
+          {!!result.gestores_criados && (
+            <span>👤 <strong>{result.gestores_criados}</strong> supervisor{result.gestores_criados !== 1 ? 'es' : ''} criado{result.gestores_criados !== 1 ? 's' : ''}</span>
+          )}
+          {!!result.rcas_criados && (
+            <span>👤 <strong>{result.rcas_criados}</strong> RCA{result.rcas_criados !== 1 ? 's' : ''} criado{result.rcas_criados !== 1 ? 's' : ''}</span>
           )}
           <button
             className="ml-auto text-muted-foreground hover:text-foreground"
