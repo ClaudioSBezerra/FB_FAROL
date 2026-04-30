@@ -170,7 +170,25 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			if len(buf) == 0 {
 				return
 			}
-			n := len(buf)
+
+			// De-duplica o batch: o CSV pode ter a mesma chave várias vezes
+			// (mesmo sup × rca × depto × sec × fornec × prod). PostgreSQL rejeita
+			// INSERT ... ON CONFLICT DO UPDATE quando o mesmo alvo seria atualizado
+			// duas vezes no mesmo statement (erro 21000). Mantém a última ocorrência.
+			seen := make(map[string]int, len(buf))
+			deduped := make([]batchRow, 0, len(buf))
+			for _, row := range buf {
+				key := fmt.Sprintf("%d|%d|%s|%s|%s|%s",
+					row.codSup, row.codRCA, row.codDepto, row.codSec, row.codFornec, row.codProd)
+				if idx, ok := seen[key]; ok {
+					deduped[idx] = row // última ocorrência sobrescreve
+				} else {
+					seen[key] = len(deduped)
+					deduped = append(deduped, row)
+				}
+			}
+
+			n := len(deduped)
 			codSups      := make([]int64,   n)
 			codRCAs      := make([]int64,   n)
 			codDeptos    := make([]string,  n)
@@ -183,7 +201,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			qtdClis      := make([]int64,   n)
 			vlAnts       := make([]float64, n)
 			vlCors       := make([]float64, n)
-			for i, row := range buf {
+			for i, row := range deduped {
 				codSups[i]      = row.codSup
 				codRCAs[i]      = row.codRCA
 				codDeptos[i]    = row.codDepto
