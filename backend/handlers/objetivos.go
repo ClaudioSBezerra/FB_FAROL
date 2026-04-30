@@ -449,24 +449,29 @@ func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
 		defer rows.Close()
 
 		type row struct {
-			CodSupervisor int     `json:"cod_supervisor"`
-			NomeSupervisor string `json:"nome_supervisor"`
+			CodSupervisor  *int    `json:"cod_supervisor"`
+			NomeSupervisor string  `json:"nome_supervisor"`
 			CodRCA         int     `json:"cod_rca"`
 			NomeRCA        string  `json:"nome_rca"`
 			CodFornec      string  `json:"cod_fornec"`
 			Fornecedor     string  `json:"fornecedor"`
-			QtdProdutos    int     `json:"qtd_produtos"`
-			QtdClientes    int     `json:"qtd_clientes"`
+			QtdProdutos    int64   `json:"qtd_produtos"`
+			QtdClientes    int64   `json:"qtd_clientes"`
 			VlAnterior     float64 `json:"vl_anterior"`
 			VlCorrente     float64 `json:"vl_corrente"`
 		}
 		result := make([]row, 0)
 		for rows.Next() {
 			var rw row
+			var supNull          sql.NullInt64
 			var nomeSup, nomeRCA, fornec sql.NullString
-			if err := rows.Scan(&rw.CodSupervisor, &nomeSup, &rw.CodRCA, &nomeRCA,
+			if err := rows.Scan(&supNull, &nomeSup, &rw.CodRCA, &nomeRCA,
 				&rw.CodFornec, &fornec, &rw.QtdProdutos, &rw.QtdClientes,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				if supNull.Valid {
+					v := int(supNull.Int64)
+					rw.CodSupervisor = &v
+				}
 				rw.NomeSupervisor = nomeSup.String
 				rw.NomeRCA = nomeRCA.String
 				rw.Fornecedor = fornec.String
@@ -534,23 +539,28 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 		defer rows.Close()
 
 		type row struct {
-			CodSupervisor  int     `json:"cod_supervisor"`
+			CodSupervisor  *int    `json:"cod_supervisor"`
 			NomeSupervisor string  `json:"nome_supervisor"`
 			CodFornec      string  `json:"cod_fornec"`
 			Fornecedor     string  `json:"fornecedor"`
-			QtdRCAs        int     `json:"qtd_rcas"`
-			QtdProdutos    int     `json:"qtd_produtos"`
-			QtdClientes    int     `json:"qtd_clientes"`
+			QtdRCAs        int64   `json:"qtd_rcas"`
+			QtdProdutos    int64   `json:"qtd_produtos"`
+			QtdClientes    int64   `json:"qtd_clientes"`
 			VlAnterior     float64 `json:"vl_anterior"`
 			VlCorrente     float64 `json:"vl_corrente"`
 		}
 		result := make([]row, 0)
 		for rows.Next() {
 			var rw row
+			var supNull     sql.NullInt64
 			var nomeSup, fornec sql.NullString
-			if err := rows.Scan(&rw.CodSupervisor, &nomeSup, &rw.CodFornec, &fornec,
+			if err := rows.Scan(&supNull, &nomeSup, &rw.CodFornec, &fornec,
 				&rw.QtdRCAs, &rw.QtdProdutos, &rw.QtdClientes,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				if supNull.Valid {
+					v := int(supNull.Int64)
+					rw.CodSupervisor = &v
+				}
 				rw.NomeSupervisor = nomeSup.String
 				rw.Fornecedor = fornec.String
 				result = append(result, rw)

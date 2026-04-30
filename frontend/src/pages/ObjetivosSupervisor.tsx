@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { Search } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -20,12 +20,13 @@ interface Periodo {
   periodo_seq: number
 }
 
-interface SupervisorRow {
-  cod_supervisor: number
+interface RCARow {
+  cod_supervisor: number | null
   nome_supervisor: string
+  cod_rca: number
+  nome_rca: string
   cod_fornec: string
   fornecedor: string
-  qtd_rcas: number
   qtd_produtos: number
   qtd_clientes: number
   vl_anterior: number
@@ -56,16 +57,49 @@ function varPct(ant: number, cor: number): string {
   return (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%'
 }
 
-function varClass(ant: number, cor: number): string {
-  if (ant === 0) return ''
-  return cor >= ant ? 'text-green-600' : 'text-red-600'
+function varNum(ant: number, cor: number): number | null {
+  if (ant === 0) return null
+  return ((cor - ant) / ant) * 100
+}
+
+// ─── Cards de resumo ──────────────────────────────────────────────────────────
+
+function StatCard({ label, value, green, red }: {
+  label: string; value: string; green?: boolean; red?: boolean
+}) {
+  return (
+    <div className="border rounded-lg p-4 bg-white space-y-1 min-w-0">
+      <p className="text-xs text-muted-foreground truncate">{label}</p>
+      <p className={`text-sm font-semibold leading-tight truncate ${green ? 'text-green-600' : red ? 'text-red-600' : ''}`}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function VarCard({ ant, cor }: { ant: number; cor: number }) {
+  const n = varNum(ant, cor)
+  const label = varPct(ant, cor)
+  const up = n !== null && n > 0
+  const down = n !== null && n < 0
+  const Icon = up ? TrendingUp : down ? TrendingDown : Minus
+  return (
+    <div className="border rounded-lg p-4 bg-white space-y-1 min-w-0">
+      <p className="text-xs text-muted-foreground">Variação</p>
+      <div className={`flex items-center gap-1.5 ${up ? 'text-green-600' : down ? 'text-red-600' : 'text-muted-foreground'}`}>
+        <Icon className="w-4 h-4 shrink-0" />
+        <span className="text-sm font-semibold">{label}</span>
+      </div>
+    </div>
+  )
 }
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function ObjetivosSupervisor() {
-  const [search, setSearch] = useState('')
-  const [periodoKey, setPeriodoKey] = useState<string>('')
+  const [periodoKey,    setPeriodoKey]    = useState('')
+  const [supFilter,     setSupFilter]     = useState('_all')
+  const [fornecFilter,  setFornecFilter]  = useState('')
 
   const { data: periodos = [] } = useQuery<Periodo[]>({
     queryKey: ['objetivos-periodos'],
@@ -83,31 +117,63 @@ export default function ObjetivosSupervisor() {
     `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
   )
 
-  const { data: rows = [], isFetching } = useQuery<SupervisorRow[]>({
-    queryKey: ['objetivos-supervisor', periodoKey, search],
+  // Carrega todos os dados do período de vw_obj_rca_fornecedor para drill-down por supervisor
+  const { data: allRows = [], isFetching } = useQuery<RCARow[]>({
+    queryKey: ['objetivos-rca-all', periodoKey],
     queryFn: () => {
       if (!periodoSel) return []
       const p = new URLSearchParams({
         tipo_periodo: periodoSel.tipo_periodo,
         ano:          String(periodoSel.ano),
         periodo_seq:  String(periodoSel.periodo_seq),
-        q:            search,
       })
-      return fetch(`/api/objetivos/supervisor?${p}`).then(r => r.json())
+      return fetch(`/api/objetivos/rca-fornecedor?${p}`).then(r => r.json())
     },
     enabled: !!periodoSel,
   })
 
-  const totalAnterior = rows.reduce((s, r) => s + r.vl_anterior, 0)
-  const totalCorrente = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  // Opções de supervisor para o dropdown
+  const supOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    allRows.forEach(r => {
+      const key = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
+      seen.set(key, r.nome_supervisor)
+    })
+    return Array.from(seen.entries())
+      .map(([key, nome]) => ({ key, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [allRows])
+
+  // Filtragem client-side
+  const rows = useMemo(() => allRows.filter(r => {
+    const supKey = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
+    return (supFilter === '_all' || supKey === supFilter) &&
+           (!fornecFilter || r.fornecedor.toLowerCase().includes(fornecFilter.toLowerCase()))
+  }), [allRows, supFilter, fornecFilter])
+
+  const totalAnt  = rows.reduce((s, r) => s + r.vl_anterior, 0)
+  const totalCor  = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  const qtdSups   = new Set(rows.map(r => r.cod_supervisor)).size
+  const qtdRCAs   = new Set(rows.map(r => r.cod_rca)).size
+  const qtdFornc  = new Set(rows.map(r => r.cod_fornec)).size
+  const n         = varNum(totalAnt, totalCor)
+
+  if (!periodoSel && periodos.length === 0 && !isFetching) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        Nenhum objetivo importado. Use a aba <strong>Importar</strong> para carregar dados.
+      </p>
+    )
+  }
 
   return (
     <div className="space-y-4">
+
+      {/* ── Filtros ── */}
       <div className="flex flex-wrap gap-3 items-end">
-        {/* Seletor de período */}
         <div className="space-y-1.5">
           <Label>Período</Label>
-          <Select value={periodoKey} onValueChange={setPeriodoKey}>
+          <Select value={periodoKey} onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setFornecFilter('') }}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Selecione..." />
             </SelectTrigger>
@@ -124,41 +190,60 @@ export default function ObjetivosSupervisor() {
           </Select>
         </div>
 
-        {/* Busca */}
-        <div className="space-y-1.5 flex-1 min-w-48 max-w-xs">
-          <Label>Busca</Label>
+        <div className="space-y-1.5">
+          <Label>Supervisor</Label>
+          <Select value={supFilter} onValueChange={setSupFilter}>
+            <SelectTrigger className="w-60">
+              <SelectValue placeholder="Todos os supervisores" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all">Todos os supervisores</SelectItem>
+              {supOptions.map(s => (
+                <SelectItem key={s.key} value={s.key}>{s.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5 flex-1 min-w-44 max-w-xs">
+          <Label>Fornecedor</Label>
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
             <Input
               className="pl-8"
-              placeholder="Supervisor ou fornecedor..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              placeholder="Filtrar por fornecedor..."
+              value={fornecFilter}
+              onChange={e => setFornecFilter(e.target.value)}
             />
           </div>
         </div>
 
-        {isFetching && (
-          <span className="text-xs text-muted-foreground pb-2">Carregando...</span>
-        )}
+        {isFetching && <span className="text-xs text-muted-foreground pb-2">Carregando...</span>}
       </div>
 
-      {!periodoSel && periodos.length === 0 && (
-        <p className="text-sm text-muted-foreground py-8 text-center">
-          Nenhum objetivo importado ainda. Use a aba <strong>Importar</strong> para carregar dados.
-        </p>
+      {/* ── Cards de resumo ── */}
+      {allRows.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <StatCard label="Valor Corrente" value={fmt(totalCor)} />
+          <StatCard label="Valor Anterior" value={fmt(totalAnt)} />
+          <VarCard ant={totalAnt} cor={totalCor} />
+          <StatCard label="Supervisores" value={String(qtdSups)} />
+          <StatCard label="RCAs" value={String(qtdRCAs)} />
+          <StatCard label="Fornecedores" value={String(qtdFornc)} />
+        </div>
       )}
 
+      {/* ── Tabela RCA × Fornecedor ── */}
       {periodoSel && (
         <div className="border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40">
                 <TableHead>Supervisor</TableHead>
+                <TableHead>RCA</TableHead>
                 <TableHead>Fornecedor</TableHead>
-                <TableHead className="text-center">RCAs</TableHead>
-                <TableHead className="text-center">Produtos</TableHead>
-                <TableHead className="text-center">Clientes</TableHead>
+                <TableHead className="text-center">Prod.</TableHead>
+                <TableHead className="text-center">Cli.</TableHead>
                 <TableHead className="text-right">Anterior</TableHead>
                 <TableHead className="text-right">Corrente</TableHead>
                 <TableHead className="text-right">Var.%</TableHead>
@@ -172,30 +257,39 @@ export default function ObjetivosSupervisor() {
                   </TableCell>
                 </TableRow>
               )}
-              {rows.map((row, i) => (
-                <TableRow key={i}>
-                  <TableCell className="text-xs">
-                    <span className="text-muted-foreground">{row.cod_supervisor} </span>
-                    {row.nome_supervisor}
-                  </TableCell>
-                  <TableCell className="text-xs">{row.fornecedor}</TableCell>
-                  <TableCell className="text-center text-xs">{row.qtd_rcas}</TableCell>
-                  <TableCell className="text-center text-xs">{row.qtd_produtos}</TableCell>
-                  <TableCell className="text-center text-xs">{row.qtd_clientes}</TableCell>
-                  <TableCell className="text-right text-xs">{fmt(row.vl_anterior)}</TableCell>
-                  <TableCell className="text-right text-xs font-medium">{fmt(row.vl_corrente)}</TableCell>
-                  <TableCell className={`text-right text-xs font-medium ${varClass(row.vl_anterior, row.vl_corrente)}`}>
-                    {varPct(row.vl_anterior, row.vl_corrente)}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {rows.map((row, i) => {
+                const vn = varNum(row.vl_anterior, row.vl_corrente)
+                return (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs">
+                      {row.cod_supervisor != null &&
+                        <span className="text-muted-foreground mr-1">{row.cod_supervisor}</span>}
+                      {row.nome_supervisor}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <span className="text-muted-foreground mr-1">{row.cod_rca}</span>
+                      {row.nome_rca}
+                    </TableCell>
+                    <TableCell className="text-xs">{row.fornecedor}</TableCell>
+                    <TableCell className="text-center text-xs">{row.qtd_produtos}</TableCell>
+                    <TableCell className="text-center text-xs">{row.qtd_clientes}</TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground">{fmt(row.vl_anterior)}</TableCell>
+                    <TableCell className="text-right text-xs font-medium">{fmt(row.vl_corrente)}</TableCell>
+                    <TableCell className={`text-right text-xs font-medium ${vn === null ? '' : vn > 0 ? 'text-green-600' : vn < 0 ? 'text-red-600' : ''}`}>
+                      {varPct(row.vl_anterior, row.vl_corrente)}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
               {rows.length > 0 && (
                 <TableRow className="bg-muted/40 font-semibold">
-                  <TableCell colSpan={5} className="text-xs">Total ({rows.length} linhas)</TableCell>
-                  <TableCell className="text-right text-xs">{fmt(totalAnterior)}</TableCell>
-                  <TableCell className="text-right text-xs">{fmt(totalCorrente)}</TableCell>
-                  <TableCell className={`text-right text-xs ${varClass(totalAnterior, totalCorrente)}`}>
-                    {varPct(totalAnterior, totalCorrente)}
+                  <TableCell colSpan={5} className="text-xs text-muted-foreground">
+                    {rows.length} linha{rows.length !== 1 ? 's' : ''}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{fmt(totalAnt)}</TableCell>
+                  <TableCell className="text-right text-xs">{fmt(totalCor)}</TableCell>
+                  <TableCell className={`text-right text-xs ${n === null ? '' : n > 0 ? 'text-green-600' : n < 0 ? 'text-red-600' : ''}`}>
+                    {varPct(totalAnt, totalCor)}
                   </TableCell>
                 </TableRow>
               )}

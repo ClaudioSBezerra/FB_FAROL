@@ -33,7 +33,7 @@ import { toast } from 'sonner'
 
 const mainItems = [
   { id: 'cadastros', icon: Users,   label: 'Cadastros', path: '/cadastros/rcas'      },
-  { id: 'objetivos', icon: Target,  label: 'Objetivos', path: '/objetivos/importar'  },
+  { id: 'objetivos', icon: Target,  label: 'Objetivos', path: '/objetivos/rca'       },
 ] as const
 
 export function AppRail() {
