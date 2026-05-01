@@ -121,7 +121,7 @@ export default function ObjetivosSupervisor() {
     `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
   )
 
-  const { data: allRows = [], isFetching } = useQuery<SupRow[]>({
+  const { data: rawRows, isFetching } = useQuery<SupRow[]>({
     queryKey: ['objetivos-supervisor-all', periodoKey],
     queryFn: () => {
       if (!periodoSel) return []
@@ -134,6 +134,7 @@ export default function ObjetivosSupervisor() {
     },
     enabled: !!periodoSel,
   })
+  const allRows: SupRow[] = Array.isArray(rawRows) ? rawRows : []
 
   const supOptions = useMemo(() => {
     const seen = new Map<string, { nome: string; cod: number | null }>()

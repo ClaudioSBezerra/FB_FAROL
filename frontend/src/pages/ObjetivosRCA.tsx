@@ -122,7 +122,7 @@ export default function ObjetivosRCA() {
     `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
   )
 
-  const { data: allRows = [], isFetching } = useQuery<RCARow[]>({
+  const { data: rawRows, isFetching } = useQuery<RCARow[]>({
     queryKey: ['objetivos-rca-all', periodoKey],
     queryFn: () => {
       if (!periodoSel) return []
@@ -135,6 +135,7 @@ export default function ObjetivosRCA() {
     },
     enabled: !!periodoSel,
   })
+  const allRows: RCARow[] = Array.isArray(rawRows) ? rawRows : []
 
   const rcaOptions = useMemo(() => {
     const seen = new Map<number, string>()
