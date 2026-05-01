@@ -21,30 +21,21 @@ interface Periodo {
   periodo_seq: number
 }
 
-interface RCARow {
+interface SupRow {
   cod_supervisor: number | null
   nome_supervisor: string
-  cod_rca: number
-  nome_rca: string
   cod_fornec: string
   fornecedor: string
+  qtd_rcas: number
   qtd_produtos: number
-  qtd_clientes: number
+  cl_ativos: number
+  posit_med: number
+  ttal_itens: number
   vl_anterior: number
   vl_corrente: number
 }
 
-interface ClienteEntry { cod: number | null; nome: string; qtd: number }
-interface ClientesData {
-  total: number
-  por_supervisor: ClienteEntry[]
-  por_rca: ClienteEntry[]
-}
-
-const MESES = [
-  'Jan','Fev','Mar','Abr','Mai','Jun',
-  'Jul','Ago','Set','Out','Nov','Dez',
-]
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 const TRIMESTRES = ['T1','T2','T3','T4']
 const SEMESTRES  = ['S1','S2']
 
@@ -55,8 +46,8 @@ function periodoLabel(tipo: TipoPeriodo, seq: number, ano: number): string {
   return String(ano)
 }
 
-function fmt(v: number) {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 })
+function fmtBRL(v: number) {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
 function varPct(ant: number, cor: number): string {
@@ -70,33 +61,38 @@ function varNum(ant: number, cor: number): number | null {
   return ((cor - ant) / ant) * 100
 }
 
-// ─── Cards de resumo ──────────────────────────────────────────────────────────
+function pctPosit(posit: number, ativos: number): string {
+  if (ativos === 0) return '—'
+  return ((posit / ativos) * 100).toFixed(1) + '%'
+}
 
-function StatCard({ label, value, green, red }: {
-  label: string; value: string; green?: boolean; red?: boolean
-}) {
+function medItens(ttal: number, posit: number): string {
+  if (posit === 0) return '—'
+  return (ttal / posit).toFixed(1)
+}
+
+// ─── Cards ────────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="border rounded-lg p-4 bg-white space-y-1 min-w-0">
+    <div className={`border rounded-lg p-3 space-y-0.5 min-w-0 ${highlight ? 'bg-red-50 border-red-300' : 'bg-white'}`}>
       <p className="text-xs text-muted-foreground truncate">{label}</p>
-      <p className={`text-sm font-semibold leading-tight truncate ${green ? 'text-green-600' : red ? 'text-red-600' : ''}`}>
-        {value}
-      </p>
+      <p className={`text-sm font-semibold leading-tight truncate ${highlight ? 'text-red-700' : ''}`}>{value}</p>
     </div>
   )
 }
 
 function VarCard({ ant, cor }: { ant: number; cor: number }) {
   const n = varNum(ant, cor)
-  const label = varPct(ant, cor)
   const up = n !== null && n > 0
   const down = n !== null && n < 0
   const Icon = up ? TrendingUp : down ? TrendingDown : Minus
   return (
-    <div className="border rounded-lg p-4 bg-white space-y-1 min-w-0">
-      <p className="text-xs text-muted-foreground">Variação</p>
-      <div className={`flex items-center gap-1.5 ${up ? 'text-green-600' : down ? 'text-red-600' : 'text-muted-foreground'}`}>
-        <Icon className="w-4 h-4 shrink-0" />
-        <span className="text-sm font-semibold">{label}</span>
+    <div className="border rounded-lg p-3 bg-white space-y-0.5 min-w-0">
+      <p className="text-xs text-muted-foreground">% Cresc.</p>
+      <div className={`flex items-center gap-1 ${up ? 'text-green-600' : down ? 'text-red-600' : 'text-muted-foreground'}`}>
+        <Icon className="w-3.5 h-3.5 shrink-0" />
+        <span className="text-sm font-semibold">{varPct(ant, cor)}</span>
       </div>
     </div>
   )
@@ -105,9 +101,9 @@ function VarCard({ ant, cor }: { ant: number; cor: number }) {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function ObjetivosSupervisor() {
-  const [periodoKey,    setPeriodoKey]    = useState('')
-  const [supFilter,     setSupFilter]     = useState('_all')
-  const [fornecFilter,  setFornecFilter]  = useState('')
+  const [periodoKey,   setPeriodoKey]   = useState('')
+  const [supFilter,    setSupFilter]    = useState('_all')
+  const [fornecFilter, setFornecFilter] = useState('')
 
   const { data: periodos = [] } = useQuery<Periodo[]>({
     queryKey: ['objetivos-periodos'],
@@ -125,9 +121,8 @@ export default function ObjetivosSupervisor() {
     `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
   )
 
-  // Carrega todos os dados do período de vw_obj_rca_fornecedor para drill-down por supervisor
-  const { data: allRows = [], isFetching } = useQuery<RCARow[]>({
-    queryKey: ['objetivos-rca-all', periodoKey],
+  const { data: allRows = [], isFetching } = useQuery<SupRow[]>({
+    queryKey: ['objetivos-supervisor-all', periodoKey],
     queryFn: () => {
       if (!periodoSel) return []
       const p = new URLSearchParams({
@@ -135,26 +130,11 @@ export default function ObjetivosSupervisor() {
         ano:          String(periodoSel.ano),
         periodo_seq:  String(periodoSel.periodo_seq),
       })
-      return fetch(`/api/objetivos/rca-fornecedor?${p}`).then(r => r.json())
+      return fetch(`/api/objetivos/supervisor?${p}`).then(r => r.json())
     },
     enabled: !!periodoSel,
   })
 
-  const { data: clientesData } = useQuery<ClientesData>({
-    queryKey: ['objetivos-clientes', periodoKey],
-    queryFn: () => {
-      if (!periodoSel) return { total: 0, por_supervisor: [], por_rca: [] }
-      const p = new URLSearchParams({
-        tipo_periodo: periodoSel.tipo_periodo,
-        ano:          String(periodoSel.ano),
-        periodo_seq:  String(periodoSel.periodo_seq),
-      })
-      return fetch(`/api/objetivos/clientes-distintos?${p}`).then(r => r.json())
-    },
-    enabled: !!periodoSel,
-  })
-
-  // Opções de supervisor para o dropdown (código + nome para facilitar busca)
   const supOptions = useMemo(() => {
     const seen = new Map<string, { nome: string; cod: number | null }>()
     allRows.forEach(r => {
@@ -166,26 +146,20 @@ export default function ObjetivosSupervisor() {
       .sort((a, b) => (a.cod ?? 0) - (b.cod ?? 0))
   }, [allRows])
 
-  // Filtragem client-side
   const rows = useMemo(() => allRows.filter(r => {
     const supKey = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
     return (supFilter === '_all' || supKey === supFilter) &&
            (!fornecFilter || r.fornecedor.toLowerCase().includes(fornecFilter.toLowerCase()))
   }), [allRows, supFilter, fornecFilter])
 
-  const totalAnt = rows.reduce((s, r) => s + r.vl_anterior, 0)
-  const totalCor = rows.reduce((s, r) => s + r.vl_corrente, 0)
-  const qtdSups  = new Set(rows.map(r => r.cod_supervisor)).size
-  const qtdRCAs  = new Set(rows.map(r => r.cod_rca)).size
-  const qtdFornc = new Set(rows.map(r => r.cod_fornec)).size
-  const n        = varNum(totalAnt, totalCor)
-
-  // Clientes distintos: COUNT(DISTINCT cod_cli) agrupado por supervisor (não SUM de qtd_clientes)
-  const totalCli = supFilter === '_all'
-    ? (clientesData?.total ?? 0)
-    : supFilter === '_null'
-      ? (clientesData?.por_supervisor.find(e => e.cod === null)?.qtd ?? 0)
-      : (clientesData?.por_supervisor.find(e => e.cod === Number(supFilter))?.qtd ?? 0)
+  const totalAnt  = rows.reduce((s, r) => s + r.vl_anterior, 0)
+  const totalCor  = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  const totalTtal = rows.reduce((s, r) => s + r.ttal_itens, 0)
+  const qtdSups   = new Set(rows.map(r => r.cod_supervisor)).size
+  const qtdFornc  = new Set(rows.map(r => r.cod_fornec)).size
+  const sumAtivos = rows.reduce((s, r) => s + r.cl_ativos, 0)
+  const sumPosit  = rows.reduce((s, r) => s + r.posit_med, 0)
+  const n         = varNum(totalAnt, totalCor)
 
   if (!periodoSel && periodos.length === 0 && !isFetching) {
     return (
@@ -222,7 +196,7 @@ export default function ObjetivosSupervisor() {
         <div className="space-y-1.5">
           <Label>Supervisor</Label>
           <SearchableCombobox
-            className="w-60"
+            className="w-64"
             placeholder="Todos os supervisores"
             searchPlaceholder="Código ou nome..."
             value={supFilter}
@@ -255,36 +229,40 @@ export default function ObjetivosSupervisor() {
 
       {/* ── Cards de resumo ── */}
       {allRows.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
-          <StatCard label="Valor Corrente" value={fmt(totalCor)} />
-          <StatCard label="Valor Anterior" value={fmt(totalAnt)} />
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+          <StatCard label="Venda Anterior" value={fmtBRL(totalAnt)} />
+          <StatCard label="Venda Corrente" value={fmtBRL(totalCor)} />
           <VarCard ant={totalAnt} cor={totalCor} />
-          <StatCard label="Supervisores" value={String(qtdSups)} />
-          <StatCard label="RCAs" value={String(qtdRCAs)} />
-          <StatCard label="Fornecedores" value={String(qtdFornc)} />
-          <StatCard label="Clientes" value={totalCli.toLocaleString('pt-BR')} />
+          <StatCard label="Supervisores"   value={String(qtdSups)} />
+          <StatCard label="Fornecedores"   value={String(qtdFornc)} />
+          <StatCard label="CL Ativos"      value={sumAtivos.toLocaleString('pt-BR')} />
+          <StatCard label="Positivados"    value={sumPosit.toLocaleString('pt-BR')} highlight />
+          <StatCard label="Total Itens"    value={totalTtal.toLocaleString('pt-BR')} highlight />
         </div>
       )}
 
-      {/* ── Tabela RCA × Fornecedor ── */}
+      {/* ── Tabela ── */}
       {periodoSel && (
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
+        <div className="border rounded-lg overflow-auto">
+          <Table className="text-xs whitespace-nowrap">
             <TableHeader>
-              <TableRow className="bg-muted/40">
-                <TableHead>Supervisor</TableHead>
-                <TableHead>RCA</TableHead>
-                <TableHead>Fornecedor</TableHead>
-                <TableHead className="text-center">Prod.</TableHead>
-                <TableHead className="text-right">Anterior</TableHead>
-                <TableHead className="text-right">Corrente</TableHead>
-                <TableHead className="text-right">Var.%</TableHead>
+              <TableRow className="bg-[#003366] text-white hover:bg-[#003366]">
+                <TableHead className="text-white font-semibold">Supervisor</TableHead>
+                <TableHead className="text-white font-semibold">Fornecedor</TableHead>
+                <TableHead className="text-white font-semibold text-right">Venda 24</TableHead>
+                <TableHead className="text-white font-semibold text-right">Venda 25</TableHead>
+                <TableHead className="text-white font-semibold text-right">% Cresc</TableHead>
+                <TableHead className="text-white font-semibold text-center">CL Ativos</TableHead>
+                <TableHead className="text-white font-semibold text-center">Posit Med</TableHead>
+                <TableHead className="text-white font-semibold text-center">% Posit</TableHead>
+                <TableHead className="bg-red-600 text-white font-semibold text-center">Méd Itens CL</TableHead>
+                <TableHead className="bg-red-600 text-white font-semibold text-center">Total Itens</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 && !isFetching && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                     Nenhum resultado encontrado.
                   </TableCell>
                 </TableRow>
@@ -292,36 +270,45 @@ export default function ObjetivosSupervisor() {
               {rows.map((row, i) => {
                 const vn = varNum(row.vl_anterior, row.vl_corrente)
                 return (
-                  <TableRow key={i}>
-                    <TableCell className="text-xs">
+                  <TableRow key={i} className="even:bg-muted/20">
+                    <TableCell>
                       {row.cod_supervisor != null &&
                         <span className="text-muted-foreground mr-1">{row.cod_supervisor}</span>}
                       {row.nome_supervisor}
                     </TableCell>
-                    <TableCell className="text-xs">
-                      <span className="text-muted-foreground mr-1">{row.cod_rca}</span>
-                      {row.nome_rca}
-                    </TableCell>
-                    <TableCell className="text-xs">{row.fornecedor}</TableCell>
-                    <TableCell className="text-center text-xs">{row.qtd_produtos}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">{fmt(row.vl_anterior)}</TableCell>
-                    <TableCell className="text-right text-xs font-medium">{fmt(row.vl_corrente)}</TableCell>
-                    <TableCell className={`text-right text-xs font-medium ${vn === null ? '' : vn > 0 ? 'text-green-600' : vn < 0 ? 'text-red-600' : ''}`}>
+                    <TableCell>{row.fornecedor}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{fmtBRL(row.vl_anterior)}</TableCell>
+                    <TableCell className="text-right font-medium">{fmtBRL(row.vl_corrente)}</TableCell>
+                    <TableCell className={`text-right font-medium ${vn === null ? '' : vn > 0 ? 'text-green-600' : vn < 0 ? 'text-red-600' : ''}`}>
                       {varPct(row.vl_anterior, row.vl_corrente)}
+                    </TableCell>
+                    <TableCell className="text-center">{row.cl_ativos.toLocaleString('pt-BR')}</TableCell>
+                    <TableCell className="text-center">{row.posit_med.toLocaleString('pt-BR')}</TableCell>
+                    <TableCell className="text-center">{pctPosit(row.posit_med, row.cl_ativos)}</TableCell>
+                    <TableCell className="text-center font-medium text-red-700">
+                      {medItens(row.ttal_itens, row.posit_med)}
+                    </TableCell>
+                    <TableCell className="text-center font-medium text-red-700">
+                      {row.ttal_itens.toLocaleString('pt-BR')}
                     </TableCell>
                   </TableRow>
                 )
               })}
               {rows.length > 0 && (
-                <TableRow className="bg-muted/40 font-semibold">
-                  <TableCell colSpan={4} className="text-xs text-muted-foreground">
+                <TableRow className="bg-[#003366]/10 font-semibold">
+                  <TableCell colSpan={2} className="text-muted-foreground">
                     {rows.length} linha{rows.length !== 1 ? 's' : ''}
                   </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">{fmt(totalAnt)}</TableCell>
-                  <TableCell className="text-right text-xs">{fmt(totalCor)}</TableCell>
-                  <TableCell className={`text-right text-xs ${n === null ? '' : n > 0 ? 'text-green-600' : n < 0 ? 'text-red-600' : ''}`}>
+                  <TableCell className="text-right text-muted-foreground">{fmtBRL(totalAnt)}</TableCell>
+                  <TableCell className="text-right">{fmtBRL(totalCor)}</TableCell>
+                  <TableCell className={`text-right ${n === null ? '' : n > 0 ? 'text-green-600' : n < 0 ? 'text-red-600' : ''}`}>
                     {varPct(totalAnt, totalCor)}
                   </TableCell>
+                  <TableCell className="text-center">{sumAtivos.toLocaleString('pt-BR')}</TableCell>
+                  <TableCell className="text-center">{sumPosit.toLocaleString('pt-BR')}</TableCell>
+                  <TableCell className="text-center">{pctPosit(sumPosit, sumAtivos)}</TableCell>
+                  <TableCell className="text-center text-red-700">{medItens(totalTtal, sumPosit)}</TableCell>
+                  <TableCell className="text-center text-red-700">{totalTtal.toLocaleString('pt-BR')}</TableCell>
                 </TableRow>
               )}
             </TableBody>

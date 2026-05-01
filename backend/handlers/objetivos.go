@@ -438,7 +438,8 @@ func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
 		likeParam := "%" + busca + "%"
 		rows, err := db.Query(`
 			SELECT cod_supervisor, nome_supervisor, cod_rca, nome_rca,
-			       cod_fornec, fornecedor, qtd_produtos, qtd_clientes,
+			       cod_fornec, fornecedor, qtd_produtos,
+			       cl_ativos, posit_med, ttal_itens,
 			       vl_anterior, vl_corrente
 			FROM vw_obj_rca_fornecedor
 			WHERE empresa_id = $1
@@ -462,7 +463,9 @@ func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
 			CodFornec      string  `json:"cod_fornec"`
 			Fornecedor     string  `json:"fornecedor"`
 			QtdProdutos    int64   `json:"qtd_produtos"`
-			QtdClientes    int64   `json:"qtd_clientes"`
+			ClAtivos       int64   `json:"cl_ativos"`
+			PositMed       int64   `json:"posit_med"`
+			TtalItens      int64   `json:"ttal_itens"`
 			VlAnterior     float64 `json:"vl_anterior"`
 			VlCorrente     float64 `json:"vl_corrente"`
 		}
@@ -472,7 +475,8 @@ func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
 			var supNull          sql.NullInt64
 			var nomeSup, nomeRCA, fornec sql.NullString
 			if err := rows.Scan(&supNull, &nomeSup, &rw.CodRCA, &nomeRCA,
-				&rw.CodFornec, &fornec, &rw.QtdProdutos, &rw.QtdClientes,
+				&rw.CodFornec, &fornec, &rw.QtdProdutos,
+				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
 				if supNull.Valid {
 					v := int(supNull.Int64)
@@ -528,7 +532,8 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 		rows, err := db.Query(`
 			SELECT cod_supervisor, nome_supervisor,
 			       cod_fornec, fornecedor,
-			       qtd_rcas, qtd_produtos, qtd_clientes,
+			       qtd_rcas, qtd_produtos,
+			       cl_ativos, posit_med, ttal_itens,
 			       vl_anterior, vl_corrente
 			FROM vw_obj_supervisor
 			WHERE empresa_id = $1
@@ -551,7 +556,9 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			Fornecedor     string  `json:"fornecedor"`
 			QtdRCAs        int64   `json:"qtd_rcas"`
 			QtdProdutos    int64   `json:"qtd_produtos"`
-			QtdClientes    int64   `json:"qtd_clientes"`
+			ClAtivos       int64   `json:"cl_ativos"`
+			PositMed       int64   `json:"posit_med"`
+			TtalItens      int64   `json:"ttal_itens"`
 			VlAnterior     float64 `json:"vl_anterior"`
 			VlCorrente     float64 `json:"vl_corrente"`
 		}
@@ -561,7 +568,8 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			var supNull     sql.NullInt64
 			var nomeSup, fornec sql.NullString
 			if err := rows.Scan(&supNull, &nomeSup, &rw.CodFornec, &fornec,
-				&rw.QtdRCAs, &rw.QtdProdutos, &rw.QtdClientes,
+				&rw.QtdRCAs, &rw.QtdProdutos,
+				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
 				if supNull.Valid {
 					v := int(supNull.Int64)
