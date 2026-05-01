@@ -133,16 +133,16 @@ export default function ObjetivosSupervisor() {
     enabled: !!periodoSel,
   })
 
-  // Opções de supervisor para o dropdown
+  // Opções de supervisor para o dropdown (código + nome para facilitar busca)
   const supOptions = useMemo(() => {
-    const seen = new Map<string, string>()
+    const seen = new Map<string, { nome: string; cod: number | null }>()
     allRows.forEach(r => {
       const key = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
-      seen.set(key, r.nome_supervisor)
+      seen.set(key, { nome: r.nome_supervisor, cod: r.cod_supervisor })
     })
     return Array.from(seen.entries())
-      .map(([key, nome]) => ({ key, nome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+      .map(([key, { nome, cod }]) => ({ key, nome, cod }))
+      .sort((a, b) => (a.cod ?? 0) - (b.cod ?? 0))
   }, [allRows])
 
   // Filtragem client-side
@@ -154,6 +154,7 @@ export default function ObjetivosSupervisor() {
 
   const totalAnt  = rows.reduce((s, r) => s + r.vl_anterior, 0)
   const totalCor  = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  const totalCli  = rows.reduce((s, r) => s + (r.qtd_clientes ?? 0), 0)
   const qtdSups   = new Set(rows.map(r => r.cod_supervisor)).size
   const qtdRCAs   = new Set(rows.map(r => r.cod_rca)).size
   const qtdFornc  = new Set(rows.map(r => r.cod_fornec)).size
@@ -201,7 +202,10 @@ export default function ObjetivosSupervisor() {
             onChange={setSupFilter}
             options={[
               { value: '_all', label: 'Todos os supervisores' },
-              ...supOptions.map(s => ({ value: s.key, label: s.nome })),
+              ...supOptions.map(s => ({
+                value: s.key,
+                label: s.cod != null ? `${s.cod} — ${s.nome}` : s.nome,
+              })),
             ]}
           />
         </div>
@@ -224,13 +228,14 @@ export default function ObjetivosSupervisor() {
 
       {/* ── Cards de resumo ── */}
       {allRows.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
           <StatCard label="Valor Corrente" value={fmt(totalCor)} />
           <StatCard label="Valor Anterior" value={fmt(totalAnt)} />
           <VarCard ant={totalAnt} cor={totalCor} />
           <StatCard label="Supervisores" value={String(qtdSups)} />
           <StatCard label="RCAs" value={String(qtdRCAs)} />
           <StatCard label="Fornecedores" value={String(qtdFornc)} />
+          <StatCard label="Clientes" value={totalCli.toLocaleString('pt-BR')} />
         </div>
       )}
 
@@ -244,7 +249,6 @@ export default function ObjetivosSupervisor() {
                 <TableHead>RCA</TableHead>
                 <TableHead>Fornecedor</TableHead>
                 <TableHead className="text-center">Prod.</TableHead>
-                <TableHead className="text-center">Cli.</TableHead>
                 <TableHead className="text-right">Anterior</TableHead>
                 <TableHead className="text-right">Corrente</TableHead>
                 <TableHead className="text-right">Var.%</TableHead>
@@ -253,7 +257,7 @@ export default function ObjetivosSupervisor() {
             <TableBody>
               {rows.length === 0 && !isFetching && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     Nenhum resultado encontrado.
                   </TableCell>
                 </TableRow>
@@ -273,7 +277,6 @@ export default function ObjetivosSupervisor() {
                     </TableCell>
                     <TableCell className="text-xs">{row.fornecedor}</TableCell>
                     <TableCell className="text-center text-xs">{row.qtd_produtos}</TableCell>
-                    <TableCell className="text-center text-xs">{row.qtd_clientes}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{fmt(row.vl_anterior)}</TableCell>
                     <TableCell className="text-right text-xs font-medium">{fmt(row.vl_corrente)}</TableCell>
                     <TableCell className={`text-right text-xs font-medium ${vn === null ? '' : vn > 0 ? 'text-green-600' : vn < 0 ? 'text-red-600' : ''}`}>
@@ -284,7 +287,7 @@ export default function ObjetivosSupervisor() {
               })}
               {rows.length > 0 && (
                 <TableRow className="bg-muted/40 font-semibold">
-                  <TableCell colSpan={5} className="text-xs text-muted-foreground">
+                  <TableCell colSpan={4} className="text-xs text-muted-foreground">
                     {rows.length} linha{rows.length !== 1 ? 's' : ''}
                   </TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">{fmt(totalAnt)}</TableCell>

@@ -167,7 +167,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornec    string
 			fornecedor   string
 			codProd      string
-			codCli       string // CODCLI do CSV — código do cliente (não contagem)
+			codCli       int64  // CODCLI do CSV — código do cliente (numérico)
 			vlAnt        float64
 			vlCor        float64
 		}
@@ -215,7 +215,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornecs   := make([]string,  n)
 			fornecedores := make([]string,  n)
 			codProds     := make([]string,  n)
-			codClis      := make([]string,  n)
+			codClis      := make([]int64,   n)
 			vlAnts       := make([]float64, n)
 			vlCors       := make([]float64, n)
 			for i, row := range deduped {
@@ -271,7 +271,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				FROM unnest(
 				    $5::bigint[], $6::bigint[],
 				    $7::text[], $8::text[], $9::text[], $10::text[],
-				    $11::text[], $12::text[], $13::text[], $14::text[],
+				    $11::text[], $12::text[], $13::text[], $14::bigint[],
 				    $15::float8[], $16::float8[]
 				) AS t(csup, crca, cdep, dep, csec, sec, cforn, forn, cprod, ccli, vant, vcor)
 				ON CONFLICT (empresa_id, tipo_periodo, ano, periodo_seq,
@@ -342,7 +342,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				codSup = cs
 			}
 
-			codCli := strings.TrimSpace(record[9])
+			codCli, _ := strconv.ParseInt(strings.TrimSpace(record[9]), 10, 64)
 			vlAnt, errA := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[10]), ",", "."), 64)
 			vlCor, errC := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[11]), ",", "."), 64)
 			if errA != nil || errC != nil {
