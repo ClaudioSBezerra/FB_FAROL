@@ -9,6 +9,8 @@ BEGIN
           AND column_name = 'cod_cli'
           AND data_type   = 'text'
     ) THEN
+        -- Remove o DEFAULT '' antes de converter (PostgreSQL não faz cast automático de '' para INTEGER)
+        ALTER TABLE objetivos_importados ALTER COLUMN cod_cli DROP DEFAULT;
         ALTER TABLE objetivos_importados
             ALTER COLUMN cod_cli TYPE INTEGER
             USING CASE WHEN cod_cli = '' THEN 0 ELSE cod_cli::INTEGER END;

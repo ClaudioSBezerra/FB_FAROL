@@ -12,6 +12,7 @@ import (
 	"time"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lib/pq"
 )
@@ -94,6 +95,22 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 		// Strip UTF-8 BOM (arquivos Excel)
 		if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
 			rawBytes = rawBytes[3:]
+		}
+
+		// Converte Latin-1/Windows-1252 → UTF-8 automaticamente quando necessário
+		// (CSVs gerados no Windows frequentemente usam essa codificação)
+		if !utf8.Valid(rawBytes) {
+			out := make([]byte, 0, len(rawBytes)*2)
+			for _, b := range rawBytes {
+				if b < 0x80 {
+					out = append(out, b)
+				} else {
+					var buf [4]byte
+					n := utf8.EncodeRune(buf[:], rune(b))
+					out = append(out, buf[:n]...)
+				}
+			}
+			rawBytes = out
 		}
 
 		// Estimativa rápida de total via contagem de '\n'

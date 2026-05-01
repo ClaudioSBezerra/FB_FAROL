@@ -3,11 +3,22 @@
 -- O handler de import chama REFRESH MATERIALIZED VIEW após cada importação.
 -- IDEMPOTENTE: remove materialized view e view regular antes de recriar.
 
--- 1. Remove views (materialized ou regular) que possam existir
-DROP MATERIALIZED VIEW IF EXISTS vw_obj_rca_fornecedor;
-DROP MATERIALIZED VIEW IF EXISTS vw_obj_supervisor;
-DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
-DROP VIEW IF EXISTS vw_obj_supervisor;
+-- 1. Remove views em qualquer forma (regular 'v' ou materializada 'm')
+DO $$
+DECLARE v_kind char;
+BEGIN
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_rca_fornecedor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_rca_fornecedor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_rca_fornecedor;
+    END IF;
+
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_supervisor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_supervisor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_supervisor;
+    END IF;
+END $$;
 
 -- 2. Cria materialized views com os mesmos nomes e queries
 

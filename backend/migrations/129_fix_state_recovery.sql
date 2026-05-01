@@ -2,12 +2,28 @@
 -- IDEMPOTENTE: seguro re-executar em qualquer estado intermediário das migrations 126-128.
 -- Cobre o caso em que o servidor ficou com qtd_clientes e sem cod_cli por falha anterior.
 
--- 1. Remove views em qualquer forma que possam existir
-DROP MATERIALIZED VIEW IF EXISTS vw_obj_supervisor;
-DROP MATERIALIZED VIEW IF EXISTS vw_obj_rca_fornecedor;
-DROP VIEW IF EXISTS vw_obj_supervisor;
-DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
-DROP VIEW IF EXISTS vw_obj_rca_produto;
+-- 1. Remove views em qualquer forma (regular 'v' ou materializada 'm')
+DO $$
+DECLARE v_kind char;
+BEGIN
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_supervisor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_supervisor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_supervisor;
+    END IF;
+
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_rca_fornecedor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_rca_fornecedor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_rca_fornecedor;
+    END IF;
+
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_rca_produto' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_rca_produto;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_rca_produto;
+    END IF;
+END $$;
 
 -- 2. Garante cod_cli como INTEGER (trata ausência ou presença como TEXT)
 DO $$
@@ -24,6 +40,7 @@ BEGIN
           AND column_name = 'cod_cli'
           AND data_type   = 'text'
     ) THEN
+        ALTER TABLE objetivos_importados ALTER COLUMN cod_cli DROP DEFAULT;
         ALTER TABLE objetivos_importados
             ALTER COLUMN cod_cli TYPE INTEGER
             USING CASE WHEN cod_cli = '' THEN 0 ELSE cod_cli::INTEGER END;
