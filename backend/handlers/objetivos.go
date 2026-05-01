@@ -9,9 +9,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/lib/pq"
@@ -200,24 +201,33 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			return def
 		}
 
-		iSup   := col(0,  "codger",  "codgerente",  "codsup",   "codsupervisor")
-		iRCA   := col(1,  "codcrv",  "codrcv",      "codrca",   "codrepresentante")
-		iDep   := col(2,  "coddep",  "coddepto",    "coddepart")
-		iNDep  := col(3,  "descdep", "nomdep",      "nomedep",  "nomedepto", "nomdepto")
-		iSec   := col(4,  "codgr",   "codgru",      "codsec",   "codsetor")
-		iNSec  := col(5,  "descgr",  "nomgr",       "nomsec",   "nomesec",  "nomsetor")
-		iFornC := col(6,  "codforn", "codfornec",   "codfor",   "codfornecedor")
-		iFornN := col(7,  "nomforn", "nomeforn",    "descforn", "nomefornec", "nomefornecedor", "fornecedor")
-		iProd  := col(8,  "codprod", "codproduto")
-		iCli   := col(9,  "codcli",  "codcliente")
-		iVAnt  := col(10, "vlant",   "vlanterior",  "vlmeta",   "vlobj", "vlmetaanterior")
-		iVCor  := col(11, "vlcor",   "vlcorrente",  "vlmetaatual", "vlmetacorrente")
+		// Layout canônico: CODSUPERVISOR;CODUSUR;CODEPTO;DEPARTAMENTO;CODSEC;SECAO;CODFORNEC;FORNECEDOR;CODPROD;CODCLI;VLVENDA_PROD_AAAA;VLVENDA_PROD_AAAA
+		iSup   := col(0,  "codsupervisor", "codger",  "codgerente", "codsup")
+		iRCA   := col(1,  "codusur",       "codcrv",  "codrcv",     "codrca", "codrepresentante")
+		iDep   := col(2,  "codepto",       "coddep",  "coddepto",   "coddepart")
+		iNDep  := col(3,  "departamento",  "descdep", "nomdep",     "nomedep", "nomedepto")
+		iSec   := col(4,  "codsec",        "codgr",   "codgru",     "codsetor")
+		iNSec  := col(5,  "secao",         "descgr",  "nomgr",      "nomsec",  "nomesec", "nomsetor")
+		iFornC := col(6,  "codfornec",     "codforn", "codfor",     "codfornecedor")
+		iFornN := col(7,  "fornecedor",    "nomforn", "nomeforn",   "descforn", "nomefornec", "nomefornecedor")
+		iProd  := col(8,  "codprod",       "codproduto")
+		iCli   := col(9,  "codcli",        "codcliente")
 
-		// Se EMBALAGEM está na posição detectada para nome do fornecedor,
-		// usa o código do fornecedor como nome (CSV sem coluna NOMEFORNEC)
-		if embIdx, hasEmb := colMap[norm("embalagem")]; hasEmb && iFornN == embIdx {
-			log.Printf("[ObjetivosImport] EMBALAGEM detectada na pos %d; usando cod_fornec como nome", embIdx)
-			iFornN = iFornC
+		// Detecta VLVENDA_PROD_AAAA pelo prefixo — pega as duas primeiras colunas
+		// em ordem de posição: menor índice = ano anterior, maior = ano corrente.
+		var vendaCols []int
+		for k, idx := range colMap {
+			if strings.HasPrefix(k, "vlvendaprod") {
+				vendaCols = append(vendaCols, idx)
+			}
+		}
+		sort.Ints(vendaCols)
+		iVAnt, iVCor := 10, 11
+		if len(vendaCols) >= 2 {
+			iVAnt, iVCor = vendaCols[0], vendaCols[1]
+		} else {
+			iVAnt = col(10, "vlant", "vlanterior", "vlmeta", "vlobj", "vlmetaanterior")
+			iVCor = col(11, "vlcor", "vlcorrente", "vlmetaatual", "vlmetacorrente")
 		}
 
 		minCols := iVCor + 1
