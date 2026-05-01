@@ -1,8 +1,11 @@
 -- Migration 128: converte vw_obj_rca_fornecedor e vw_obj_supervisor em
 -- materialized views para que o dado fique pré-computado em disco.
 -- O handler de import chama REFRESH MATERIALIZED VIEW após cada importação.
+-- IDEMPOTENTE: remove materialized view e view regular antes de recriar.
 
--- 1. Remove as views regulares (substituídas por materialized views)
+-- 1. Remove views (materialized ou regular) que possam existir
+DROP MATERIALIZED VIEW IF EXISTS vw_obj_rca_fornecedor;
+DROP MATERIALIZED VIEW IF EXISTS vw_obj_supervisor;
 DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
 DROP VIEW IF EXISTS vw_obj_supervisor;
 
@@ -58,8 +61,8 @@ GROUP BY
 WITH DATA;
 
 -- 3. Índices de consulta (não unique — refresh não-concurrent não exige)
-CREATE INDEX idx_mv_rca_forn_periodo
+CREATE INDEX IF NOT EXISTS idx_mv_rca_forn_periodo
     ON vw_obj_rca_fornecedor (empresa_id, tipo_periodo, ano, periodo_seq);
 
-CREATE INDEX idx_mv_supervisor_periodo
+CREATE INDEX IF NOT EXISTS idx_mv_supervisor_periodo
     ON vw_obj_supervisor (empresa_id, tipo_periodo, ano, periodo_seq);

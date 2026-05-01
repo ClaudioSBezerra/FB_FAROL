@@ -1,9 +1,24 @@
--- Migration 127: cod_cli TEXT → INTEGER (CODCLI é sempre numérico).
--- IDEMPOTENTE: só converte o tipo se a coluna ainda for TEXT.
+-- Migration 129: recuperação de estado — garante cod_cli INTEGER e views materializadas.
+-- IDEMPOTENTE: seguro re-executar em qualquer estado intermediário das migrations 126-128.
+-- Cobre o caso em que o servidor ficou com qtd_clientes e sem cod_cli por falha anterior.
 
+-- 1. Remove views em qualquer forma que possam existir
+DROP MATERIALIZED VIEW IF EXISTS vw_obj_supervisor;
+DROP MATERIALIZED VIEW IF EXISTS vw_obj_rca_fornecedor;
+DROP VIEW IF EXISTS vw_obj_supervisor;
+DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
+DROP VIEW IF EXISTS vw_obj_rca_produto;
+
+-- 2. Garante cod_cli como INTEGER (trata ausência ou presença como TEXT)
 DO $$
 BEGIN
-    IF EXISTS (
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'objetivos_importados' AND column_name = 'cod_cli'
+    ) THEN
+        ALTER TABLE objetivos_importados
+            ADD COLUMN cod_cli INTEGER NOT NULL DEFAULT 0;
+    ELSIF EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'objetivos_importados'
           AND column_name = 'cod_cli'
@@ -17,9 +32,18 @@ BEGIN
     END IF;
 END $$;
 
--- Recria constraint com o tipo definitivo (INTEGER).
--- Remove qualquer constraint antiga que inclua cod_cli como texto,
--- e garante que a versão final (com INTEGER) esteja registrada.
+-- 3. Remove coluna qtd_clientes se ainda existir (substituída por cod_cli)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'objetivos_importados' AND column_name = 'qtd_clientes'
+    ) THEN
+        ALTER TABLE objetivos_importados DROP COLUMN qtd_clientes;
+    END IF;
+END $$;
+
+-- 4. Recria constraint UNIQUE incluindo cod_cli
 DO $$
 DECLARE v_name TEXT;
 BEGIN
@@ -38,9 +62,7 @@ ALTER TABLE objetivos_importados
     UNIQUE (empresa_id, tipo_periodo, ano, periodo_seq,
             cod_supervisor, cod_rca, cod_depto, cod_sec, cod_fornec, cod_prod, cod_cli);
 
--- Atualiza as views para usar NULLIF(cod_cli, 0) (agora INTEGER).
--- As views regulares criadas pela 126 usavam NULLIF(cod_cli, ''); recriamos com 0.
-DROP VIEW IF EXISTS vw_obj_rca_produto;
+-- 5. Recria vw_obj_rca_produto como view regular (detalhe por linha)
 CREATE VIEW vw_obj_rca_produto AS
 SELECT
     oi.empresa_id,
@@ -65,8 +87,8 @@ FROM objetivos_importados oi
 LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.cod_supervisor
 LEFT JOIN rcas     r ON r.empresa_id = oi.empresa_id AND r.cod_rca        = oi.cod_rca;
 
-DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
-CREATE VIEW vw_obj_rca_fornecedor AS
+-- 6. Recria vw_obj_rca_fornecedor como materialized view
+CREATE MATERIALIZED VIEW vw_obj_rca_fornecedor AS
 SELECT
     oi.empresa_id,
     oi.tipo_periodo,
@@ -89,10 +111,11 @@ GROUP BY
     oi.empresa_id, oi.tipo_periodo, oi.ano, oi.periodo_seq,
     oi.cod_supervisor, g.nome,
     oi.cod_rca, r.nome,
-    oi.cod_fornec;
+    oi.cod_fornec
+WITH DATA;
 
-DROP VIEW IF EXISTS vw_obj_supervisor;
-CREATE VIEW vw_obj_supervisor AS
+-- 7. Recria vw_obj_supervisor como materialized view
+CREATE MATERIALIZED VIEW vw_obj_supervisor AS
 SELECT
     oi.empresa_id,
     oi.tipo_periodo,
@@ -112,4 +135,12 @@ LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.c
 GROUP BY
     oi.empresa_id, oi.tipo_periodo, oi.ano, oi.periodo_seq,
     oi.cod_supervisor, g.nome,
-    oi.cod_fornec;
+    oi.cod_fornec
+WITH DATA;
+
+-- 8. Índices
+CREATE INDEX IF NOT EXISTS idx_mv_rca_forn_periodo
+    ON vw_obj_rca_fornecedor (empresa_id, tipo_periodo, ano, periodo_seq);
+
+CREATE INDEX IF NOT EXISTS idx_mv_supervisor_periodo
+    ON vw_obj_supervisor (empresa_id, tipo_periodo, ano, periodo_seq);
