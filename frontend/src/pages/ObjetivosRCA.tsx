@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Search, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -186,19 +187,17 @@ export default function ObjetivosRCA() {
 
         <div className="space-y-1.5">
           <Label>RCA</Label>
-          <Select value={rcaFilter} onValueChange={setRcaFilter}>
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="Todos os RCAs" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">Todos os RCAs</SelectItem>
-              {rcaOptions.map(r => (
-                <SelectItem key={r.cod} value={String(r.cod)}>
-                  {r.cod} — {r.nome}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableCombobox
+            className="w-56"
+            placeholder="Todos os RCAs"
+            searchPlaceholder="Código ou nome..."
+            value={rcaFilter}
+            onChange={setRcaFilter}
+            options={[
+              { value: '_all', label: 'Todos os RCAs' },
+              ...rcaOptions.map(r => ({ value: String(r.cod), label: `${r.cod} — ${r.nome}` })),
+            ]}
+          />
         </div>
 
         <div className="space-y-1.5 flex-1 min-w-44 max-w-xs">

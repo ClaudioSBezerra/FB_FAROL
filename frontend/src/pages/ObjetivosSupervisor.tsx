@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Search, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -192,17 +193,17 @@ export default function ObjetivosSupervisor() {
 
         <div className="space-y-1.5">
           <Label>Supervisor</Label>
-          <Select value={supFilter} onValueChange={setSupFilter}>
-            <SelectTrigger className="w-60">
-              <SelectValue placeholder="Todos os supervisores" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">Todos os supervisores</SelectItem>
-              {supOptions.map(s => (
-                <SelectItem key={s.key} value={s.key}>{s.nome}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableCombobox
+            className="w-60"
+            placeholder="Todos os supervisores"
+            searchPlaceholder="Código ou nome..."
+            value={supFilter}
+            onChange={setSupFilter}
+            options={[
+              { value: '_all', label: 'Todos os supervisores' },
+              ...supOptions.map(s => ({ value: s.key, label: s.nome })),
+            ]}
+          />
         </div>
 
         <div className="space-y-1.5 flex-1 min-w-44 max-w-xs">

@@ -167,7 +167,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornec    string
 			fornecedor   string
 			codProd      string
-			qtdCli       int64
+			codCli       string // CODCLI do CSV — código do cliente (não contagem)
 			vlAnt        float64
 			vlCor        float64
 		}
@@ -195,8 +195,8 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			seen := make(map[string]int, len(buf))
 			deduped := make([]batchRow, 0, len(buf))
 			for _, row := range buf {
-				key := fmt.Sprintf("%d|%d|%s|%s|%s|%s",
-					row.codSup, row.codRCA, row.codDepto, row.codSec, row.codFornec, row.codProd)
+				key := fmt.Sprintf("%d|%d|%s|%s|%s|%s|%s",
+					row.codSup, row.codRCA, row.codDepto, row.codSec, row.codFornec, row.codProd, row.codCli)
 				if idx, ok := seen[key]; ok {
 					deduped[idx] = row // última ocorrência sobrescreve
 				} else {
@@ -215,7 +215,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornecs   := make([]string,  n)
 			fornecedores := make([]string,  n)
 			codProds     := make([]string,  n)
-			qtdClis      := make([]int64,   n)
+			codClis      := make([]string,  n)
 			vlAnts       := make([]float64, n)
 			vlCors       := make([]float64, n)
 			for i, row := range deduped {
@@ -228,7 +228,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				codFornecs[i]   = row.codFornec
 				fornecedores[i] = row.fornecedor
 				codProds[i]     = row.codProd
-				qtdClis[i]      = row.qtdCli
+				codClis[i]      = row.codCli
 				vlAnts[i]       = row.vlAnt
 				vlCors[i]       = row.vlCor
 			}
@@ -251,8 +251,8 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				    empresa_id, tipo_periodo, ano, periodo_seq,
 				    cod_supervisor, cod_rca,
 				    cod_depto, departamento, cod_sec, secao,
-				    cod_fornec, fornecedor, cod_prod,
-				    qtd_clientes, vl_anterior, vl_corrente
+				    cod_fornec, fornecedor, cod_prod, cod_cli,
+				    vl_anterior, vl_corrente
 				)
 				SELECT
 				    $1, $2, $3, $4,
@@ -265,22 +265,21 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				    t.cforn,
 				    NULLIF(t.forn, ''),
 				    t.cprod,
-				    t.qcli::int,
+				    t.ccli,
 				    t.vant,
 				    t.vcor
 				FROM unnest(
 				    $5::bigint[], $6::bigint[],
 				    $7::text[], $8::text[], $9::text[], $10::text[],
-				    $11::text[], $12::text[], $13::text[],
-				    $14::bigint[], $15::float8[], $16::float8[]
-				) AS t(csup, crca, cdep, dep, csec, sec, cforn, forn, cprod, qcli, vant, vcor)
+				    $11::text[], $12::text[], $13::text[], $14::text[],
+				    $15::float8[], $16::float8[]
+				) AS t(csup, crca, cdep, dep, csec, sec, cforn, forn, cprod, ccli, vant, vcor)
 				ON CONFLICT (empresa_id, tipo_periodo, ano, periodo_seq,
-				             cod_supervisor, cod_rca, cod_depto, cod_sec, cod_fornec, cod_prod)
+				             cod_supervisor, cod_rca, cod_depto, cod_sec, cod_fornec, cod_prod, cod_cli)
 				DO UPDATE SET
 				    fornecedor   = EXCLUDED.fornecedor,
 				    departamento = EXCLUDED.departamento,
 				    secao        = EXCLUDED.secao,
-				    qtd_clientes = EXCLUDED.qtd_clientes,
 				    vl_anterior  = EXCLUDED.vl_anterior,
 				    vl_corrente  = EXCLUDED.vl_corrente,
 				    importado_em = NOW()
@@ -289,8 +288,8 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				pq.Array(codSups), pq.Array(codRCAs),
 				pq.Array(codDeptos), pq.Array(deptos),
 				pq.Array(codSecs), pq.Array(secoes),
-				pq.Array(codFornecs), pq.Array(fornecedores), pq.Array(codProds),
-				pq.Array(qtdClis), pq.Array(vlAnts), pq.Array(vlCors),
+				pq.Array(codFornecs), pq.Array(fornecedores), pq.Array(codProds), pq.Array(codClis),
+				pq.Array(vlAnts), pq.Array(vlCors),
 			)
 			if qerr != nil {
 				log.Printf("[ObjetivosImport] batch erro (n=%d): %v", n, qerr)
@@ -343,7 +342,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				codSup = cs
 			}
 
-			qtdCli, _ := strconv.ParseInt(strings.TrimSpace(record[9]), 10, 64)
+			codCli := strings.TrimSpace(record[9])
 			vlAnt, errA := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[10]), ",", "."), 64)
 			vlCor, errC := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[11]), ",", "."), 64)
 			if errA != nil || errC != nil {
@@ -362,7 +361,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 				codFornec:    codFornec,
 				fornecedor:   strings.TrimSpace(record[7]),
 				codProd:      codProd,
-				qtdCli:       qtdCli,
+				codCli:       codCli,
 				vlAnt:        vlAnt,
 				vlCor:        vlCor,
 			})
