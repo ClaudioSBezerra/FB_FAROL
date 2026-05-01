@@ -34,6 +34,13 @@ interface RCARow {
   vl_corrente: number
 }
 
+interface ClienteEntry { cod: number | null; nome: string; qtd: number }
+interface ClientesData {
+  total: number
+  por_supervisor: ClienteEntry[]
+  por_rca: ClienteEntry[]
+}
+
 const MESES = [
   'Jan','Fev','Mar','Abr','Mai','Jun',
   'Jul','Ago','Set','Out','Nov','Dez',
@@ -133,6 +140,20 @@ export default function ObjetivosSupervisor() {
     enabled: !!periodoSel,
   })
 
+  const { data: clientesData } = useQuery<ClientesData>({
+    queryKey: ['objetivos-clientes', periodoKey],
+    queryFn: () => {
+      if (!periodoSel) return { total: 0, por_supervisor: [], por_rca: [] }
+      const p = new URLSearchParams({
+        tipo_periodo: periodoSel.tipo_periodo,
+        ano:          String(periodoSel.ano),
+        periodo_seq:  String(periodoSel.periodo_seq),
+      })
+      return fetch(`/api/objetivos/clientes-distintos?${p}`).then(r => r.json())
+    },
+    enabled: !!periodoSel,
+  })
+
   // Opções de supervisor para o dropdown (código + nome para facilitar busca)
   const supOptions = useMemo(() => {
     const seen = new Map<string, { nome: string; cod: number | null }>()
@@ -152,13 +173,19 @@ export default function ObjetivosSupervisor() {
            (!fornecFilter || r.fornecedor.toLowerCase().includes(fornecFilter.toLowerCase()))
   }), [allRows, supFilter, fornecFilter])
 
-  const totalAnt  = rows.reduce((s, r) => s + r.vl_anterior, 0)
-  const totalCor  = rows.reduce((s, r) => s + r.vl_corrente, 0)
-  const totalCli  = rows.reduce((s, r) => s + (r.qtd_clientes ?? 0), 0)
-  const qtdSups   = new Set(rows.map(r => r.cod_supervisor)).size
-  const qtdRCAs   = new Set(rows.map(r => r.cod_rca)).size
-  const qtdFornc  = new Set(rows.map(r => r.cod_fornec)).size
-  const n         = varNum(totalAnt, totalCor)
+  const totalAnt = rows.reduce((s, r) => s + r.vl_anterior, 0)
+  const totalCor = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  const qtdSups  = new Set(rows.map(r => r.cod_supervisor)).size
+  const qtdRCAs  = new Set(rows.map(r => r.cod_rca)).size
+  const qtdFornc = new Set(rows.map(r => r.cod_fornec)).size
+  const n        = varNum(totalAnt, totalCor)
+
+  // Clientes distintos: COUNT(DISTINCT cod_cli) agrupado por supervisor (não SUM de qtd_clientes)
+  const totalCli = supFilter === '_all'
+    ? (clientesData?.total ?? 0)
+    : supFilter === '_null'
+      ? (clientesData?.por_supervisor.find(e => e.cod === null)?.qtd ?? 0)
+      : (clientesData?.por_supervisor.find(e => e.cod === Number(supFilter))?.qtd ?? 0)
 
   if (!periodoSel && periodos.length === 0 && !isFetching) {
     return (

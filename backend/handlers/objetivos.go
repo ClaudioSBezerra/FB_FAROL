@@ -380,6 +380,13 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Atualiza materialized views pós-commit (dados pré-computados para as queries de dashboard)
+		for _, mv := range []string{"vw_obj_rca_fornecedor", "vw_obj_supervisor"} {
+			if _, rerr := db.Exec("REFRESH MATERIALIZED VIEW " + mv); rerr != nil {
+				log.Printf("[ObjetivosImport] refresh %s erro: %v", mv, rerr)
+			}
+		}
+
 		log.Printf("[ObjetivosImport] concluído: importados=%d atualizados=%d ignorados=%d",
 			imported, updated, skipped)
 
@@ -566,6 +573,114 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// ObjetivosClientesHandler retorna COUNT(DISTINCT cod_cli) agrupado corretamente.
+// GET /api/objetivos/clientes-distintos?tipo_periodo=X&ano=Y&periodo_seq=Z
+// Resposta: { total, por_supervisor: [{cod,nome,qtd}], por_rca: [{cod,nome,qtd}] }
+func ObjetivosClientesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		tipo   := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_periodo")))
+		anoStr := strings.TrimSpace(r.URL.Query().Get("ano"))
+		seqStr := strings.TrimSpace(r.URL.Query().Get("periodo_seq"))
+
+		if _, ok := periodoSeqMax[tipo]; !ok {
+			http.Error(w, `{"error":"tipo_periodo inválido"}`, http.StatusBadRequest)
+			return
+		}
+		ano, err := strconv.Atoi(anoStr)
+		if err != nil || ano < 2000 || ano > 2100 {
+			http.Error(w, `{"error":"ano inválido"}`, http.StatusBadRequest)
+			return
+		}
+		seq, err := strconv.Atoi(seqStr)
+		if err != nil || seq < 1 {
+			http.Error(w, `{"error":"periodo_seq inválido"}`, http.StatusBadRequest)
+			return
+		}
+
+		type entry struct {
+			Cod  *int   `json:"cod"`
+			Nome string `json:"nome"`
+			Qtd  int64  `json:"qtd"`
+		}
+		type resp struct {
+			Total         int64   `json:"total"`
+			PorSupervisor []entry `json:"por_supervisor"`
+			PorRCA        []entry `json:"por_rca"`
+		}
+
+		baseArgs := []any{spCtx.EmpresaID, tipo, ano, seq}
+		baseWhere := `WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4 AND NULLIF(cod_cli,0) IS NOT NULL`
+
+		// Total de clientes distintos no período
+		var total int64
+		db.QueryRow(`SELECT COUNT(DISTINCT cod_cli) FROM objetivos_importados `+baseWhere, baseArgs...).Scan(&total) //nolint
+
+		// Por supervisor
+		supRows, _ := db.Query(`
+			SELECT oi.cod_supervisor,
+			       COALESCE(g.nome, 'Supervisor ' || oi.cod_supervisor::text) AS nome,
+			       COUNT(DISTINCT oi.cod_cli)
+			FROM objetivos_importados oi
+			LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.cod_supervisor
+			`+baseWhere+`
+			GROUP BY oi.cod_supervisor, g.nome
+			ORDER BY oi.cod_supervisor`, baseArgs...)
+		porSup := make([]entry, 0)
+		if supRows != nil {
+			defer supRows.Close()
+			for supRows.Next() {
+				var e entry
+				var supNull sql.NullInt64
+				var nomeNull sql.NullString
+				if supRows.Scan(&supNull, &nomeNull, &e.Qtd) == nil {
+					if supNull.Valid { v := int(supNull.Int64); e.Cod = &v }
+					e.Nome = nomeNull.String
+					porSup = append(porSup, e)
+				}
+			}
+		}
+
+		// Por RCA
+		rcaRows, _ := db.Query(`
+			SELECT oi.cod_rca,
+			       COALESCE(r.nome, 'RCA ' || oi.cod_rca::text) AS nome,
+			       COUNT(DISTINCT oi.cod_cli)
+			FROM objetivos_importados oi
+			LEFT JOIN rcas r ON r.empresa_id = oi.empresa_id AND r.cod_rca = oi.cod_rca
+			`+baseWhere+`
+			GROUP BY oi.cod_rca, r.nome
+			ORDER BY oi.cod_rca`, baseArgs...)
+		porRCA := make([]entry, 0)
+		if rcaRows != nil {
+			defer rcaRows.Close()
+			for rcaRows.Next() {
+				var e entry
+				var cod int
+				var nomeNull sql.NullString
+				if rcaRows.Scan(&cod, &nomeNull, &e.Qtd) == nil {
+					e.Cod = &cod
+					e.Nome = nomeNull.String
+					porRCA = append(porRCA, e)
+				}
+			}
+		}
+
+		json.NewEncoder(w).Encode(resp{Total: total, PorSupervisor: porSup, PorRCA: porRCA})
 	}
 }
 

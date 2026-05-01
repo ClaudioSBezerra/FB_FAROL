@@ -34,6 +34,13 @@ interface RCARow {
   vl_corrente: number
 }
 
+interface ClienteEntry { cod: number | null; nome: string; qtd: number }
+interface ClientesData {
+  total: number
+  por_supervisor: ClienteEntry[]
+  por_rca: ClienteEntry[]
+}
+
 const MESES = [
   'Jan','Fev','Mar','Abr','Mai','Jun',
   'Jul','Ago','Set','Out','Nov','Dez',
@@ -132,6 +139,20 @@ export default function ObjetivosRCA() {
     enabled: !!periodoSel,
   })
 
+  const { data: clientesData } = useQuery<ClientesData>({
+    queryKey: ['objetivos-clientes', periodoKey],
+    queryFn: () => {
+      if (!periodoSel) return { total: 0, por_supervisor: [], por_rca: [] }
+      const p = new URLSearchParams({
+        tipo_periodo: periodoSel.tipo_periodo,
+        ano:          String(periodoSel.ano),
+        periodo_seq:  String(periodoSel.periodo_seq),
+      })
+      return fetch(`/api/objetivos/clientes-distintos?${p}`).then(r => r.json())
+    },
+    enabled: !!periodoSel,
+  })
+
   // Opções de RCA para o dropdown
   const rcaOptions = useMemo(() => {
     const seen = new Map<number, string>()
@@ -147,12 +168,16 @@ export default function ObjetivosRCA() {
     (!fornecFilter || r.fornecedor.toLowerCase().includes(fornecFilter.toLowerCase()))
   ), [allRows, rcaFilter, fornecFilter])
 
-  const totalAnt   = rows.reduce((s, r) => s + r.vl_anterior, 0)
-  const totalCor   = rows.reduce((s, r) => s + r.vl_corrente, 0)
-  const totalCli   = rows.reduce((s, r) => s + (r.qtd_clientes ?? 0), 0)
-  const qtdRCAs    = new Set(rows.map(r => r.cod_rca)).size
-  const qtdFornc   = new Set(rows.map(r => r.cod_fornec)).size
-  const n          = varNum(totalAnt, totalCor)
+  const totalAnt = rows.reduce((s, r) => s + r.vl_anterior, 0)
+  const totalCor = rows.reduce((s, r) => s + r.vl_corrente, 0)
+  const qtdRCAs  = new Set(rows.map(r => r.cod_rca)).size
+  const qtdFornc = new Set(rows.map(r => r.cod_fornec)).size
+  const n        = varNum(totalAnt, totalCor)
+
+  // Clientes distintos: COUNT(DISTINCT cod_cli) agrupado por RCA (não SUM de qtd_clientes)
+  const totalCli = rcaFilter === '_all'
+    ? (clientesData?.total ?? 0)
+    : (clientesData?.por_rca.find(e => e.cod === Number(rcaFilter))?.qtd ?? 0)
 
   if (!periodoSel && periodos.length === 0 && !isFetching) {
     return (

@@ -351,10 +351,11 @@ func main() {
 	}
 
 	// ── Objetivos — Import CSV de objetivos de vendas ────────────────────────
-	http.HandleFunc("/api/objetivos/upload-csv",    withSP(handlers.ObjetivosImportHandler,      "gestor_filial"))
-	http.HandleFunc("/api/objetivos/periodos",      withSP(handlers.ObjetivosPeriosHandler,       "gestor_filial"))
-	http.HandleFunc("/api/objetivos/rca-fornecedor", withSP(handlers.ObjetivosRCAHandler,         "gestor_filial"))
-	http.HandleFunc("/api/objetivos/supervisor",    withSP(handlers.ObjetivosSupervisorHandler,   "gestor_filial"))
+	http.HandleFunc("/api/objetivos/upload-csv",      withSP(handlers.ObjetivosImportHandler,       "gestor_filial"))
+	http.HandleFunc("/api/objetivos/periodos",        withSP(handlers.ObjetivosPeriosHandler,        "gestor_filial"))
+	http.HandleFunc("/api/objetivos/rca-fornecedor",  withSP(handlers.ObjetivosRCAHandler,           "gestor_filial"))
+	http.HandleFunc("/api/objetivos/supervisor",      withSP(handlers.ObjetivosSupervisorHandler,    "gestor_filial"))
+	http.HandleFunc("/api/objetivos/clientes-distintos", withSP(handlers.ObjetivosClientesHandler,  "gestor_filial"))
 
 	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
 	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
