@@ -67,51 +67,20 @@ FROM objetivos_importados oi
 LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.cod_supervisor
 LEFT JOIN rcas     r ON r.empresa_id = oi.empresa_id AND r.cod_rca        = oi.cod_rca;
 
-DROP VIEW IF EXISTS vw_obj_rca_fornecedor;
-CREATE VIEW vw_obj_rca_fornecedor AS
-SELECT
-    oi.empresa_id,
-    oi.tipo_periodo,
-    oi.ano,
-    oi.periodo_seq,
-    oi.cod_supervisor,
-    COALESCE(g.nome, 'Supervisor ' || oi.cod_supervisor::text) AS nome_supervisor,
-    oi.cod_rca,
-    COALESCE(r.nome, 'RCA ' || oi.cod_rca::text)              AS nome_rca,
-    oi.cod_fornec,
-    MAX(oi.fornecedor)                    AS fornecedor,
-    COUNT(DISTINCT oi.cod_prod)           AS qtd_produtos,
-    COUNT(DISTINCT NULLIF(oi.cod_cli, 0)) AS qtd_clientes,
-    SUM(oi.vl_anterior)                   AS vl_anterior,
-    SUM(oi.vl_corrente)                   AS vl_corrente
-FROM objetivos_importados oi
-LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.cod_supervisor
-LEFT JOIN rcas     r ON r.empresa_id = oi.empresa_id AND r.cod_rca        = oi.cod_rca
-GROUP BY
-    oi.empresa_id, oi.tipo_periodo, oi.ano, oi.periodo_seq,
-    oi.cod_supervisor, g.nome,
-    oi.cod_rca, r.nome,
-    oi.cod_fornec;
+-- Drop vw_obj_rca_fornecedor and vw_obj_supervisor regardless of type (view or materialized view).
+-- They will be recreated as materialized views by migrations 128-130.
+DO $$
+DECLARE v_kind char;
+BEGIN
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_rca_fornecedor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_rca_fornecedor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_rca_fornecedor;
+    END IF;
 
-DROP VIEW IF EXISTS vw_obj_supervisor;
-CREATE VIEW vw_obj_supervisor AS
-SELECT
-    oi.empresa_id,
-    oi.tipo_periodo,
-    oi.ano,
-    oi.periodo_seq,
-    oi.cod_supervisor,
-    COALESCE(g.nome, 'Supervisor ' || oi.cod_supervisor::text) AS nome_supervisor,
-    oi.cod_fornec,
-    MAX(oi.fornecedor)                    AS fornecedor,
-    COUNT(DISTINCT oi.cod_rca)            AS qtd_rcas,
-    COUNT(DISTINCT oi.cod_prod)           AS qtd_produtos,
-    COUNT(DISTINCT NULLIF(oi.cod_cli, 0)) AS qtd_clientes,
-    SUM(oi.vl_anterior)                   AS vl_anterior,
-    SUM(oi.vl_corrente)                   AS vl_corrente
-FROM objetivos_importados oi
-LEFT JOIN gestores g ON g.empresa_id = oi.empresa_id AND g.cod_supervisor = oi.cod_supervisor
-GROUP BY
-    oi.empresa_id, oi.tipo_periodo, oi.ano, oi.periodo_seq,
-    oi.cod_supervisor, g.nome,
-    oi.cod_fornec;
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_supervisor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN DROP VIEW              vw_obj_supervisor;
+    ELSIF v_kind = 'm' THEN DROP MATERIALIZED VIEW  vw_obj_supervisor;
+    END IF;
+END $$;
