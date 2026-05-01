@@ -103,6 +103,7 @@ function VarCard({ ant, cor }: { ant: number; cor: number }) {
 
 export default function ObjetivosRCA() {
   const [periodoKey,   setPeriodoKey]   = useState('')
+  const [supFilter,    setSupFilter]    = useState('_all')
   const [rcaFilter,    setRcaFilter]    = useState('_all')
   const [fornecFilter, setFornecFilter] = useState('')
 
@@ -137,18 +138,32 @@ export default function ObjetivosRCA() {
   })
   const allRows: RCARow[] = Array.isArray(rawRows) ? rawRows : []
 
-  const rcaOptions = useMemo(() => {
-    const seen = new Map<number, string>()
-    allRows.forEach(r => seen.set(r.cod_rca, r.nome_rca))
+  const supOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    allRows.forEach(r => {
+      const key = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
+      seen.set(key, r.nome_supervisor)
+    })
     return Array.from(seen.entries())
       .map(([cod, nome]) => ({ cod, nome }))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
   }, [allRows])
 
+  const rcaOptions = useMemo(() => {
+    const seen = new Map<number, string>()
+    allRows
+      .filter(r => supFilter === '_all' || (r.cod_supervisor != null ? String(r.cod_supervisor) : '_null') === supFilter)
+      .forEach(r => seen.set(r.cod_rca, r.nome_rca))
+    return Array.from(seen.entries())
+      .map(([cod, nome]) => ({ cod, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [allRows, supFilter])
+
   const rows = useMemo(() => allRows.filter(r =>
+    (supFilter === '_all' || (r.cod_supervisor != null ? String(r.cod_supervisor) : '_null') === supFilter) &&
     (rcaFilter === '_all' || r.cod_rca === Number(rcaFilter)) &&
     (!fornecFilter || r.fornecedor.toLowerCase().includes(fornecFilter.toLowerCase()))
-  ), [allRows, rcaFilter, fornecFilter])
+  ), [allRows, supFilter, rcaFilter, fornecFilter])
 
   const totalAnt   = rows.reduce((s, r) => s + r.vl_anterior, 0)
   const totalCor   = rows.reduce((s, r) => s + r.vl_corrente, 0)
@@ -175,7 +190,7 @@ export default function ObjetivosRCA() {
       <div className="flex flex-wrap gap-3 items-end">
         <div className="space-y-1.5">
           <Label>Período</Label>
-          <Select value={periodoKey} onValueChange={v => { setPeriodoKey(v); setRcaFilter('_all'); setFornecFilter('') }}>
+          <Select value={periodoKey} onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setRcaFilter('_all'); setFornecFilter('') }}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Selecione..." />
             </SelectTrigger>
@@ -190,6 +205,21 @@ export default function ObjetivosRCA() {
               })}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Supervisor</Label>
+          <SearchableCombobox
+            className="w-56"
+            placeholder="Todos os supervisores"
+            searchPlaceholder="Nome do supervisor..."
+            value={supFilter}
+            onChange={v => { setSupFilter(v); setRcaFilter('_all') }}
+            options={[
+              { value: '_all', label: 'Todos os supervisores' },
+              ...supOptions.map(s => ({ value: s.cod, label: s.nome })),
+            ]}
+          />
         </div>
 
         <div className="space-y-1.5">
