@@ -734,3 +734,39 @@ func ObjetivosPeriosHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(result)
 	}
 }
+
+// ObjetivosLimparHandler apaga todos os objetivos importados da empresa e
+// atualiza as materialized views.
+// POST /api/objetivos/limpar
+func ObjetivosLimparHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		res, err := db.Exec(`DELETE FROM objetivos_importados WHERE empresa_id = $1`, spCtx.EmpresaID)
+		if err != nil {
+			log.Printf("[ObjetivosLimpar] delete erro: %v", err)
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		deleted, _ := res.RowsAffected()
+
+		for _, mv := range []string{"vw_obj_rca_fornecedor", "vw_obj_supervisor"} {
+			if _, rerr := db.Exec("REFRESH MATERIALIZED VIEW " + mv); rerr != nil {
+				log.Printf("[ObjetivosLimpar] refresh %s erro: %v", mv, rerr)
+			}
+		}
+
+		log.Printf("[ObjetivosLimpar] empresa_id=%d deletados=%d", spCtx.EmpresaID, deleted)
+		json.NewEncoder(w).Encode(map[string]int64{"deleted": deleted})
+	}
+}

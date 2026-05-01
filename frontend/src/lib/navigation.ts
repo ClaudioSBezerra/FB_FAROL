@@ -27,8 +27,7 @@ export const modules: Record<string, ModuleConfig> = {
   obj_rca: {
     label: 'Objetivo RCA',
     tabs: [
-      { label: 'Painel',   path: '/objetivos/rca'      },
-      { label: 'Importar', path: '/objetivos/importar' },
+      { label: 'Painel', path: '/objetivos/rca' },
     ],
   },
   // ── Objetivo Supervisor ──────────────────────────────────────────────────
@@ -36,6 +35,14 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Objetivo Supervisor',
     tabs: [
       { label: 'Painel', path: '/objetivos/supervisor' },
+    ],
+  },
+  // ── Importação ───────────────────────────────────────────────────────────
+  importacao: {
+    label: 'Importação',
+    tabs: [
+      { label: 'Importar',    path: '/objetivos/importar'    },
+      { label: 'Manutenção',  path: '/objetivos/manutencao'  },
     ],
   },
   // ── Administração ────────────────────────────────────────────────────────
@@ -61,10 +68,12 @@ export const modules: Record<string, ModuleConfig> = {
 }
 
 export function getActiveModule(pathname: string): string {
-  if (pathname.startsWith('/cadastros'))          return 'cadastros'
-  if (pathname.startsWith('/objetivos/supervisor')) return 'obj_supervisor'
-  if (pathname.startsWith('/objetivos'))           return 'obj_rca'
-  if (pathname.startsWith('/gestao'))             return 'gestao'
-  if (pathname.startsWith('/config'))             return 'config'
+  if (pathname.startsWith('/cadastros'))             return 'cadastros'
+  if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
+  if (pathname.startsWith('/objetivos/importar'))    return 'importacao'
+  if (pathname.startsWith('/objetivos/manutencao'))  return 'importacao'
+  if (pathname.startsWith('/objetivos'))             return 'obj_rca'
+  if (pathname.startsWith('/gestao'))                return 'gestao'
+  if (pathname.startsWith('/config'))                return 'config'
   return 'cadastros'
 }
