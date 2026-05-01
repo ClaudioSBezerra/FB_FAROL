@@ -139,14 +139,14 @@ export default function ObjetivosRCA() {
   const allRows: RCARow[] = Array.isArray(rawRows) ? rawRows : []
 
   const supOptions = useMemo(() => {
-    const seen = new Map<string, string>()
+    const seen = new Map<string, { nome: string; cod: number | null }>()
     allRows.forEach(r => {
       const key = r.cod_supervisor != null ? String(r.cod_supervisor) : '_null'
-      seen.set(key, r.nome_supervisor)
+      seen.set(key, { nome: r.nome_supervisor, cod: r.cod_supervisor })
     })
     return Array.from(seen.entries())
-      .map(([cod, nome]) => ({ cod, nome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+      .map(([key, { nome, cod }]) => ({ key, nome, cod }))
+      .sort((a, b) => (a.cod ?? 0) - (b.cod ?? 0))
   }, [allRows])
 
   const rcaOptions = useMemo(() => {
@@ -210,14 +210,17 @@ export default function ObjetivosRCA() {
         <div className="space-y-1.5">
           <Label>Supervisor</Label>
           <SearchableCombobox
-            className="w-56"
+            className="w-64"
             placeholder="Todos os supervisores"
-            searchPlaceholder="Nome do supervisor..."
+            searchPlaceholder="Código ou nome..."
             value={supFilter}
             onChange={v => { setSupFilter(v); setRcaFilter('_all') }}
             options={[
               { value: '_all', label: 'Todos os supervisores' },
-              ...supOptions.map(s => ({ value: s.cod, label: s.nome })),
+              ...supOptions.map(s => ({
+                value: s.key,
+                label: s.cod != null ? `${s.cod} — ${s.nome}` : s.nome,
+              })),
             ]}
           />
         </div>
