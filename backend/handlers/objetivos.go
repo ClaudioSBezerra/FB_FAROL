@@ -169,10 +169,65 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 		csvReader.TrimLeadingSpace = true
 		csvReader.FieldsPerRecord = -1
 
-		if _, err := csvReader.Read(); err != nil {
+		// ── Detecta posições das colunas pelo cabeçalho ──────────────────────
+		headerRow, err := csvReader.Read()
+		if err != nil {
 			sendEvent(map[string]any{"error": "falha ao ler cabeçalho CSV"})
 			return
 		}
+		log.Printf("[ObjetivosImport] colunas CSV (%d): %v", len(headerRow), headerRow)
+
+		// Normaliza: minúsculo, sem espaços, sem sublinhados
+		norm := func(s string) string {
+			s = strings.ToLower(strings.TrimSpace(s))
+			s = strings.ReplaceAll(s, " ", "")
+			s = strings.ReplaceAll(s, "_", "")
+			return s
+		}
+		colMap := make(map[string]int, len(headerRow))
+		for i, h := range headerRow {
+			colMap[norm(h)] = i
+		}
+
+		// Encontra a primeira coluna cujo nome normalizado corresponda a um dos candidatos;
+		// se nenhum for encontrado, retorna o índice padrão.
+		col := func(def int, candidates ...string) int {
+			for _, c := range candidates {
+				if idx, ok := colMap[norm(c)]; ok {
+					return idx
+				}
+			}
+			return def
+		}
+
+		iSup   := col(0,  "codger",  "codgerente",  "codsup",   "codsupervisor")
+		iRCA   := col(1,  "codcrv",  "codrcv",      "codrca",   "codrepresentante")
+		iDep   := col(2,  "coddep",  "coddepto",    "coddepart")
+		iNDep  := col(3,  "descdep", "nomdep",      "nomedep",  "nomedepto", "nomdepto")
+		iSec   := col(4,  "codgr",   "codgru",      "codsec",   "codsetor")
+		iNSec  := col(5,  "descgr",  "nomgr",       "nomsec",   "nomesec",  "nomsetor")
+		iFornC := col(6,  "codforn", "codfornec",   "codfor",   "codfornecedor")
+		iFornN := col(7,  "nomforn", "nomeforn",    "descforn", "nomefornec", "nomefornecedor", "fornecedor")
+		iProd  := col(8,  "codprod", "codproduto")
+		iCli   := col(9,  "codcli",  "codcliente")
+		iVAnt  := col(10, "vlant",   "vlanterior",  "vlmeta",   "vlobj", "vlmetaanterior")
+		iVCor  := col(11, "vlcor",   "vlcorrente",  "vlmetaatual", "vlmetacorrente")
+
+		// Se EMBALAGEM está na posição detectada para nome do fornecedor,
+		// usa o código do fornecedor como nome (CSV sem coluna NOMEFORNEC)
+		if embIdx, hasEmb := colMap[norm("embalagem")]; hasEmb && iFornN == embIdx {
+			log.Printf("[ObjetivosImport] EMBALAGEM detectada na pos %d; usando cod_fornec como nome", embIdx)
+			iFornN = iFornC
+		}
+
+		minCols := iVCor + 1
+		for _, idx := range []int{iSup, iRCA, iDep, iNDep, iSec, iNSec, iFornC, iFornN, iProd, iCli, iVAnt, iVCor} {
+			if idx+1 > minCols {
+				minCols = idx + 1
+			}
+		}
+		log.Printf("[ObjetivosImport] mapa colunas: sup=%d rca=%d fornC=%d fornN=%d prod=%d cli=%d vAnt=%d vCor=%d minCols=%d",
+			iSup, iRCA, iFornC, iFornN, iProd, iCli, iVAnt, iVCor, minCols)
 
 		type batchRow struct {
 			codSup       int64 // -1 = NULL
@@ -339,15 +394,15 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			if rerr == io.EOF {
 				break
 			}
-			if rerr != nil || len(record) < 12 {
+			if rerr != nil || len(record) < minCols {
 				skipped++
 				processed++
 				continue
 			}
 
-			codRCA, errRCA := strconv.ParseInt(strings.TrimSpace(record[1]), 10, 64)
-			codFornec := strings.TrimSpace(record[6])
-			codProd := strings.TrimSpace(record[8])
+			codRCA, errRCA := strconv.ParseInt(strings.TrimSpace(record[iRCA]), 10, 64)
+			codFornec := strings.TrimSpace(record[iFornC])
+			codProd   := strings.TrimSpace(record[iProd])
 			if errRCA != nil || codFornec == "" || codProd == "" {
 				skipped++
 				processed++
@@ -355,13 +410,13 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			}
 
 			var codSup int64 = -1
-			if cs, e := strconv.ParseInt(strings.TrimSpace(record[0]), 10, 64); e == nil {
+			if cs, e := strconv.ParseInt(strings.TrimSpace(record[iSup]), 10, 64); e == nil {
 				codSup = cs
 			}
 
-			codCli, _ := strconv.ParseInt(strings.TrimSpace(record[9]), 10, 64)
-			vlAnt, errA := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[10]), ",", "."), 64)
-			vlCor, errC := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[11]), ",", "."), 64)
+			codCli, _ := strconv.ParseInt(strings.TrimSpace(record[iCli]), 10, 64)
+			vlAnt, errA := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[iVAnt]), ",", "."), 64)
+			vlCor, errC := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(record[iVCor]), ",", "."), 64)
 			if errA != nil || errC != nil {
 				skipped++
 				processed++
@@ -371,12 +426,12 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			buf = append(buf, batchRow{
 				codSup:       codSup,
 				codRCA:       codRCA,
-				codDepto:     strings.TrimSpace(record[2]),
-				departamento: strings.TrimSpace(record[3]),
-				codSec:       strings.TrimSpace(record[4]),
-				secao:        strings.TrimSpace(record[5]),
+				codDepto:     strings.TrimSpace(record[iDep]),
+				departamento: strings.TrimSpace(record[iNDep]),
+				codSec:       strings.TrimSpace(record[iSec]),
+				secao:        strings.TrimSpace(record[iNSec]),
 				codFornec:    codFornec,
-				fornecedor:   strings.TrimSpace(record[7]),
+				fornecedor:   strings.TrimSpace(record[iFornN]),
 				codProd:      codProd,
 				codCli:       codCli,
 				vlAnt:        vlAnt,
