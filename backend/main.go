@@ -358,6 +358,21 @@ func main() {
 	http.HandleFunc("/api/objetivos/clientes-distintos", withSP(handlers.ObjetivosClientesHandler,  "gestor_filial"))
 	http.HandleFunc("/api/objetivos/limpar",             withSP(handlers.ObjetivosLimparHandler,    "gestor_filial"))
 
+	// ── Farol Mobile (público — chamado via WebView do ION VENDAS) ─────────
+	publicHandler := func(factory func(*sql.DB) http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			database := getDB()
+			if database == nil {
+				http.Error(w, "Database initializing...", http.StatusServiceUnavailable)
+				return
+			}
+			factory(database)(w, r)
+		}
+	}
+	http.HandleFunc("/api/farol/sup/",      publicHandler(handlers.FarolSupervisorHandler))
+	http.HandleFunc("/api/farol/rca/",      publicHandler(handlers.FarolRcaDetailHandler))
+	http.HandleFunc("/api/farol/periodos/", publicHandler(handlers.FarolPeriodosHandler))
+
 	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
 	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
 	http.HandleFunc("/api/cadastros/rcas/upload-csv", withSP(handlers.UploadCadastrosCSVHandler, "gestor_filial"))

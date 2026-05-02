@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Link, useParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from '@/components/ui/sonner'
 import CadastroGestores from './pages/CadastroGestores'
@@ -28,6 +28,8 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+import FarolDashboard from './pages/farol/FarolDashboard'
+import FarolRcaDetail from './pages/farol/FarolRcaDetail'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -54,6 +56,13 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
   if (user?.role !== 'admin') return <Navigate to="/" replace />
   return <>{children}</>
+}
+
+// Redireciona /:cod (numérico) → /m/:cod (compatibilidade com chamadas do ION VENDAS)
+function FarolNumericRedirect() {
+  const { cod } = useParams<{ cod: string }>()
+  if (!cod || !/^\d+$/.test(cod)) return <Navigate to="/login" replace />
+  return <Navigate to={`/m/${cod}`} replace />
 }
 
 function MasterRoute({ children }: { children: React.ReactNode }) {
@@ -229,6 +238,11 @@ function App() {
             <Route path="/register"        element={<Register />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-senha"     element={<ResetPassword />} />
+
+            {/* Farol Mobile (público — chamado via WebView do ION VENDAS) */}
+            <Route path="/m/:cod"               element={<FarolDashboard />} />
+            <Route path="/m/:cod/rca/:codRca"   element={<FarolRcaDetail />} />
+            <Route path="/:cod"                 element={<FarolNumericRedirect />} />
             <Route path="/*" element={
               <ProtectedRoute>
                 <FilialProvider>
