@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -524,9 +525,28 @@ func main() {
 	staticDir := "./static"
 	if _, err := os.Stat(staticDir); err == nil {
 		fs := http.FileServer(http.Dir(staticDir))
+		// Padrões de URL que o ION VENDAS chama via WebView e que devem ser
+		// redirecionados server-side para a rota canônica /m/... ANTES do
+		// React Router ver, evitando que /:cod e /:cnpj/:kind/:cod (que seriam
+		// mais específicos que /*) engulam outras rotas autenticadas.
+		ionNumericPath := regexp.MustCompile(`^/(\d+)$`)
+		ionCnpjPath    := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.NotFound(w, r)
+				return
+			}
+
+			// /701 → /m/701
+			if m := ionNumericPath.FindStringSubmatch(r.URL.Path); m != nil {
+				http.Redirect(w, r, "/m/"+m[1], http.StatusFound)
+				return
+			}
+			// /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/CNPJ/sup|rca/cod
+			if m := ionCnpjPath.FindStringSubmatch(r.URL.Path); m != nil {
+				kind := strings.ToLower(m[2])
+				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3], http.StatusFound)
 				return
 			}
 

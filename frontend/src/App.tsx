@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation, Link, useParams } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from '@/components/ui/sonner'
 import CadastroGestores from './pages/CadastroGestores'
@@ -57,39 +57,6 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
   if (user?.role !== 'admin') return <Navigate to="/" replace />
   return <>{children}</>
-}
-
-// Redireciona /:cod (numérico) → /m/:cod. Quando NÃO é numérico (ex: /farol, /cadastros)
-// faz fall-through para o AppLayout autenticado, evitando que /:cod engula essas rotas.
-function FarolNumericRedirect() {
-  const { cod } = useParams<{ cod: string }>()
-  if (cod && /^\d+$/.test(cod)) {
-    return <Navigate to={`/m/${cod}`} replace />
-  }
-  return (
-    <ProtectedRoute>
-      <FilialProvider>
-        <AppLayout />
-      </FilialProvider>
-    </ProtectedRoute>
-  )
-}
-
-// Redireciona /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/:cnpj/:kind/:cod. Quando o padrão
-// não bate (ex: /dashboard/urgencia/falta), cai para o AppLayout.
-function FarolCnpjRedirect() {
-  const { cnpj, kind, cod } = useParams<{ cnpj: string; kind: string; cod: string }>()
-  const k = (kind || '').toLowerCase()
-  if (cnpj && /^\d{14}$/.test(cnpj) && cod && /^\d+$/.test(cod) && (k === 'sup' || k === 'rca')) {
-    return <Navigate to={`/m/${cnpj}/${k}/${cod}`} replace />
-  }
-  return (
-    <ProtectedRoute>
-      <FilialProvider>
-        <AppLayout />
-      </FilialProvider>
-    </ProtectedRoute>
-  )
 }
 
 function MasterRoute({ children }: { children: React.ReactNode }) {
@@ -270,16 +237,13 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-senha"     element={<ResetPassword />} />
 
-            {/* Farol Mobile (público — chamado via WebView do ION VENDAS) */}
-            {/* Formato canônico com CNPJ */}
+            {/* Farol Mobile (público — chamado via WebView do ION VENDAS).
+                Os redirects /701 → /m/701 e /CNPJ/SUP|RCA/cod → /m/... são feitos
+                server-side em main.go, então essas rotas só recebem o formato canônico. */}
             <Route path="/m/:cnpj/sup/:cod"       element={<FarolDashboard />} />
             <Route path="/m/:cnpj/rca/:cod"       element={<FarolRcaDetail />} />
-            {/* Redirect público /CNPJ/SUP/cod e /CNPJ/RCA/cod (formato ION) */}
-            <Route path="/:cnpj/:kind/:cod"       element={<FarolCnpjRedirect />} />
-            {/* Compatibilidade com formato antigo (sem CNPJ) */}
             <Route path="/m/:cod"                 element={<FarolDashboard />} />
             <Route path="/m/:cod/rca/:codRca"     element={<FarolRcaDetail />} />
-            <Route path="/:cod"                   element={<FarolNumericRedirect />} />
             <Route path="/*" element={
               <ProtectedRoute>
                 <FilialProvider>
