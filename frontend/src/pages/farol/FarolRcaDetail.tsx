@@ -45,21 +45,23 @@ function fmtPct(pct: number, ant: number): string {
 }
 
 export default function FarolRcaDetail({ embedded = false }: { embedded?: boolean } = {}) {
-  // Suporta três formatos:
-  //   - /m/:cod/rca/:codRca           (mobile antigo: cod=supervisor)
-  //   - /m/:cnpj/rca/:cod             (mobile novo: cnpj=empresa, cod=rca)
-  //   - /farol/sup/:cod/rca/:codRca   (web embed: cod=supervisor, cnpj do AuthContext)
-  const { cod, codRca, cnpj: cnpjFromUrl } = useParams<{ cod: string; codRca?: string; cnpj?: string }>()
+  // Rota única /m/:cod/rca/:codRca, mas dois fluxos:
+  //   - cod = supervisor (3-7 dígitos) e codRca = RCA  → fluxo legado
+  //   - cod = CNPJ (14 dígitos) e codRca = RCA          → fluxo com CNPJ na URL
+  // No web embedded usa-se /farol/sup/:cod/rca/:codRca (cod=supervisor) e CNPJ do AuthContext.
+  const { cod, codRca } = useParams<{ cod: string; codRca: string }>()
   const { cnpj: cnpjFromAuth } = useAuth()
-  const cnpj = cnpjFromUrl || (embedded ? (cnpjFromAuth || '').replace(/\D/g, '') : undefined)
   const [search] = useSearchParams()
   const navigate = useNavigate()
 
-  // No formato web/embed e mobile antigo: cod=supervisor, codRca=rca.
-  // No formato mobile novo (com cnpj na URL): cod=rca.
-  const useCodAsRca = !!cnpjFromUrl && !codRca
-  const codRcaFinal = useCodAsRca ? cod : codRca
-  const codSupFromUrl = useCodAsRca ? search.get('cod_supervisor') : cod
+  const codIsCnpj = !!cod && /^\d{14}$/.test(cod)
+  const cnpjFromUrl = codIsCnpj ? cod : undefined
+  const cnpj = cnpjFromUrl || (embedded ? (cnpjFromAuth || '').replace(/\D/g, '') : undefined)
+
+  // codRca sempre vem da segunda parte da rota /m/:cod/rca/:codRca
+  const codRcaFinal = codRca
+  // Quando cod é CNPJ não temos supervisor no path; ele vem na query string (do dashboard)
+  const codSupFromUrl = codIsCnpj ? search.get('cod_supervisor') : cod
 
   const { data, isError } = useQuery<RcaResp>({
     queryKey: ['farol-rca', cnpj, codRcaFinal, codSupFromUrl, search.toString()],
@@ -98,6 +100,7 @@ export default function FarolRcaDetail({ embedded = false }: { embedded?: boolea
     } else if (cnpjFromUrl) {
       supTarget = `/m/${cnpjFromUrl}/sup/${codSupFromUrl}`
     } else {
+      // formato legado /m/:cod (cod=supervisor)
       supTarget = `/m/${cod}`
     }
     navigate(`${supTarget}${params.toString() ? '?' + params.toString() : ''}`)

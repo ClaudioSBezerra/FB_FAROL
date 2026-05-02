@@ -239,9 +239,10 @@ function App() {
 
             {/* Farol Mobile (público — chamado via WebView do ION VENDAS).
                 Os redirects /701 → /m/701 e /CNPJ/SUP|RCA/cod → /m/... são feitos
-                server-side em main.go, então essas rotas só recebem o formato canônico. */}
+                server-side em main.go.
+                A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU cod=CNPJ);
+                o componente detecta pela quantidade de dígitos. */}
             <Route path="/m/:cnpj/sup/:cod"       element={<FarolDashboard />} />
-            <Route path="/m/:cnpj/rca/:cod"       element={<FarolRcaDetail />} />
             <Route path="/m/:cod"                 element={<FarolDashboard />} />
             <Route path="/m/:cod/rca/:codRca"     element={<FarolRcaDetail />} />
             <Route path="/*" element={
