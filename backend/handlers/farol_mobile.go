@@ -22,6 +22,9 @@ func farolCor(pct float64) string {
 
 func calcPct(ant, cor float64) float64 {
 	if ant == 0 {
+		if cor > 0 {
+			return 100 // sem base anterior mas com valor atual → considera atingido
+		}
 		return 0
 	}
 	return (cor / ant) * 100

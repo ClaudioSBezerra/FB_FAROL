@@ -372,6 +372,12 @@ func main() {
 			factory(database)(w, r)
 		}
 	}
+	// ── Farol Web (autenticado — usa empresa_id do JWT) ─────────────────────
+	http.HandleFunc("/api/farol/web/supervisores", withSP(handlers.FarolWebSupervisoresHandler, "gestor_filial"))
+	http.HandleFunc("/api/farol/web/sup/",         withSP(handlers.FarolWebSupHandler,          "gestor_filial"))
+	http.HandleFunc("/api/farol/web/rca/",         withSP(handlers.FarolWebRcaHandler,          "gestor_filial"))
+	http.HandleFunc("/api/farol/web/periodos",     withSP(handlers.FarolWebPeriodosHandler,     "gestor_filial"))
+
 	http.HandleFunc("/api/farol/sup/",          publicHandler(handlers.FarolSupervisorHandler))
 	http.HandleFunc("/api/farol/rca/",          publicHandler(handlers.FarolRcaDetailHandler))
 	http.HandleFunc("/api/farol/periodos/",     publicHandler(handlers.FarolPeriodosHandler))
