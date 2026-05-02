@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -13,10 +13,8 @@ import { Search } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type TipoPeriodo = 'MENSAL' | 'TRIMESTRAL' | 'SEMESTRAL' | 'ANUAL'
-
 interface Periodo {
-  tipo_periodo: TipoPeriodo
+  tipo_periodo: string
   ano: number
   periodo_seq: number
 }
@@ -36,11 +34,17 @@ interface RCARow {
   vl_corrente: number
 }
 
+interface PainelResp {
+  periodos:    Periodo[]
+  periodo_sel: Periodo | null
+  rows:        RCARow[]
+}
+
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 const TRIMESTRES = ['T1','T2','T3','T4']
 const SEMESTRES  = ['S1','S2']
 
-function periodoLabel(tipo: TipoPeriodo, seq: number, ano: number): string {
+function periodoLabel(tipo: string, seq: number, ano: number): string {
   if (tipo === 'MENSAL')     return `${MESES[seq - 1] ?? seq}/${ano}`
   if (tipo === 'TRIMESTRAL') return `${TRIMESTRES[seq - 1] ?? seq}/${ano}`
   if (tipo === 'SEMESTRAL')  return `${SEMESTRES[seq - 1] ?? seq}/${ano}`
@@ -74,12 +78,11 @@ function medItens(ttal: number, posit: number): string {
 
 // ─── Componentes visuais ──────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KpiCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 min-w-0">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
       <p className="text-xl font-bold text-slate-800 mt-1 truncate">{value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
     </div>
   )
 }
@@ -124,41 +127,24 @@ export default function ObjetivosRCA() {
   const [rcaFilter,    setRcaFilter]    = useState('_all')
   const [fornecFilter, setFornecFilter] = useState('')
 
-  const { data: periodos = [] } = useQuery<Periodo[]>({
-    queryKey: ['objetivos-periodos'],
-    queryFn:  () => fetch('/api/objetivos/periodos').then(r => r.json()),
-    staleTime: 5 * 60_000,
-    gcTime:    10 * 60_000,
-  })
+  // Endpoint combinado: retorna períodos + dados numa única requisição
+  const qs = periodoKey ? (() => {
+    const [tipo, ano, seq] = periodoKey.split('|')
+    return `?tipo_periodo=${tipo}&ano=${ano}&periodo_seq=${seq}`
+  })() : ''
 
-  useEffect(() => {
-    if (periodos.length > 0 && !periodoKey) {
-      const p = periodos[0]
-      setPeriodoKey(`${p.tipo_periodo}|${p.ano}|${p.periodo_seq}`)
-    }
-  }, [periodos, periodoKey])
-
-  const periodoSel = periodos.find(p =>
-    `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
-  )
-
-  const { data: rawRows, isFetching } = useQuery<RCARow[]>({
-    queryKey: ['objetivos-rca-all', periodoKey],
-    queryFn: () => {
-      if (!periodoSel) return []
-      const p = new URLSearchParams({
-        tipo_periodo: periodoSel.tipo_periodo,
-        ano:          String(periodoSel.ano),
-        periodo_seq:  String(periodoSel.periodo_seq),
-      })
-      return fetch(`/api/objetivos/rca-fornecedor?${p}`).then(r => r.json())
-    },
-    enabled: !!periodoSel,
+  const { data: painel, isFetching } = useQuery<PainelResp>({
+    queryKey: ['objetivos-painel-rca', periodoKey],
+    queryFn:  () => fetch(`/api/objetivos/painel-rca${qs}`).then(r => r.json()),
     staleTime: 2 * 60_000,
     gcTime:    10 * 60_000,
     refetchOnWindowFocus: false,
+    placeholderData: prev => prev,
   })
-  const allRows: RCARow[] = Array.isArray(rawRows) ? rawRows : []
+
+  const periodos   = painel?.periodos   ?? []
+  const periodoSel = painel?.periodo_sel ?? null
+  const allRows: RCARow[] = Array.isArray(painel?.rows) ? painel!.rows : []
 
   const supOptions = useMemo(() => {
     const seen = new Map<string, { nome: string; cod: number | null }>()
@@ -195,7 +181,7 @@ export default function ObjetivosRCA() {
   const sumAtivos = rows.reduce((s, r) => s + r.cl_ativos, 0)
   const sumPosit  = rows.reduce((s, r) => s + r.posit_med, 0)
 
-  if (!periodoSel && periodos.length === 0 && !isFetching) {
+  if (!painel && !isFetching) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <p className="text-slate-500 text-sm">Nenhum objetivo importado.</p>
@@ -204,6 +190,11 @@ export default function ObjetivosRCA() {
     )
   }
 
+  const periodoSelKey = periodoSel
+    ? `${periodoSel.tipo_periodo}|${periodoSel.ano}|${periodoSel.periodo_seq}`
+    : ''
+  const activePeriodoKey = periodoKey || periodoSelKey
+
   return (
     <div className="space-y-5">
 
@@ -211,7 +202,10 @@ export default function ObjetivosRCA() {
       <div className="flex flex-wrap gap-3 items-end">
         <div className="space-y-1.5">
           <Label className="text-xs font-medium text-slate-500 uppercase tracking-wider">Período</Label>
-          <Select value={periodoKey} onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setRcaFilter('_all'); setFornecFilter('') }}>
+          <Select
+            value={activePeriodoKey}
+            onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setRcaFilter('_all'); setFornecFilter('') }}
+          >
             <SelectTrigger className="w-40 h-9 text-sm">
               <SelectValue placeholder="Selecione..." />
             </SelectTrigger>
@@ -267,9 +261,7 @@ export default function ObjetivosRCA() {
           </div>
         </div>
 
-        {isFetching && (
-          <span className="text-xs text-slate-400 pb-2 animate-pulse">Carregando...</span>
-        )}
+        {isFetching && <span className="text-xs text-slate-400 pb-2 animate-pulse">Carregando...</span>}
       </div>
 
       {/* ── KPIs ── */}
@@ -322,9 +314,7 @@ export default function ObjetivosRCA() {
               {rows.map((row, i) => (
                 <TableRow key={i} className="hover:bg-slate-50/70 transition-colors border-b border-slate-50">
                   <TableCell className="py-2.5">
-                    {row.cod_supervisor != null && (
-                      <span className="text-slate-400 text-[10px] mr-1">{row.cod_supervisor}</span>
-                    )}
+                    {row.cod_supervisor != null && <span className="text-slate-400 text-[10px] mr-1">{row.cod_supervisor}</span>}
                     <span className="font-medium text-slate-700">{row.nome_supervisor}</span>
                   </TableCell>
                   <TableCell className="py-2.5">
@@ -334,18 +324,12 @@ export default function ObjetivosRCA() {
                   <TableCell className="text-slate-700 py-2.5">{row.fornecedor}</TableCell>
                   <TableCell className="text-right text-slate-400 tabular-nums py-2.5">{fmtBRL(row.vl_anterior)}</TableCell>
                   <TableCell className="text-right font-semibold text-slate-800 tabular-nums py-2.5">{fmtBRL(row.vl_corrente)}</TableCell>
-                  <TableCell className="text-right py-2.5">
-                    <GrowthChip ant={row.vl_anterior} cor={row.vl_corrente} />
-                  </TableCell>
+                  <TableCell className="text-right py-2.5"><GrowthChip ant={row.vl_anterior} cor={row.vl_corrente} /></TableCell>
                   <TableCell className="text-center text-slate-600 tabular-nums py-2.5">{row.cl_ativos.toLocaleString('pt-BR')}</TableCell>
                   <TableCell className="text-center text-slate-600 tabular-nums py-2.5">{row.posit_med.toLocaleString('pt-BR')}</TableCell>
                   <TableCell className="text-center text-slate-600 py-2.5">{pctPosit(row.posit_med, row.cl_ativos)}</TableCell>
-                  <TableCell className="text-center font-semibold text-orange-600 tabular-nums py-2.5">
-                    {medItens(row.ttal_itens, row.posit_med)}
-                  </TableCell>
-                  <TableCell className="text-center font-semibold text-orange-600 tabular-nums py-2.5">
-                    {row.ttal_itens.toLocaleString('pt-BR')}
-                  </TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600 tabular-nums py-2.5">{medItens(row.ttal_itens, row.posit_med)}</TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600 tabular-nums py-2.5">{row.ttal_itens.toLocaleString('pt-BR')}</TableCell>
                 </TableRow>
               ))}
               {rows.length > 0 && (
@@ -355,9 +339,7 @@ export default function ObjetivosRCA() {
                   </TableCell>
                   <TableCell className="text-right text-slate-400 tabular-nums py-2.5">{fmtBRL(totalAnt)}</TableCell>
                   <TableCell className="text-right text-slate-800 tabular-nums py-2.5">{fmtBRL(totalCor)}</TableCell>
-                  <TableCell className="text-right py-2.5">
-                    <GrowthChip ant={totalAnt} cor={totalCor} />
-                  </TableCell>
+                  <TableCell className="text-right py-2.5"><GrowthChip ant={totalAnt} cor={totalCor} /></TableCell>
                   <TableCell className="text-center tabular-nums py-2.5">{sumAtivos.toLocaleString('pt-BR')}</TableCell>
                   <TableCell className="text-center tabular-nums py-2.5">{sumPosit.toLocaleString('pt-BR')}</TableCell>
                   <TableCell className="text-center py-2.5">{pctPosit(sumPosit, sumAtivos)}</TableCell>

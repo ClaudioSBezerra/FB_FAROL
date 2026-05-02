@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -13,12 +13,16 @@ import { Search } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type TipoPeriodo = 'MENSAL' | 'TRIMESTRAL' | 'SEMESTRAL' | 'ANUAL'
-
 interface Periodo {
-  tipo_periodo: TipoPeriodo
+  tipo_periodo: string
   ano: number
   periodo_seq: number
+}
+
+interface PainelResp {
+  periodos:    Periodo[]
+  periodo_sel: Periodo | null
+  rows:        SupRow[]
 }
 
 interface SupRow {
@@ -121,41 +125,23 @@ export default function ObjetivosSupervisor() {
   const [supFilter,    setSupFilter]    = useState('_all')
   const [fornecFilter, setFornecFilter] = useState('')
 
-  const { data: periodos = [] } = useQuery<Periodo[]>({
-    queryKey: ['objetivos-periodos'],
-    queryFn:  () => fetch('/api/objetivos/periodos').then(r => r.json()),
-    staleTime: 5 * 60_000,
-    gcTime:    10 * 60_000,
-  })
+  const qs = periodoKey ? (() => {
+    const [tipo, ano, seq] = periodoKey.split('|')
+    return `?tipo_periodo=${tipo}&ano=${ano}&periodo_seq=${seq}`
+  })() : ''
 
-  useEffect(() => {
-    if (periodos.length > 0 && !periodoKey) {
-      const p = periodos[0]
-      setPeriodoKey(`${p.tipo_periodo}|${p.ano}|${p.periodo_seq}`)
-    }
-  }, [periodos, periodoKey])
-
-  const periodoSel = periodos.find(p =>
-    `${p.tipo_periodo}|${p.ano}|${p.periodo_seq}` === periodoKey
-  )
-
-  const { data: rawRows, isFetching } = useQuery<SupRow[]>({
-    queryKey: ['objetivos-supervisor-all', periodoKey],
-    queryFn: () => {
-      if (!periodoSel) return []
-      const p = new URLSearchParams({
-        tipo_periodo: periodoSel.tipo_periodo,
-        ano:          String(periodoSel.ano),
-        periodo_seq:  String(periodoSel.periodo_seq),
-      })
-      return fetch(`/api/objetivos/supervisor?${p}`).then(r => r.json())
-    },
-    enabled: !!periodoSel,
+  const { data: painel, isFetching } = useQuery<PainelResp>({
+    queryKey: ['objetivos-painel-supervisor', periodoKey],
+    queryFn:  () => fetch(`/api/objetivos/painel-supervisor${qs}`).then(r => r.json()),
     staleTime: 2 * 60_000,
     gcTime:    10 * 60_000,
     refetchOnWindowFocus: false,
+    placeholderData: prev => prev,
   })
-  const allRows: SupRow[] = Array.isArray(rawRows) ? rawRows : []
+
+  const periodos   = painel?.periodos   ?? []
+  const periodoSel = painel?.periodo_sel ?? null
+  const allRows: SupRow[] = Array.isArray(painel?.rows) ? painel!.rows : []
 
   const supOptions = useMemo(() => {
     const seen = new Map<string, { nome: string; cod: number | null }>()
@@ -183,7 +169,12 @@ export default function ObjetivosSupervisor() {
   const sumPosit  = rows.reduce((s, r) => s + r.posit_med, 0)
   const n         = varNum(totalAnt, totalCor)
 
-  if (!periodoSel && periodos.length === 0 && !isFetching) {
+  const periodoSelKey = periodoSel
+    ? `${periodoSel.tipo_periodo}|${periodoSel.ano}|${periodoSel.periodo_seq}`
+    : ''
+  const activePeriodoKey = periodoKey || periodoSelKey
+
+  if (!painel && !isFetching) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
         Nenhum objetivo importado. Use a aba <strong>Importar</strong> para carregar dados.
@@ -198,7 +189,7 @@ export default function ObjetivosSupervisor() {
       <div className="flex flex-wrap gap-3 items-end">
         <div className="space-y-1.5">
           <Label>Período</Label>
-          <Select value={periodoKey} onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setFornecFilter('') }}>
+          <Select value={activePeriodoKey} onValueChange={v => { setPeriodoKey(v); setSupFilter('_all'); setFornecFilter('') }}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Selecione..." />
             </SelectTrigger>

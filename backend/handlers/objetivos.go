@@ -817,6 +817,225 @@ func ObjetivosPeriosHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ─── Helpers compartilhados ────────────────────────────────────────────────────
+
+// listPeriodos retorna os períodos disponíveis para a empresa, do mais recente ao mais antigo.
+func listPeriodos(db *sql.DB, empresaID string) []map[string]any {
+	rows, err := db.Query(`
+		SELECT DISTINCT tipo_periodo, ano, periodo_seq
+		FROM objetivos_importados
+		WHERE empresa_id = $1
+		ORDER BY ano DESC, periodo_seq DESC`, empresaID)
+	result := make([]map[string]any, 0)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tipo string
+		var ano, seq int
+		if rows.Scan(&tipo, &ano, &seq) == nil {
+			result = append(result, map[string]any{"tipo_periodo": tipo, "ano": ano, "periodo_seq": seq})
+		}
+	}
+	return result
+}
+
+// resolvePeriodoFromQuery lê tipo_periodo/ano/periodo_seq da query string.
+// Se ausentes, usa o período mais recente da empresa.
+func resolvePeriodoFromQuery(db *sql.DB, empresaID string, q string, anoStr, seqStr string) (tipo string, ano, seq int, ok bool) {
+	tipo = strings.ToUpper(strings.TrimSpace(q))
+	if _, valid := periodoSeqMax[tipo]; valid && anoStr != "" && seqStr != "" {
+		if a, ea := strconv.Atoi(anoStr); ea == nil {
+			if s, es := strconv.Atoi(seqStr); es == nil {
+				return tipo, a, s, true
+			}
+		}
+	}
+	// fallback: mais recente
+	err := db.QueryRow(`
+		SELECT tipo_periodo, ano, periodo_seq
+		FROM objetivos_importados
+		WHERE empresa_id = $1
+		GROUP BY tipo_periodo, ano, periodo_seq
+		ORDER BY ano DESC, periodo_seq DESC
+		LIMIT 1`, empresaID).Scan(&tipo, &ano, &seq)
+	return tipo, ano, seq, err == nil
+}
+
+// ObjetivosPainelRCAHandler retorna períodos + dados do painel RCA em uma única chamada.
+// GET /api/objetivos/painel-rca?[tipo_periodo=X&ano=Y&periodo_seq=Z]
+func ObjetivosPainelRCAHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, max-age=60")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		tipo, ano, seq, hasPeriodo := resolvePeriodoFromQuery(db, spCtx.EmpresaID,
+			r.URL.Query().Get("tipo_periodo"),
+			r.URL.Query().Get("ano"),
+			r.URL.Query().Get("periodo_seq"))
+		periodos := listPeriodos(db, spCtx.EmpresaID)
+
+		type periodoOut struct {
+			TipoPeriodo string `json:"tipo_periodo"`
+			Ano         int    `json:"ano"`
+			PeriodoSeq  int    `json:"periodo_seq"`
+		}
+		type rowOut struct {
+			CodSupervisor  *int    `json:"cod_supervisor"`
+			NomeSupervisor string  `json:"nome_supervisor"`
+			CodRCA         int     `json:"cod_rca"`
+			NomeRCA        string  `json:"nome_rca"`
+			CodFornec      string  `json:"cod_fornec"`
+			Fornecedor     string  `json:"fornecedor"`
+			QtdProdutos    int64   `json:"qtd_produtos"`
+			ClAtivos       int64   `json:"cl_ativos"`
+			PositMed       int64   `json:"posit_med"`
+			TtalItens      int64   `json:"ttal_itens"`
+			VlAnterior     float64 `json:"vl_anterior"`
+			VlCorrente     float64 `json:"vl_corrente"`
+		}
+		type resp struct {
+			Periodos    []map[string]any `json:"periodos"`
+			PeriodoSel  *periodoOut      `json:"periodo_sel"`
+			Rows        []rowOut         `json:"rows"`
+		}
+		out := resp{Periodos: periodos, Rows: []rowOut{}}
+		if !hasPeriodo {
+			json.NewEncoder(w).Encode(out)
+			return
+		}
+		out.PeriodoSel = &periodoOut{TipoPeriodo: tipo, Ano: ano, PeriodoSeq: seq}
+
+		rows, err := db.Query(`
+			SELECT cod_supervisor, nome_supervisor, cod_rca, nome_rca,
+			       cod_fornec, fornecedor, qtd_produtos,
+			       cl_ativos, posit_med, ttal_itens,
+			       vl_anterior, vl_corrente
+			FROM vw_obj_rca_fornecedor
+			WHERE empresa_id = $1 AND tipo_periodo = $2 AND ano = $3 AND periodo_seq = $4
+			ORDER BY nome_supervisor, nome_rca, fornecedor`,
+			spCtx.EmpresaID, tipo, ano, seq)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rw rowOut
+			var supNull sql.NullInt64
+			var nomeSup, nomeRCA, fornec sql.NullString
+			if err := rows.Scan(&supNull, &nomeSup, &rw.CodRCA, &nomeRCA,
+				&rw.CodFornec, &fornec, &rw.QtdProdutos,
+				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
+				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				if supNull.Valid { v := int(supNull.Int64); rw.CodSupervisor = &v }
+				rw.NomeSupervisor = nomeSup.String
+				rw.NomeRCA = nomeRCA.String
+				rw.Fornecedor = fornec.String
+				out.Rows = append(out.Rows, rw)
+			}
+		}
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// ObjetivosPainelSupervisorHandler retorna períodos + dados do painel Supervisor em uma chamada.
+// GET /api/objetivos/painel-supervisor?[tipo_periodo=X&ano=Y&periodo_seq=Z]
+func ObjetivosPainelSupervisorHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, max-age=60")
+
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		tipo, ano, seq, hasPeriodo := resolvePeriodoFromQuery(db, spCtx.EmpresaID,
+			r.URL.Query().Get("tipo_periodo"),
+			r.URL.Query().Get("ano"),
+			r.URL.Query().Get("periodo_seq"))
+		periodos := listPeriodos(db, spCtx.EmpresaID)
+
+		type periodoOut struct {
+			TipoPeriodo string `json:"tipo_periodo"`
+			Ano         int    `json:"ano"`
+			PeriodoSeq  int    `json:"periodo_seq"`
+		}
+		type rowOut struct {
+			CodSupervisor  *int    `json:"cod_supervisor"`
+			NomeSupervisor string  `json:"nome_supervisor"`
+			CodFornec      string  `json:"cod_fornec"`
+			Fornecedor     string  `json:"fornecedor"`
+			QtdRCAs        int64   `json:"qtd_rcas"`
+			QtdProdutos    int64   `json:"qtd_produtos"`
+			ClAtivos       int64   `json:"cl_ativos"`
+			PositMed       int64   `json:"posit_med"`
+			TtalItens      int64   `json:"ttal_itens"`
+			VlAnterior     float64 `json:"vl_anterior"`
+			VlCorrente     float64 `json:"vl_corrente"`
+		}
+		type resp struct {
+			Periodos   []map[string]any `json:"periodos"`
+			PeriodoSel *periodoOut      `json:"periodo_sel"`
+			Rows       []rowOut         `json:"rows"`
+		}
+		out := resp{Periodos: periodos, Rows: []rowOut{}}
+		if !hasPeriodo {
+			json.NewEncoder(w).Encode(out)
+			return
+		}
+		out.PeriodoSel = &periodoOut{TipoPeriodo: tipo, Ano: ano, PeriodoSeq: seq}
+
+		rows, err := db.Query(`
+			SELECT cod_supervisor, nome_supervisor,
+			       cod_fornec, fornecedor,
+			       qtd_rcas, qtd_produtos,
+			       cl_ativos, posit_med, ttal_itens,
+			       vl_anterior, vl_corrente
+			FROM vw_obj_supervisor
+			WHERE empresa_id = $1 AND tipo_periodo = $2 AND ano = $3 AND periodo_seq = $4
+			ORDER BY nome_supervisor, fornecedor`,
+			spCtx.EmpresaID, tipo, ano, seq)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rw rowOut
+			var supNull sql.NullInt64
+			var nomeSup, fornec sql.NullString
+			if err := rows.Scan(&supNull, &nomeSup, &rw.CodFornec, &fornec,
+				&rw.QtdRCAs, &rw.QtdProdutos,
+				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
+				&rw.VlAnterior, &rw.VlCorrente); err == nil {
+				if supNull.Valid { v := int(supNull.Int64); rw.CodSupervisor = &v }
+				rw.NomeSupervisor = nomeSup.String
+				rw.Fornecedor = fornec.String
+				out.Rows = append(out.Rows, rw)
+			}
+		}
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
 // ObjetivosLimparHandler apaga todos os objetivos importados da empresa e
 // atualiza as materialized views.
 // POST /api/objetivos/limpar

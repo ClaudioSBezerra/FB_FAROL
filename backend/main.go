@@ -356,8 +356,10 @@ func main() {
 	// ── Objetivos — Import CSV de objetivos de vendas ────────────────────────
 	http.HandleFunc("/api/objetivos/upload-csv",         withSP(handlers.ObjetivosImportHandler,     "gestor_filial"))
 	http.HandleFunc("/api/objetivos/periodos",           withSP(handlers.ObjetivosPeriosHandler,     "gestor_filial"))
-	http.HandleFunc("/api/objetivos/rca-fornecedor",     handlers.GzipMiddleware(withSP(handlers.ObjetivosRCAHandler,        "gestor_filial")))
-	http.HandleFunc("/api/objetivos/supervisor",         handlers.GzipMiddleware(withSP(handlers.ObjetivosSupervisorHandler, "gestor_filial")))
+	http.HandleFunc("/api/objetivos/rca-fornecedor",     handlers.GzipMiddleware(withSP(handlers.ObjetivosRCAHandler,              "gestor_filial")))
+	http.HandleFunc("/api/objetivos/supervisor",         handlers.GzipMiddleware(withSP(handlers.ObjetivosSupervisorHandler,        "gestor_filial")))
+	http.HandleFunc("/api/objetivos/painel-rca",         handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelRCAHandler,        "gestor_filial")))
+	http.HandleFunc("/api/objetivos/painel-supervisor",  handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelSupervisorHandler, "gestor_filial")))
 	http.HandleFunc("/api/objetivos/clientes-distintos", withSP(handlers.ObjetivosClientesHandler,  "gestor_filial"))
 	http.HandleFunc("/api/objetivos/limpar",             withSP(handlers.ObjetivosLimparHandler,    "gestor_filial"))
 
@@ -373,15 +375,16 @@ func main() {
 		}
 	}
 	// ── Farol Web (autenticado — usa empresa_id do JWT) ─────────────────────
-	http.HandleFunc("/api/farol/web/supervisores", withSP(handlers.FarolWebSupervisoresHandler, "gestor_filial"))
-	http.HandleFunc("/api/farol/web/sup/",         withSP(handlers.FarolWebSupHandler,          "gestor_filial"))
-	http.HandleFunc("/api/farol/web/rca/",         withSP(handlers.FarolWebRcaHandler,          "gestor_filial"))
-	http.HandleFunc("/api/farol/web/periodos",     withSP(handlers.FarolWebPeriodosHandler,     "gestor_filial"))
+	gz := handlers.GzipMiddleware
+	http.HandleFunc("/api/farol/web/supervisores", gz(withSP(handlers.FarolWebSupervisoresHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/sup/",         gz(withSP(handlers.FarolWebSupHandler,          "gestor_filial")))
+	http.HandleFunc("/api/farol/web/rca/",         gz(withSP(handlers.FarolWebRcaHandler,          "gestor_filial")))
+	http.HandleFunc("/api/farol/web/periodos",     gz(withSP(handlers.FarolWebPeriodosHandler,     "gestor_filial")))
 
-	http.HandleFunc("/api/farol/sup/",          publicHandler(handlers.FarolSupervisorHandler))
-	http.HandleFunc("/api/farol/rca/",          publicHandler(handlers.FarolRcaDetailHandler))
-	http.HandleFunc("/api/farol/periodos/",     publicHandler(handlers.FarolPeriodosHandler))
-	http.HandleFunc("/api/farol/supervisores",  publicHandler(handlers.FarolSupervisoresListHandler))
+	http.HandleFunc("/api/farol/sup/",          gz(publicHandler(handlers.FarolSupervisorHandler)))
+	http.HandleFunc("/api/farol/rca/",          gz(publicHandler(handlers.FarolRcaDetailHandler)))
+	http.HandleFunc("/api/farol/periodos/",     gz(publicHandler(handlers.FarolPeriodosHandler)))
+	http.HandleFunc("/api/farol/supervisores",  gz(publicHandler(handlers.FarolSupervisoresListHandler)))
 
 	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
 	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
