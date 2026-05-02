@@ -27,9 +27,53 @@ func calcPct(ant, cor float64) float64 {
 	return (cor / ant) * 100
 }
 
+// normalizeCnpjQuery extrai apenas dígitos do CNPJ informado por query string.
+func normalizeCnpjQuery(raw string) string {
+	out := make([]byte, 0, 14)
+	for i := 0; i < len(raw); i++ {
+		if raw[i] >= '0' && raw[i] <= '9' {
+			out = append(out, raw[i])
+		}
+	}
+	return string(out)
+}
+
+// resolveEmpresaByCnpj busca o empresa_id pelo CNPJ (string com 14 dígitos).
+func resolveEmpresaByCnpj(db *sql.DB, cnpj string) (empresaID string, ok bool) {
+	if cnpj == "" {
+		return "", false
+	}
+	err := db.QueryRow(`SELECT id FROM companies WHERE cnpj = $1 LIMIT 1`, cnpj).Scan(&empresaID)
+	if err != nil {
+		return "", false
+	}
+	return empresaID, true
+}
+
+// nomeSupervisorPorEmpresa busca o nome do supervisor restrito a uma empresa.
+func nomeSupervisorPorEmpresa(db *sql.DB, empresaID string, codSup int) string {
+	var nome sql.NullString
+	_ = db.QueryRow(`
+		SELECT nome FROM gestores
+		WHERE empresa_id = $1 AND cod_supervisor = $2
+		LIMIT 1`, empresaID, codSup).Scan(&nome)
+	if nome.Valid && nome.String != "" {
+		return nome.String
+	}
+	return "Supervisor " + strconv.Itoa(codSup)
+}
+
 // resolveSupervisor busca empresa_id e nome para o cod_supervisor.
-// Como cod_supervisor pode existir em várias empresas, retorna a primeira encontrada.
-func resolveSupervisor(db *sql.DB, codSup int) (empresaID, nome string, ok bool) {
+// Se cnpj for informado, usa-o como chave determinística (multi-empresa).
+// Caso contrário, faz fallback pela tabela de gestores (legado).
+func resolveSupervisor(db *sql.DB, codSup int, cnpj string) (empresaID, nome string, ok bool) {
+	if cnpj != "" {
+		empresaID, ok = resolveEmpresaByCnpj(db, cnpj)
+		if !ok {
+			return "", "", false
+		}
+		return empresaID, nomeSupervisorPorEmpresa(db, empresaID, codSup), true
+	}
 	err := db.QueryRow(`
 		SELECT empresa_id, COALESCE(nome, 'Supervisor ' || cod_supervisor::text)
 		FROM gestores
@@ -87,7 +131,8 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		empresaID, nomeSup, ok := resolveSupervisor(db, codSup)
+		cnpj := normalizeCnpjQuery(r.URL.Query().Get("cnpj"))
+		empresaID, nomeSup, ok := resolveSupervisor(db, codSup, cnpj)
 		if !ok {
 			http.Error(w, `{"error":"supervisor não encontrado"}`, http.StatusNotFound)
 			return
@@ -216,15 +261,43 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		codSup, err := strconv.Atoi(r.URL.Query().Get("cod_supervisor"))
-		if err != nil || codSup <= 0 {
-			http.Error(w, `{"error":"cod_supervisor inválido"}`, http.StatusBadRequest)
-			return
-		}
+		// cod_supervisor é opcional quando o cliente vem via CNPJ (chamada direta /CNPJ/RCA/cod):
+		// nesse caso descobrimos o supervisor principal do RCA dentro da empresa.
+		codSup, _ := strconv.Atoi(r.URL.Query().Get("cod_supervisor"))
+		cnpj := normalizeCnpjQuery(r.URL.Query().Get("cnpj"))
 
-		empresaID, nomeSup, ok := resolveSupervisor(db, codSup)
-		if !ok {
-			http.Error(w, `{"error":"supervisor não encontrado"}`, http.StatusNotFound)
+		var empresaID, nomeSup string
+		if codSup > 0 {
+			var ok bool
+			empresaID, nomeSup, ok = resolveSupervisor(db, codSup, cnpj)
+			if !ok {
+				http.Error(w, `{"error":"supervisor não encontrado"}`, http.StatusNotFound)
+				return
+			}
+		} else if cnpj != "" {
+			var ok bool
+			empresaID, ok = resolveEmpresaByCnpj(db, cnpj)
+			if !ok {
+				http.Error(w, `{"error":"empresa não encontrada"}`, http.StatusNotFound)
+				return
+			}
+			// supervisor principal do RCA (maior volume corrente)
+			var nomeNull sql.NullString
+			err := db.QueryRow(`
+				SELECT cod_supervisor, MAX(nome_supervisor)
+				FROM vw_obj_rca_fornecedor
+				WHERE empresa_id = $1 AND cod_rca = $2
+				GROUP BY cod_supervisor
+				ORDER BY SUM(vl_corrente) DESC NULLS LAST
+				LIMIT 1`, empresaID, codRCA).Scan(&codSup, &nomeNull)
+			if err != nil {
+				// RCA sem dados ainda — segue com codSup=0 e nome vazio
+				nomeSup = ""
+			} else {
+				nomeSup = nomeNull.String
+			}
+		} else {
+			http.Error(w, `{"error":"cod_supervisor ou cnpj obrigatório"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -292,20 +365,42 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 
 		// Ordena pelos piores primeiro (% realização ASC). Fornecedor sem base
 		// anterior (vl_anterior=0) vai pro fim para não poluir o topo.
-		rows, err := db.Query(`
-			SELECT cod_fornec, fornecedor, vl_anterior, vl_corrente
-			FROM vw_obj_rca_fornecedor
-			WHERE empresa_id = $1
-			  AND tipo_periodo = $2
-			  AND ano = $3
-			  AND periodo_seq = $4
-			  AND cod_supervisor = $5
-			  AND cod_rca = $6
-			ORDER BY
-			    CASE WHEN vl_anterior > 0 THEN 0 ELSE 1 END,
-			    CASE WHEN vl_anterior > 0 THEN (vl_corrente / vl_anterior) ELSE NULL END ASC,
-			    fornecedor`,
-			empresaID, tipo, ano, seq, codSup, codRCA)
+		// codSup=0 (fluxo CNPJ+RCA direto) → soma fornecedores entre supervisores.
+		var rows *sql.Rows
+		if codSup > 0 {
+			rows, err = db.Query(`
+				SELECT cod_fornec, MAX(fornecedor),
+				       SUM(vl_anterior), SUM(vl_corrente)
+				FROM vw_obj_rca_fornecedor
+				WHERE empresa_id = $1
+				  AND tipo_periodo = $2
+				  AND ano = $3
+				  AND periodo_seq = $4
+				  AND cod_supervisor = $5
+				  AND cod_rca = $6
+				GROUP BY cod_fornec
+				ORDER BY
+				    CASE WHEN SUM(vl_anterior) > 0 THEN 0 ELSE 1 END,
+				    CASE WHEN SUM(vl_anterior) > 0 THEN (SUM(vl_corrente) / SUM(vl_anterior)) ELSE NULL END ASC,
+				    MAX(fornecedor)`,
+				empresaID, tipo, ano, seq, codSup, codRCA)
+		} else {
+			rows, err = db.Query(`
+				SELECT cod_fornec, MAX(fornecedor),
+				       SUM(vl_anterior), SUM(vl_corrente)
+				FROM vw_obj_rca_fornecedor
+				WHERE empresa_id = $1
+				  AND tipo_periodo = $2
+				  AND ano = $3
+				  AND periodo_seq = $4
+				  AND cod_rca = $5
+				GROUP BY cod_fornec
+				ORDER BY
+				    CASE WHEN SUM(vl_anterior) > 0 THEN 0 ELSE 1 END,
+				    CASE WHEN SUM(vl_anterior) > 0 THEN (SUM(vl_corrente) / SUM(vl_anterior)) ELSE NULL END ASC,
+				    MAX(fornecedor)`,
+				empresaID, tipo, ano, seq, codRCA)
+		}
 		if err != nil {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -356,7 +451,8 @@ func FarolPeriodosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		empresaID, _, ok := resolveSupervisor(db, codSup)
+		cnpj := normalizeCnpjQuery(r.URL.Query().Get("cnpj"))
+		empresaID, _, ok := resolveSupervisor(db, codSup, cnpj)
 		if !ok {
 			http.Error(w, `{"error":"supervisor não encontrado"}`, http.StatusNotFound)
 			return

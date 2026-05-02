@@ -53,14 +53,18 @@ function saudacao(): string {
 }
 
 export default function FarolDashboard() {
-  const { cod } = useParams<{ cod: string }>()
+  const { cod, cnpj } = useParams<{ cod: string; cnpj?: string }>()
   const navigate = useNavigate()
   const [periodoKey, setPeriodoKey] = useState<string>('')
   const [showPeriodos, setShowPeriodos] = useState(false)
 
   const { data: periodos = [] } = useQuery<PeriodoItem[]>({
-    queryKey: ['farol-periodos', cod],
-    queryFn: () => fetch(`/api/farol/periodos/${cod}`).then(r => r.json()),
+    queryKey: ['farol-periodos', cnpj, cod],
+    queryFn: () => {
+      const url = new URL(`/api/farol/periodos/${cod}`, window.location.origin)
+      if (cnpj) url.searchParams.set('cnpj', cnpj)
+      return fetch(url.toString()).then(r => r.json())
+    },
     enabled: !!cod,
   })
 
@@ -69,9 +73,10 @@ export default function FarolDashboard() {
     : undefined
 
   const { data, isFetching, isError } = useQuery<SupResp>({
-    queryKey: ['farol-sup', cod, periodoKey],
+    queryKey: ['farol-sup', cnpj, cod, periodoKey],
     queryFn: () => {
       const url = new URL(`/api/farol/sup/${cod}`, window.location.origin)
+      if (cnpj) url.searchParams.set('cnpj', cnpj)
       if (periodoSel) {
         url.searchParams.set('tipo_periodo', periodoSel.tipo)
         url.searchParams.set('ano',          String(periodoSel.ano))
@@ -206,7 +211,9 @@ export default function FarolDashboard() {
                       params.set('ano',          String(periodoSel.ano))
                       params.set('periodo_seq',  String(periodoSel.seq))
                     }
-                    navigate(`/m/${cod}/rca/${rca.cod_rca}?${params}`)
+                    if (cnpj) params.set('cod_supervisor', cod ?? '')
+                    const base = cnpj ? `/m/${cnpj}/rca/${rca.cod_rca}` : `/m/${cod}/rca/${rca.cod_rca}`
+                    navigate(`${base}?${params}`)
                   }}
                   className="w-full bg-white border-2 border-slate-200 rounded-xl p-4 flex items-center gap-4 active:bg-slate-50 active:border-slate-300 text-left"
                   style={{ minHeight: 80 }}

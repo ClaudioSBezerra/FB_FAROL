@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Building, Layers, Factory } from "lucide-react";
+import { Plus, Trash2, Building, Layers, Factory, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -86,6 +86,12 @@ export default function GestaoAmbiente() {
   const [newCompanyCNPJ, setNewCompanyCNPJ] = useState("");
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyTradeName, setNewCompanyTradeName] = useState("");
+
+  // Edit company state
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editCompanyCNPJ, setEditCompanyCNPJ] = useState("");
+  const [editCompanyName, setEditCompanyName] = useState("");
+  const [editCompanyTradeName, setEditCompanyTradeName] = useState("");
 
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
@@ -282,7 +288,7 @@ export default function GestaoAmbiente() {
       });
 
       if (!res.ok) throw new Error("Failed to create");
-      
+
       toast.success("Empresa cadastrada com sucesso!");
       setIsCompanyModalOpen(false);
       setNewCompanyCNPJ("");
@@ -291,6 +297,43 @@ export default function GestaoAmbiente() {
       fetchCompanies(selectedGroup.id);
     } catch (error) {
       toast.error("Erro ao criar empresa");
+    }
+  };
+
+  const openEditCompany = (c: Company) => {
+    setEditingCompany(c);
+    setEditCompanyCNPJ(c.cnpj || "");
+    setEditCompanyName(c.name || "");
+    setEditCompanyTradeName(c.trade_name || "");
+  };
+
+  const handleUpdateCompany = async () => {
+    if (!editingCompany) return;
+    const cnpjDigits = editCompanyCNPJ.replace(/\D/g, "");
+    if (cnpjDigits !== "" && cnpjDigits.length !== 14) {
+      toast.error("CNPJ deve ter 14 dígitos");
+      return;
+    }
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/config/companies?id=${encodeURIComponent(editingCompany.id)}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          cnpj: cnpjDigits,
+          name: editCompanyName,
+          trade_name: editCompanyTradeName,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      toast.success("Empresa atualizada");
+      setEditingCompany(null);
+      if (selectedGroup) fetchCompanies(selectedGroup.id);
+    } catch {
+      toast.error("Erro ao atualizar empresa");
     }
   };
 
@@ -647,20 +690,67 @@ export default function GestaoAmbiente() {
                     {company.cnpj && <p className="text-xs text-gray-500 font-mono">{company.cnpj}</p>}
                     {company.trade_name && <p className="text-xs text-gray-400 truncate">{company.trade_name}</p>}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-gray-400 hover:text-red-500"
-                    onClick={() => handleDeleteCompany(company.id)}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-gray-400 hover:text-blue-500"
+                      onClick={() => openEditCompany(company)}
+                      title="Editar empresa"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-gray-400 hover:text-red-500"
+                      onClick={() => handleDeleteCompany(company.id)}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
               ))
             )}
           </div>
         </div>
       </div>
+
+      {/* Dialog de edição de empresa */}
+      <Dialog open={!!editingCompany} onOpenChange={(open) => !open && setEditingCompany(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Empresa</DialogTitle>
+            <DialogDescription>{editingCompany?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>CNPJ (apenas números)</Label>
+              <Input
+                value={editCompanyCNPJ}
+                onChange={(e) => setEditCompanyCNPJ(e.target.value.replace(/\D/g, ""))}
+                placeholder="14 dígitos"
+                maxLength={14}
+              />
+              <p className="text-xs text-muted-foreground">
+                Usado para identificar a empresa nas chamadas do Farol Mobile pelo ION.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Razão Social</Label>
+              <Input value={editCompanyName} onChange={(e) => setEditCompanyName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Nome Fantasia</Label>
+              <Input value={editCompanyTradeName} onChange={(e) => setEditCompanyTradeName(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingCompany(null)}>Cancelar</Button>
+            <Button onClick={handleUpdateCompany}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

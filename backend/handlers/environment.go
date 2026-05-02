@@ -26,9 +26,9 @@ type EnterpriseGroup struct {
 }
 
 type Company struct {
-	ID      string `json:"id"`
-	GroupID string `json:"group_id"`
-	// CNPJ      string `json:"cnpj"` // Deprecated
+	ID        string `json:"id"`
+	GroupID   string `json:"group_id"`
+	CNPJ      string `json:"cnpj"`
 	Name      string `json:"name"`
 	TradeName string `json:"trade_name"` // Fantasia
 	CreatedAt string `json:"created_at"`
@@ -233,7 +233,7 @@ func DeleteGroupHandler(db *sql.DB) http.HandlerFunc {
 func GetCompaniesHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := r.URL.Query().Get("group_id")
-		query := "SELECT id, group_id, name, COALESCE(trade_name, ''), created_at FROM companies"
+		query := "SELECT id, group_id, COALESCE(cnpj, ''), name, COALESCE(trade_name, ''), created_at FROM companies"
 		args := []interface{}{}
 
 		if groupID != "" {
@@ -252,7 +252,7 @@ func GetCompaniesHandler(db *sql.DB) http.HandlerFunc {
 		var companies []Company
 		for rows.Next() {
 			var c Company
-			if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.TradeName, &c.CreatedAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.GroupID, &c.CNPJ, &c.Name, &c.TradeName, &c.CreatedAt); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -294,17 +294,91 @@ func CreateCompanyHandler(db *sql.DB) http.HandlerFunc {
 			ownerID = nil // no owner found, leave NULL (still visible via group query)
 		}
 
+		cnpj := normalizeCNPJ(c.CNPJ)
+		var cnpjArg interface{}
+		if cnpj == "" {
+			cnpjArg = nil
+		} else {
+			cnpjArg = cnpj
+		}
+
 		err = db.QueryRow(
-			"INSERT INTO companies (group_id, name, trade_name, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
-			c.GroupID, c.Name, c.TradeName, ownerID,
+			"INSERT INTO companies (group_id, cnpj, name, trade_name, owner_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
+			c.GroupID, cnpjArg, c.Name, c.TradeName, ownerID,
 		).Scan(&c.ID, &c.CreatedAt)
 
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		c.CNPJ = cnpj
 
 		json.NewEncoder(w).Encode(c)
+	}
+}
+
+// normalizeCNPJ remove tudo que não for dígito e valida o tamanho (14 ou vazio).
+func normalizeCNPJ(raw string) string {
+	out := make([]byte, 0, 14)
+	for i := 0; i < len(raw); i++ {
+		if raw[i] >= '0' && raw[i] <= '9' {
+			out = append(out, raw[i])
+		}
+	}
+	return string(out)
+}
+
+// UpdateCompanyHandler — PUT /api/config/companies?id=...
+// Atualiza CNPJ e (opcionalmente) nome/trade_name de uma empresa existente.
+func UpdateCompanyHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "Missing id parameter", http.StatusBadRequest)
+			return
+		}
+		var c Company
+		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cnpj := normalizeCNPJ(c.CNPJ)
+		if cnpj != "" && len(cnpj) != 14 {
+			http.Error(w, `{"error":"CNPJ deve ter 14 dígitos"}`, http.StatusBadRequest)
+			return
+		}
+		var cnpjArg interface{}
+		if cnpj == "" {
+			cnpjArg = nil
+		} else {
+			cnpjArg = cnpj
+		}
+
+		// Atualiza CNPJ sempre; nome/trade_name só se enviados
+		_, err := db.Exec(`
+			UPDATE companies
+			SET cnpj       = $1,
+			    name       = COALESCE(NULLIF($2, ''), name),
+			    trade_name = COALESCE(NULLIF($3, ''), trade_name),
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = $4`,
+			cnpjArg, c.Name, c.TradeName, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Retorna o registro atualizado
+		var out Company
+		err = db.QueryRow(`
+			SELECT id, group_id, COALESCE(cnpj, ''), name, COALESCE(trade_name, ''), created_at
+			FROM companies WHERE id = $1`, id).
+			Scan(&out.ID, &out.GroupID, &out.CNPJ, &out.Name, &out.TradeName, &out.CreatedAt)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(out)
 	}
 }
 

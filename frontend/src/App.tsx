@@ -58,11 +58,21 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// Redireciona /:cod (numérico) → /m/:cod (compatibilidade com chamadas do ION VENDAS)
+// Redireciona /:cod (numérico) → /m/:cod (compatibilidade com chamadas antigas do ION)
 function FarolNumericRedirect() {
   const { cod } = useParams<{ cod: string }>()
   if (!cod || !/^\d+$/.test(cod)) return <Navigate to="/login" replace />
   return <Navigate to={`/m/${cod}`} replace />
+}
+
+// Redireciona /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/:cnpj/:kind/:cod (formato canônico)
+function FarolCnpjRedirect() {
+  const { cnpj, kind, cod } = useParams<{ cnpj: string; kind: string; cod: string }>()
+  const k = (kind || '').toLowerCase()
+  if (!cnpj || !/^\d{14}$/.test(cnpj) || !cod || !/^\d+$/.test(cod) || (k !== 'sup' && k !== 'rca')) {
+    return <Navigate to="/login" replace />
+  }
+  return <Navigate to={`/m/${cnpj}/${k}/${cod}`} replace />
 }
 
 function MasterRoute({ children }: { children: React.ReactNode }) {
@@ -240,9 +250,15 @@ function App() {
             <Route path="/reset-senha"     element={<ResetPassword />} />
 
             {/* Farol Mobile (público — chamado via WebView do ION VENDAS) */}
-            <Route path="/m/:cod"               element={<FarolDashboard />} />
-            <Route path="/m/:cod/rca/:codRca"   element={<FarolRcaDetail />} />
-            <Route path="/:cod"                 element={<FarolNumericRedirect />} />
+            {/* Formato canônico com CNPJ */}
+            <Route path="/m/:cnpj/sup/:cod"       element={<FarolDashboard />} />
+            <Route path="/m/:cnpj/rca/:cod"       element={<FarolRcaDetail />} />
+            {/* Redirect público /CNPJ/SUP/cod e /CNPJ/RCA/cod (formato ION) */}
+            <Route path="/:cnpj/:kind/:cod"       element={<FarolCnpjRedirect />} />
+            {/* Compatibilidade com formato antigo (sem CNPJ) */}
+            <Route path="/m/:cod"                 element={<FarolDashboard />} />
+            <Route path="/m/:cod/rca/:codRca"     element={<FarolRcaDetail />} />
+            <Route path="/:cod"                   element={<FarolNumericRedirect />} />
             <Route path="/*" element={
               <ProtectedRoute>
                 <FilialProvider>

@@ -44,17 +44,25 @@ function fmtPct(pct: number, ant: number): string {
 }
 
 export default function FarolRcaDetail() {
-  const { cod, codRca } = useParams<{ cod: string; codRca: string }>()
+  // Suporta dois formatos:
+  //   - /m/:cod/rca/:codRca         (antigo: cod=supervisor)
+  //   - /m/:cnpj/rca/:cod           (novo: cnpj=empresa, cod=rca)
+  const { cod, codRca, cnpj } = useParams<{ cod: string; codRca?: string; cnpj?: string }>()
   const [search] = useSearchParams()
   const navigate = useNavigate()
 
+  // Quando há cnpj: cod é o RCA. Senão (formato antigo): codRca é o RCA e cod é supervisor.
+  const codRcaFinal = cnpj ? cod : codRca
+  const codSupFromUrl = cnpj ? search.get('cod_supervisor') : cod
+
   const { data, isError } = useQuery<RcaResp>({
-    queryKey: ['farol-rca', cod, codRca, search.toString()],
+    queryKey: ['farol-rca', cnpj, codRcaFinal, codSupFromUrl, search.toString()],
     queryFn: () => {
-      const url = new URL(`/api/farol/rca/${codRca}`, window.location.origin)
-      url.searchParams.set('cod_supervisor', cod ?? '')
+      const url = new URL(`/api/farol/rca/${codRcaFinal}`, window.location.origin)
+      if (cnpj) url.searchParams.set('cnpj', cnpj)
+      if (codSupFromUrl) url.searchParams.set('cod_supervisor', codSupFromUrl)
       const tp = search.get('tipo_periodo')
-      if (tp)                     url.searchParams.set('tipo_periodo', tp)
+      if (tp)                        url.searchParams.set('tipo_periodo', tp)
       if (search.get('ano'))         url.searchParams.set('ano',         search.get('ano')!)
       if (search.get('periodo_seq')) url.searchParams.set('periodo_seq', search.get('periodo_seq')!)
       return fetch(url.toString()).then(r => {
@@ -62,7 +70,7 @@ export default function FarolRcaDetail() {
         return r.json()
       })
     },
-    enabled: !!cod && !!codRca,
+    enabled: !!codRcaFinal,
   })
 
   const goBack = () => {
@@ -71,7 +79,14 @@ export default function FarolRcaDetail() {
     if (tp)                        params.set('tipo_periodo', tp)
     if (search.get('ano'))         params.set('ano', search.get('ano')!)
     if (search.get('periodo_seq')) params.set('periodo_seq', search.get('periodo_seq')!)
-    navigate(`/m/${cod}${params.toString() ? '?' + params.toString() : ''}`)
+    // No fluxo CNPJ+RCA direto não há dashboard de origem; usa history.back se possível
+    if (cnpj && !codSupFromUrl) {
+      if (window.history.length > 1) { window.history.back(); return }
+      navigate(`/m/${cnpj}/sup/${data?.cod_supervisor ?? ''}`)
+      return
+    }
+    const supTarget = cnpj ? `/m/${cnpj}/sup/${codSupFromUrl}` : `/m/${cod}`
+    navigate(`${supTarget}${params.toString() ? '?' + params.toString() : ''}`)
   }
 
   if (isError) {
