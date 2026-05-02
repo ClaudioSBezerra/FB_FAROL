@@ -59,21 +59,37 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// Redireciona /:cod (numérico) → /m/:cod (compatibilidade com chamadas antigas do ION)
+// Redireciona /:cod (numérico) → /m/:cod. Quando NÃO é numérico (ex: /farol, /cadastros)
+// faz fall-through para o AppLayout autenticado, evitando que /:cod engula essas rotas.
 function FarolNumericRedirect() {
   const { cod } = useParams<{ cod: string }>()
-  if (!cod || !/^\d+$/.test(cod)) return <Navigate to="/login" replace />
-  return <Navigate to={`/m/${cod}`} replace />
+  if (cod && /^\d+$/.test(cod)) {
+    return <Navigate to={`/m/${cod}`} replace />
+  }
+  return (
+    <ProtectedRoute>
+      <FilialProvider>
+        <AppLayout />
+      </FilialProvider>
+    </ProtectedRoute>
+  )
 }
 
-// Redireciona /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/:cnpj/:kind/:cod (formato canônico)
+// Redireciona /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/:cnpj/:kind/:cod. Quando o padrão
+// não bate (ex: /dashboard/urgencia/falta), cai para o AppLayout.
 function FarolCnpjRedirect() {
   const { cnpj, kind, cod } = useParams<{ cnpj: string; kind: string; cod: string }>()
   const k = (kind || '').toLowerCase()
-  if (!cnpj || !/^\d{14}$/.test(cnpj) || !cod || !/^\d+$/.test(cod) || (k !== 'sup' && k !== 'rca')) {
-    return <Navigate to="/login" replace />
+  if (cnpj && /^\d{14}$/.test(cnpj) && cod && /^\d+$/.test(cod) && (k === 'sup' || k === 'rca')) {
+    return <Navigate to={`/m/${cnpj}/${k}/${cod}`} replace />
   }
-  return <Navigate to={`/m/${cnpj}/${k}/${cod}`} replace />
+  return (
+    <ProtectedRoute>
+      <FilialProvider>
+        <AppLayout />
+      </FilialProvider>
+    </ProtectedRoute>
+  )
 }
 
 function MasterRoute({ children }: { children: React.ReactNode }) {
