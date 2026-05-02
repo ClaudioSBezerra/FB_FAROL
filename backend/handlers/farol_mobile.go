@@ -99,12 +99,14 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			r.URL.Query().Get("periodo_seq"))
 
 		type rcaItem struct {
-			CodRCA     int     `json:"cod_rca"`
-			NomeRCA    string  `json:"nome_rca"`
-			Pct        float64 `json:"pct"`
-			Cor        string  `json:"cor"`
-			VlAnterior float64 `json:"vl_anterior"`
-			VlCorrente float64 `json:"vl_corrente"`
+			CodRCA       int     `json:"cod_rca"`
+			NomeRCA      string  `json:"nome_rca"`
+			Pct          float64 `json:"pct"`
+			Cor          string  `json:"cor"`
+			VlAnterior   float64 `json:"vl_anterior"`
+			VlCorrente   float64 `json:"vl_corrente"`
+			QtdFornec    int     `json:"qtd_fornec"`
+			QtdAbaixo    int     `json:"qtd_abaixo"`
 		}
 		type periodoOut struct {
 			Tipo  string `json:"tipo"`
@@ -143,12 +145,18 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 
 		out.Periodo = &periodoOut{Tipo: tipo, Ano: ano, Seq: seq, Label: periodoLabel(tipo, seq, ano)}
 
-		// Agrega por RCA (somando todos fornecedores da view)
+		// Agrega por RCA (somando todos fornecedores da view) + conta fornecedores e
+		// quantos estão abaixo de 100% (relevante para o caso "verde no agregado mas
+		// com fornecedores no vermelho/amarelo").
 		rows, err := db.Query(`
 			SELECT cod_rca,
 			       MAX(nome_rca) AS nome_rca,
 			       SUM(vl_anterior) AS vl_ant,
-			       SUM(vl_corrente) AS vl_cor
+			       SUM(vl_corrente) AS vl_cor,
+			       COUNT(*) AS qtd_fornec,
+			       COUNT(*) FILTER (
+			           WHERE vl_anterior > 0 AND (vl_corrente / vl_anterior) * 100 < 100
+			       ) AS qtd_abaixo
 			FROM vw_obj_rca_fornecedor
 			WHERE empresa_id = $1
 			  AND tipo_periodo = $2
@@ -168,7 +176,7 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var item rcaItem
 			var nomeNull sql.NullString
-			if rows.Scan(&item.CodRCA, &nomeNull, &item.VlAnterior, &item.VlCorrente) == nil {
+			if rows.Scan(&item.CodRCA, &nomeNull, &item.VlAnterior, &item.VlCorrente, &item.QtdFornec, &item.QtdAbaixo) == nil {
 				item.NomeRCA = nomeNull.String
 				item.Pct = calcPct(item.VlAnterior, item.VlCorrente)
 				item.Cor = farolCor(item.Pct)
@@ -282,6 +290,8 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 
 		out.Periodo = &periodoOut{Tipo: tipo, Ano: ano, Seq: seq, Label: periodoLabel(tipo, seq, ano)}
 
+		// Ordena pelos piores primeiro (% realização ASC). Fornecedor sem base
+		// anterior (vl_anterior=0) vai pro fim para não poluir o topo.
 		rows, err := db.Query(`
 			SELECT cod_fornec, fornecedor, vl_anterior, vl_corrente
 			FROM vw_obj_rca_fornecedor
@@ -291,7 +301,10 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 			  AND periodo_seq = $4
 			  AND cod_supervisor = $5
 			  AND cod_rca = $6
-			ORDER BY fornecedor`,
+			ORDER BY
+			    CASE WHEN vl_anterior > 0 THEN 0 ELSE 1 END,
+			    CASE WHEN vl_anterior > 0 THEN (vl_corrente / vl_anterior) ELSE NULL END ASC,
+			    fornecedor`,
 			empresaID, tipo, ano, seq, codSup, codRCA)
 		if err != nil {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)

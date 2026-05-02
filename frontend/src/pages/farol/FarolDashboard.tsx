@@ -11,6 +11,8 @@ interface RcaItem {
   cor: Cor
   vl_anterior: number
   vl_corrente: number
+  qtd_fornec: number
+  qtd_abaixo: number
 }
 interface FarolGeral {
   pct: number
@@ -218,6 +220,12 @@ export default function FarolDashboard() {
                     <p className="text-sm text-slate-600 mt-0.5">
                       {rca.pct.toFixed(0)}% • {fmtBRL(rca.vl_corrente)}
                     </p>
+                    {rca.qtd_abaixo > 0 && (
+                      <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-md px-2 py-0.5 text-xs font-semibold">
+                        <span>⚠</span>
+                        <span>{rca.qtd_abaixo} de {rca.qtd_fornec} abaixo da meta</span>
+                      </div>
+                    )}
                   </div>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400 shrink-0">
                     <path d="m9 18 6-6-6-6"/>
