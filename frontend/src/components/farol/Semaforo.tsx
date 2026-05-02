@@ -1,22 +1,27 @@
 type Cor = 'verde' | 'amarelo' | 'vermelho'
 
-const STYLES: Record<Cor, { bg: string; ring: string; icon: string }> = {
-  verde:     { bg: 'bg-green-500',  ring: 'ring-green-200',  icon: '✓' },
-  amarelo:   { bg: 'bg-yellow-400', ring: 'ring-yellow-200', icon: '!' },
-  vermelho:  { bg: 'bg-red-500',    ring: 'ring-red-200',    icon: '✕' },
+const STYLES: Record<Cor, { bg: string; shadow: string; symbol: string }> = {
+  verde:    { bg: 'bg-emerald-500', shadow: 'shadow-emerald-200', symbol: '✓' },
+  amarelo:  { bg: 'bg-amber-400',   shadow: 'shadow-amber-200',   symbol: '!' },
+  vermelho: { bg: 'bg-red-500',     shadow: 'shadow-red-200',     symbol: '✕' },
+}
+
+const SIZES = {
+  sm: { outer: 32, inner: 32, font: 14 },
+  md: { outer: 48, inner: 48, font: 20 },
+  lg: { outer: 64, inner: 64, font: 28 },
 }
 
 export function Semaforo({ cor, size = 'md' }: { cor: Cor; size?: 'sm' | 'md' | 'lg' }) {
-  const px = size === 'lg' ? 64 : size === 'sm' ? 32 : 48
-  const fontSize = size === 'lg' ? 32 : size === 'sm' ? 16 : 24
-  const s = STYLES[cor]
+  const { bg, shadow, symbol } = STYLES[cor]
+  const { outer, font } = SIZES[size]
   return (
     <div
-      className={`${s.bg} ${s.ring} rounded-full flex items-center justify-center text-white font-bold ring-4 shrink-0`}
-      style={{ width: px, height: px, fontSize }}
+      className={`${bg} rounded-full flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${shadow}`}
+      style={{ width: outer, height: outer, fontSize: font }}
       aria-label={`Farol ${cor}`}
     >
-      {s.icon}
+      {symbol}
     </div>
   )
 }

@@ -121,21 +121,21 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
     )
   }
 
-  const periodoLabel = data.periodo?.label ?? 'Sem período'
+  const periodoAtual = data.periodo?.label ?? 'Sem período'
   const semDados = !data.periodo || data.rcas.length === 0
+  const corGeral = data.farol_geral.cor
+  const corBar = corGeral === 'verde' ? 'bg-emerald-500' : corGeral === 'amarelo' ? 'bg-amber-400' : 'bg-red-500'
+  const corText = corGeral === 'verde' ? 'text-emerald-600' : corGeral === 'amarelo' ? 'text-amber-600' : 'text-red-500'
 
   return (
     <FarolMobileShell embedded={embedded}>
-      <FarolHeader title="FAROL" subtitle="Painel do Supervisor" />
+      <FarolHeader title="FAROL" subtitle={`Supervisor ${data.cod_supervisor}`} />
 
       <div className="p-4 space-y-4">
         {/* Saudação */}
-        <div>
-          <p className="text-base text-slate-600">{saudacao()}</p>
-          <h2 className="font-bold leading-tight" style={{ fontSize: 26 }}>
-            {data.nome}
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">Supervisor {data.cod_supervisor}</p>
+        <div className="pt-1">
+          <p className="text-sm text-slate-400">{saudacao()}</p>
+          <h2 className="text-2xl font-bold text-slate-800 leading-tight mt-0.5">{data.nome}</h2>
         </div>
 
         {/* Seletor de período */}
@@ -143,19 +143,19 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
           <div className="relative">
             <button
               onClick={() => setShowPeriodos(s => !s)}
-              className="w-full bg-white border-2 border-slate-200 rounded-lg px-4 flex items-center justify-between active:bg-slate-50"
-              style={{ minHeight: 56, fontSize: 18 }}
+              className="w-full bg-white border border-slate-200 rounded-xl px-4 flex items-center justify-between shadow-sm active:bg-slate-50 transition-colors"
+              style={{ minHeight: 52 }}
             >
               <div className="text-left">
-                <p className="text-xs text-slate-500">Período</p>
-                <p className="font-semibold">{periodoLabel}</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Período</p>
+                <p className="text-base font-semibold text-slate-700">{periodoAtual}</p>
               </div>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
                 <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
             {showPeriodos && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-slate-200 rounded-lg shadow-lg z-20 max-h-60 overflow-auto">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-60 overflow-auto">
                 {periodos.map(p => {
                   const k = `${p.tipo}|${p.ano}|${p.seq}`
                   const active = k === periodoKey || (!periodoKey && data.periodo?.label === p.label)
@@ -163,8 +163,9 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
                     <button
                       key={k}
                       onClick={() => { setPeriodoKey(k); setShowPeriodos(false) }}
-                      className={`w-full px-4 py-3 text-left active:bg-slate-100 ${active ? 'bg-blue-50 text-[#003366] font-semibold' : ''}`}
-                      style={{ minHeight: 56, fontSize: 18 }}
+                      className={`w-full px-4 py-3.5 text-left text-base transition-colors ${
+                        active ? 'bg-[#003366]/5 text-[#003366] font-semibold' : 'text-slate-700 hover:bg-slate-50'
+                      }`}
                     >
                       {p.label}
                     </button>
@@ -175,18 +176,22 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
           </div>
         )}
 
-        {/* Card do farol geral */}
+        {/* Farol geral */}
         {!semDados && (
-          <div className="bg-white border-2 border-slate-200 rounded-xl p-5 shadow-sm">
-            <p className="text-sm text-slate-500 mb-3 text-center uppercase tracking-wide">Farol do Período</p>
-            <div className="flex flex-col items-center gap-3">
+          <div className="bg-white border border-slate-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="h-1.5 bg-slate-100">
+              <div className={`h-full ${corBar} transition-all`} style={{ width: `${Math.min(data.farol_geral.pct, 100)}%` }} />
+            </div>
+            <div className="p-5 flex items-center gap-4">
               <Semaforo cor={data.farol_geral.cor} size="lg" />
-              <p className="font-bold" style={{ fontSize: 36 }}>
-                {data.farol_geral.pct.toFixed(0)}%
-              </p>
-              <div className="text-center text-sm text-slate-600 space-y-0.5">
-                <p>Anterior: <span className="font-semibold">{fmtBRL(data.farol_geral.vl_anterior)}</span></p>
-                <p>Atual:    <span className="font-semibold">{fmtBRL(data.farol_geral.vl_corrente)}</span></p>
+              <div className="flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Farol do Período</p>
+                <p className={`text-4xl font-bold leading-none mt-1 ${corText}`}>
+                  {data.farol_geral.pct.toFixed(0)}<span className="text-lg text-slate-400 font-normal ml-1">%</span>
+                </p>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {fmtBRL(data.farol_geral.vl_anterior)} → {fmtBRL(data.farol_geral.vl_corrente)}
+                </p>
               </div>
             </div>
           </div>
@@ -194,68 +199,72 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
 
         {/* Lista de RCAs */}
         {semDados ? (
-          <div className="bg-white border-2 border-dashed border-slate-300 rounded-xl p-8 text-center text-slate-500">
-            <p style={{ fontSize: 18 }}>Aguardando importação dos objetivos.</p>
+          <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
+            <p className="text-base">Aguardando importação dos objetivos.</p>
           </div>
         ) : (
           <>
-            <div className="flex items-baseline justify-between pt-2">
-              <h3 className="font-bold" style={{ fontSize: 18 }}>Seus RCAs</h3>
-              <span className="text-sm text-slate-500">({data.rcas.length})</span>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-700">Seus RCAs</h3>
+              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{data.rcas.length}</span>
             </div>
 
-            <div className="space-y-3">
-              {data.rcas.map(rca => (
-                <button
-                  key={rca.cod_rca}
-                  onClick={() => {
-                    const params = new URLSearchParams()
-                    if (periodoSel) {
-                      params.set('tipo_periodo', periodoSel.tipo)
-                      params.set('ano',          String(periodoSel.ano))
-                      params.set('periodo_seq',  String(periodoSel.seq))
-                    }
-                    if (cnpj) params.set('cod_supervisor', cod ?? '')
-                    let base: string
-                    if (embedded) {
-                      base = `/farol/sup/${cod}/rca/${rca.cod_rca}`
-                    } else if (cnpjFromUrl) {
-                      base = `/m/${cnpjFromUrl}/rca/${rca.cod_rca}`
-                    } else {
-                      base = `/m/${cod}/rca/${rca.cod_rca}`
-                    }
-                    navigate(`${base}?${params}`)
-                  }}
-                  className="w-full bg-white border-2 border-slate-200 rounded-xl p-4 flex items-center gap-4 active:bg-slate-50 active:border-slate-300 text-left"
-                  style={{ minHeight: 80 }}
-                >
-                  <Semaforo cor={rca.cor} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold leading-tight truncate" style={{ fontSize: 18 }}>
-                      <span className="text-slate-500 mr-1">{rca.cod_rca}</span>
-                      {rca.nome_rca}
-                    </p>
-                    <p className="text-sm text-slate-600 mt-0.5">
-                      {rca.pct.toFixed(0)}% • {fmtBRL(rca.vl_corrente)}
-                    </p>
-                    {rca.qtd_abaixo > 0 && (
-                      <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-md px-2 py-0.5 text-xs font-semibold">
-                        <span>⚠</span>
-                        <span>{rca.qtd_abaixo} de {rca.qtd_fornec} abaixo da meta</span>
+            <div className="space-y-2">
+              {data.rcas.map(rca => {
+                const c = rca.cor
+                const border = c === 'verde' ? 'border-l-emerald-500' : c === 'amarelo' ? 'border-l-amber-400' : 'border-l-red-500'
+                const bar    = c === 'verde' ? 'bg-emerald-500'  : c === 'amarelo' ? 'bg-amber-400'  : 'bg-red-500'
+                const txt    = c === 'verde' ? 'text-emerald-600': c === 'amarelo' ? 'text-amber-600': 'text-red-500'
+                return (
+                  <button
+                    key={rca.cod_rca}
+                    onClick={() => {
+                      const params = new URLSearchParams()
+                      if (periodoSel) {
+                        params.set('tipo_periodo', periodoSel.tipo)
+                        params.set('ano',          String(periodoSel.ano))
+                        params.set('periodo_seq',  String(periodoSel.seq))
+                      }
+                      if (cnpj) params.set('cod_supervisor', cod ?? '')
+                      let base: string
+                      if (embedded) {
+                        base = `/farol/sup/${cod}/rca/${rca.cod_rca}`
+                      } else if (cnpjFromUrl) {
+                        base = `/m/${cnpjFromUrl}/rca/${rca.cod_rca}`
+                      } else {
+                        base = `/m/${cod}/rca/${rca.cod_rca}`
+                      }
+                      navigate(`${base}?${params}`)
+                    }}
+                    className={`w-full bg-white border border-slate-100 border-l-4 ${border} rounded-xl overflow-hidden shadow-sm active:shadow-none active:bg-slate-50 transition-all text-left`}
+                  >
+                    <div className="h-1 bg-slate-100">
+                      <div className={`h-full ${bar}`} style={{ width: `${Math.min(rca.pct, 100)}%` }} />
+                    </div>
+                    <div className="px-4 py-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-slate-400">{rca.cod_rca}</p>
+                        <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(rca.vl_corrente)} atual</p>
+                        {rca.qtd_abaixo > 0 && (
+                          <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                            ⚠ {rca.qtd_abaixo} de {rca.qtd_fornec} abaixo
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400 shrink-0">
-                    <path d="m9 18 6-6-6-6"/>
-                  </svg>
-                </button>
-              ))}
+                      <p className={`text-2xl font-bold shrink-0 ${txt}`}>
+                        {rca.pct.toFixed(0)}<span className="text-sm font-normal text-slate-400">%</span>
+                      </p>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </>
         )}
 
         {isFetching && (
-          <p className="text-center text-sm text-slate-500 py-2">Atualizando...</p>
+          <p className="text-center text-xs text-slate-400 py-2 animate-pulse">Atualizando...</p>
         )}
       </div>
     </FarolMobileShell>
