@@ -432,6 +432,106 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ─── /api/farol/supervisores?cnpj=... — lista com semáforo agregado ─────────
+
+// FarolSupervisoresListHandler retorna todos os supervisores de uma empresa
+// (identificada por CNPJ) com o farol agregado e contagem de RCAs abaixo.
+func FarolSupervisoresListHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		cnpj := normalizeCnpjQuery(r.URL.Query().Get("cnpj"))
+		empresaID, ok := resolveEmpresaByCnpj(db, cnpj)
+		if !ok {
+			http.Error(w, `{"error":"empresa não encontrada"}`, http.StatusNotFound)
+			return
+		}
+
+		tipo, ano, seq, hasPeriodo := resolvePeriodo(db, empresaID,
+			r.URL.Query().Get("tipo_periodo"),
+			r.URL.Query().Get("ano"),
+			r.URL.Query().Get("periodo_seq"))
+
+		type supItem struct {
+			CodSupervisor int     `json:"cod_supervisor"`
+			Nome          string  `json:"nome"`
+			Pct           float64 `json:"pct"`
+			Cor           string  `json:"cor"`
+			VlAnterior    float64 `json:"vl_anterior"`
+			VlCorrente    float64 `json:"vl_corrente"`
+			QtdRcas       int     `json:"qtd_rcas"`
+			QtdRcasAbaixo int     `json:"qtd_rcas_abaixo"`
+		}
+		type periodoOut struct {
+			Tipo  string `json:"tipo"`
+			Ano   int    `json:"ano"`
+			Seq   int    `json:"seq"`
+			Label string `json:"label"`
+		}
+		type resp struct {
+			EmpresaID    string      `json:"empresa_id"`
+			Periodo      *periodoOut `json:"periodo"`
+			Supervisores []supItem   `json:"supervisores"`
+		}
+
+		out := resp{EmpresaID: empresaID, Supervisores: []supItem{}}
+		if !hasPeriodo {
+			json.NewEncoder(w).Encode(out)
+			return
+		}
+		out.Periodo = &periodoOut{Tipo: tipo, Ano: ano, Seq: seq, Label: periodoLabel(tipo, seq, ano)}
+
+		// Agregação em duas etapas via CTE: primeiro consolida por (sup, rca) para saber
+		// quantos RCAs estão abaixo de 100%; depois soma por supervisor.
+		rows, err := db.Query(`
+			WITH rca_agg AS (
+			  SELECT cod_supervisor, MAX(nome_supervisor) AS nome_sup,
+			         cod_rca,
+			         SUM(vl_anterior) AS vl_ant,
+			         SUM(vl_corrente) AS vl_cor
+			  FROM vw_obj_rca_fornecedor
+			  WHERE empresa_id = $1 AND tipo_periodo = $2 AND ano = $3 AND periodo_seq = $4
+			  GROUP BY cod_supervisor, cod_rca
+			)
+			SELECT cod_supervisor,
+			       MAX(nome_sup),
+			       SUM(vl_ant) AS sum_ant,
+			       SUM(vl_cor) AS sum_cor,
+			       COUNT(*)    AS qtd_rcas,
+			       COUNT(*) FILTER (WHERE vl_ant > 0 AND (vl_cor / vl_ant) * 100 < 100) AS qtd_abaixo
+			FROM rca_agg
+			GROUP BY cod_supervisor
+			ORDER BY MAX(nome_sup)`,
+			empresaID, tipo, ano, seq)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var item supItem
+			var supNull sql.NullInt64
+			var nomeNull sql.NullString
+			if rows.Scan(&supNull, &nomeNull, &item.VlAnterior, &item.VlCorrente, &item.QtdRcas, &item.QtdRcasAbaixo) == nil {
+				if supNull.Valid {
+					item.CodSupervisor = int(supNull.Int64)
+				}
+				item.Nome = nomeNull.String
+				item.Pct = calcPct(item.VlAnterior, item.VlCorrente)
+				item.Cor = farolCor(item.Pct)
+				out.Supervisores = append(out.Supervisores, item)
+			}
+		}
+
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
 // ─── /api/farol/periodos/{cod_supervisor} ───────────────────────────────────
 
 // FarolPeriodosHandler lista períodos disponíveis para o supervisor.

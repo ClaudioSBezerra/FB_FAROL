@@ -1,4 +1,4 @@
-import { Users, Target, BarChart3, Upload, Settings, LogOut, KeyRound } from 'lucide-react'
+import { Users, Target, BarChart3, Upload, Settings, LogOut, KeyRound, Lightbulb } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -33,6 +33,7 @@ import { toast } from 'sonner'
 
 const mainItems = [
   { id: 'cadastros',      icon: Users,     label: 'Cadastros',           path: '/cadastros/rcas'       },
+  { id: 'farol',          icon: Lightbulb, label: 'Farol',               path: '/farol'                },
   { id: 'obj_rca',        icon: Target,    label: 'Objetivo RCA',        path: '/objetivos/rca'        },
   { id: 'obj_supervisor', icon: BarChart3, label: 'Objetivo Supervisor', path: '/objetivos/supervisor' },
   { id: 'importacao',     icon: Upload,    label: 'Importação',          path: '/objetivos/importar'   },

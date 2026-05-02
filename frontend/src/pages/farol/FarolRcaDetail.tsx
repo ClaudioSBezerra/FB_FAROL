@@ -2,6 +2,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { FarolMobileShell, FarolHeader } from './FarolMobile'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface FornecItem {
   cod_fornec: string
@@ -43,17 +44,22 @@ function fmtPct(pct: number, ant: number): string {
   return (cresc >= 0 ? '+' : '') + cresc.toFixed(0) + '%'
 }
 
-export default function FarolRcaDetail() {
-  // Suporta dois formatos:
-  //   - /m/:cod/rca/:codRca         (antigo: cod=supervisor)
-  //   - /m/:cnpj/rca/:cod           (novo: cnpj=empresa, cod=rca)
-  const { cod, codRca, cnpj } = useParams<{ cod: string; codRca?: string; cnpj?: string }>()
+export default function FarolRcaDetail({ embedded = false }: { embedded?: boolean } = {}) {
+  // Suporta três formatos:
+  //   - /m/:cod/rca/:codRca           (mobile antigo: cod=supervisor)
+  //   - /m/:cnpj/rca/:cod             (mobile novo: cnpj=empresa, cod=rca)
+  //   - /farol/sup/:cod/rca/:codRca   (web embed: cod=supervisor, cnpj do AuthContext)
+  const { cod, codRca, cnpj: cnpjFromUrl } = useParams<{ cod: string; codRca?: string; cnpj?: string }>()
+  const { cnpj: cnpjFromAuth } = useAuth()
+  const cnpj = cnpjFromUrl || (embedded ? (cnpjFromAuth || '').replace(/\D/g, '') : undefined)
   const [search] = useSearchParams()
   const navigate = useNavigate()
 
-  // Quando há cnpj: cod é o RCA. Senão (formato antigo): codRca é o RCA e cod é supervisor.
-  const codRcaFinal = cnpj ? cod : codRca
-  const codSupFromUrl = cnpj ? search.get('cod_supervisor') : cod
+  // No formato web/embed e mobile antigo: cod=supervisor, codRca=rca.
+  // No formato mobile novo (com cnpj na URL): cod=rca.
+  const useCodAsRca = !!cnpjFromUrl && !codRca
+  const codRcaFinal = useCodAsRca ? cod : codRca
+  const codSupFromUrl = useCodAsRca ? search.get('cod_supervisor') : cod
 
   const { data, isError } = useQuery<RcaResp>({
     queryKey: ['farol-rca', cnpj, codRcaFinal, codSupFromUrl, search.toString()],
@@ -82,16 +88,24 @@ export default function FarolRcaDetail() {
     // No fluxo CNPJ+RCA direto não há dashboard de origem; usa history.back se possível
     if (cnpj && !codSupFromUrl) {
       if (window.history.length > 1) { window.history.back(); return }
-      navigate(`/m/${cnpj}/sup/${data?.cod_supervisor ?? ''}`)
+      const fallback = embedded ? `/farol/sup/${data?.cod_supervisor ?? ''}` : `/m/${cnpj}/sup/${data?.cod_supervisor ?? ''}`
+      navigate(fallback)
       return
     }
-    const supTarget = cnpj ? `/m/${cnpj}/sup/${codSupFromUrl}` : `/m/${cod}`
+    let supTarget: string
+    if (embedded) {
+      supTarget = `/farol/sup/${codSupFromUrl}`
+    } else if (cnpjFromUrl) {
+      supTarget = `/m/${cnpjFromUrl}/sup/${codSupFromUrl}`
+    } else {
+      supTarget = `/m/${cod}`
+    }
     navigate(`${supTarget}${params.toString() ? '?' + params.toString() : ''}`)
   }
 
   if (isError) {
     return (
-      <FarolMobileShell>
+      <FarolMobileShell embedded={embedded}>
         <FarolHeader title="Erro" onBack={goBack} />
         <div className="p-6 text-center">
           <p className="text-lg mb-4">Não foi possível carregar os dados do RCA.</p>
@@ -109,7 +123,7 @@ export default function FarolRcaDetail() {
 
   if (!data) {
     return (
-      <FarolMobileShell>
+      <FarolMobileShell embedded={embedded}>
         <FarolHeader title="Carregando..." onBack={goBack} />
         <div className="p-6 text-center text-slate-600">Aguarde...</div>
       </FarolMobileShell>
@@ -119,7 +133,7 @@ export default function FarolRcaDetail() {
   const semDados = !data.periodo || data.fornecedores.length === 0
 
   return (
-    <FarolMobileShell>
+    <FarolMobileShell embedded={embedded}>
       <FarolHeader title={`RCA ${data.cod_rca}`} subtitle={data.periodo?.label} onBack={goBack} />
 
       <div className="p-4 space-y-4">

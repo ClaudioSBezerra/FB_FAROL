@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { FarolMobileShell, FarolHeader } from './FarolMobile'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface RcaItem {
   cod_rca: number
@@ -52,8 +53,11 @@ function saudacao(): string {
   return 'Boa noite,'
 }
 
-export default function FarolDashboard() {
-  const { cod, cnpj } = useParams<{ cod: string; cnpj?: string }>()
+export default function FarolDashboard({ embedded = false }: { embedded?: boolean } = {}) {
+  const { cod, cnpj: cnpjFromUrl } = useParams<{ cod: string; cnpj?: string }>()
+  const { cnpj: cnpjFromAuth } = useAuth()
+  // No fluxo web embedded sem CNPJ na URL, usa o CNPJ da empresa autenticada.
+  const cnpj = cnpjFromUrl || (embedded ? (cnpjFromAuth || '').replace(/\D/g, '') : undefined)
   const navigate = useNavigate()
   const [periodoKey, setPeriodoKey] = useState<string>('')
   const [showPeriodos, setShowPeriodos] = useState(false)
@@ -92,7 +96,7 @@ export default function FarolDashboard() {
 
   if (isError) {
     return (
-      <FarolMobileShell>
+      <FarolMobileShell embedded={embedded}>
         <FarolHeader title="Erro" />
         <div className="p-6 text-center">
           <p className="text-lg mb-4">Não foi possível carregar os dados.</p>
@@ -110,7 +114,7 @@ export default function FarolDashboard() {
 
   if (!data) {
     return (
-      <FarolMobileShell>
+      <FarolMobileShell embedded={embedded}>
         <FarolHeader title="Carregando..." />
         <div className="p-6 text-center text-slate-600">Aguarde...</div>
       </FarolMobileShell>
@@ -121,7 +125,7 @@ export default function FarolDashboard() {
   const semDados = !data.periodo || data.rcas.length === 0
 
   return (
-    <FarolMobileShell>
+    <FarolMobileShell embedded={embedded}>
       <FarolHeader title="FAROL" subtitle="Painel do Supervisor" />
 
       <div className="p-4 space-y-4">
@@ -212,7 +216,14 @@ export default function FarolDashboard() {
                       params.set('periodo_seq',  String(periodoSel.seq))
                     }
                     if (cnpj) params.set('cod_supervisor', cod ?? '')
-                    const base = cnpj ? `/m/${cnpj}/rca/${rca.cod_rca}` : `/m/${cod}/rca/${rca.cod_rca}`
+                    let base: string
+                    if (embedded) {
+                      base = `/farol/sup/${cod}/rca/${rca.cod_rca}`
+                    } else if (cnpjFromUrl) {
+                      base = `/m/${cnpjFromUrl}/rca/${rca.cod_rca}`
+                    } else {
+                      base = `/m/${cod}/rca/${rca.cod_rca}`
+                    }
                     navigate(`${base}?${params}`)
                   }}
                   className="w-full bg-white border-2 border-slate-200 rounded-xl p-4 flex items-center gap-4 active:bg-slate-50 active:border-slate-300 text-left"

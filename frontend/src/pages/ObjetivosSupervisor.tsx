@@ -108,6 +108,8 @@ export default function ObjetivosSupervisor() {
   const { data: periodos = [] } = useQuery<Periodo[]>({
     queryKey: ['objetivos-periodos'],
     queryFn:  () => fetch('/api/objetivos/periodos').then(r => r.json()),
+    staleTime: 5 * 60_000,
+    gcTime:    10 * 60_000,
   })
 
   useEffect(() => {
@@ -133,6 +135,9 @@ export default function ObjetivosSupervisor() {
       return fetch(`/api/objetivos/supervisor?${p}`).then(r => r.json())
     },
     enabled: !!periodoSel,
+    staleTime: 2 * 60_000,
+    gcTime:    10 * 60_000,
+    refetchOnWindowFocus: false,
   })
   const allRows: SupRow[] = Array.isArray(rawRows) ? rawRows : []
 
@@ -231,8 +236,8 @@ export default function ObjetivosSupervisor() {
       {/* ── Cards de resumo ── */}
       {allRows.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          <StatCard label="Venda Anterior" value={fmtBRL(totalAnt)} />
-          <StatCard label="Venda Corrente" value={fmtBRL(totalCor)} />
+          <StatCard label="Obj. Anterior" value={fmtBRL(totalAnt)} />
+          <StatCard label="Obj. Atual"    value={fmtBRL(totalCor)} />
           <VarCard ant={totalAnt} cor={totalCor} />
           <StatCard label="Supervisores"   value={String(qtdSups)} />
           <StatCard label="Fornecedores"   value={String(qtdFornc)} />
@@ -250,8 +255,8 @@ export default function ObjetivosSupervisor() {
               <TableRow className="bg-[#003366] text-white hover:bg-[#003366]">
                 <TableHead className="text-white font-semibold">Supervisor</TableHead>
                 <TableHead className="text-white font-semibold">Fornecedor</TableHead>
-                <TableHead className="text-white font-semibold text-right">Venda 24</TableHead>
-                <TableHead className="text-white font-semibold text-right">Venda 25</TableHead>
+                <TableHead className="text-white font-semibold text-right">Obj. Anterior</TableHead>
+                <TableHead className="text-white font-semibold text-right">Obj. Atual</TableHead>
                 <TableHead className="text-white font-semibold text-right">% Cresc</TableHead>
                 <TableHead className="text-white font-semibold text-center">CL Ativos</TableHead>
                 <TableHead className="text-white font-semibold text-center">Posit Med</TableHead>

@@ -30,6 +30,7 @@ import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolDashboard from './pages/farol/FarolDashboard'
 import FarolRcaDetail from './pages/farol/FarolRcaDetail'
+import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail } from './pages/farol/FarolWeb'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -206,6 +207,10 @@ function AppLayout() {
               <Route path="/cadastros/rcas"      element={<ProtectedRoute><CadastroRCAs /></ProtectedRoute>} />
               <Route path="/objetivos/rca"        element={<ProtectedRoute><ObjetivosRCA /></ProtectedRoute>} />
               <Route path="/objetivos/supervisor" element={<ProtectedRoute><ObjetivosSupervisor /></ProtectedRoute>} />
+              {/* Farol — versão web (mesma visão do mobile, autenticada) */}
+              <Route path="/farol"                            element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />
+              <Route path="/farol/sup/:cod"                   element={<ProtectedRoute><FarolWebDashboard /></ProtectedRoute>} />
+              <Route path="/farol/sup/:cod/rca/:codRca"       element={<ProtectedRoute><FarolWebRcaDetail /></ProtectedRoute>} />
               <Route path="/objetivos/importar"    element={<ProtectedRoute><ObjetivosImportar /></ProtectedRoute>} />
               <Route path="/objetivos/manutencao" element={<ProtectedRoute><ObjetivosManutencao /></ProtectedRoute>} />
 
