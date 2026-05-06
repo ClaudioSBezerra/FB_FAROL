@@ -97,7 +97,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (res.ok) return res.json();
         if (res.status === 401) {
           localStorage.clear();
-          window.location.href = '/login';
+          // Rotas públicas mobile (/m/...) não precisam de autenticação —
+          // não redirecionar para login ao detectar token expirado nessas páginas.
+          if (!window.location.pathname.startsWith('/m/')) {
+            window.location.href = '/login';
+          }
           throw new Error('Session expired');
         }
         throw new Error('Failed to refresh user data');
