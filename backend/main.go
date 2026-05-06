@@ -538,8 +538,10 @@ func main() {
 		// redirecionados server-side para a rota canônica /m/... ANTES do
 		// React Router ver, evitando que /:cod e /:cnpj/:kind/:cod (que seriam
 		// mais específicos que /*) engulam outras rotas autenticadas.
-		ionNumericPath := regexp.MustCompile(`^/(\d+)$`)
-		ionCnpjPath    := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+		ionNumericPath  := regexp.MustCompile(`^/(\d+)$`)
+		ionCnpjPath     := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+		// /m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod (ION passa uppercase) → /m/CNPJ/sup|rca/cod
+		ionMobileCnpj   := regexp.MustCompile(`^/m/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
 
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -554,6 +556,12 @@ func main() {
 			}
 			// /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/CNPJ/sup|rca/cod
 			if m := ionCnpjPath.FindStringSubmatch(r.URL.Path); m != nil {
+				kind := strings.ToLower(m[2])
+				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3], http.StatusFound)
+				return
+			}
+			// /m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod (ION passa uppercase) → /m/CNPJ/sup|rca/cod
+			if m := ionMobileCnpj.FindStringSubmatch(r.URL.Path); m != nil {
 				kind := strings.ToLower(m[2])
 				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3], http.StatusFound)
 				return
