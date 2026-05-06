@@ -4,13 +4,21 @@ import { FarolMobileShell, FarolHeader } from './FarolMobile'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 
-interface FornecItem {
-  cod_fornec: string
-  fornecedor: string
-  pct: number
-  cor: Cor
+interface ProdutoAbaixo {
+  cod_prod:    string
+  pct:         number
   vl_anterior: number
   vl_corrente: number
+}
+
+interface FornecItem {
+  cod_fornec:      string
+  fornecedor:      string
+  pct:             number
+  cor:             Cor
+  vl_anterior:     number
+  vl_corrente:     number
+  produtos_abaixo: ProdutoAbaixo[]
 }
 interface PeriodoOut {
   tipo: string
@@ -224,6 +232,23 @@ export default function FarolRcaDetail({ embedded = false }: { embedded?: boolea
                       {fmtPct(f.pct, f.vl_anterior)}
                     </span>
                   </div>
+
+                  {/* Produtos abaixo da meta */}
+                  {f.produtos_abaixo?.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-slate-100">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                        Produtos abaixo da meta ({f.produtos_abaixo.length})
+                      </p>
+                      <div className="space-y-1">
+                        {f.produtos_abaixo.map(p => (
+                          <div key={p.cod_prod} className="flex items-center justify-between bg-red-50 rounded-lg px-3 py-1.5">
+                            <p className="text-xs font-semibold text-slate-700 truncate flex-1 mr-2">{p.cod_prod}</p>
+                            <span className="text-xs font-bold text-red-600 shrink-0">{p.pct.toFixed(0)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

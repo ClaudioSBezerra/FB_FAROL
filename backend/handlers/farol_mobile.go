@@ -309,13 +309,20 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 			r.URL.Query().Get("ano"),
 			r.URL.Query().Get("periodo_seq"))
 
-		type fornec struct {
-			CodFornec  string  `json:"cod_fornec"`
-			Fornecedor string  `json:"fornecedor"`
+		type produtoAbaixo struct {
+			CodProd    string  `json:"cod_prod"`
 			Pct        float64 `json:"pct"`
-			Cor        string  `json:"cor"`
 			VlAnterior float64 `json:"vl_anterior"`
 			VlCorrente float64 `json:"vl_corrente"`
+		}
+		type fornec struct {
+			CodFornec      string         `json:"cod_fornec"`
+			Fornecedor     string         `json:"fornecedor"`
+			Pct            float64        `json:"pct"`
+			Cor            string         `json:"cor"`
+			VlAnterior     float64        `json:"vl_anterior"`
+			VlCorrente     float64        `json:"vl_corrente"`
+			ProdutosAbaixo []produtoAbaixo `json:"produtos_abaixo"`
 		}
 		type periodoOut struct {
 			Tipo  string `json:"tipo"`
@@ -421,6 +428,62 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 				out.Fornecedores = append(out.Fornecedores, f)
 				totalAnt += f.VlAnterior
 				totalCor += f.VlCorrente
+			}
+		}
+
+		// Busca produtos abaixo da meta por fornecedor (única query, sem N+1).
+		// Agrupa por (cod_fornec, cod_prod) e filtra os que não atingiram 100%.
+		var prodRows *sql.Rows
+		if codSup > 0 {
+			prodRows, _ = db.Query(`
+				SELECT cod_fornec, cod_prod,
+				       SUM(vl_anterior) AS vl_ant,
+				       SUM(vl_corrente) AS vl_cor
+				FROM vw_obj_rca_produto
+				WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4
+				  AND cod_supervisor=$5 AND cod_rca=$6
+				GROUP BY cod_fornec, cod_prod
+				HAVING SUM(vl_anterior) > 0
+				   AND (SUM(vl_corrente) / SUM(vl_anterior)) * 100 < 100
+				ORDER BY cod_fornec, (SUM(vl_corrente) / SUM(vl_anterior)) ASC`,
+				empresaID, tipo, ano, seq, codSup, codRCA)
+		} else {
+			prodRows, _ = db.Query(`
+				SELECT cod_fornec, cod_prod,
+				       SUM(vl_anterior) AS vl_ant,
+				       SUM(vl_corrente) AS vl_cor
+				FROM vw_obj_rca_produto
+				WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4
+				  AND cod_rca=$5
+				GROUP BY cod_fornec, cod_prod
+				HAVING SUM(vl_anterior) > 0
+				   AND (SUM(vl_corrente) / SUM(vl_anterior)) * 100 < 100
+				ORDER BY cod_fornec, (SUM(vl_corrente) / SUM(vl_anterior)) ASC`,
+				empresaID, tipo, ano, seq, codRCA)
+		}
+		// Mapeia cod_fornec → []produtoAbaixo
+		prodMap := make(map[string][]produtoAbaixo)
+		if prodRows != nil {
+			defer prodRows.Close()
+			for prodRows.Next() {
+				var codFornec, codProd string
+				var vAnt, vCor float64
+				if prodRows.Scan(&codFornec, &codProd, &vAnt, &vCor) == nil {
+					prodMap[codFornec] = append(prodMap[codFornec], produtoAbaixo{
+						CodProd:    codProd,
+						Pct:        calcPct(vAnt, vCor),
+						VlAnterior: vAnt,
+						VlCorrente: vCor,
+					})
+				}
+			}
+		}
+		// Injeta produtos no slice de fornecedores
+		for i := range out.Fornecedores {
+			if prods, ok := prodMap[out.Fornecedores[i].CodFornec]; ok {
+				out.Fornecedores[i].ProdutosAbaixo = prods
+			} else {
+				out.Fornecedores[i].ProdutosAbaixo = []produtoAbaixo{}
 			}
 		}
 

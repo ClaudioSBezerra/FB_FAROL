@@ -243,7 +243,7 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
                     </div>
                     <div className="px-4 py-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs text-slate-400">{rca.cod_rca}</p>
+                        <p className="font-bold text-slate-700 text-base">{rca.cod_rca}</p>
                         <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
                         <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(rca.vl_corrente)} atual</p>
                         {rca.qtd_abaixo > 0 && (
