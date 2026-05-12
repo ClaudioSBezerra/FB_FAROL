@@ -26,6 +26,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     volumes:
@@ -80,10 +82,29 @@ services:
     networks:
       - fb_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-fb_farol}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Cria a database se não existir (POSTGRES_DB só roda no init do volume vazio)
+  db-init:
+    image: postgres:15-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=${DB_PASSWORD:-postgres}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_NAME=${DB_NAME:-fb_farol}
+    restart: "no"
+    command: >
+      sh -c "
+        psql -h db -U $$DB_USER -tc \"SELECT 1 FROM pg_database WHERE datname = '$$DB_NAME'\" | grep -q 1 ||
+        psql -h db -U $$DB_USER -c \"CREATE DATABASE \\\"$$DB_NAME\\\"\"
+      "
+    networks:
+      - fb_net
 
   # Redis
   redis:
