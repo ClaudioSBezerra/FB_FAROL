@@ -52,6 +52,65 @@ func getDB() *sql.DB {
 	return db
 }
 
+// ensureDatabaseExists conecta no banco 'postgres' (default) e cria a database
+// alvo se ela não existir. Necessário quando o volume do PostgreSQL persiste
+// entre redeploys mas o POSTGRES_DB foi mudado (o postgres só cria a DB
+// na primeira inicialização do volume).
+func ensureDatabaseExists(connStr string) error {
+	dbName := ""
+	prefixEnd := strings.Index(connStr, "://")
+	if prefixEnd < 0 {
+		return nil
+	}
+	rest := connStr[prefixEnd+3:]
+	slashIdx := strings.Index(rest, "/")
+	if slashIdx < 0 {
+		return nil
+	}
+	afterSlash := rest[slashIdx+1:]
+	queryIdx := strings.Index(afterSlash, "?")
+	if queryIdx < 0 {
+		dbName = afterSlash
+	} else {
+		dbName = afterSlash[:queryIdx]
+	}
+	if dbName == "" || dbName == "postgres" {
+		return nil
+	}
+
+	adminConnStr := connStr[:prefixEnd+3] + rest[:slashIdx+1] + "postgres"
+	if queryIdx >= 0 {
+		adminConnStr += "?" + afterSlash[queryIdx+1:]
+	}
+
+	adminConn, err := sql.Open("postgres", adminConnStr)
+	if err != nil {
+		return err
+	}
+	defer adminConn.Close()
+
+	if err := adminConn.Ping(); err != nil {
+		return err
+	}
+
+	var exists bool
+	err = adminConn.QueryRow("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", dbName).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	fmt.Printf("Database %q does not exist. Creating...\n", dbName)
+	_, err = adminConn.Exec(fmt.Sprintf(`CREATE DATABASE "%s"`, strings.ReplaceAll(dbName, `"`, ``)))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Database %q created successfully\n", dbName)
+	return nil
+}
+
 func initDBAsync() {
 	go func() {
 		var conn *sql.DB
@@ -65,6 +124,13 @@ func initDBAsync() {
 		attempt := 0
 		for {
 			attempt++
+
+			if attempt == 1 || attempt%6 == 0 {
+				if ensureErr := ensureDatabaseExists(connStr); ensureErr != nil {
+					fmt.Printf("ensureDatabaseExists falhou (attempt %d): %v\n", attempt, ensureErr)
+				}
+			}
+
 			conn, err = sql.Open("postgres", connStr)
 			if err == nil {
 				err = conn.Ping()
