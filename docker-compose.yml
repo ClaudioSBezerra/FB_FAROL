@@ -1,5 +1,5 @@
 services:
-  # Backend (Go)
+  # Backend (Go) — Traefik roteia /api/* direto pra cá
   api:
     build:
       context: .
@@ -32,8 +32,18 @@ services:
       - api_uploads:/root/uploads
     networks:
       - fb_net
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.farol-api.rule=Host(`farol.fbtax.cloud`) && PathPrefix(`/api/`)"
+      - "traefik.http.routers.farol-api.entrypoints=https"
+      - "traefik.http.routers.farol-api.tls=true"
+      - "traefik.http.routers.farol-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.farol-api.priority=10"
+      - "traefik.http.services.farol-api.loadbalancer.server.port=8087"
 
-  # Frontend (React/Nginx)
+  # Frontend (React/Nginx) — Traefik roteia tudo que NÃO é /api/* pra cá
   web:
     build:
       context: ./frontend
@@ -49,6 +59,7 @@ services:
       - "traefik.http.routers.farol.entrypoints=https"
       - "traefik.http.routers.farol.tls=true"
       - "traefik.http.routers.farol.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.farol.priority=1"
       - "traefik.http.services.farol.loadbalancer.server.port=80"
     depends_on:
       - api
