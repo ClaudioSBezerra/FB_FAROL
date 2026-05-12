@@ -9,8 +9,6 @@ services:
       target: production
     container_name: fb_farol-api-prod
     restart: always
-    ports:
-      - "8081:8081"
     expose:
       - "8081"
     environment:
@@ -168,8 +166,8 @@ services:
     image: prom/prometheus:latest
     container_name: fb_farol-prometheus
     restart: always
-    ports:
-      - "9090:9090"
+    expose:
+      - "9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -188,8 +186,8 @@ services:
     image: grafana/grafana:latest
     container_name: fb_farol-grafana
     restart: always
-    ports:
-      - "3001:3000"
+    expose:
+      - "3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
