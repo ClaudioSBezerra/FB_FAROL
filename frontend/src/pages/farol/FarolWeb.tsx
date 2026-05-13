@@ -3,6 +3,8 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
 
+type TabKey = 'fornec' | 'rca'
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface PeriodoOut { tipo: string; ano: number; seq: number; label: string }
@@ -238,7 +240,7 @@ export function FarolWebList() {
   )
 }
 
-// ─── Tela 2: RCAs do supervisor ───────────────────────────────────────────────
+// ─── Tela 2: Dashboard do supervisor (abas Fornecedor + RCA) ──────────────────
 
 interface RcaItem {
   cod_rca: number; nome_rca: string
@@ -246,11 +248,43 @@ interface RcaItem {
   vl_anterior: number; vl_corrente: number
   qtd_fornec: number; qtd_abaixo: number
 }
+interface FornecItemSup {
+  cod_fornec: string; fornecedor: string
+  pct: number; cor: Cor
+  vl_anterior: number; vl_corrente: number
+  qtd_rcas: number; qtd_rcas_abaixo: number
+}
 interface SupResp {
   cod_supervisor: number; nome: string
   periodo: PeriodoOut | null
   farol_geral: Resumo
   rcas: RcaItem[]
+}
+interface SupFornecResp {
+  cod_supervisor: number; nome: string
+  periodo: PeriodoOut | null
+  farol_geral: Resumo
+  fornecedores: FornecItemSup[]
+}
+
+function TabSwitcher({ value, onChange }: { value: TabKey; onChange: (t: TabKey) => void }) {
+  return (
+    <div className="bg-slate-100 rounded-xl p-1 inline-flex">
+      {(['fornec','rca'] as const).map(tab => {
+        const label = tab === 'fornec' ? 'Por Fornecedor' : 'Por RCA'
+        const active = tab === value
+        return (
+          <button
+            key={tab}
+            onClick={() => onChange(tab)}
+            className={`py-2 px-5 rounded-lg text-sm font-semibold transition-all ${
+              active ? 'bg-white text-[#003366] shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >{label}</button>
+        )
+      })}
+    </div>
+  )
 }
 
 export function FarolWebDashboard() {
@@ -258,18 +292,31 @@ export function FarolWebDashboard() {
   const [search] = useSearchParams()
   const navigate = useNavigate()
   const qs = search.toString()
+  const [activeTab, setActiveTab] = useState<TabKey>('fornec')
 
-  const { data, isLoading, isError } = useQuery<SupResp>({
+  const { data: rcaData, isLoading: rcaLoading, isError: rcaError } = useQuery<SupResp>({
     queryKey: ['farol-web-sup', cod, qs],
     queryFn: () => fetch(`/api/farol/web/sup/${cod}${qs ? '?' + qs : ''}`).then(r => {
       if (!r.ok) throw new Error('falha')
       return r.json()
     }),
-    enabled: !!cod,
-    staleTime: 2 * 60_000,
-    gcTime:    10 * 60_000,
-    refetchOnWindowFocus: false,
+    enabled: !!cod && activeTab === 'rca',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
   })
+
+  const { data: fornecData, isLoading: fornecLoading, isError: fornecError } = useQuery<SupFornecResp>({
+    queryKey: ['farol-web-sup-forn', cod, qs],
+    queryFn: () => fetch(`/api/farol/web/sup-forn/${cod}${qs ? '?' + qs : ''}`).then(r => {
+      if (!r.ok) throw new Error('falha')
+      return r.json()
+    }),
+    enabled: !!cod && activeTab === 'fornec',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
+  })
+
+  const data = activeTab === 'fornec' ? fornecData : rcaData
+  const isLoading = activeTab === 'fornec' ? fornecLoading : rcaLoading
+  const isError   = activeTab === 'fornec' ? fornecError   : rcaError
 
   const periodoQs = data?.periodo ? periodoParams(data.periodo) : qs
 
@@ -279,10 +326,123 @@ export function FarolWebDashboard() {
         onClick={() => navigate('/farol')}
         className="inline-flex items-center gap-1.5 text-sm text-[#003366] hover:text-[#003366]/70 transition-colors font-medium"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path d="m15 18-6-6 6-6"/>
-        </svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
         Todos os supervisores
+      </button>
+
+      {data && (
+        <FarolHeader
+          title={data.nome}
+          sub={`Supervisor ${data.cod_supervisor}`}
+          resumo={data.farol_geral}
+          periodo={data.periodo ?? undefined}
+        />
+      )}
+
+      <TabSwitcher value={activeTab} onChange={setActiveTab} />
+
+      {isLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[...Array(6)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
+        </div>
+      )}
+      {isError && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">
+          Erro ao carregar dados.
+        </div>
+      )}
+
+      {!isLoading && activeTab === 'fornec' && fornecData && (
+        fornecData.fornecedores.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
+            Nenhum fornecedor no período.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {fornecData.fornecedores.map(f => (
+              <EntityCard
+                key={f.cod_fornec}
+                cor={f.cor}
+                pct={f.pct}
+                title={f.fornecedor || '—'}
+                sub={`Fornecedor ${f.cod_fornec}`}
+                value={`${fmtBRL(f.vl_corrente)} atual`}
+                badge={f.qtd_rcas_abaixo > 0 ? `${f.qtd_rcas_abaixo} de ${f.qtd_rcas} RCA(s) abaixo` : undefined}
+                onClick={() => navigate(`/farol/sup/${cod}/forn/${encodeURIComponent(f.cod_fornec)}?${periodoQs}`)}
+              />
+            ))}
+          </div>
+        )
+      )}
+
+      {!isLoading && activeTab === 'rca' && rcaData && (
+        rcaData.rcas.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
+            Nenhum RCA no período.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {rcaData.rcas.map(rca => (
+              <EntityCard
+                key={rca.cod_rca}
+                cor={rca.cor}
+                pct={rca.pct}
+                title={rca.nome_rca}
+                sub={`RCA ${rca.cod_rca}`}
+                value={`${fmtBRL(rca.vl_corrente)} atual`}
+                badge={rca.qtd_abaixo > 0 ? `${rca.qtd_abaixo} de ${rca.qtd_fornec} fornecedor(es) abaixo` : undefined}
+                onClick={() => navigate(`/farol/sup/${cod}/rca/${rca.cod_rca}?${periodoQs}&cod_supervisor=${cod}`)}
+              />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Tela 2b: RCAs daquele fornecedor (drill-down da aba Fornecedor) ──────────
+
+interface FornecRcasResp {
+  cod_supervisor: number; nome_supervisor: string
+  cod_fornec: string; fornecedor: string
+  periodo: PeriodoOut | null
+  resumo: Resumo
+  rcas: { cod_rca: number; nome_rca: string; pct: number; cor: Cor; vl_anterior: number; vl_corrente: number }[]
+}
+
+export function FarolWebFornecRcas() {
+  const { cod, codFornec } = useParams<{ cod: string; codFornec: string }>()
+  const [search] = useSearchParams()
+  const navigate = useNavigate()
+  const qs = search.toString()
+
+  const { data, isLoading, isError } = useQuery<FornecRcasResp>({
+    queryKey: ['farol-web-forn-rcas', cod, codFornec, qs],
+    queryFn: () => {
+      const url = new URL(`/api/farol/web/forn-rcas/${cod}`, window.location.origin)
+      if (codFornec) url.searchParams.set('cod_fornec', codFornec)
+      const tp = search.get('tipo_periodo')
+      if (tp)                        url.searchParams.set('tipo_periodo', tp)
+      if (search.get('ano'))         url.searchParams.set('ano',         search.get('ano')!)
+      if (search.get('periodo_seq')) url.searchParams.set('periodo_seq', search.get('periodo_seq')!)
+      return fetch(url.toString()).then(r => {
+        if (!r.ok) throw new Error('falha')
+        return r.json()
+      })
+    },
+    enabled: !!cod && !!codFornec,
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
+  })
+
+  return (
+    <div className="space-y-5 max-w-5xl mx-auto">
+      <button
+        onClick={() => navigate(`/farol/sup/${cod}?${qs}`)}
+        className="inline-flex items-center gap-1.5 text-sm text-[#003366] hover:text-[#003366]/70 transition-colors font-medium"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
+        {data ? `${data.cod_supervisor} — ${data.nome_supervisor}` : 'Voltar'}
       </button>
 
       {isLoading && (
@@ -299,29 +459,34 @@ export function FarolWebDashboard() {
       {data && (
         <>
           <FarolHeader
-            title={data.nome}
-            sub={`Supervisor ${data.cod_supervisor}`}
-            resumo={data.farol_geral}
+            title={data.fornecedor || '—'}
+            sub={`Fornecedor ${data.cod_fornec}`}
+            resumo={data.resumo}
             periodo={data.periodo ?? undefined}
           />
 
           {data.rcas.length === 0 ? (
             <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
-              Aguardando importação dos objetivos.
+              Sem RCAs para este fornecedor no período.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {data.rcas.map(rca => (
-                <EntityCard
-                  key={rca.cod_rca}
-                  cor={rca.cor}
-                  pct={rca.pct}
-                  title={rca.nome_rca}
-                  sub={`RCA ${rca.cod_rca}`}
-                  value={`${fmtBRL(rca.vl_corrente)} atual`}
-                  badge={rca.qtd_abaixo > 0 ? `${rca.qtd_abaixo} de ${rca.qtd_fornec} fornecedor(es) abaixo` : undefined}
-                  onClick={() => navigate(`/farol/sup/${cod}/rca/${rca.cod_rca}?${periodoQs}&cod_supervisor=${cod}`)}
-                />
+                <div key={rca.cod_rca} className={`bg-white border border-slate-100 border-l-4 ${COR_BORDER[rca.cor]} rounded-xl shadow-sm overflow-hidden`}>
+                  <div className="h-1 bg-slate-100">
+                    <div className={`h-full ${COR_BAR[rca.cor]}`} style={{ width: `${Math.min(rca.pct, 100)}%` }} />
+                  </div>
+                  <div className="p-4">
+                    <p className="font-bold text-slate-700 text-sm">{rca.cod_rca}</p>
+                    <p className="font-semibold text-slate-800 truncate mt-0.5">{rca.nome_rca}</p>
+                    <p className={`text-3xl font-bold mt-3 leading-none ${COR_TEXT[rca.cor]}`}>
+                      {rca.pct.toFixed(0)}<span className="text-base font-normal text-slate-400 ml-0.5">%</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1.5">
+                      {fmtBRL(rca.vl_anterior)} → {fmtBRL(rca.vl_corrente)}
+                    </p>
+                  </div>
+                </div>
               ))}
             </div>
           )}

@@ -5,6 +5,8 @@ import { FarolMobileShell, FarolHeader } from './FarolMobile'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
 interface RcaItem {
   cod_rca: number
   nome_rca: string
@@ -15,52 +17,69 @@ interface RcaItem {
   qtd_fornec: number
   qtd_abaixo: number
 }
-interface FarolGeral {
+interface FornecItem {
+  cod_fornec: string
+  fornecedor: string
   pct: number
   cor: Cor
   vl_anterior: number
   vl_corrente: number
+  qtd_rcas: number
+  qtd_rcas_abaixo: number
 }
-interface PeriodoOut {
-  tipo: string
-  ano: number
-  seq: number
-  label: string
+interface FarolGeral {
+  pct: number; cor: Cor; vl_anterior: number; vl_corrente: number
 }
+interface PeriodoOut { tipo: string; ano: number; seq: number; label: string }
 interface SupResp {
   cod_supervisor: number
   nome: string
-  empresa_id: string
   periodo: PeriodoOut | null
   farol_geral: FarolGeral
   rcas: RcaItem[]
 }
-interface PeriodoItem {
-  tipo: string
-  ano: number
-  seq: number
-  label: string
+interface SupFornecResp {
+  cod_supervisor: number
+  nome: string
+  periodo: PeriodoOut | null
+  farol_geral: FarolGeral
+  fornecedores: FornecItem[]
 }
+interface PeriodoItem { tipo: string; ano: number; seq: number; label: string }
+
+type TabKey = 'fornec' | 'rca'
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtBRL(v: number): string {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
-
 function saudacao(): string {
   const h = new Date().getHours()
   if (h < 12) return 'Bom dia,'
   if (h < 18) return 'Boa tarde,'
   return 'Boa noite,'
 }
+const CORS_BORDER: Record<Cor, string> = {
+  verde: 'border-l-emerald-500', amarelo: 'border-l-amber-400', vermelho: 'border-l-red-500',
+}
+const CORS_BAR: Record<Cor, string> = {
+  verde: 'bg-emerald-500', amarelo: 'bg-amber-400', vermelho: 'bg-red-500',
+}
+const CORS_TEXT: Record<Cor, string> = {
+  verde: 'text-emerald-600', amarelo: 'text-amber-600', vermelho: 'text-red-500',
+}
+
+// ─── Componente ──────────────────────────────────────────────────────────────
 
 export default function FarolDashboard({ embedded = false }: { embedded?: boolean } = {}) {
   const { cod, cnpj: cnpjFromUrl } = useParams<{ cod: string; cnpj?: string }>()
   const { cnpj: cnpjFromAuth } = useAuth()
-  // No fluxo web embedded sem CNPJ na URL, usa o CNPJ da empresa autenticada.
   const cnpj = cnpjFromUrl || (embedded ? (cnpjFromAuth || '').replace(/\D/g, '') : undefined)
   const navigate = useNavigate()
   const [periodoKey, setPeriodoKey] = useState<string>('')
   const [showPeriodos, setShowPeriodos] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabKey>('fornec')
 
   const { data: periodos = [] } = useQuery<PeriodoItem[]>({
     queryKey: ['farol-periodos', cnpj, cod],
@@ -70,29 +89,49 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
       return fetch(url.toString()).then(r => r.json())
     },
     enabled: !!cod,
+    staleTime: 5 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
   })
 
   const periodoSel = periodoKey
     ? periodos.find(p => `${p.tipo}|${p.ano}|${p.seq}` === periodoKey)
     : undefined
 
-  const { data, isFetching, isError } = useQuery<SupResp>({
+  const buildQs = () => {
+    const u = new URLSearchParams()
+    if (cnpj) u.set('cnpj', cnpj)
+    if (periodoSel) {
+      u.set('tipo_periodo', periodoSel.tipo)
+      u.set('ano', String(periodoSel.ano))
+      u.set('periodo_seq', String(periodoSel.seq))
+    }
+    return u.toString()
+  }
+
+  // Query aba RCA
+  const { data: rcaData, isFetching: rcaLoading, isError: rcaError } = useQuery<SupResp>({
     queryKey: ['farol-sup', cnpj, cod, periodoKey],
-    queryFn: () => {
-      const url = new URL(`/api/farol/sup/${cod}`, window.location.origin)
-      if (cnpj) url.searchParams.set('cnpj', cnpj)
-      if (periodoSel) {
-        url.searchParams.set('tipo_periodo', periodoSel.tipo)
-        url.searchParams.set('ano',          String(periodoSel.ano))
-        url.searchParams.set('periodo_seq',  String(periodoSel.seq))
-      }
-      return fetch(url.toString()).then(r => {
-        if (!r.ok) throw new Error('falha ao carregar')
-        return r.json()
-      })
-    },
-    enabled: !!cod,
+    queryFn: () => fetch(`/api/farol/sup/${cod}?${buildQs()}`).then(r => {
+      if (!r.ok) throw new Error('falha ao carregar')
+      return r.json()
+    }),
+    enabled: !!cod && activeTab === 'rca',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
   })
+
+  // Query aba Fornecedor (default)
+  const { data: fornecData, isFetching: fornecLoading, isError: fornecError } = useQuery<SupFornecResp>({
+    queryKey: ['farol-sup-forn', cnpj, cod, periodoKey],
+    queryFn: () => fetch(`/api/farol/sup-forn/${cod}?${buildQs()}`).then(r => {
+      if (!r.ok) throw new Error('falha ao carregar')
+      return r.json()
+    }),
+    enabled: !!cod && activeTab === 'fornec',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
+  })
+
+  const data = activeTab === 'fornec' ? fornecData : rcaData
+  const isError = activeTab === 'fornec' ? fornecError : rcaError
+  const isFetching = activeTab === 'fornec' ? fornecLoading : rcaLoading
 
   if (isError) {
     return (
@@ -104,9 +143,7 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
             onClick={() => window.location.reload()}
             className="bg-[#003366] text-white rounded-lg w-full font-semibold"
             style={{ minHeight: 56, fontSize: 18 }}
-          >
-            Tentar novamente
-          </button>
+          >Tentar novamente</button>
         </div>
       </FarolMobileShell>
     )
@@ -122,10 +159,8 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
   }
 
   const periodoAtual = data.periodo?.label ?? 'Sem período'
-  const semDados = !data.periodo || data.rcas.length === 0
+  const semPeriodo = !data.periodo
   const corGeral = data.farol_geral.cor
-  const corBar = corGeral === 'verde' ? 'bg-emerald-500' : corGeral === 'amarelo' ? 'bg-amber-400' : 'bg-red-500'
-  const corText = corGeral === 'verde' ? 'text-emerald-600' : corGeral === 'amarelo' ? 'text-amber-600' : 'text-red-500'
 
   return (
     <FarolMobileShell embedded={embedded}>
@@ -150,9 +185,7 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Período</p>
                 <p className="text-base font-semibold text-slate-700">{periodoAtual}</p>
               </div>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             {showPeriodos && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-60 overflow-auto">
@@ -166,9 +199,7 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
                       className={`w-full px-4 py-3.5 text-left text-base transition-colors ${
                         active ? 'bg-[#003366]/5 text-[#003366] font-semibold' : 'text-slate-700 hover:bg-slate-50'
                       }`}
-                    >
-                      {p.label}
-                    </button>
+                    >{p.label}</button>
                   )
                 })}
               </div>
@@ -177,16 +208,16 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
         )}
 
         {/* Farol geral */}
-        {!semDados && (
+        {!semPeriodo && (
           <div className="bg-white border border-slate-100 rounded-xl shadow-sm overflow-hidden">
             <div className="h-1.5 bg-slate-100">
-              <div className={`h-full ${corBar} transition-all`} style={{ width: `${Math.min(data.farol_geral.pct, 100)}%` }} />
+              <div className={`h-full ${CORS_BAR[corGeral]} transition-all`} style={{ width: `${Math.min(data.farol_geral.pct, 100)}%` }} />
             </div>
             <div className="p-5 flex items-center gap-4">
-              <Semaforo cor={data.farol_geral.cor} size="lg" />
+              <Semaforo cor={corGeral} size="lg" />
               <div className="flex-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Farol do Período</p>
-                <p className={`text-4xl font-bold leading-none mt-1 ${corText}`}>
+                <p className={`text-4xl font-bold leading-none mt-1 ${CORS_TEXT[corGeral]}`}>
                   {data.farol_geral.pct.toFixed(0)}<span className="text-lg text-slate-400 font-normal ml-1">%</span>
                 </p>
                 <p className="text-xs text-slate-500 mt-1.5">
@@ -197,70 +228,65 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
           </div>
         )}
 
-        {/* Lista de RCAs */}
-        {semDados ? (
+        {/* Abas */}
+        <div className="bg-slate-100 rounded-xl p-1 flex">
+          {(['fornec','rca'] as const).map(tab => {
+            const label = tab === 'fornec' ? 'Por Fornecedor' : 'Por RCA'
+            const active = tab === activeTab
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition-all ${
+                  active ? 'bg-white text-[#003366] shadow-sm' : 'text-slate-500'
+                }`}
+              >{label}</button>
+            )
+          })}
+        </div>
+
+        {/* Conteúdo das abas */}
+        {semPeriodo ? (
           <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
             <p className="text-base">Aguardando importação dos objetivos.</p>
           </div>
+        ) : activeTab === 'fornec' ? (
+          <FornecList
+            items={fornecData?.fornecedores ?? []}
+            onClick={(cf) => {
+              const params = new URLSearchParams()
+              if (periodoSel) {
+                params.set('tipo_periodo', periodoSel.tipo)
+                params.set('ano',          String(periodoSel.ano))
+                params.set('periodo_seq',  String(periodoSel.seq))
+              }
+              const base = embedded
+                ? `/farol/sup/${cod}/forn/${encodeURIComponent(cf)}`
+                : cnpjFromUrl
+                  ? `/m/${cnpjFromUrl}/sup/${cod}/forn/${encodeURIComponent(cf)}`
+                  : `/m/${cod}/forn/${encodeURIComponent(cf)}`
+              navigate(`${base}?${params}`)
+            }}
+          />
         ) : (
-          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-slate-700">Seus RCAs</h3>
-              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{data.rcas.length}</span>
-            </div>
-
-            <div className="space-y-2">
-              {data.rcas.map(rca => {
-                const c = rca.cor
-                const border = c === 'verde' ? 'border-l-emerald-500' : c === 'amarelo' ? 'border-l-amber-400' : 'border-l-red-500'
-                const bar    = c === 'verde' ? 'bg-emerald-500'  : c === 'amarelo' ? 'bg-amber-400'  : 'bg-red-500'
-                const txt    = c === 'verde' ? 'text-emerald-600': c === 'amarelo' ? 'text-amber-600': 'text-red-500'
-                return (
-                  <button
-                    key={rca.cod_rca}
-                    onClick={() => {
-                      const params = new URLSearchParams()
-                      if (periodoSel) {
-                        params.set('tipo_periodo', periodoSel.tipo)
-                        params.set('ano',          String(periodoSel.ano))
-                        params.set('periodo_seq',  String(periodoSel.seq))
-                      }
-                      if (cnpj) params.set('cod_supervisor', cod ?? '')
-                      let base: string
-                      if (embedded) {
-                        base = `/farol/sup/${cod}/rca/${rca.cod_rca}`
-                      } else if (cnpjFromUrl) {
-                        base = `/m/${cnpjFromUrl}/rca/${rca.cod_rca}`
-                      } else {
-                        base = `/m/${cod}/rca/${rca.cod_rca}`
-                      }
-                      navigate(`${base}?${params}`)
-                    }}
-                    className={`w-full bg-white border border-slate-100 border-l-4 ${border} rounded-xl overflow-hidden shadow-sm active:shadow-none active:bg-slate-50 transition-all text-left`}
-                  >
-                    <div className="h-1 bg-slate-100">
-                      <div className={`h-full ${bar}`} style={{ width: `${Math.min(rca.pct, 100)}%` }} />
-                    </div>
-                    <div className="px-4 py-3 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-slate-700 text-base">{rca.cod_rca}</p>
-                        <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(rca.vl_corrente)} atual</p>
-                        {rca.qtd_abaixo > 0 && (
-                          <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
-                            ⚠ {rca.qtd_abaixo} de {rca.qtd_fornec} abaixo
-                          </div>
-                        )}
-                      </div>
-                      <p className={`text-2xl font-bold shrink-0 ${txt}`}>
-                        {rca.pct.toFixed(0)}<span className="text-sm font-normal text-slate-400">%</span>
-                      </p>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </>
+          <RcaList
+            items={rcaData?.rcas ?? []}
+            onClick={(rca) => {
+              const params = new URLSearchParams()
+              if (periodoSel) {
+                params.set('tipo_periodo', periodoSel.tipo)
+                params.set('ano',          String(periodoSel.ano))
+                params.set('periodo_seq',  String(periodoSel.seq))
+              }
+              if (cnpj) params.set('cod_supervisor', cod ?? '')
+              const base = embedded
+                ? `/farol/sup/${cod}/rca/${rca}`
+                : cnpjFromUrl
+                  ? `/m/${cnpjFromUrl}/rca/${rca}`
+                  : `/m/${cod}/rca/${rca}`
+              navigate(`${base}?${params}`)
+            }}
+          />
         )}
 
         {isFetching && (
@@ -268,5 +294,105 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
         )}
       </div>
     </FarolMobileShell>
+  )
+}
+
+// ─── Sub-componentes ──────────────────────────────────────────────────────────
+
+function FornecList({ items, onClick }: { items: FornecItem[]; onClick: (codFornec: string) => void }) {
+  if (items.length === 0) {
+    return (
+      <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
+        <p className="text-base">Nenhum fornecedor no período.</p>
+      </div>
+    )
+  }
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-slate-700">Fornecedores</h3>
+        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{items.length}</span>
+      </div>
+      <div className="space-y-2">
+        {items.map(f => {
+          const c = f.cor
+          return (
+            <button
+              key={f.cod_fornec}
+              onClick={() => onClick(f.cod_fornec)}
+              className={`w-full bg-white border border-slate-100 border-l-4 ${CORS_BORDER[c]} rounded-xl overflow-hidden shadow-sm active:shadow-none active:bg-slate-50 transition-all text-left`}
+            >
+              <div className="h-1 bg-slate-100">
+                <div className={`h-full ${CORS_BAR[c]}`} style={{ width: `${Math.min(f.pct, 100)}%` }} />
+              </div>
+              <div className="px-4 py-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-700 text-sm">{f.cod_fornec}</p>
+                  <p className="font-semibold text-slate-800 text-base leading-tight truncate">{f.fornecedor || '—'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(f.vl_corrente)} atual</p>
+                  {f.qtd_rcas_abaixo > 0 && (
+                    <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                      ⚠ {f.qtd_rcas_abaixo} de {f.qtd_rcas} RCA(s) abaixo
+                    </div>
+                  )}
+                </div>
+                <p className={`text-2xl font-bold shrink-0 ${CORS_TEXT[c]}`}>
+                  {f.pct.toFixed(0)}<span className="text-sm font-normal text-slate-400">%</span>
+                </p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
+function RcaList({ items, onClick }: { items: RcaItem[]; onClick: (codRca: number) => void }) {
+  if (items.length === 0) {
+    return (
+      <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
+        <p className="text-base">Nenhum RCA no período.</p>
+      </div>
+    )
+  }
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-slate-700">Seus RCAs</h3>
+        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{items.length}</span>
+      </div>
+      <div className="space-y-2">
+        {items.map(rca => {
+          const c = rca.cor
+          return (
+            <button
+              key={rca.cod_rca}
+              onClick={() => onClick(rca.cod_rca)}
+              className={`w-full bg-white border border-slate-100 border-l-4 ${CORS_BORDER[c]} rounded-xl overflow-hidden shadow-sm active:shadow-none active:bg-slate-50 transition-all text-left`}
+            >
+              <div className="h-1 bg-slate-100">
+                <div className={`h-full ${CORS_BAR[c]}`} style={{ width: `${Math.min(rca.pct, 100)}%` }} />
+              </div>
+              <div className="px-4 py-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-700 text-base">{rca.cod_rca}</p>
+                  <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(rca.vl_corrente)} atual</p>
+                  {rca.qtd_abaixo > 0 && (
+                    <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
+                      ⚠ {rca.qtd_abaixo} de {rca.qtd_fornec} abaixo
+                    </div>
+                  )}
+                </div>
+                <p className={`text-2xl font-bold shrink-0 ${CORS_TEXT[c]}`}>
+                  {rca.pct.toFixed(0)}<span className="text-sm font-normal text-slate-400">%</span>
+                </p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </>
   )
 }
