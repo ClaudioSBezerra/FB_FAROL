@@ -257,7 +257,192 @@ func FarolFornecRcasHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// ─── Handlers autenticados (web via JWT) ──────────────────────────────────────
+// ─── Empresa (web autenticado): /api/farol/web/fornecedores ─────────────────
+
+// Lista todos os fornecedores da empresa com totais agregados de todos os supervisores.
+func FarolWebFornecedoresEmpresaHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		tipo, ano, seq, hasPeriodo := resolvePeriodo(db, spCtx.EmpresaID,
+			r.URL.Query().Get("tipo_periodo"),
+			r.URL.Query().Get("ano"),
+			r.URL.Query().Get("periodo_seq"))
+
+		type fornecEmpresaItem struct {
+			CodFornec     string  `json:"cod_fornec"`
+			Fornecedor    string  `json:"fornecedor"`
+			Pct           float64 `json:"pct"`
+			Cor           string  `json:"cor"`
+			VlAnterior    float64 `json:"vl_anterior"`
+			VlCorrente    float64 `json:"vl_corrente"`
+			QtdSups       int     `json:"qtd_sups"`
+			QtdSupsAbaixo int     `json:"qtd_sups_abaixo"`
+		}
+		type resp struct {
+			Periodo      *periodoFarolOut    `json:"periodo"`
+			FarolGeral   resumoFarolOut      `json:"farol_geral"`
+			Fornecedores []fornecEmpresaItem `json:"fornecedores"`
+		}
+		out := resp{Fornecedores: []fornecEmpresaItem{}}
+		if !hasPeriodo {
+			out.FarolGeral = resumoFarolOut{Cor: "vermelho"}
+			json.NewEncoder(w).Encode(out)
+			return
+		}
+		out.Periodo = &periodoFarolOut{Tipo: tipo, Ano: ano, Seq: seq, Label: periodoLabel(tipo, seq, ano)}
+
+		// Agrega por (cod_fornec, cod_supervisor) e depois por cod_fornec.
+		// Contabiliza supervisores abaixo de 100% por fornecedor.
+		rows, err := db.Query(`
+			WITH sup_agg AS (
+			  SELECT cod_fornec, MAX(fornecedor) AS forn_nome,
+			         cod_supervisor,
+			         SUM(vl_anterior) AS vl_ant,
+			         SUM(vl_corrente) AS vl_cor
+			  FROM vw_obj_rca_fornecedor
+			  WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4
+			  GROUP BY cod_fornec, cod_supervisor
+			)
+			SELECT cod_fornec,
+			       MAX(forn_nome),
+			       SUM(vl_ant),
+			       SUM(vl_cor),
+			       COUNT(*) AS qtd_sups,
+			       COUNT(*) FILTER (
+			           WHERE NOT (vl_ant = 0 AND vl_cor > 0)
+			             AND vl_ant > 0
+			             AND (vl_cor / vl_ant) * 100 < 100
+			       ) AS qtd_sups_abaixo
+			FROM sup_agg
+			GROUP BY cod_fornec
+			ORDER BY MAX(forn_nome)`,
+			spCtx.EmpresaID, tipo, ano, seq)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		var totalAnt, totalCor float64
+		for rows.Next() {
+			var it fornecEmpresaItem
+			var nomeNull sql.NullString
+			if rows.Scan(&it.CodFornec, &nomeNull, &it.VlAnterior, &it.VlCorrente, &it.QtdSups, &it.QtdSupsAbaixo) == nil {
+				it.Fornecedor = nomeNull.String
+				it.Pct = calcPct(it.VlAnterior, it.VlCorrente)
+				it.Cor = farolCor(it.Pct)
+				out.Fornecedores = append(out.Fornecedores, it)
+				totalAnt += it.VlAnterior
+				totalCor += it.VlCorrente
+			}
+		}
+		out.FarolGeral = resumoFarolOut{
+			Pct: calcPct(totalAnt, totalCor), Cor: farolCor(calcPct(totalAnt, totalCor)),
+			VlAnterior: totalAnt, VlCorrente: totalCor,
+		}
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// ─── Fornecedor → Supervisores (web): /api/farol/web/forn/:cf/supervisores ──
+
+func FarolWebFornecSupervisoresHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		// path: /api/farol/web/forn/<cf>/supervisores
+		path := strings.TrimPrefix(r.URL.Path, "/api/farol/web/forn/")
+		path = strings.TrimSuffix(path, "/supervisores")
+		codFornec := strings.Trim(path, "/")
+		if codFornec == "" {
+			http.Error(w, `{"error":"cod_fornec inválido"}`, http.StatusBadRequest)
+			return
+		}
+		tipo, ano, seq, hasPeriodo := resolvePeriodo(db, spCtx.EmpresaID,
+			r.URL.Query().Get("tipo_periodo"),
+			r.URL.Query().Get("ano"),
+			r.URL.Query().Get("periodo_seq"))
+
+		type supItem struct {
+			CodSupervisor int     `json:"cod_supervisor"`
+			NomeSupervisor string `json:"nome_supervisor"`
+			Pct           float64 `json:"pct"`
+			Cor           string  `json:"cor"`
+			VlAnterior    float64 `json:"vl_anterior"`
+			VlCorrente    float64 `json:"vl_corrente"`
+		}
+		type resp struct {
+			CodFornec    string           `json:"cod_fornec"`
+			Fornecedor   string           `json:"fornecedor"`
+			Periodo      *periodoFarolOut `json:"periodo"`
+			Resumo       resumoFarolOut   `json:"resumo"`
+			Supervisores []supItem        `json:"supervisores"`
+		}
+		out := resp{CodFornec: codFornec, Supervisores: []supItem{}}
+		if !hasPeriodo {
+			out.Resumo = resumoFarolOut{Cor: "vermelho"}
+			json.NewEncoder(w).Encode(out)
+			return
+		}
+		out.Periodo = &periodoFarolOut{Tipo: tipo, Ano: ano, Seq: seq, Label: periodoLabel(tipo, seq, ano)}
+
+		// Nome do fornecedor
+		var fornecNome sql.NullString
+		_ = db.QueryRow(`
+			SELECT MAX(fornecedor) FROM vw_obj_rca_fornecedor
+			WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4
+			  AND cod_fornec=$5`,
+			spCtx.EmpresaID, tipo, ano, seq, codFornec).Scan(&fornecNome)
+		out.Fornecedor = fornecNome.String
+
+		rows, err := db.Query(`
+			SELECT cod_supervisor, MAX(nome_supervisor),
+			       SUM(vl_anterior), SUM(vl_corrente)
+			FROM vw_obj_rca_fornecedor
+			WHERE empresa_id=$1 AND tipo_periodo=$2 AND ano=$3 AND periodo_seq=$4
+			  AND cod_fornec=$5
+			GROUP BY cod_supervisor
+			ORDER BY MAX(nome_supervisor)`,
+			spCtx.EmpresaID, tipo, ano, seq, codFornec)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		var totalAnt, totalCor float64
+		for rows.Next() {
+			var it supItem
+			var supNull sql.NullInt64
+			var nomeNull sql.NullString
+			if rows.Scan(&supNull, &nomeNull, &it.VlAnterior, &it.VlCorrente) == nil {
+				if supNull.Valid {
+					it.CodSupervisor = int(supNull.Int64)
+				}
+				it.NomeSupervisor = nomeNull.String
+				it.Pct = calcPct(it.VlAnterior, it.VlCorrente)
+				it.Cor = farolCor(it.Pct)
+				out.Supervisores = append(out.Supervisores, it)
+				totalAnt += it.VlAnterior
+				totalCor += it.VlCorrente
+			}
+		}
+		out.Resumo = resumoFarolOut{
+			Pct: calcPct(totalAnt, totalCor), Cor: farolCor(calcPct(totalAnt, totalCor)),
+			VlAnterior: totalAnt, VlCorrente: totalCor,
+		}
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// ─── Handlers autenticados existentes (web via JWT) ─────────────────────────
 
 // GET /api/farol/web/sup-forn/{cod}
 func FarolWebSupFornecedoresHandler(db *sql.DB) http.HandlerFunc {

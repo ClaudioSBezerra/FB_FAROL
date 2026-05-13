@@ -455,8 +455,10 @@ func main() {
 	http.HandleFunc("/api/farol/forn-rcas/",    gz(publicHandler(handlers.FarolFornecRcasHandler)))
 
 	// Versões autenticadas (Web)
-	http.HandleFunc("/api/farol/web/sup-forn/",  gz(withSP(handlers.FarolWebSupFornecedoresHandler, "gestor_filial")))
-	http.HandleFunc("/api/farol/web/forn-rcas/", gz(withSP(handlers.FarolWebFornecRcasHandler,      "gestor_filial")))
+	http.HandleFunc("/api/farol/web/sup-forn/",     gz(withSP(handlers.FarolWebSupFornecedoresHandler,     "gestor_filial")))
+	http.HandleFunc("/api/farol/web/forn-rcas/",    gz(withSP(handlers.FarolWebFornecRcasHandler,          "gestor_filial")))
+	http.HandleFunc("/api/farol/web/fornecedores",  gz(withSP(handlers.FarolWebFornecedoresEmpresaHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/forn/",         gz(withSP(handlers.FarolWebFornecSupervisoresHandler,  "gestor_filial")))
 
 	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
 	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))

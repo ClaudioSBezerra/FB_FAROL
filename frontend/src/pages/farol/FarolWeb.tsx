@@ -141,13 +141,27 @@ interface SupItem {
 }
 interface SupervisoresResp { periodo: PeriodoOut | null; supervisores: SupItem[] }
 
+interface FornecEmpresaItem {
+  cod_fornec: string; fornecedor: string
+  pct: number; cor: Cor
+  vl_anterior: number; vl_corrente: number
+  qtd_sups: number; qtd_sups_abaixo: number
+}
+interface FornecedoresEmpresaResp {
+  periodo: PeriodoOut | null
+  farol_geral: Resumo
+  fornecedores: FornecEmpresaItem[]
+}
+
 export function FarolWebList() {
   const navigate = useNavigate()
   const [periodoKey, setPeriodoKey] = useState('')
   const [filtro, setFiltro] = useState('')
+  const [activeTab, setActiveTab] = useState<TabKey>('fornec')
   const periodo = usePeriodoSel(periodoKey)
 
-  const { data, isLoading, isError } = useQuery<SupervisoresResp>({
+  // Aba "Por Supervisor"
+  const { data: supData, isLoading: supLoading, isError: supError } = useQuery<SupervisoresResp>({
     queryKey: ['farol-web-supervisores', periodoKey],
     queryFn: () => {
       const qs = periodo ? periodoParams(periodo) : ''
@@ -156,22 +170,47 @@ export function FarolWebList() {
         return r.json()
       })
     },
-    staleTime: 2 * 60_000,
-    gcTime:    10 * 60_000,
-    refetchOnWindowFocus: false,
+    enabled: activeTab === 'rca',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
+  })
+
+  // Aba "Por Fornecedor" (default)
+  const { data: fornecData, isLoading: fornecLoading, isError: fornecError } = useQuery<FornecedoresEmpresaResp>({
+    queryKey: ['farol-web-empresa-fornecedores', periodoKey],
+    queryFn: () => {
+      const qs = periodo ? periodoParams(periodo) : ''
+      return fetch(`/api/farol/web/fornecedores${qs ? '?' + qs : ''}`).then(r => {
+        if (!r.ok) throw new Error('falha')
+        return r.json()
+      })
+    },
+    enabled: activeTab === 'fornec',
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
   })
 
   const supervisores = useMemo<SupItem[]>(
-    () => Array.isArray(data?.supervisores) ? data!.supervisores : [],
-    [data]
+    () => Array.isArray(supData?.supervisores) ? supData!.supervisores : [],
+    [supData]
   )
-  const filtered = useMemo(() => {
+  const fornecedores = useMemo<FornecEmpresaItem[]>(
+    () => Array.isArray(fornecData?.fornecedores) ? fornecData!.fornecedores : [],
+    [fornecData]
+  )
+
+  const filteredSups = useMemo(() => {
     if (!filtro) return supervisores
     const q = filtro.toLowerCase()
     return supervisores.filter(s => s.nome.toLowerCase().includes(q) || String(s.cod_supervisor).includes(q))
   }, [supervisores, filtro])
+  const filteredForns = useMemo(() => {
+    if (!filtro) return fornecedores
+    const q = filtro.toLowerCase()
+    return fornecedores.filter(f => f.fornecedor.toLowerCase().includes(q) || f.cod_fornec.toLowerCase().includes(q))
+  }, [fornecedores, filtro])
 
-  const periodoAtual = data?.periodo ?? periodo
+  const periodoAtual = (activeTab === 'fornec' ? fornecData?.periodo : supData?.periodo) ?? periodo
+  const isLoading = activeTab === 'fornec' ? fornecLoading : supLoading
+  const isError   = activeTab === 'fornec' ? fornecError   : supError
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -179,7 +218,7 @@ export function FarolWebList() {
       {/* cabeçalho */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Farol de Supervisores</h1>
+          <h1 className="text-xl font-bold text-slate-800">Farol da Empresa</h1>
           {periodoAtual && (
             <p className="text-sm text-slate-400 mt-0.5">Período: {periodoAtual.label}</p>
           )}
@@ -191,13 +230,27 @@ export function FarolWebList() {
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
             <input
-              type="text" placeholder="Filtrar supervisor..." value={filtro}
+              type="text"
+              placeholder={activeTab === 'fornec' ? 'Filtrar fornecedor...' : 'Filtrar supervisor...'}
+              value={filtro}
               onChange={e => setFiltro(e.target.value)}
               className="h-9 rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#003366]/30 w-52"
             />
           </div>
         </div>
       </div>
+
+      {/* Farol geral (visível na aba Fornecedor que tem o agregado) */}
+      {activeTab === 'fornec' && fornecData && fornecData.periodo && (
+        <FarolHeader
+          title="Total da Empresa"
+          sub="Consolidado de todos os fornecedores"
+          resumo={fornecData.farol_geral}
+          periodo={fornecData.periodo}
+        />
+      )}
+
+      <TabSwitcher value={activeTab} onChange={t => { setActiveTab(t); setFiltro('') }} secondLabel="Por Supervisor" />
 
       {isLoading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -213,29 +266,59 @@ export function FarolWebList() {
         </div>
       )}
 
-      {!isLoading && filtered.length === 0 && (
-        <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
-          {supervisores.length === 0 ? 'Aguardando importação dos objetivos.' : 'Nenhum supervisor encontrado.'}
-        </div>
+      {/* Aba: Por Fornecedor */}
+      {!isLoading && activeTab === 'fornec' && (
+        filteredForns.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
+            {fornecedores.length === 0 ? 'Aguardando importação dos objetivos.' : 'Nenhum fornecedor encontrado.'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredForns.map(f => {
+              const qs = periodoAtual ? '?' + periodoParams(periodoAtual) : ''
+              return (
+                <EntityCard
+                  key={f.cod_fornec}
+                  cor={f.cor}
+                  pct={f.pct}
+                  title={f.fornecedor || '—'}
+                  sub={`Fornecedor ${f.cod_fornec}`}
+                  value={`${fmtBRL(f.vl_corrente)} atual`}
+                  badge={f.qtd_sups_abaixo > 0 ? `${f.qtd_sups_abaixo} de ${f.qtd_sups} supervisor(es) abaixo` : undefined}
+                  onClick={() => navigate(`/farol/forn/${encodeURIComponent(f.cod_fornec)}${qs}`)}
+                />
+              )
+            })}
+          </div>
+        )
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {filtered.map(s => {
-          const qs = periodoAtual ? '?' + periodoParams(periodoAtual) : ''
-          return (
-            <EntityCard
-              key={s.cod_supervisor}
-              cor={s.cor}
-              pct={s.pct}
-              title={s.nome}
-              sub={`Supervisor ${s.cod_supervisor}`}
-              value={`${fmtBRL(s.vl_corrente)} atual`}
-              badge={s.qtd_rcas_abaixo > 0 ? `${s.qtd_rcas_abaixo} de ${s.qtd_rcas} RCA(s) abaixo` : undefined}
-              onClick={() => navigate(`/farol/sup/${s.cod_supervisor}${qs}`)}
-            />
-          )
-        })}
-      </div>
+      {/* Aba: Por Supervisor */}
+      {!isLoading && activeTab === 'rca' && (
+        filteredSups.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
+            {supervisores.length === 0 ? 'Aguardando importação dos objetivos.' : 'Nenhum supervisor encontrado.'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredSups.map(s => {
+              const qs = periodoAtual ? '?' + periodoParams(periodoAtual) : ''
+              return (
+                <EntityCard
+                  key={s.cod_supervisor}
+                  cor={s.cor}
+                  pct={s.pct}
+                  title={s.nome}
+                  sub={`Supervisor ${s.cod_supervisor}`}
+                  value={`${fmtBRL(s.vl_corrente)} atual`}
+                  badge={s.qtd_rcas_abaixo > 0 ? `${s.qtd_rcas_abaixo} de ${s.qtd_rcas} RCA(s) abaixo` : undefined}
+                  onClick={() => navigate(`/farol/sup/${s.cod_supervisor}${qs}`)}
+                />
+              )
+            })}
+          </div>
+        )
+      )}
     </div>
   )
 }
@@ -267,11 +350,15 @@ interface SupFornecResp {
   fornecedores: FornecItemSup[]
 }
 
-function TabSwitcher({ value, onChange }: { value: TabKey; onChange: (t: TabKey) => void }) {
+function TabSwitcher({ value, onChange, secondLabel = 'Por RCA' }: {
+  value: TabKey
+  onChange: (t: TabKey) => void
+  secondLabel?: string
+}) {
   return (
     <div className="border-b border-slate-200 flex gap-1">
       {(['fornec','rca'] as const).map(tab => {
-        const label = tab === 'fornec' ? 'Por Fornecedor' : 'Por RCA'
+        const label = tab === 'fornec' ? 'Por Fornecedor' : secondLabel
         const active = tab === value
         return (
           <button
@@ -598,6 +685,101 @@ export function FarolWebRcaDetail() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Tela: Supervisores daquele fornecedor (drill da aba Fornecedor na lista Empresa) ──
+
+interface FornecSupItem {
+  cod_supervisor: number; nome_supervisor: string
+  pct: number; cor: Cor
+  vl_anterior: number; vl_corrente: number
+}
+interface FornecSupervisoresResp {
+  cod_fornec: string; fornecedor: string
+  periodo: PeriodoOut | null
+  resumo: Resumo
+  supervisores: FornecSupItem[]
+}
+
+export function FarolWebFornecSups() {
+  const { codFornec } = useParams<{ codFornec: string }>()
+  const [search] = useSearchParams()
+  const navigate = useNavigate()
+  const qs = search.toString()
+
+  const { data, isLoading, isError } = useQuery<FornecSupervisoresResp>({
+    queryKey: ['farol-web-forn-sups', codFornec, qs],
+    queryFn: () => {
+      const url = new URL(`/api/farol/web/forn/${codFornec}/supervisores`, window.location.origin)
+      const tp = search.get('tipo_periodo')
+      if (tp)                        url.searchParams.set('tipo_periodo', tp)
+      if (search.get('ano'))         url.searchParams.set('ano',         search.get('ano')!)
+      if (search.get('periodo_seq')) url.searchParams.set('periodo_seq', search.get('periodo_seq')!)
+      return fetch(url.toString()).then(r => {
+        if (!r.ok) throw new Error('falha')
+        return r.json()
+      })
+    },
+    enabled: !!codFornec,
+    staleTime: 2 * 60_000, gcTime: 10 * 60_000, refetchOnWindowFocus: false,
+  })
+
+  return (
+    <div className="space-y-5 max-w-5xl mx-auto">
+      <button
+        onClick={() => navigate(`/farol?${qs}`)}
+        className="inline-flex items-center gap-1.5 text-sm text-[#003366] hover:text-[#003366]/70 transition-colors font-medium"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
+        Todos os fornecedores
+      </button>
+
+      {isLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[...Array(6)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
+        </div>
+      )}
+      {isError && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">
+          Erro ao carregar dados.
+        </div>
+      )}
+
+      {data && (
+        <>
+          <FarolHeader
+            title={data.fornecedor || '—'}
+            sub={`Fornecedor ${data.cod_fornec}`}
+            resumo={data.resumo}
+            periodo={data.periodo ?? undefined}
+          />
+
+          {data.supervisores.length === 0 ? (
+            <div className="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400 text-sm">
+              Sem supervisores para este fornecedor no período.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {data.supervisores.map(s => {
+                const periodoQs = data.periodo ? periodoParams(data.periodo) : qs
+                return (
+                  <EntityCard
+                    key={s.cod_supervisor}
+                    cor={s.cor}
+                    pct={s.pct}
+                    title={s.nome_supervisor}
+                    sub={`Supervisor ${s.cod_supervisor}`}
+                    value={`${fmtBRL(s.vl_corrente)} atual`}
+                    onClick={() => navigate(`/farol/sup/${s.cod_supervisor}?${periodoQs}`)}
+                  />
+                )
+              })}
             </div>
           )}
         </>
