@@ -147,7 +147,7 @@ export default function FarolFornecRcas({ embedded = false }: { embedded?: boole
               <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{data.rcas.length}</span>
             </div>
             <div className="space-y-2">
-              {data.rcas.map(rca => (
+              {[...data.rcas].sort((a,b) => b.pct - a.pct).map(rca => (
                 <div
                   key={rca.cod_rca}
                   className={`bg-white border border-slate-100 border-l-4 ${CORS_BORDER[rca.cor]} rounded-xl overflow-hidden shadow-sm`}
@@ -159,9 +159,10 @@ export default function FarolFornecRcas({ embedded = false }: { embedded?: boole
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-slate-700 text-base">{rca.cod_rca}</p>
                       <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {fmtBRL(rca.vl_anterior)} → {fmtBRL(rca.vl_corrente)}
-                      </p>
+                      <div className="flex gap-3 mt-1 text-xs">
+                        <span><span className="text-slate-400">Ant.</span> <span className="text-slate-500 font-medium">{fmtBRL(rca.vl_anterior)}</span></span>
+                        <span><span className="text-slate-400">Atual</span> <span className="text-slate-800 font-semibold">{fmtBRL(rca.vl_corrente)}</span></span>
+                      </div>
                     </div>
                     <p className={`text-2xl font-bold shrink-0 ${CORS_TEXT[rca.cor]}`}>
                       {rca.pct.toFixed(0)}<span className="text-sm font-normal text-slate-400">%</span>

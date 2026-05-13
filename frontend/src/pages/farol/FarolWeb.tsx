@@ -67,9 +67,10 @@ function PeriodoSelect({ value, onChange }: { value: string; onChange: (k: strin
 // ─── Card de entidade (supervisor ou RCA) ─────────────────────────────────────
 
 function EntityCard({
-  cor, pct, title, sub, value, badge, onClick,
+  cor, pct, title, sub, vlAnterior, vlCorrente, badge, onClick,
 }: {
-  cor: Cor; pct: number; title: string; sub?: string; value: string
+  cor: Cor; pct: number; title: string; sub?: string
+  vlAnterior: number; vlCorrente: number
   badge?: string; onClick: () => void
 }) {
   return (
@@ -77,7 +78,6 @@ function EntityCard({
       onClick={onClick}
       className={`relative bg-white border border-slate-100 border-l-4 ${COR_BORDER[cor]} rounded-xl shadow-sm hover:shadow-md transition-all overflow-hidden text-left w-full`}
     >
-      {/* barra de progresso no topo */}
       <div className="h-1 bg-slate-100 w-full">
         <div className={`h-full ${COR_BAR[cor]} transition-all`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
@@ -89,7 +89,17 @@ function EntityCard({
         <p className={`text-3xl font-bold mt-3 leading-none ${COR_TEXT[cor]}`}>
           {pct.toFixed(0)}<span className="text-base font-normal text-slate-400 ml-0.5">%</span>
         </p>
-        <p className="text-xs text-slate-500 mt-1">{value}</p>
+
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-50">
+          <div>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider">Anterior</p>
+            <p className="font-semibold text-slate-500 mt-0.5">{fmtBRL(vlAnterior)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider">Atual</p>
+            <p className="font-semibold text-slate-800 mt-0.5">{fmtBRL(vlCorrente)}</p>
+          </div>
+        </div>
 
         {badge && (
           <div className="mt-2.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
@@ -198,14 +208,16 @@ export function FarolWebList() {
   )
 
   const filteredSups = useMemo(() => {
-    if (!filtro) return supervisores
-    const q = filtro.toLowerCase()
-    return supervisores.filter(s => s.nome.toLowerCase().includes(q) || String(s.cod_supervisor).includes(q))
+    const arr = filtro
+      ? supervisores.filter(s => s.nome.toLowerCase().includes(filtro.toLowerCase()) || String(s.cod_supervisor).includes(filtro))
+      : supervisores
+    return [...arr].sort((a, b) => b.pct - a.pct) // melhores primeiro (DESC)
   }, [supervisores, filtro])
   const filteredForns = useMemo(() => {
-    if (!filtro) return fornecedores
-    const q = filtro.toLowerCase()
-    return fornecedores.filter(f => f.fornecedor.toLowerCase().includes(q) || f.cod_fornec.toLowerCase().includes(q))
+    const arr = filtro
+      ? fornecedores.filter(f => f.fornecedor.toLowerCase().includes(filtro.toLowerCase()) || f.cod_fornec.toLowerCase().includes(filtro.toLowerCase()))
+      : fornecedores
+    return [...arr].sort((a, b) => b.pct - a.pct) // melhores primeiro (DESC)
   }, [fornecedores, filtro])
 
   const periodoAtual = (activeTab === 'fornec' ? fornecData?.periodo : supData?.periodo) ?? periodo
@@ -283,7 +295,8 @@ export function FarolWebList() {
                   pct={f.pct}
                   title={f.fornecedor || '—'}
                   sub={`Fornecedor ${f.cod_fornec}`}
-                  value={`${fmtBRL(f.vl_corrente)} atual`}
+                  vlAnterior={f.vl_anterior}
+                  vlCorrente={f.vl_corrente}
                   badge={f.qtd_sups_abaixo > 0 ? `${f.qtd_sups_abaixo} de ${f.qtd_sups} supervisor(es) abaixo` : undefined}
                   onClick={() => navigate(`/farol/forn/${encodeURIComponent(f.cod_fornec)}${qs}`)}
                 />
@@ -310,7 +323,8 @@ export function FarolWebList() {
                   pct={s.pct}
                   title={s.nome}
                   sub={`Supervisor ${s.cod_supervisor}`}
-                  value={`${fmtBRL(s.vl_corrente)} atual`}
+                  vlAnterior={s.vl_anterior}
+                  vlCorrente={s.vl_corrente}
                   badge={s.qtd_rcas_abaixo > 0 ? `${s.qtd_rcas_abaixo} de ${s.qtd_rcas} RCA(s) abaixo` : undefined}
                   onClick={() => navigate(`/farol/sup/${s.cod_supervisor}${qs}`)}
                 />
@@ -449,14 +463,15 @@ export function FarolWebDashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {fornecData.fornecedores.map(f => (
+            {[...fornecData.fornecedores].sort((a,b)=>b.pct-a.pct).map(f => (
               <EntityCard
                 key={f.cod_fornec}
                 cor={f.cor}
                 pct={f.pct}
                 title={f.fornecedor || '—'}
                 sub={`Fornecedor ${f.cod_fornec}`}
-                value={`${fmtBRL(f.vl_corrente)} atual`}
+                vlAnterior={f.vl_anterior}
+                  vlCorrente={f.vl_corrente}
                 badge={f.qtd_rcas_abaixo > 0 ? `${f.qtd_rcas_abaixo} de ${f.qtd_rcas} RCA(s) abaixo` : undefined}
                 onClick={() => navigate(`/farol/sup/${cod}/forn/${encodeURIComponent(f.cod_fornec)}?${periodoQs}`)}
               />
@@ -472,14 +487,15 @@ export function FarolWebDashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {rcaData.rcas.map(rca => (
+            {[...rcaData.rcas].sort((a,b)=>b.pct-a.pct).map(rca => (
               <EntityCard
                 key={rca.cod_rca}
                 cor={rca.cor}
                 pct={rca.pct}
                 title={rca.nome_rca}
                 sub={`RCA ${rca.cod_rca}`}
-                value={`${fmtBRL(rca.vl_corrente)} atual`}
+                vlAnterior={rca.vl_anterior}
+                  vlCorrente={rca.vl_corrente}
                 badge={rca.qtd_abaixo > 0 ? `${rca.qtd_abaixo} de ${rca.qtd_fornec} fornecedor(es) abaixo` : undefined}
                 onClick={() => navigate(`/farol/sup/${cod}/rca/${rca.cod_rca}?${periodoQs}&cod_supervisor=${cod}`)}
               />
@@ -561,7 +577,7 @@ export function FarolWebFornecRcas() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {data.rcas.map(rca => (
+              {[...data.rcas].sort((a,b)=>b.pct-a.pct).map(rca => (
                 <div key={rca.cod_rca} className={`bg-white border border-slate-100 border-l-4 ${COR_BORDER[rca.cor]} rounded-xl shadow-sm overflow-hidden`}>
                   <div className="h-1 bg-slate-100">
                     <div className={`h-full ${COR_BAR[rca.cor]}`} style={{ width: `${Math.min(rca.pct, 100)}%` }} />
@@ -659,7 +675,7 @@ export function FarolWebRcaDetail() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {data.fornecedores.map(f => (
+              {[...data.fornecedores].sort((a,b)=>b.pct-a.pct).map(f => (
                 <div
                   key={f.cod_fornec}
                   className={`relative bg-white border border-slate-100 border-l-4 ${COR_BORDER[f.cor]} rounded-xl shadow-sm overflow-hidden`}
@@ -766,7 +782,7 @@ export function FarolWebFornecSups() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {data.supervisores.map(s => {
+              {[...data.supervisores].sort((a,b)=>b.pct-a.pct).map(s => {
                 const periodoQs = data.periodo ? periodoParams(data.periodo) : qs
                 return (
                   <EntityCard
@@ -775,7 +791,8 @@ export function FarolWebFornecSups() {
                     pct={s.pct}
                     title={s.nome_supervisor}
                     sub={`Supervisor ${s.cod_supervisor}`}
-                    value={`${fmtBRL(s.vl_corrente)} atual`}
+                    vlAnterior={s.vl_anterior}
+                  vlCorrente={s.vl_corrente}
                     onClick={() => navigate(`/farol/sup/${s.cod_supervisor}?${periodoQs}`)}
                   />
                 )

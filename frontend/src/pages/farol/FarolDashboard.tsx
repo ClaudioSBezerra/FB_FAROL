@@ -300,7 +300,8 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
 // ─── Sub-componentes ──────────────────────────────────────────────────────────
 
 function FornecList({ items, onClick }: { items: FornecItem[]; onClick: (codFornec: string) => void }) {
-  if (items.length === 0) {
+  const sorted = [...items].sort((a, b) => b.pct - a.pct) // melhores primeiro
+  if (sorted.length === 0) {
     return (
       <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
         <p className="text-base">Nenhum fornecedor no período.</p>
@@ -311,10 +312,10 @@ function FornecList({ items, onClick }: { items: FornecItem[]; onClick: (codForn
     <>
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold text-slate-700">Fornecedores</h3>
-        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{items.length}</span>
+        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{sorted.length}</span>
       </div>
       <div className="space-y-2">
-        {items.map(f => {
+        {sorted.map(f => {
           const c = f.cor
           return (
             <button
@@ -329,7 +330,10 @@ function FornecList({ items, onClick }: { items: FornecItem[]; onClick: (codForn
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-slate-700 text-sm">{f.cod_fornec}</p>
                   <p className="font-semibold text-slate-800 text-base leading-tight truncate">{f.fornecedor || '—'}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(f.vl_corrente)} atual</p>
+                  <div className="flex gap-3 mt-1 text-xs">
+                    <span><span className="text-slate-400">Ant.</span> <span className="text-slate-500 font-medium">{fmtBRL(f.vl_anterior)}</span></span>
+                    <span><span className="text-slate-400">Atual</span> <span className="text-slate-800 font-semibold">{fmtBRL(f.vl_corrente)}</span></span>
+                  </div>
                   {f.qtd_rcas_abaixo > 0 && (
                     <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
                       ⚠ {f.qtd_rcas_abaixo} de {f.qtd_rcas} RCA(s) abaixo
@@ -349,7 +353,8 @@ function FornecList({ items, onClick }: { items: FornecItem[]; onClick: (codForn
 }
 
 function RcaList({ items, onClick }: { items: RcaItem[]; onClick: (codRca: number) => void }) {
-  if (items.length === 0) {
+  const sorted = [...items].sort((a, b) => b.pct - a.pct) // melhores primeiro
+  if (sorted.length === 0) {
     return (
       <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
         <p className="text-base">Nenhum RCA no período.</p>
@@ -360,10 +365,10 @@ function RcaList({ items, onClick }: { items: RcaItem[]; onClick: (codRca: numbe
     <>
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold text-slate-700">Seus RCAs</h3>
-        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{items.length}</span>
+        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{sorted.length}</span>
       </div>
       <div className="space-y-2">
-        {items.map(rca => {
+        {sorted.map(rca => {
           const c = rca.cor
           return (
             <button
@@ -378,7 +383,10 @@ function RcaList({ items, onClick }: { items: RcaItem[]; onClick: (codRca: numbe
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-slate-700 text-base">{rca.cod_rca}</p>
                   <p className="font-semibold text-slate-800 text-base leading-tight truncate">{rca.nome_rca}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{fmtBRL(rca.vl_corrente)} atual</p>
+                  <div className="flex gap-3 mt-1 text-xs">
+                    <span><span className="text-slate-400">Ant.</span> <span className="text-slate-500 font-medium">{fmtBRL(rca.vl_anterior)}</span></span>
+                    <span><span className="text-slate-400">Atual</span> <span className="text-slate-800 font-semibold">{fmtBRL(rca.vl_corrente)}</span></span>
+                  </div>
                   {rca.qtd_abaixo > 0 && (
                     <div className="mt-1.5 inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5 text-xs font-semibold">
                       ⚠ {rca.qtd_abaixo} de {rca.qtd_fornec} abaixo
