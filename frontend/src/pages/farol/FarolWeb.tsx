@@ -269,7 +269,7 @@ interface SupFornecResp {
 
 function TabSwitcher({ value, onChange }: { value: TabKey; onChange: (t: TabKey) => void }) {
   return (
-    <div className="bg-slate-100 rounded-xl p-1 inline-flex">
+    <div className="border-b border-slate-200 flex gap-1">
       {(['fornec','rca'] as const).map(tab => {
         const label = tab === 'fornec' ? 'Por Fornecedor' : 'Por RCA'
         const active = tab === value
@@ -277,10 +277,13 @@ function TabSwitcher({ value, onChange }: { value: TabKey; onChange: (t: TabKey)
           <button
             key={tab}
             onClick={() => onChange(tab)}
-            className={`py-2 px-5 rounded-lg text-sm font-semibold transition-all ${
-              active ? 'bg-white text-[#003366] shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            className={`relative py-3 px-6 text-sm font-semibold transition-colors ${
+              active ? 'text-[#003366]' : 'text-slate-500 hover:text-slate-700'
             }`}
-          >{label}</button>
+          >
+            {label}
+            {active && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#003366]" />}
+          </button>
         )
       })}
     </div>
