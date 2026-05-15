@@ -7,9 +7,10 @@ import pkg from "./package.json";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const target = env.VITE_API_TARGET || "http://localhost:8081";
+  const target  = env.VITE_API_TARGET || "http://localhost:8087";
+  const devPort = Number(env.VITE_DEV_PORT) || 3087;
 
-  console.log(`[Vite] Proxying /api to: ${target}`);
+  console.log(`[Vite] Proxying /api to: ${target} (dev port ${devPort})`);
 
   return {
     define: {
@@ -17,7 +18,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: "0.0.0.0",
-      port: 3000,
+      port: devPort,
       proxy: {
         "/api": {
           target: target,
