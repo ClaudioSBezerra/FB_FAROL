@@ -15,6 +15,7 @@ const state = {
   baseComparativa: [],   // array de rows normalizadas
   baseAtual:       [],
   persona:         'diretoria',  // diretoria | ggv | supervisor
+  personaEntity:   null,         // código da entidade selecionada (cod_gerente OU cod_supervisor)
   view:            'V01',        // V01 | V02 | V03
   drillPath:       [],           // [{level, value, label}, ...]
 }
@@ -161,12 +162,65 @@ function filterByDrill(rows) {
 
 // Persona scope: limita o que cada persona enxerga
 function applyPersonaScope(rows) {
-  // Para a maquete, o seletor de persona apenas filtra a hierarquia visualmente.
-  // Em produção, virá do JWT/cadastro de usuário. Por agora:
-  // - Diretoria: vê tudo
-  // - GGV: limita às V01/V02 (oculta visão Diretoria)
-  // - Supervisor: idem
-  return rows  // maquete não filtra; ajustar quando definir persona = código
+  if (state.persona === 'diretoria' || !state.personaEntity) return rows
+  if (state.persona === 'ggv')        return rows.filter(r => r.cod_gerente    === state.personaEntity)
+  if (state.persona === 'supervisor') return rows.filter(r => r.cod_supervisor === state.personaEntity)
+  return rows
+}
+
+// Extrai a lista de entidades disponíveis para a persona ativa (a partir dos dados carregados)
+function listPersonaEntities() {
+  if (state.persona === 'ggv') {
+    const map = new Map()
+    state.baseAtual.forEach(r => {
+      if (r.cod_gerente) map.set(r.cod_gerente, r.nome_gerente || r.cod_gerente)
+    })
+    return Array.from(map.entries())
+      .map(([cod, nome]) => ({ cod, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }
+  if (state.persona === 'supervisor') {
+    const map = new Map()
+    state.baseAtual.forEach(r => {
+      if (r.cod_supervisor) map.set(r.cod_supervisor, r.nome_supervisor || r.cod_supervisor)
+    })
+    return Array.from(map.entries())
+      .map(([cod, nome]) => ({ cod, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }
+  return []
+}
+
+// Atualiza o segundo seletor (GGV/Supervisor específico) e a visibilidade da aba Diretoria
+function refreshPersonaUI() {
+  const sel = document.getElementById('personaEntitySelect')
+  const entities = listPersonaEntities()
+
+  if (state.persona === 'diretoria') {
+    sel.classList.add('hidden')
+    state.personaEntity = null
+  } else {
+    sel.classList.remove('hidden')
+    const label = state.persona === 'ggv' ? 'Selecione o GGV' : 'Selecione o Supervisor'
+    sel.innerHTML = `<option value="">${label}</option>` +
+      entities.map(e => `<option value="${escapeAttr(e.cod)}">${escapeHtml(e.cod)} — ${escapeHtml(e.nome)}</option>`).join('')
+    // Mantém seleção atual se ainda válida; senão escolhe a primeira entidade
+    if (!entities.some(e => e.cod === state.personaEntity)) {
+      state.personaEntity = entities[0]?.cod || null
+    }
+    sel.value = state.personaEntity || ''
+  }
+
+  // Diretoria (V03) só faz sentido para a persona Diretoria
+  const tabV03 = document.querySelector('.tab-btn[data-view="V03"]')
+  if (tabV03) {
+    if (state.persona === 'diretoria') {
+      tabV03.classList.remove('hidden')
+    } else {
+      tabV03.classList.add('hidden')
+      if (state.view === 'V03') state.view = 'V01'
+    }
+  }
 }
 
 // Agrega rows pelo próximo nível da hierarquia
@@ -260,9 +314,16 @@ function renderBreadcrumb() {
   const bc = document.getElementById('breadcrumb')
   const hierarquia = HIERARQUIAS[state.view]
   const viewNames = { V01: 'Por Fornecedor', V02: 'Por RCA', V03: 'Diretoria' }
-  const html = [
-    `<span class="breadcrumb-chip" data-idx="-1">📊 ${viewNames[state.view]}</span>`,
-  ]
+  const html = []
+  // Badge de persona quando filtrada
+  if (state.persona !== 'diretoria' && state.personaEntity) {
+    const entities = listPersonaEntities()
+    const ent = entities.find(e => e.cod === state.personaEntity)
+    const label = state.persona === 'ggv' ? '👤 GGV' : '👤 Supervisor'
+    html.push(`<span class="breadcrumb-chip" style="background:#fef3c7;color:#92400e">${label}: ${escapeHtml(ent?.nome || state.personaEntity)}</span>`)
+    html.push(`<span class="breadcrumb-sep">›</span>`)
+  }
+  html.push(`<span class="breadcrumb-chip" data-idx="-1">📊 ${viewNames[state.view]}</span>`)
   state.drillPath.forEach((seg, i) => {
     html.push(`<span class="breadcrumb-sep">›</span>`)
     const isLast = i === state.drillPath.length - 1
@@ -418,6 +479,7 @@ function escapeAttr(s) {
 function onDataLoaded() {
   document.getElementById('toggleImport').classList.remove('hidden')
   state.drillPath = []
+  refreshPersonaUI()
   render()
 }
 
@@ -460,6 +522,14 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 })
 document.getElementById('personaSelect').addEventListener('change', (e) => {
   state.persona = e.target.value
+  state.personaEntity = null
+  state.drillPath = []
+  refreshPersonaUI()
+  render()
+})
+document.getElementById('personaEntitySelect').addEventListener('change', (e) => {
+  state.personaEntity = e.target.value || null
+  state.drillPath = []
   render()
 })
 
