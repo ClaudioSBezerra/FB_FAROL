@@ -74,45 +74,51 @@ function parseInt2(s) {
   return isNaN(n) ? 0 : n
 }
 
-// Normaliza uma row do CSV: lower-case keys, parsing numérico, descoberta de estado
+// Normaliza uma row do CSV. SLIM: só os campos usados pelo painel.
+// Campos descartados (não usados ainda): cnpj, cod_ramo, ramo, embalagem,
+// qt_unit, qt_unit_cx, ean, qtrca_supervisor, periodo. Adicione de volta
+// aqui se forem usados em alguma feature.
+//
+// Para evitar OOM em arquivos grandes (>50MB), retorna null quando a row
+// não tem identificação mínima (cod_fornec/cod_rca/cod_cli vazios) —
+// economiza milhões de objetos descartados.
 function normalizeRow(raw) {
-  const r = {}
-  for (const k of Object.keys(raw)) {
-    r[k.trim().toLowerCase()] = raw[k]
-  }
-  // Possíveis variações de nomes de campos no CSV (flexível)
-  const periodo = r['periodo'] || ''
-  const isFaturado = /fat/i.test(periodo) || /fat/i.test(r['estado'] || '')
-  const isTrans    = /trans/i.test(periodo) || /trans/i.test(r['estado'] || '')
+  // Lookup case-insensitive sem criar objeto intermediário
+  const lk = {}
+  for (const k in raw) lk[k.trim().toLowerCase()] = raw[k]
+
+  const codFornec = String(lk['codfornec'] || lk['cod_fornec'] || '')
+  const codRca    = String(lk['codusur']   || lk['cod_rca']    || '')
+  const codCli    = String(lk['codcli']    || lk['cod_cli']    || '')
+  // Se nenhum identificador, descarta — economiza memória
+  if (!codFornec && !codRca && !codCli) return null
+
+  // Estado: detecta no PERIODO ou no campo ESTADO
+  const periodo = lk['periodo'] || ''
+  const estadoRaw = lk['estado'] || ''
+  const estado = /trans/i.test(periodo) || /trans/i.test(estadoRaw)
+    ? 'TRANSMITIDO'
+    : 'FATURADO'
 
   return {
-    periodo:           periodo,
-    estado:            isFaturado ? 'FATURADO' : (isTrans ? 'TRANSMITIDO' : (r['estado'] || 'FATURADO')),
-    cod_gerente:       String(r['codgerente'] || r['cod_gerente'] || ''),
-    nome_gerente:      r['gerente'] || r['nome_gerente'] || '',
-    cod_supervisor:    String(r['codsupervisor'] || r['cod_supervisor'] || ''),
-    nome_supervisor:   r['supervisor'] || r['nome_supervisor'] || '',
-    qtrca_supervisor:  parseInt2(r['qtrca_supervisor']),
-    cod_rca:           String(r['codusur'] || r['cod_rca'] || ''),
-    nome_rca:          r['rca'] || r['nome_rca'] || '',
-    qtcli_rca:         parseInt2(r['qtcli_rca']),
-    cod_fornec:        String(r['codfornec'] || r['cod_fornec'] || ''),
-    nome_fornec:       r['fornecedor'] || r['nome_fornec'] || '',
-    cod_cli:           String(r['codcli'] || r['cod_cli'] || ''),
-    nome_cli:          r['cliente'] || r['nome_cli'] || '',
-    cnpj:              r['cnpj'] || '',
-    cod_ramo:          String(r['codramo'] || r['cod_ramo'] || ''),
-    ramo:              r['ramo'] || '',
-    uf:                r['uf'] || '',
-    empresa:           r['empresa'] || 'EMPRESA',  // pode vir do CSV ou ficar fixo
-    cod_prod:          String(r['codprod'] || r['cod_prod'] || ''),
-    nome_prod:         r['produto'] || r['nome_prod'] || '',
-    embalagem:         r['embalagem'] || '',
-    qt_unit:           parseInt2(r['qtunit']),
-    qt_unit_cx:        parseInt2(r['qtunitcx']),
-    ean:               r['ean'] || '',
-    qt:                parseNum(r['qt']),
-    pvenda:            parseNum(r['pvenda']),
+    estado,
+    cod_gerente:     String(lk['codgerente']    || lk['cod_gerente']    || ''),
+    nome_gerente:    lk['gerente']  || lk['nome_gerente']  || '',
+    cod_supervisor:  String(lk['codsupervisor'] || lk['cod_supervisor'] || ''),
+    nome_supervisor: lk['supervisor'] || lk['nome_supervisor'] || '',
+    cod_rca:         codRca,
+    nome_rca:        lk['rca']        || lk['nome_rca']        || '',
+    qtcli_rca:       parseInt2(lk['qtcli_rca']),
+    cod_fornec:      codFornec,
+    nome_fornec:     lk['fornecedor'] || lk['nome_fornec']     || '',
+    cod_cli:         codCli,
+    nome_cli:        lk['cliente']    || lk['nome_cli']        || '',
+    uf:              lk['uf']         || '',
+    empresa:         lk['empresa']    || 'EMPRESA',
+    cod_prod:        String(lk['codprod'] || lk['cod_prod'] || ''),
+    nome_prod:       lk['produto']    || lk['nome_prod']       || '',
+    qt:              parseNum(lk['qt']),
+    pvenda:          parseNum(lk['pvenda']),
   }
 }
 
@@ -130,7 +136,7 @@ function loadCSV(file, dest, statusEl) {
       chunk: (results) => {
         for (const raw of results.data) {
           const r = normalizeRow(raw)
-          if (r.cod_fornec || r.cod_rca || r.cod_cli) rows.push(r)
+          if (r) rows.push(r)
         }
         // Posição real do parser (byte offset). Aproxima de 100% no último chunk.
         const cursor = results.meta?.cursor || 0
@@ -161,7 +167,7 @@ async function loadSamples() {
     const parse = (text) => new Promise((res) => {
       Papa.parse(text, {
         header: true, delimiter: ';', skipEmptyLines: true,
-        complete: (r) => res(r.data.map(normalizeRow).filter(r => r.cod_fornec || r.cod_rca || r.cod_cli)),
+        complete: (r) => res(r.data.map(normalizeRow).filter(Boolean)),
       })
     })
     state.baseComparativa = await parse(csv1)
@@ -348,10 +354,21 @@ function render() {
   document.getElementById('emptyState').classList.add('hidden')
   document.getElementById('mainContent').classList.remove('hidden')
 
-  renderTabs()
-  renderBreadcrumb()
-  renderKPIs()
-  renderCards()
+  try {
+    renderTabs()
+    renderBreadcrumb()
+    renderKPIs()
+    renderCards()
+  } catch (err) {
+    console.error('Erro ao renderizar painel:', err)
+    document.getElementById('cardsGrid').innerHTML = `
+      <div class="col-span-full bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
+        <p class="font-semibold mb-2">⚠ Erro ao renderizar</p>
+        <p class="text-sm">${escapeHtml(err.message)}</p>
+        <pre class="text-xs mt-3 bg-white p-3 rounded border border-red-200 overflow-auto">${escapeHtml(err.stack || '')}</pre>
+      </div>
+    `
+  }
 }
 
 function renderTabs() {
@@ -652,12 +669,12 @@ document.getElementById('fileSim').addEventListener('change', async (e) => {
     worker: true,
     chunkSize: 1024 * 1024,
     chunk: (r) => {
-      chunkCount++
       for (const raw of r.data) {
         const x = normalizeRow(raw)
-        if (x.cod_fornec || x.cod_rca || x.cod_cli) rows.push(x)
+        if (x) rows.push(x)
       }
-      const pct = totalBytes > 0 ? Math.min(99, Math.round((chunkCount * 1024 * 1024 / totalBytes) * 100)) : 0
+      const cursor = r.meta?.cursor || 0
+      const pct = totalBytes > 0 ? Math.min(99, Math.round((cursor / totalBytes) * 100)) : 0
       statusEl.textContent = `⏳ Importando... ${pct}% • ${rows.length.toLocaleString('pt-BR')} linhas`
     },
     complete: () => res(),
