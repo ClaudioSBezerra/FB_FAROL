@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FAROL — Maquete v0</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<link rel="stylesheet" href="maquete.css" />
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans">
+
+<!-- ─── Header ─────────────────────────────────────────────────── -->
+<header class="bg-[#003366] text-white sticky top-0 z-10 shadow-md">
+  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🚦</span>
+      <div>
+        <h1 class="text-base font-bold leading-none">FAROL</h1>
+        <p class="text-[10px] uppercase tracking-wider opacity-75">Maquete v0 — Reescrita 2026</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="text-xs opacity-75 hidden md:block">Persona</label>
+      <select id="personaSelect" class="bg-white/10 border border-white/20 rounded px-2 py-1 text-sm">
+        <option value="diretoria">Diretoria</option>
+        <option value="ggv">GGV</option>
+        <option value="supervisor">Supervisor</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-5 space-y-5">
+
+  <!-- ─── Importação ──────────────────────────────────────────── -->
+  <section id="importSection" class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <header class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold text-slate-800">Importação de Dados</h2>
+        <p class="text-xs text-slate-500 mt-0.5">Carregue 1 mês de Base Comparativa + 1 mês de Base Atual (CSV; separador <code>;</code>)</p>
+      </div>
+      <button id="toggleImport" class="text-xs text-slate-400 hover:text-slate-600 hidden">Ocultar</button>
+    </header>
+    <div class="p-5 grid md:grid-cols-2 gap-4">
+      <div class="space-y-2">
+        <label class="text-xs font-semibold uppercase tracking-wider text-slate-500">Base Comparativa</label>
+        <input type="file" id="fileComparativa" accept=".csv,.txt" class="block w-full text-sm border border-slate-300 rounded p-2 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:bg-slate-100 file:text-slate-700" />
+        <p id="statusComparativa" class="text-xs text-slate-400">Nenhum arquivo</p>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-semibold uppercase tracking-wider text-slate-500">Base Atual</label>
+        <input type="file" id="fileAtual" accept=".csv,.txt" class="block w-full text-sm border border-slate-300 rounded p-2 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:bg-slate-100 file:text-slate-700" />
+        <p id="statusAtual" class="text-xs text-slate-400">Nenhum arquivo</p>
+      </div>
+    </div>
+    <div class="px-5 pb-4 flex items-center gap-3 flex-wrap">
+      <button id="btnLoadSample" class="text-xs bg-[#003366] text-white px-3 py-1.5 rounded hover:bg-[#003366]/90">📂 Carregar dados de exemplo</button>
+      <span class="text-xs text-slate-400">ou arraste seus próprios CSVs nos campos acima</span>
+    </div>
+  </section>
+
+  <!-- ─── Empty state quando sem dados ─────────────────────── -->
+  <section id="emptyState" class="bg-white border-2 border-dashed border-slate-200 rounded-xl p-12 text-center">
+    <p class="text-slate-400 text-base">📊 Importe os dois CSVs (Comparativa + Atual) para visualizar o farol.</p>
+    <p class="text-slate-400 text-xs mt-2">Ou clique em <strong>"Carregar dados de exemplo"</strong> para ver com dados fictícios.</p>
+  </section>
+
+  <!-- ─── Conteúdo principal (oculto até ter dados) ───────── -->
+  <div id="mainContent" class="hidden space-y-5">
+
+    <!-- Tabs de visão -->
+    <nav id="tabsNav" class="border-b border-slate-200 flex gap-1">
+      <button data-view="V01" class="tab-btn relative py-3 px-5 text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors">
+        Por Fornecedor
+      </button>
+      <button data-view="V02" class="tab-btn relative py-3 px-5 text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors">
+        Por RCA
+      </button>
+      <button data-view="V03" class="tab-btn relative py-3 px-5 text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors">
+        Diretoria
+      </button>
+    </nav>
+
+    <!-- Breadcrumb -->
+    <nav id="breadcrumb" class="text-sm flex items-center flex-wrap gap-1.5"></nav>
+
+    <!-- KPI strip -->
+    <section id="kpiStrip" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2"></section>
+
+    <!-- Header com farol geral -->
+    <section id="farolHeader" class="hidden"></section>
+
+    <!-- Grid de cards -->
+    <section id="cardsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></section>
+
+    <!-- Footer info -->
+    <footer class="text-xs text-slate-400 text-center py-4">
+      Maquete cliente-side • Sem backend • Dados em memória
+    </footer>
+  </div>
+
+</main>
+
+<script src="maquete.js"></script>
+</body>
+</html>

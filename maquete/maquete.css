@@ -1,0 +1,130 @@
+/* ═══════════════════════════════════════════════════════════════════
+ * FAROL Maquete — estilos custom complementares ao Tailwind CDN
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* Tab ativa */
+.tab-btn.active {
+  color: #003366;
+}
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: #003366;
+}
+
+/* Card de entidade */
+.entity-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #16a34a;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  transition: all 0.15s;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.entity-card:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+.entity-card.cor-vermelho { border-left-color: #ef4444; }
+.entity-card.cor-verde    { border-left-color: #16a34a; }
+
+.entity-card .progress-track {
+  height: 4px;
+  background: #f1f5f9;
+}
+.entity-card .progress-fill {
+  height: 100%;
+  background: #16a34a;
+  transition: width 0.3s;
+}
+.entity-card.cor-vermelho .progress-fill { background: #ef4444; }
+.entity-card.cor-verde    .progress-fill { background: #16a34a; }
+
+.entity-card .pct-big {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #16a34a;
+}
+.entity-card.cor-vermelho .pct-big { color: #dc2626; }
+.entity-card.cor-verde    .pct-big { color: #16a34a; }
+
+/* Semáforo bolinha */
+.semaforo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.125rem;
+  flex-shrink: 0;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+}
+.semaforo.cor-verde    { background: #16a34a; box-shadow: 0 4px 8px rgba(22,163,74,0.3); }
+.semaforo.cor-vermelho { background: #ef4444; box-shadow: 0 4px 8px rgba(239,68,68,0.3); }
+
+/* Breadcrumb chips */
+.breadcrumb-chip {
+  display: inline-flex;
+  align-items: center;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.breadcrumb-chip:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+  cursor: pointer;
+}
+.breadcrumb-chip.current {
+  background: #003366;
+  color: #fff;
+  font-weight: 600;
+}
+.breadcrumb-sep {
+  color: #cbd5e1;
+  font-size: 0.875rem;
+  user-select: none;
+}
+
+/* KPI card */
+.kpi-card {
+  background: #fff;
+  border: 1px solid #f1f5f9;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  padding: 1rem;
+  min-width: 0;
+}
+.kpi-card.highlight {
+  border-color: #fed7aa;
+}
+.kpi-card .kpi-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+.kpi-card.highlight .kpi-label { color: #fb923c; }
+.kpi-card .kpi-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 0.25rem;
+}
+.kpi-card.highlight .kpi-value { color: #ea580c; }
