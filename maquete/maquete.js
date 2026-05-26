@@ -520,12 +520,16 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     render()
   })
 })
-document.getElementById('personaSelect').addEventListener('change', (e) => {
-  state.persona = e.target.value
-  state.personaEntity = null
-  state.drillPath = []
-  refreshPersonaUI()
-  render()
+document.querySelectorAll('.persona-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.persona-tab').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    state.persona = btn.dataset.persona
+    state.personaEntity = null
+    state.drillPath = []
+    refreshPersonaUI()
+    render()
+  })
 })
 document.getElementById('personaEntitySelect').addEventListener('change', (e) => {
   state.personaEntity = e.target.value || null

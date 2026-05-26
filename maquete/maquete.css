@@ -2,6 +2,17 @@
  * FAROL Maquete — estilos custom complementares ao Tailwind CDN
  * ═══════════════════════════════════════════════════════════════════ */
 
+/* Persona tabs no header */
+.persona-tab {
+  color: rgba(255,255,255,0.7);
+  transition: all 0.15s;
+}
+.persona-tab:hover { color: #fff; }
+.persona-tab.active {
+  background: #fff;
+  color: #003366;
+}
+
 /* Tab ativa */
 .tab-btn.active {
   color: #003366;
