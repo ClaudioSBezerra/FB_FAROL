@@ -18,6 +18,9 @@ const state = {
   personaEntity:   null,         // código da entidade selecionada (cod_gerente OU cod_supervisor)
   view:            'V01',        // V01 | V02 | V03
   drillPath:       [],           // [{level, value, label}, ...]
+  importMode:      'real',       // 'real' (2 arquivos) | 'sim' (1 arquivo + %)
+  simSourceRows:   [],           // rows carregadas no modo simulação (fonte do clone)
+  simPct:          10,           // % de acréscimo/decréscimo aplicado
 }
 
 // ─── Definição das 3 visões hierárquicas ────────────────────────────────
@@ -430,14 +433,14 @@ function renderCards() {
           <span class="semaforo cor-${it.cor}">${it.cor === 'verde' ? '✓' : '✕'}</span>
         </div>
         <p class="pct-big mt-2">${fmtPct(it.pct)}</p>
-        <div class="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100 text-xs">
+        <div class="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100">
           <div>
             <p class="text-[10px] text-slate-400 uppercase tracking-wider">Anterior</p>
-            <p class="font-semibold text-slate-500 mt-0.5">${fmtBRL(it.valorAnt)}</p>
+            <p class="text-base font-bold text-slate-500 mt-0.5 tabular-nums">${fmtBRL(it.valorAnt)}</p>
           </div>
           <div>
             <p class="text-[10px] text-slate-400 uppercase tracking-wider">Atual</p>
-            <p class="font-semibold text-slate-800 mt-0.5">${fmtBRL(it.valorAtual)}</p>
+            <p class="text-base font-bold text-slate-900 mt-0.5 tabular-nums">${fmtBRL(it.valorAtual)}</p>
           </div>
         </div>
         <div class="mt-3 flex items-center gap-3 text-xs text-slate-500">
@@ -537,6 +540,58 @@ document.getElementById('personaEntitySelect').addEventListener('change', (e) =>
   render()
 })
 
+// ─── Modo simulação ──────────────────────────────────────────────────────
+function switchImportMode(mode) {
+  state.importMode = mode
+  document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === mode))
+  document.getElementById('modeReal').classList.toggle('hidden', mode !== 'real')
+  document.getElementById('modeSim').classList.toggle('hidden',  mode !== 'sim')
+}
+
+function applySimulation() {
+  if (state.simSourceRows.length === 0) return
+  const fator = 1 + (state.simPct / 100)
+  // Base Comparativa = arquivo original (sem mudança)
+  state.baseComparativa = state.simSourceRows.map(r => ({ ...r }))
+  // Base Atual = clone com qt e pvenda multiplicados pelo fator
+  state.baseAtual = state.simSourceRows.map(r => ({
+    ...r,
+    qt:     Math.round(r.qt * fator * 100) / 100,
+    pvenda: Math.round(r.pvenda * fator * 100) / 100,
+  }))
+  onDataLoaded()
+}
+
+function updateSimPct(v) {
+  const n = Math.max(-100, Math.min(500, parseInt(v, 10) || 0))
+  state.simPct = n
+  document.getElementById('simPct').value   = n
+  document.getElementById('simRange').value = Math.max(-100, Math.min(200, n))  // range tem limite menor
+  document.getElementById('btnApplySim').disabled = state.simSourceRows.length === 0
+}
+
+document.querySelectorAll('.mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => switchImportMode(btn.dataset.mode))
+})
+
+document.getElementById('fileSim').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return
+  document.getElementById('statusSim').textContent = '⏳ Importando...'
+  await new Promise((res) => Papa.parse(f, {
+    header: true, delimiter: ';', skipEmptyLines: true,
+    complete: (r) => { state.simSourceRows = r.data.map(normalizeRow).filter(x => x.cod_fornec || x.cod_rca || x.cod_cli); res() },
+  }))
+  document.getElementById('statusSim').textContent = `✓ ${state.simSourceRows.length} linhas`
+  document.getElementById('btnApplySim').disabled = false
+})
+
+document.getElementById('simPct').addEventListener('input',   (e) => updateSimPct(e.target.value))
+document.getElementById('simRange').addEventListener('input', (e) => updateSimPct(e.target.value))
+document.getElementById('simStep').addEventListener('click',   () => updateSimPct(state.simPct - 5))
+document.getElementById('simStepUp').addEventListener('click', () => updateSimPct(state.simPct + 5))
+document.getElementById('btnApplySim').addEventListener('click', applySimulation)
+
 // Inicializa tab
 state.view = 'V01'
 renderTabs()
+updateSimPct(state.simPct)
