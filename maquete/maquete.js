@@ -120,30 +120,31 @@ function normalizeRow(raw) {
 function loadCSV(file, dest, statusEl) {
   return new Promise((resolve, reject) => {
     const rows = []
-    let bytesProcessed = 0
     const totalBytes = file.size
-    let chunkCount = 0
     Papa.parse(file, {
       header: true,
       delimiter: ';',
       skipEmptyLines: true,
       worker: true,
       chunkSize: 1024 * 1024,  // 1 MB por chunk
-      chunk: (results, parser) => {
-        chunkCount++
+      chunk: (results) => {
         for (const raw of results.data) {
           const r = normalizeRow(raw)
           if (r.cod_fornec || r.cod_rca || r.cod_cli) rows.push(r)
         }
-        // Progresso aproximado (PapaParse worker não expõe bytes processados; estima via chunks)
-        bytesProcessed = Math.min(totalBytes, chunkCount * 1024 * 1024)
-        const pct = totalBytes > 0 ? Math.min(99, Math.round((bytesProcessed / totalBytes) * 100)) : 0
+        // Posição real do parser (byte offset). Aproxima de 100% no último chunk.
+        const cursor = results.meta?.cursor || 0
+        const pct = totalBytes > 0 ? Math.min(99, Math.round((cursor / totalBytes) * 100)) : 0
         if (statusEl) statusEl.textContent = `⏳ Importando... ${pct}% • ${rows.length.toLocaleString('pt-BR')} linhas`
       },
       complete: () => {
         state[dest] = rows
-        if (statusEl) statusEl.textContent = `✓ ${rows.length.toLocaleString('pt-BR')} linhas`
-        resolve(rows)
+        if (statusEl) statusEl.textContent = `✓ ${rows.length.toLocaleString('pt-BR')} linhas carregadas. Processando painel...`
+        // Yield para o browser atualizar o texto antes do render pesado
+        setTimeout(() => {
+          if (statusEl) statusEl.textContent = `✓ ${rows.length.toLocaleString('pt-BR')} linhas`
+          resolve(rows)
+        }, 50)
       },
       error: reject,
     })
@@ -287,31 +288,47 @@ function aggregate() {
   return Array.from(groups.values()).map(calcCard)
 }
 
+// Calcula tudo em UMA passada O(N). Antes era O(N × clientes) por causa do mix nested.
 function calcCard(g) {
-  const valorAtual    = sum(g.atual, 'pvenda')
-  const valorAnt      = sum(g.compar, 'pvenda')
-  const pct           = valorAnt > 0 ? (valorAtual / valorAnt) * 100 : (valorAtual > 0 ? 100 : 0)
-  const cor           = pct >= 100 ? 'verde' : 'vermelho'
+  let valorAtual = 0, valorAnt = 0
+  let faturado = 0, transmitido = 0
+  let maxQtcliRca = 0
+  const positSet   = new Set()  // clientes que bateram trava mínima
+  const cliDistinct = new Set() // todos clientes (inclusive sem venda)
+  const cliProds   = new Map()  // cliente → Set<produto> para mix
 
-  // Positivação: clientes distintos com qt >= TRAVA, sobre qtcli_rca (declarado) ou clientes distintos
-  const positivados = countDistinctWhere(g.atual, 'cod_cli', r => r.qt >= TRAVA_MINIMA_DEFAULT)
-  const baseCli = maxNum(g.atual, 'qtcli_rca') || countDistinct(g.atual, 'cod_cli')
-  const positPct = baseCli > 0 ? (positivados / baseCli) * 100 : 0
-
-  // Mix: média de produtos distintos por cliente ativo
-  const ativos = uniqueBy(g.atual.filter(r => r.qt > 0), 'cod_cli')
-  let mix = 0
-  if (ativos.length > 0) {
-    const totProds = ativos.reduce((acc, cli) => {
-      const prodSet = new Set(g.atual.filter(r => r.cod_cli === cli && r.qt > 0).map(r => r.cod_prod))
-      return acc + prodSet.size
-    }, 0)
-    mix = totProds / ativos.length
+  for (let i = 0, n = g.atual.length; i < n; i++) {
+    const r = g.atual[i]
+    const pv = r.pvenda || 0
+    valorAtual += pv
+    if (r.estado === 'FATURADO')    faturado    += pv
+    if (r.estado === 'TRANSMITIDO') transmitido += pv
+    if (r.qtcli_rca > maxQtcliRca)  maxQtcliRca = r.qtcli_rca
+    if (r.cod_cli) {
+      cliDistinct.add(r.cod_cli)
+      if (r.qt >= TRAVA_MINIMA_DEFAULT) positSet.add(r.cod_cli)
+      if (r.qt > 0) {
+        let prods = cliProds.get(r.cod_cli)
+        if (!prods) { prods = new Set(); cliProds.set(r.cod_cli, prods) }
+        if (r.cod_prod) prods.add(r.cod_prod)
+      }
+    }
+  }
+  for (let i = 0, n = g.compar.length; i < n; i++) {
+    valorAnt += g.compar[i].pvenda || 0
   }
 
-  const faturado    = sum(g.atual.filter(r => r.estado === 'FATURADO'),    'pvenda')
-  const transmitido = sum(g.atual.filter(r => r.estado === 'TRANSMITIDO'), 'pvenda')
-
+  const pct           = valorAnt > 0 ? (valorAtual / valorAnt) * 100 : (valorAtual > 0 ? 100 : 0)
+  const cor           = pct >= 100 ? 'verde' : 'vermelho'
+  const baseCli       = maxQtcliRca || cliDistinct.size
+  const positivados   = positSet.size
+  const positPct      = baseCli > 0 ? (positivados / baseCli) * 100 : 0
+  let mix = 0
+  if (cliProds.size > 0) {
+    let total = 0
+    cliProds.forEach(set => total += set.size)
+    mix = total / cliProds.size
+  }
   return { ...g, pct, cor, valorAtual, valorAnt, positivados, baseCli, positPct, mix, faturado, transmitido }
 }
 
@@ -384,27 +401,40 @@ function renderKPIs() {
   const atual = applyPersonaScope(filterByDrill(state.baseAtual))
   const compar = applyPersonaScope(filterByDrill(state.baseComparativa))
 
-  const totAtual    = sum(atual, 'pvenda')
-  const totAnt      = sum(compar, 'pvenda')
+  // Single-pass O(N) sobre atual: acumula tudo de uma vez
+  let totAtual = 0, faturado = 0, transmitido = 0, maxQtcliRca = 0
+  const positSet = new Set(), cliDistinct = new Set(), cliProds = new Map()
+  for (let i = 0, n = atual.length; i < n; i++) {
+    const r = atual[i]
+    const pv = r.pvenda || 0
+    totAtual += pv
+    if (r.estado === 'FATURADO')    faturado    += pv
+    if (r.estado === 'TRANSMITIDO') transmitido += pv
+    if (r.qtcli_rca > maxQtcliRca)  maxQtcliRca = r.qtcli_rca
+    if (r.cod_cli) {
+      cliDistinct.add(r.cod_cli)
+      if (r.qt >= TRAVA_MINIMA_DEFAULT) positSet.add(r.cod_cli)
+      if (r.qt > 0) {
+        let prods = cliProds.get(r.cod_cli)
+        if (!prods) { prods = new Set(); cliProds.set(r.cod_cli, prods) }
+        if (r.cod_prod) prods.add(r.cod_prod)
+      }
+    }
+  }
+  let totAnt = 0
+  for (let i = 0, n = compar.length; i < n; i++) totAnt += compar[i].pvenda || 0
+
   const pctTotal    = totAnt > 0 ? (totAtual / totAnt) * 100 : (totAtual > 0 ? 100 : 0)
   const corTotal    = pctTotal >= 100 ? 'verde' : 'vermelho'
-
-  const positivados = countDistinctWhere(atual, 'cod_cli', r => r.qt >= TRAVA_MINIMA_DEFAULT)
-  const baseCli     = maxNum(atual, 'qtcli_rca') || countDistinct(atual, 'cod_cli')
+  const positivados = positSet.size
+  const baseCli     = maxQtcliRca || cliDistinct.size
   const positPct    = baseCli > 0 ? (positivados / baseCli) * 100 : 0
-
-  const ativos = uniqueBy(atual.filter(r => r.qt > 0), 'cod_cli')
   let mix = 0
-  if (ativos.length > 0) {
-    const totProds = ativos.reduce((acc, cli) => {
-      const prodSet = new Set(atual.filter(r => r.cod_cli === cli && r.qt > 0).map(r => r.cod_prod))
-      return acc + prodSet.size
-    }, 0)
-    mix = totProds / ativos.length
+  if (cliProds.size > 0) {
+    let total = 0
+    cliProds.forEach(set => total += set.size)
+    mix = total / cliProds.size
   }
-
-  const faturado    = sum(atual.filter(r => r.estado === 'FATURADO'),    'pvenda')
-  const transmitido = sum(atual.filter(r => r.estado === 'TRANSMITIDO'), 'pvenda')
 
   document.getElementById('kpiStrip').innerHTML = `
     <div class="kpi-card">
