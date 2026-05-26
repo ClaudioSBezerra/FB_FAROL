@@ -77,13 +77,43 @@
 
 ---
 
-## Traceability (preenchido após criação do ROADMAP.md)
+## Traceability
 
-| Req-ID | Phase |
-|---|---|
-| DATA-01..06 | Fase 1 (Schema + Importação) |
-| IND-01..06 | Fase 2 (Views + Endpoints) |
-| VIEW-01..06 | Fase 0 (Maquete) + Fase 3 (Frontend) |
-| AUTH-01..04 | Fase 3 (Frontend) |
-| UX-01..07 | Fase 0 (Maquete) + Fase 3 (Frontend) |
-| FEAT-01..05 | Fase 4 (Avançadas) |
+Mapeamento 1:1 — cada requisito pertence a exatamente uma fase. Coverage: **34/34 ✓**
+
+| Req-ID | Phase | Status |
+|---|---|---|
+| DATA-01 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| DATA-02 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| DATA-03 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| DATA-04 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| DATA-05 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| DATA-06 | Phase 1 — Schema novo + Migration + Importação | Pending |
+| IND-01 | Phase 2 — Views materializadas + Endpoints de leitura | Pending |
+| IND-02 | Phase 2 — Views materializadas + Endpoints de leitura | Pending |
+| IND-03 | Phase 2 — Views materializadas + Endpoints de leitura | Pending |
+| IND-04 | Phase 0 — Maquete HTML local | Pending |
+| IND-05 | Phase 2 — Views materializadas + Endpoints de leitura | Pending |
+| IND-06 | Phase 2 — Views materializadas + Endpoints de leitura | Pending |
+| VIEW-01 | Phase 0 — Maquete HTML local | Pending |
+| VIEW-02 | Phase 0 — Maquete HTML local | Pending |
+| VIEW-03 | Phase 0 — Maquete HTML local | Pending |
+| VIEW-04 | Phase 3 — Frontend React integrado | Pending |
+| VIEW-05 | Phase 0 — Maquete HTML local | Pending |
+| VIEW-06 | Phase 0 — Maquete HTML local | Pending |
+| AUTH-01 | Phase 3 — Frontend React integrado | Pending |
+| AUTH-02 | Phase 3 — Frontend React integrado | Pending |
+| AUTH-03 | Phase 3 — Frontend React integrado | Pending |
+| AUTH-04 | Phase 3 — Frontend React integrado | Pending |
+| UX-01 | Phase 0 — Maquete HTML local | Pending |
+| UX-02 | Phase 0 — Maquete HTML local | Pending |
+| UX-03 | Phase 3 — Frontend React integrado | Pending |
+| UX-04 | Phase 3 — Frontend React integrado | Pending |
+| UX-05 | Phase 3 — Frontend React integrado | Pending |
+| UX-06 | Phase 3 — Frontend React integrado | Pending |
+| UX-07 | Phase 3 — Frontend React integrado | Pending |
+| FEAT-01 | Phase 4 — Features avançadas | Pending |
+| FEAT-02 | Phase 4 — Features avançadas | Pending |
+| FEAT-03 | Phase 4 — Features avançadas | Pending |
+| FEAT-04 | Phase 4 — Features avançadas | Pending |
+| FEAT-05 | Phase 4 — Features avançadas | Pending |
