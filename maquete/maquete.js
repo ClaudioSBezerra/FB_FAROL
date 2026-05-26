@@ -116,16 +116,33 @@ function normalizeRow(raw) {
   }
 }
 
-// ─── Importação CSV ─────────────────────────────────────────────────────
-function loadCSV(file, dest) {
+// ─── Importação CSV (chunk + worker pra não travar com arquivos grandes) ──
+function loadCSV(file, dest, statusEl) {
   return new Promise((resolve, reject) => {
+    const rows = []
+    let bytesProcessed = 0
+    const totalBytes = file.size
+    let chunkCount = 0
     Papa.parse(file, {
       header: true,
       delimiter: ';',
       skipEmptyLines: true,
-      complete: (results) => {
-        const rows = results.data.map(normalizeRow).filter(r => r.cod_fornec || r.cod_rca || r.cod_cli)
+      worker: true,
+      chunkSize: 1024 * 1024,  // 1 MB por chunk
+      chunk: (results, parser) => {
+        chunkCount++
+        for (const raw of results.data) {
+          const r = normalizeRow(raw)
+          if (r.cod_fornec || r.cod_rca || r.cod_cli) rows.push(r)
+        }
+        // Progresso aproximado (PapaParse worker não expõe bytes processados; estima via chunks)
+        bytesProcessed = Math.min(totalBytes, chunkCount * 1024 * 1024)
+        const pct = totalBytes > 0 ? Math.min(99, Math.round((bytesProcessed / totalBytes) * 100)) : 0
+        if (statusEl) statusEl.textContent = `⏳ Importando... ${pct}% • ${rows.length.toLocaleString('pt-BR')} linhas`
+      },
+      complete: () => {
         state[dest] = rows
+        if (statusEl) statusEl.textContent = `✓ ${rows.length.toLocaleString('pt-BR')} linhas`
         resolve(rows)
       },
       error: reject,
@@ -157,10 +174,23 @@ async function loadSamples() {
 }
 
 // ─── Lógica de agregação ────────────────────────────────────────────────
+// Cache de filtros (drillPath + persona) para não re-iterar 100k+ rows a cada render
+const filterCache = new Map()
+function drillCacheKey(rows) {
+  const drillKey = state.drillPath.map(p => `${p.level}=${p.value}`).join('|')
+  const personaKey = `${state.persona}:${state.personaEntity || ''}`
+  return `${rows === state.baseAtual ? 'A' : 'C'}|${personaKey}|${drillKey}`
+}
+function invalidateCache() { filterCache.clear() }
+
 function filterByDrill(rows) {
-  return rows.filter(row =>
-    state.drillPath.every(({level, value}) => row[level] === value)
-  )
+  const key = drillCacheKey(rows)
+  if (filterCache.has(key)) return filterCache.get(key)
+  const result = state.drillPath.length === 0
+    ? rows
+    : rows.filter(row => state.drillPath.every(({level, value}) => row[level] === value))
+  filterCache.set(key, result)
+  return result
 }
 
 // Persona scope: limita o que cada persona enxerga
@@ -482,22 +512,23 @@ function escapeAttr(s) {
 function onDataLoaded() {
   document.getElementById('toggleImport').classList.remove('hidden')
   state.drillPath = []
+  invalidateCache()
   refreshPersonaUI()
   render()
 }
 
 document.getElementById('fileComparativa').addEventListener('change', async (e) => {
   const f = e.target.files[0]; if (!f) return
-  document.getElementById('statusComparativa').textContent = '⏳ Importando...'
-  await loadCSV(f, 'baseComparativa')
-  document.getElementById('statusComparativa').textContent = `✓ ${state.baseComparativa.length} linhas`
+  const statusEl = document.getElementById('statusComparativa')
+  statusEl.textContent = '⏳ Iniciando...'
+  await loadCSV(f, 'baseComparativa', statusEl)
   if (state.baseAtual.length > 0) onDataLoaded()
 })
 document.getElementById('fileAtual').addEventListener('change', async (e) => {
   const f = e.target.files[0]; if (!f) return
-  document.getElementById('statusAtual').textContent = '⏳ Importando...'
-  await loadCSV(f, 'baseAtual')
-  document.getElementById('statusAtual').textContent = `✓ ${state.baseAtual.length} linhas`
+  const statusEl = document.getElementById('statusAtual')
+  statusEl.textContent = '⏳ Iniciando...'
+  await loadCSV(f, 'baseAtual', statusEl)
   if (state.baseComparativa.length > 0) onDataLoaded()
 })
 document.getElementById('btnLoadSample').addEventListener('click', loadSamples)
@@ -551,14 +582,19 @@ function switchImportMode(mode) {
 function applySimulation() {
   if (state.simSourceRows.length === 0) return
   const fator = 1 + (state.simPct / 100)
-  // Base Comparativa = arquivo original (sem mudança)
-  state.baseComparativa = state.simSourceRows.map(r => ({ ...r }))
-  // Base Atual = clone com qt e pvenda multiplicados pelo fator
-  state.baseAtual = state.simSourceRows.map(r => ({
-    ...r,
-    qt:     Math.round(r.qt * fator * 100) / 100,
-    pvenda: Math.round(r.pvenda * fator * 100) / 100,
-  }))
+  // Base Comparativa reusa o array fonte (sem clone — economia de memória em arquivos grandes)
+  state.baseComparativa = state.simSourceRows
+  // Base Atual: cria novo array só com qt/pvenda escalados; usa Object.assign pra ser mais rápido que spread
+  const n = state.simSourceRows.length
+  const atual = new Array(n)
+  for (let i = 0; i < n; i++) {
+    const r = state.simSourceRows[i]
+    atual[i] = Object.assign({}, r, {
+      qt:     Math.round(r.qt * fator * 100) / 100,
+      pvenda: Math.round(r.pvenda * fator * 100) / 100,
+    })
+  }
+  state.baseAtual = atual
   onDataLoaded()
 }
 
@@ -576,12 +612,28 @@ document.querySelectorAll('.mode-tab').forEach(btn => {
 
 document.getElementById('fileSim').addEventListener('change', async (e) => {
   const f = e.target.files[0]; if (!f) return
-  document.getElementById('statusSim').textContent = '⏳ Importando...'
+  const statusEl = document.getElementById('statusSim')
+  statusEl.textContent = '⏳ Iniciando...'
+  const rows = []
+  let chunkCount = 0
+  const totalBytes = f.size
   await new Promise((res) => Papa.parse(f, {
     header: true, delimiter: ';', skipEmptyLines: true,
-    complete: (r) => { state.simSourceRows = r.data.map(normalizeRow).filter(x => x.cod_fornec || x.cod_rca || x.cod_cli); res() },
+    worker: true,
+    chunkSize: 1024 * 1024,
+    chunk: (r) => {
+      chunkCount++
+      for (const raw of r.data) {
+        const x = normalizeRow(raw)
+        if (x.cod_fornec || x.cod_rca || x.cod_cli) rows.push(x)
+      }
+      const pct = totalBytes > 0 ? Math.min(99, Math.round((chunkCount * 1024 * 1024 / totalBytes) * 100)) : 0
+      statusEl.textContent = `⏳ Importando... ${pct}% • ${rows.length.toLocaleString('pt-BR')} linhas`
+    },
+    complete: () => res(),
   }))
-  document.getElementById('statusSim').textContent = `✓ ${state.simSourceRows.length} linhas`
+  state.simSourceRows = rows
+  statusEl.textContent = `✓ ${rows.length.toLocaleString('pt-BR')} linhas`
   document.getElementById('btnApplySim').disabled = false
 })
 
