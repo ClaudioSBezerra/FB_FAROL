@@ -22,6 +22,8 @@ interface SpUsuario {
   email: string
   full_name: string
   sp_role: string
+  tipo_persona: string
+  cod_referencia: string
   is_verified: boolean
   trial_ends_at: string
   created_at: string
@@ -57,6 +59,45 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
+const PERSONAS: { value: string; label: string }[] = [
+  { value: 'diretor',           label: 'Diretor' },
+  { value: 'gerente_geral',     label: 'Gerente Geral' },
+  { value: 'ggv',               label: 'GGV' },
+  { value: 'supervisor',        label: 'Supervisor' },
+  { value: 'rca',               label: 'RCA' },
+  { value: 'ti',                label: 'TI' },
+  { value: 'analista_negocios', label: 'Analista de Negócios' },
+  { value: 'admin',             label: 'Admin' },
+]
+
+const PERSONA_LABEL: Record<string, string> = Object.fromEntries(PERSONAS.map(p => [p.value, p.label]))
+
+const PERSONA_COLOR: Record<string, string> = {
+  diretor:           'bg-purple-100 text-purple-800',
+  gerente_geral:     'bg-blue-100 text-blue-800',
+  ggv:               'bg-indigo-100 text-indigo-800',
+  supervisor:        'bg-cyan-100 text-cyan-800',
+  rca:               'bg-teal-100 text-teal-800',
+  ti:                'bg-orange-100 text-orange-800',
+  analista_negocios: 'bg-yellow-100 text-yellow-800',
+  admin:             'bg-red-100 text-red-800',
+}
+
+function PersonaBadge({ persona }: { persona: string }) {
+  if (!persona) return <span className="text-xs text-muted-foreground">—</span>
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PERSONA_COLOR[persona] ?? 'bg-gray-100'}`}>
+      {PERSONA_LABEL[persona] ?? persona}
+    </span>
+  )
+}
+
+function personaToRole(persona: string): string {
+  if (['diretor', 'gerente_geral', 'ti', 'admin'].includes(persona)) return 'gestor_geral'
+  if (['ggv', 'supervisor'].includes(persona)) return 'gestor_filial'
+  return 'somente_leitura'
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SpUsuarios() {
@@ -71,6 +112,8 @@ export default function SpUsuarios() {
   const [newRole,      setNewRole]      = useState('')
   const [editTrialDate, setEditTrialDate] = useState('')
   const [editNome,     setEditNome]     = useState('')
+  const [editPersona,  setEditPersona]  = useState('')
+  const [editCodRef,   setEditCodRef]   = useState('')
   const [showReassign, setShowReassign] = useState(false)
 
   // Campos do novo usuário
@@ -78,6 +121,8 @@ export default function SpUsuarios() {
   const [novoEmail,     setNovoEmail]     = useState('')
   const [novaSenha,     setNovaSenha]     = useState('')
   const [novoSpRole,    setNovoSpRole]    = useState('somente_leitura')
+  const [novoPersona,   setNovoPersona]   = useState('')
+  const [novoCodRef,    setNovoCodRef]    = useState('')
   const [novoTrialDate, setNovoTrialDate] = useState('2099-12-31')
 
   // Hierarquia do novo usuário
@@ -155,12 +200,12 @@ export default function SpUsuarios() {
 
   // ── Mutations ────────────────────────────────────────────────────────────────
   const updateRole = useMutation({
-    mutationFn: async ({ id, sp_role, full_name, environment_id, group_id, company_id, trial_ends_at }:
-      { id: string; sp_role: string; full_name: string; environment_id?: string; group_id?: string; company_id?: string; trial_ends_at?: string }) => {
+    mutationFn: async ({ id, sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at }:
+      { id: string; sp_role: string; full_name: string; tipo_persona?: string; cod_referencia?: string; environment_id?: string; group_id?: string; company_id?: string; trial_ends_at?: string }) => {
       const res = await fetch(`/api/sp/usuarios/${id}/role`, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ sp_role, full_name, environment_id, group_id, company_id, trial_ends_at }),
+        body:    JSON.stringify({ sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao atualizar perfil')
     },
@@ -178,13 +223,15 @@ export default function SpUsuarios() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          full_name:    novoNome,
-          email:        novoEmail,
-          password:     novaSenha,
-          sp_role:      novoSpRole,
-          trial_ends_at: novoTrialDate,
-          all_filiais:  true,
-          filial_ids:   [],
+          full_name:      novoNome,
+          email:          novoEmail,
+          password:       novaSenha,
+          sp_role:        novoSpRole,
+          tipo_persona:   novoPersona,
+          cod_referencia: novoCodRef,
+          trial_ends_at:  novoTrialDate,
+          all_filiais:    true,
+          filial_ids:     [],
           ...(createEnvId     && { environment_id: createEnvId }),
           ...(createGroupId   && { group_id: createGroupId }),
           ...(createCompanyId && { company_id: createCompanyId }),
@@ -197,7 +244,8 @@ export default function SpUsuarios() {
       qc.invalidateQueries({ queryKey: ['sp-usuarios'] })
       setNovoDialog(false)
       setNovoNome(''); setNovoEmail(''); setNovaSenha('')
-      setNovoSpRole('somente_leitura'); setNovoTrialDate('2099-12-31')
+      setNovoSpRole('somente_leitura'); setNovoPersona(''); setNovoCodRef('')
+      setNovoTrialDate('2099-12-31')
       setCreateEnvId(''); setCreateGroupId(''); setCreateCompanyId('')
     },
     onError: (e: Error) => toast.error(e.message),
@@ -247,6 +295,8 @@ export default function SpUsuarios() {
     setSelected(u)
     setNewRole(u.sp_role)
     setEditNome(u.full_name)
+    setEditPersona(u.tipo_persona || '')
+    setEditCodRef(u.cod_referencia || '')
     setEditTrialDate(u.trial_ends_at ? u.trial_ends_at.slice(0, 10) : '')
     setShowReassign(false)
     setReassignEnvId(''); setReassignGroupId(''); setReassignCompanyId('')
@@ -295,6 +345,7 @@ export default function SpUsuarios() {
               <TableHead>Nome</TableHead>
               <TableHead>E-mail</TableHead>
               <TableHead>Empresa</TableHead>
+              <TableHead>Persona</TableHead>
               <TableHead>Perfil</TableHead>
               <TableHead className="w-32">Ações</TableHead>
             </TableRow>
@@ -305,6 +356,7 @@ export default function SpUsuarios() {
                 <TableCell className="font-medium">{u.full_name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{u.company_name || '—'}</TableCell>
+                <TableCell><PersonaBadge persona={u.tipo_persona} /></TableCell>
                 <TableCell><RoleBadge role={u.sp_role} /></TableCell>
                 <TableCell>
                   <div className="flex gap-1">
@@ -329,7 +381,7 @@ export default function SpUsuarios() {
             ))}
             {usuarios.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-8">
+                <TableCell colSpan={6} className="text-center text-muted-foreground text-sm py-8">
                   Nenhum usuário encontrado.
                 </TableCell>
               </TableRow>
@@ -358,17 +410,32 @@ export default function SpUsuarios() {
               <Label>Senha inicial</Label>
               <Input type="password" value={novaSenha} onChange={e => setNovaSenha(e.target.value)} placeholder="Mínimo 6 caracteres" />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label>Persona</Label>
+                <Select value={novoPersona} onValueChange={v => { setNovoPersona(v); setNovoSpRole(personaToRole(v)) }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {PERSONAS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Perfil</Label>
+                <Select value={novoSpRole} onValueChange={setNovoSpRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin_fbtax">Admin FbTax</SelectItem>
+                    <SelectItem value="gestor_geral">Gestor Geral</SelectItem>
+                    <SelectItem value="gestor_filial">Gestor</SelectItem>
+                    <SelectItem value="somente_leitura">Somente Leitura</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid gap-1.5">
-              <Label>Perfil</Label>
-              <Select value={novoSpRole} onValueChange={setNovoSpRole}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin_fbtax">Admin FbTax</SelectItem>
-                  <SelectItem value="gestor_geral">Gestor Geral</SelectItem>
-                  <SelectItem value="gestor_filial">Gestor</SelectItem>
-                  <SelectItem value="somente_leitura">Somente Leitura</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Código de referência <span className="text-muted-foreground text-xs">(cod_supervisor, cod_rca, etc.)</span></Label>
+              <Input value={novoCodRef} onChange={e => setNovoCodRef(e.target.value)} placeholder="ex: 001, 042" />
             </div>
             <div className="grid gap-1.5">
               <Label>Validade da licença</Label>
@@ -430,17 +497,32 @@ export default function SpUsuarios() {
               <Label>Nome completo</Label>
               <Input value={editNome} onChange={e => setEditNome(e.target.value)} />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label>Persona</Label>
+                <Select value={editPersona} onValueChange={v => { setEditPersona(v); setNewRole(personaToRole(v)) }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {PERSONAS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Perfil</Label>
+                <Select value={newRole} onValueChange={setNewRole}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o perfil" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin_fbtax">Admin FbTax</SelectItem>
+                    <SelectItem value="gestor_geral">Gestor Geral</SelectItem>
+                    <SelectItem value="gestor_filial">Gestor</SelectItem>
+                    <SelectItem value="somente_leitura">Somente Leitura</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid gap-1.5">
-              <Label>Perfil</Label>
-              <Select value={newRole} onValueChange={setNewRole}>
-                <SelectTrigger><SelectValue placeholder="Selecione o perfil" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin_fbtax">Admin FbTax</SelectItem>
-                  <SelectItem value="gestor_geral">Gestor Geral</SelectItem>
-                  <SelectItem value="gestor_filial">Gestor</SelectItem>
-                  <SelectItem value="somente_leitura">Somente Leitura</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Código de referência</Label>
+              <Input value={editCodRef} onChange={e => setEditCodRef(e.target.value)} placeholder="cod_supervisor, cod_rca, etc." />
             </div>
             <div className="grid gap-1.5">
               <Label>Vencimento da licença</Label>
@@ -501,6 +583,8 @@ export default function SpUsuarios() {
               disabled={updateRole.isPending || !newRole || !editNome}
               onClick={() => selected && updateRole.mutate({
                 id: selected.id, sp_role: newRole, full_name: editNome,
+                tipo_persona: editPersona,
+                cod_referencia: editCodRef,
                 ...(editTrialDate && editTrialDate !== (selected.trial_ends_at?.slice(0, 10) ?? '') ? { trial_ends_at: editTrialDate } : {}),
                 ...(showReassign && reassignEnvId ? { environment_id: reassignEnvId, group_id: reassignGroupId, company_id: reassignCompanyId } : {}),
               })}
