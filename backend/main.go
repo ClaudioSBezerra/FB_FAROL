@@ -462,6 +462,7 @@ func main() {
 
 	// ── Farol V2 — Novo sistema de vendas (Reescrita 2026) ───────────────────
 	http.HandleFunc("/api/v2/vendas/import",    withSP(handlers.VendasImportHandler,    "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/job/",      withSP(handlers.VendasJobHandler,        "gestor_filial")) // GET status + POST cancel
 	http.HandleFunc("/api/v2/vendas/periodos",  withSP(handlers.VendasPeriodosHandler,  "gestor_filial"))
 	http.HandleFunc("/api/v2/vendas/clear",     withSP(handlers.VendasClearHandler,     "gestor_filial"))
 	http.HandleFunc("/api/v2/industrias",       withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
