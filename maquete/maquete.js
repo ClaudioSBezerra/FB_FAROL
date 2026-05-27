@@ -203,6 +203,7 @@ function filterByDrill(rows) {
 // Persona scope: limita o que cada persona enxerga
 function applyPersonaScope(rows) {
   if (state.persona === 'diretoria' || !state.personaEntity) return rows
+  if (state.persona === 'gerente')    return rows.filter(r => r.empresa        === state.personaEntity)
   if (state.persona === 'ggv')        return rows.filter(r => r.cod_gerente    === state.personaEntity)
   if (state.persona === 'supervisor') return rows.filter(r => r.cod_supervisor === state.personaEntity)
   return rows
@@ -210,51 +211,68 @@ function applyPersonaScope(rows) {
 
 // Extrai a lista de entidades disponíveis para a persona ativa (a partir dos dados carregados)
 function listPersonaEntities() {
-  if (state.persona === 'ggv') {
-    const map = new Map()
+  const map = new Map()
+  if (state.persona === 'gerente') {
+    // Gerente vê uma empresa específica do grupo
+    state.baseAtual.forEach(r => {
+      if (r.empresa) map.set(r.empresa, r.empresa)
+    })
+  } else if (state.persona === 'ggv') {
     state.baseAtual.forEach(r => {
       if (r.cod_gerente) map.set(r.cod_gerente, r.nome_gerente || r.cod_gerente)
     })
-    return Array.from(map.entries())
-      .map(([cod, nome]) => ({ cod, nome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
-  }
-  if (state.persona === 'supervisor') {
-    const map = new Map()
+  } else if (state.persona === 'supervisor') {
     state.baseAtual.forEach(r => {
       if (r.cod_supervisor) map.set(r.cod_supervisor, r.nome_supervisor || r.cod_supervisor)
     })
-    return Array.from(map.entries())
-      .map(([cod, nome]) => ({ cod, nome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  } else {
+    return []
   }
-  return []
+  return Array.from(map.entries())
+    .map(([cod, nome]) => ({ cod, nome }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
 }
 
-// Atualiza o segundo seletor (GGV/Supervisor específico) e a visibilidade da aba Diretoria
+// Mapeamento persona → layout (desktop = notebook, mobile = celular)
+const PERSONA_LAYOUT = {
+  diretoria:  'desktop',
+  gerente:    'desktop',
+  ggv:        'mobile',
+  supervisor: 'mobile',
+}
+
+// Atualiza o segundo seletor e a visibilidade da aba Diretoria + classe de layout
 function refreshPersonaUI() {
   const sel = document.getElementById('personaEntitySelect')
   const entities = listPersonaEntities()
+
+  // Aplica classe de layout no <body> (CSS faz o resto)
+  document.body.classList.remove('layout-desktop', 'layout-mobile')
+  document.body.classList.add('layout-' + (PERSONA_LAYOUT[state.persona] || 'desktop'))
 
   if (state.persona === 'diretoria') {
     sel.classList.add('hidden')
     state.personaEntity = null
   } else {
     sel.classList.remove('hidden')
-    const label = state.persona === 'ggv' ? 'Selecione o GGV' : 'Selecione o Supervisor'
+    const label =
+      state.persona === 'gerente'    ? 'Selecione a empresa' :
+      state.persona === 'ggv'        ? 'Selecione o GGV' :
+      state.persona === 'supervisor' ? 'Selecione o Supervisor' :
+      'Selecione...'
     sel.innerHTML = `<option value="">${label}</option>` +
-      entities.map(e => `<option value="${escapeAttr(e.cod)}">${escapeHtml(e.cod)} — ${escapeHtml(e.nome)}</option>`).join('')
-    // Mantém seleção atual se ainda válida; senão escolhe a primeira entidade
+      entities.map(e => `<option value="${escapeAttr(e.cod)}">${escapeHtml(e.cod)}${e.cod !== e.nome ? ' — ' + escapeHtml(e.nome) : ''}</option>`).join('')
     if (!entities.some(e => e.cod === state.personaEntity)) {
       state.personaEntity = entities[0]?.cod || null
     }
     sel.value = state.personaEntity || ''
   }
 
-  // Diretoria (V03) só faz sentido para a persona Diretoria
+  // Visão Diretoria (V03) só para Diretoria + Gerente (personas com vista de grupo/empresa)
   const tabV03 = document.querySelector('.tab-btn[data-view="V03"]')
   if (tabV03) {
-    if (state.persona === 'diretoria') {
+    const podeVerDiretoria = state.persona === 'diretoria' || state.persona === 'gerente'
+    if (podeVerDiretoria) {
       tabV03.classList.remove('hidden')
     } else {
       tabV03.classList.add('hidden')
@@ -690,7 +708,8 @@ document.getElementById('simStep').addEventListener('click',   () => updateSimPc
 document.getElementById('simStepUp').addEventListener('click', () => updateSimPct(state.simPct + 5))
 document.getElementById('btnApplySim').addEventListener('click', applySimulation)
 
-// Inicializa tab
+// Inicializa tab e layout
 state.view = 'V01'
 renderTabs()
 updateSimPct(state.simPct)
+document.body.classList.add('layout-' + (PERSONA_LAYOUT[state.persona] || 'desktop'))

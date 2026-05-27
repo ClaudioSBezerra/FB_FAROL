@@ -6,7 +6,7 @@
 <title>FAROL — Maquete v0</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<link rel="stylesheet" href="maquete.css?v=6" />
+<link rel="stylesheet" href="maquete.css?v=7" />
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
@@ -23,9 +23,10 @@
     <div class="flex items-center gap-2 flex-wrap">
       <span class="text-xs opacity-75 hidden md:inline">Persona:</span>
       <div id="personaTabs" class="flex bg-white/10 rounded-lg p-0.5">
-        <button data-persona="diretoria" class="persona-tab active px-3 py-1 rounded-md text-xs font-semibold">Diretoria</button>
-        <button data-persona="ggv"       class="persona-tab        px-3 py-1 rounded-md text-xs font-semibold">GGV</button>
-        <button data-persona="supervisor" class="persona-tab       px-3 py-1 rounded-md text-xs font-semibold">Supervisor</button>
+        <button data-persona="diretoria"  class="persona-tab active px-3 py-1 rounded-md text-xs font-semibold" title="Notebook">💻 Diretoria</button>
+        <button data-persona="gerente"    class="persona-tab        px-3 py-1 rounded-md text-xs font-semibold" title="Notebook">💻 Gerente</button>
+        <button data-persona="ggv"        class="persona-tab        px-3 py-1 rounded-md text-xs font-semibold" title="Mobile">📱 GGV</button>
+        <button data-persona="supervisor" class="persona-tab        px-3 py-1 rounded-md text-xs font-semibold" title="Mobile">📱 Supervisor</button>
       </div>
       <select id="personaEntitySelect" class="hidden bg-white text-slate-800 border border-white/20 rounded px-2 py-1 text-sm max-w-[200px]">
         <!-- preenchido dinamicamente -->
@@ -147,6 +148,6 @@
 
 </main>
 
-<script src="maquete.js?v=6"></script>
+<script src="maquete.js?v=7"></script>
 </body>
 </html>

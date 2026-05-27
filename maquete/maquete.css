@@ -13,6 +13,52 @@
   color: #003366;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ * Layouts diferenciados por persona
+ *  body.layout-desktop  → Diretoria, Gerente (notebook, denso, grid 4 colunas)
+ *  body.layout-mobile   → GGV, Supervisor (estilo mobile, cards grandes empilhados)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* MOBILE: container estreito centralizado, cards grandes empilhados */
+body.layout-mobile main {
+  max-width: 42rem;  /* ~672px — sensação de tela vertical */
+}
+body.layout-mobile #cardsGrid {
+  grid-template-columns: 1fr;  /* sempre 1 coluna */
+  gap: 0.75rem;
+}
+body.layout-mobile #kpiStrip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+body.layout-mobile .kpi-card { padding: 0.75rem; }
+body.layout-mobile .kpi-card .kpi-value { font-size: 1.125rem; }
+body.layout-mobile .entity-card .p-4 { padding: 1.25rem; }
+body.layout-mobile .entity-card .pct-big { font-size: 2.5rem; }
+body.layout-mobile .entity-card .semaforo { width: 56px; height: 56px; font-size: 1.5rem; }
+
+/* DESKTOP: container largo, cards densos em grid 4 colunas */
+body.layout-desktop main {
+  max-width: 96rem;  /* ~1536px */
+}
+body.layout-desktop #cardsGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+@media (min-width: 1024px) {
+  body.layout-desktop #cardsGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  body.layout-desktop #cardsGrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+body.layout-desktop #kpiStrip {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+body.layout-desktop .entity-card .p-4 { padding: 0.875rem; }
+body.layout-desktop .entity-card .pct-big { font-size: 1.5rem; }
+body.layout-desktop .entity-card .semaforo { width: 32px; height: 32px; font-size: 0.875rem; }
+body.layout-desktop .entity-card .progress-track { height: 3px; }
+
 /* Mode tabs (Real vs Simulação) */
 .mode-tab {
   color: #64748b;
