@@ -91,7 +91,7 @@ const COR_TEXT: Record<Cor, string> = {
 
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
 
-function useCards(view: string, compMode: string, refAno: number, refMes: number, drillPath: DrillStep[]) {
+function useCards(view: string, compMode: string, refAno: number, refMes: number, drillPath: DrillStep[], enabled = true) {
   const drillParam = JSON.stringify(drillPath)
   return useQuery<CardsResponse>({
     queryKey: ['farol-v2-cards', view, compMode, refAno, refMes, drillParam],
@@ -110,6 +110,7 @@ function useCards(view: string, compMode: string, refAno: number, refMes: number
     staleTime: 2 * 60_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    enabled,
   })
 }
 
@@ -252,20 +253,21 @@ function Breadcrumb({
 // ─── FarolV2Dashboard ─────────────────────────────────────────────────────────
 
 export default function FarolV2Dashboard() {
-  const { tipoPersona } = useAuth()
+  const { tipoPersona, spRole } = useAuth()
   const navigate = useNavigate()
 
-  if (tipoPersona && PERSONAS_EXECUTIVO.has(tipoPersona)) {
-    return <FarolExecutivo />
-  }
-
+  // Hooks must always run in the same order — conditional return only after all hooks
   const [view, setView]           = useState<'V01' | 'V02' | 'V03'>('V01')
   const [compMode, setCompMode]   = useState('yoy')
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [refAno, setRefAno]       = useState(0)
   const [refMes, setRefMes]       = useState(0)
 
-  const { data, isLoading, error } = useCards(view, compMode, refAno, refMes, drillPath)
+  const isExecutivo = !!(
+    (tipoPersona && PERSONAS_EXECUTIVO.has(tipoPersona)) || spRole === 'admin_fbtax'
+  )
+
+  const { data, isLoading, error } = useCards(view, compMode, refAno, refMes, drillPath, !isExecutivo)
 
   // Sincroniza seleção de período quando dados chegam pela primeira vez
   const autoRef = useCallback((d: CardsResponse) => {
@@ -294,6 +296,8 @@ export default function FarolV2Dashboard() {
   }
 
   const periodos = data?.periodos ?? []
+
+  if (isExecutivo) return <FarolExecutivo />
 
   return (
     <div className="min-h-full">

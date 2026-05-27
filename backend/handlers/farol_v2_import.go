@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // importJobs guarda a função de cancelamento de cada job ativo.
@@ -577,24 +578,25 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, tipoBase string, an
 		}, p.cod))
 		email := fmt.Sprintf("%s.%s@%s.farol.local", p.tipo, codSafe, empresaShort)
 
-		var exists bool
-		_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)`, email).Scan(&exists)
-		if exists {
+		// bcrypt cost 10 (vs auth.go cost 14) — auto-generated accounts only.
+		// Runs sequentially for 200+ RCAs; cost 14 ≈ 2s each → 400s total.
+		hashBytes, herr := bcrypt.GenerateFromPassword([]byte("Farol@"+p.cod), 10)
+		if herr != nil {
 			continue
 		}
-
-		hash, err := HashPassword("Farol@" + p.cod)
-		if err != nil {
-			continue
-		}
+		hash := string(hashBytes)
 
 		var userID string
-		err = db.QueryRow(`
+		err := db.QueryRow(`
 			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
 			VALUES ($1, $2, $3, $4, TRUE, 'user', 'somente_leitura', $5, $6)
+			ON CONFLICT (email) DO NOTHING
 			RETURNING id`,
 			email, hash, p.nome, trialEndsAt, p.tipo, p.cod,
 		).Scan(&userID)
+		if err == sql.ErrNoRows {
+			continue // email já existia — OK, ignora
+		}
 		if err != nil {
 			log.Printf("[SyncUsuarios] falha ao criar %s (%s): %v", email, p.nome, err)
 			continue
