@@ -258,17 +258,18 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 
 		res, err := db.Exec(
 			`UPDATE users SET
-			    sp_role = CASE WHEN $1 != '' THEN $1 ELSE sp_role END,
-			    full_name = CASE WHEN $2 != '' THEN $2 ELSE full_name END,
-			    trial_ends_at = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
-			    tipo_persona   = CASE WHEN $5 != '' THEN $5 ELSE tipo_persona END,
-			    cod_referencia = CASE WHEN $6 != '' THEN $6 ELSE cod_referencia END
+			    sp_role        = $1::text::smartpick.sp_role_type,
+			    full_name      = CASE WHEN $2 != '' THEN $2 ELSE full_name END,
+			    trial_ends_at  = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
+			    tipo_persona   = COALESCE(NULLIF($5, ''), tipo_persona),
+			    cod_referencia = COALESCE(NULLIF($6, ''), cod_referencia)
 			 WHERE id = $3`,
 			req.SpRole, req.FullName, targetID, trialEnds,
 			req.TipoPersona, req.CodReferencia,
 		)
 		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
+			log.Printf("SpUpdateRole: DB error updating user %s: %v", targetID, err)
+			http.Error(w, "Erro ao atualizar: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
