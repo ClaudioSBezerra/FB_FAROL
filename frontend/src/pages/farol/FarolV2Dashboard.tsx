@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Semaforo } from '@/components/farol/Semaforo'
 import type { Cor } from '@/components/farol/Semaforo'
+import { useAuth } from '@/contexts/AuthContext'
+import FarolExecutivo from './FarolExecutivo'
+
+const PERSONAS_EXECUTIVO = new Set(['diretor', 'gerente_geral'])
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -248,7 +252,12 @@ function Breadcrumb({
 // ─── FarolV2Dashboard ─────────────────────────────────────────────────────────
 
 export default function FarolV2Dashboard() {
+  const { tipoPersona } = useAuth()
   const navigate = useNavigate()
+
+  if (tipoPersona && PERSONAS_EXECUTIVO.has(tipoPersona)) {
+    return <FarolExecutivo />
+  }
 
   const [view, setView]           = useState<'V01' | 'V02' | 'V03'>('V01')
   const [compMode, setCompMode]   = useState('yoy')

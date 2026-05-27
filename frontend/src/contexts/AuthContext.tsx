@@ -17,6 +17,7 @@ interface AuthContextType {
   companyId: string | null;
   cnpj: string | null;
   spRole: string | null;
+  tipoPersona: string | null;
   canManageUsers: boolean;
   loading: boolean;
   login: (data: any) => void;
@@ -36,6 +37,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [cnpj, setCnpj] = useState<string | null>(null);
   const [spRole, setSpRole] = useState<string | null>(null);
+  const [tipoPersona, setTipoPersona] = useState<string | null>(null);
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -44,6 +46,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.sp_role) setSpRole(d.sp_role)
+        if (d?.tipo_persona) setTipoPersona(d.tipo_persona)
         setCanManageUsers(!!d?.can_manage_users)
       })
       .catch(() => {});
@@ -216,6 +219,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       companyId,
       cnpj,
       spRole,
+      tipoPersona,
       canManageUsers,
       loading,
       login,
