@@ -12,8 +12,8 @@ package handlers
 //
 // GET /api/v2/farol/periodos — anos+meses disponíveis no banco
 //
-// Dados lidos de farol.mv_farol_resumo (materialized view) — GROUP BY feito no
-// Postgres, não em Go. A view é refreshed após cada importação.
+// Dados lidos de views materializadas pré-agregadas (uma por nível de drill,
+// migration 143). A API só faz SELECT/WHERE — sem GROUP BY. Refresh após import.
 
 import (
 	"database/sql"
@@ -400,8 +400,14 @@ func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, dr
 	antCond  := buildAntCond(compMode, refAno, refMes, &antArgs)
 	antDrill := buildDrillCond(drillPath, &antArgs)
 
-	atualMap := queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs)
-	antMap   := queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs)
+	// As duas queries são independentes (buckets atual e anterior) — rodam em paralelo.
+	var atualMap map[string]aggResult
+	var antMap map[string]float64
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); atualMap = queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs) }()
+	go func() { defer wg.Done(); antMap = queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs) }()
+	wg.Wait()
 
 	seen := make(map[string]bool, len(atualMap))
 	cards := make([]cardItem, 0, len(atualMap)+len(antMap))
@@ -539,8 +545,8 @@ func buildPeriodoLabel(compMode string, refAno, refMes int) string {
 }
 
 // ─── RefreshViewsHandler — POST /api/v2/farol/refresh-views ─────────────────
-// Dispara REFRESH MATERIALIZED VIEW CONCURRENTLY na mv_farol_resumo.
-// Necessário após deploy inicial ou quando a view ficou desatualizada.
+// REFRESH CONCURRENTLY de mv_farol_cli (base) e depois as 7 views de resumo em
+// paralelo. Necessário após deploy inicial ou quando as views desatualizaram.
 
 func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

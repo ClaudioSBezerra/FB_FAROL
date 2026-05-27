@@ -427,14 +427,14 @@ export default function FarolExecutivo() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
 
-  // Executivos sempre iniciam na visão hierárquica principal (V03 = Diretoria)
+  const [view, setView]               = useState<'V01' | 'V02'>('V01')
   const [compMode, setCompMode]       = useState('yoy')
   const [drillPath, setDrillPath]     = useState<DrillStep[]>([])
   const [refAno, setRefAno]           = useState(0)
   const [refreshing, setRefreshing]   = useState(false)
   const [refMes, setRefMes]       = useState(0)
 
-  const { data, isLoading, error } = useCards('V03', compMode, refAno, refMes, drillPath)
+  const { data, isLoading, error } = useCards(view, compMode, refAno, refMes, drillPath)
 
   const autoRef = useCallback((d: CardsResponse) => {
     if (refAno === 0 && d.periodo.ref_ano) {
@@ -469,6 +469,26 @@ export default function FarolExecutivo() {
     <div className="min-h-full">
       {/* ── Controles ────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
+        {/* Visão */}
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
+          {([
+            { id: 'V01' as const, label: 'Por Indústria' },
+            { id: 'V02' as const, label: 'Por RCA' },
+          ]).map(v => (
+            <button
+              key={v.id}
+              onClick={() => { setView(v.id); setDrillPath([]) }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === v.id
+                  ? 'bg-primary text-white'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
         {/* Comparação */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
