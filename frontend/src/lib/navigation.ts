@@ -37,14 +37,15 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Painel', path: '/objetivos/supervisor' },
     ],
   },
-  // ── Farol (visão de semáforo do supervisor/RCA) ─────────────────────────
+  // ── Farol V2 — novo sistema de vendas (2026) ────────────────────────────
   farol: {
     label: 'Farol',
     tabs: [
-      { label: 'Supervisores', path: '/farol' },
+      { label: 'Painel',    path: '/farol/v2'        },
+      { label: 'Importar',  path: '/farol/importar'  },
     ],
   },
-  // ── Importação ───────────────────────────────────────────────────────────
+  // ── Importação (objetivos legado) ────────────────────────────────────────
   importacao: {
     label: 'Importação',
     tabs: [
@@ -80,6 +81,8 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/objetivos/importar'))    return 'importacao'
   if (pathname.startsWith('/objetivos/manutencao'))  return 'importacao'
   if (pathname.startsWith('/objetivos'))             return 'obj_rca'
+  if (pathname.startsWith('/farol/v2'))              return 'farol'
+  if (pathname.startsWith('/farol/importar'))        return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/gestao'))                return 'gestao'
   if (pathname.startsWith('/config'))                return 'config'

@@ -460,6 +460,14 @@ func main() {
 	http.HandleFunc("/api/farol/web/fornecedores",  gz(withSP(handlers.FarolWebFornecedoresEmpresaHandler, "gestor_filial")))
 	http.HandleFunc("/api/farol/web/forn/",         gz(withSP(handlers.FarolWebFornecSupervisoresHandler,  "gestor_filial")))
 
+	// ── Farol V2 — Novo sistema de vendas (Reescrita 2026) ───────────────────
+	http.HandleFunc("/api/v2/vendas/import",    withSP(handlers.VendasImportHandler,    "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/periodos",  withSP(handlers.VendasPeriodosHandler,  "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/clear",     withSP(handlers.VendasClearHandler,     "gestor_filial"))
+	http.HandleFunc("/api/v2/industrias",       withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/cards",      gz(withSP(handlers.FarolV2CardsHandler,  "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/periodos",   withSP(handlers.FarolV2PeriodosHandler,  "gestor_filial"))
+
 	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
 	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
 	http.HandleFunc("/api/cadastros/rcas/upload-csv", withSP(handlers.UploadCadastrosCSVHandler, "gestor_filial"))
