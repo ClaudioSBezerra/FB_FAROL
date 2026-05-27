@@ -11,55 +11,34 @@ export interface ModuleTab {
 export interface ModuleConfig {
   label: string
   adminOnly?: boolean
+  dev?: boolean           // módulo em desenvolvimento — exibido no rail com badge
   tabs: ModuleTab[]
 }
 
 // ─── Farol — Módulos e abas ───────────────────────────────────────────────
 export const modules: Record<string, ModuleConfig> = {
-  // ── Cadastros (todos os usuários autenticados) ───────────────────────────
-  cadastros: {
-    label: 'Cadastros',
-    tabs: [
-      { label: 'Gestores', path: '/cadastros/gestores' },
-      { label: 'RCAs',     path: '/cadastros/rcas' },
-    ],
-  },
-  // ── Objetivo RCA ────────────────────────────────────────────────────────
-  obj_rca: {
-    label: 'Objetivo RCA',
-    tabs: [
-      { label: 'Painel', path: '/objetivos/rca' },
-    ],
-  },
-  // ── Objetivo Supervisor ──────────────────────────────────────────────────
-  obj_supervisor: {
-    label: 'Objetivo Supervisor',
-    tabs: [
-      { label: 'Painel', path: '/objetivos/supervisor' },
-    ],
-  },
-  // ── Farol V2 — novo sistema de vendas (2026) ────────────────────────────
+  // ── Farol V2 — sistema principal de vendas ───────────────────────────────
   farol: {
     label: 'Farol',
     tabs: [
-      { label: 'Painel',    path: '/farol/v2'        },
-      { label: 'Importar',  path: '/farol/importar'  },
-      { label: 'Usuários',  path: '/farol/usuarios', managerOnly: true },
+      { label: 'Painel',    path: '/farol/v2'       },
+      { label: 'Importar',  path: '/farol/importar' },
     ],
   },
-  // ── Importação (objetivos legado) ────────────────────────────────────────
-  importacao: {
-    label: 'Importação',
+  // ── Objetivo RCA (em desenvolvimento) ────────────────────────────────────
+  obj_rca: {
+    label: 'Objetivo RCA',
+    dev: true,
     tabs: [
-      { label: 'Importar',    path: '/objetivos/importar'    },
-      { label: 'Manutenção',  path: '/objetivos/manutencao'  },
+      { label: 'Painel', path: '/objetivos/rca', disabled: true },
     ],
   },
-  // ── Administração ────────────────────────────────────────────────────────
-  gestao: {
-    label: 'Administração',
+  // ── Objetivo Supervisor (em desenvolvimento) ─────────────────────────────
+  obj_supervisor: {
+    label: 'Objetivo Supervisor',
+    dev: true,
     tabs: [
-      { label: 'Ambiente', path: '/gestao/filiais' },
+      { label: 'Painel', path: '/objetivos/supervisor', disabled: true },
     ],
   },
   // ── Configurações (admin only) ────────────────────────────────────────────
@@ -67,27 +46,26 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Configurações',
     adminOnly: true,
     tabs: [
-      { label: 'Ambiente',        path: '/config/ambiente',   masterOnly: true },
-      { label: 'Usuários',        path: '/config/usuarios',   masterOnly: true },
-      { label: 'Log de Auditoria', path: '/config/audit-log', masterOnly: true },
+      { label: 'Ambiente',          path: '/config/ambiente',         masterOnly: true },
+      { label: 'Usuários',          path: '/config/usuarios',         masterOnly: true },
+      { label: 'Log de Auditoria',  path: '/config/audit-log',        masterOnly: true },
       { label: 'Bloqueio Empresas', path: '/config/empresas-bloqueio', masterOnly: true },
-      { label: 'Uso do Sistema',   path: '/config/uso',               masterOnly: true },
-      { label: 'Manutenção',      path: '/config/manutencao' },
+      { label: 'Uso do Sistema',    path: '/config/uso',              masterOnly: true },
+      { label: 'Manutenção',        path: '/config/manutencao'        },
+      { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
     ],
   },
 }
 
 export function getActiveModule(pathname: string): string {
-  if (pathname.startsWith('/cadastros'))             return 'cadastros'
-  if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
-  if (pathname.startsWith('/objetivos/importar'))    return 'importacao'
-  if (pathname.startsWith('/objetivos/manutencao'))  return 'importacao'
-  if (pathname.startsWith('/objetivos'))             return 'obj_rca'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/importar'))        return 'farol'
-  if (pathname.startsWith('/farol/usuarios'))        return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
-  if (pathname.startsWith('/gestao'))                return 'gestao'
+  if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'
+  if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
+  if (pathname.startsWith('/objetivos/manutencao'))  return 'config'
+  if (pathname.startsWith('/objetivos/importar'))    return 'farol'
+  if (pathname.startsWith('/gestao'))                return 'config'
   if (pathname.startsWith('/config'))                return 'config'
-  return 'cadastros'
+  return 'farol'
 }

@@ -1,4 +1,4 @@
-import { Users, Target, BarChart3, Upload, Settings, LogOut, KeyRound, Lightbulb } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -32,12 +32,10 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 const mainItems = [
-  { id: 'cadastros',      icon: Users,     label: 'Cadastros',           path: '/cadastros/rcas'       },
-  { id: 'farol',          icon: Lightbulb, label: 'Farol',               path: '/farol'                },
-  { id: 'obj_rca',        icon: Target,    label: 'Objetivo RCA',        path: '/objetivos/rca'        },
-  { id: 'obj_supervisor', icon: BarChart3, label: 'Objetivo Supervisor', path: '/objetivos/supervisor' },
-  { id: 'importacao',     icon: Upload,    label: 'Importação',          path: '/objetivos/importar'   },
-] as const
+  { id: 'farol',          icon: Lightbulb, label: 'Farol',               path: '/farol/v2',            dev: false },
+  { id: 'obj_rca',        icon: Target,    label: 'Objetivo RCA',        path: '/objetivos/rca',       dev: true  },
+  { id: 'obj_supervisor', icon: BarChart3, label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true },
+]
 
 export function AppRail() {
   const location = useLocation()
@@ -100,20 +98,29 @@ export function AppRail() {
           {mainItems.map(item => (
               <Tooltip key={item.id}>
                 <TooltipTrigger asChild>
-                  <button
-                    onClick={() => navigate(item.path)}
-                    className={cn(
-                      'flex items-center justify-center w-10 h-10 rounded-lg transition-colors',
-                      active === item.id
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-gray-100 hover:text-foreground'
+                  <div className="relative">
+                    <button
+                      onClick={() => !item.dev && navigate(item.path)}
+                      className={cn(
+                        'flex items-center justify-center w-10 h-10 rounded-lg transition-colors',
+                        item.dev
+                          ? 'text-muted-foreground/40 cursor-not-allowed'
+                          : active === item.id
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:bg-gray-100 hover:text-foreground'
+                      )}
+                    >
+                      <item.icon className="h-5 w-5" />
+                    </button>
+                    {item.dev && (
+                      <span className="absolute -top-0.5 -right-0.5 text-[7px] leading-none bg-amber-400 text-amber-900 font-bold rounded px-0.5">
+                        DEV
+                      </span>
                     )}
-                  >
-                    <item.icon className="h-5 w-5" />
-                  </button>
+                  </div>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="text-xs">
-                  {item.label}
+                  {item.dev ? `${item.label} — Em Desenvolvimento` : item.label}
                 </TooltipContent>
               </Tooltip>
             ))}

@@ -468,13 +468,8 @@ func main() {
 	http.HandleFunc("/api/v2/farol/cards",      gz(withSP(handlers.FarolV2CardsHandler,  "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos",   withSP(handlers.FarolV2PeriodosHandler,  "gestor_filial"))
 
-	// ── Cadastros — Gestores, RCAs (isolados por empresa via FarolAuthMiddleware) ──
-	http.HandleFunc("/api/cadastros/limpar",          withSP(handlers.LimparCadastrosHandler, "admin_fbtax"))
-	http.HandleFunc("/api/cadastros/rcas/upload-csv", withSP(handlers.UploadCadastrosCSVHandler, "gestor_filial"))
-	http.HandleFunc("/api/cadastros/gestores",        withSP(handlers.CadastrosGestoresHandler, "gestor_filial"))
-	http.HandleFunc("/api/cadastros/gestores/",       withSP(handlers.CadastrosGestoresHandler, "gestor_filial"))
-	http.HandleFunc("/api/cadastros/rcas",            withSP(handlers.CadastrosRCAsHandler, "gestor_filial"))
-	http.HandleFunc("/api/cadastros/rcas/",           withSP(handlers.CadastrosRCAsHandler, "gestor_filial"))
+	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
+	// /api/cadastros/* desativado em 2026-05-27
 
 	http.HandleFunc("/api/sp/usuarios", withSP(func(db *sql.DB) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

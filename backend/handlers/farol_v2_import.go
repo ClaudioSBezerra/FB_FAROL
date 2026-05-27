@@ -353,16 +353,130 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[VendasImport] concluído: %d linhas → %d importadas", processed, importados)
+		// Auto-cria usuários GGV / Supervisor / RCA encontrados no CSV
+		usuariosCriados, _ := syncUsuariosFromImport(db, spCtx, tipoBase, ano, mes)
+
+		log.Printf("[VendasImport] concluído: %d linhas → %d importadas, %d usuários criados", processed, importados, usuariosCriados)
 		sendEvent(map[string]any{
-			"done":       true,
-			"processed":  processed,
-			"importados": importados,
-			"tipo_base":  tipoBase,
-			"ano":        ano,
-			"mes":        mes,
+			"done":             true,
+			"processed":        processed,
+			"importados":       importados,
+			"usuarios_criados": usuariosCriados,
+			"tipo_base":        tipoBase,
+			"ano":              ano,
+			"mes":              mes,
 		})
 	}
+}
+
+// syncUsuariosFromImport cria contas para GGV, Supervisor e RCA encontrados no CSV importado.
+// Pula entradas que já possuem e-mail gerado cadastrado no sistema.
+// Senha padrão: Farol@{cod} — TI comunica a cada usuário; podem trocar depois.
+// Hierarquia (environment, empresa) herdada do usuário autenticado que fez o import.
+func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, tipoBase string, ano, mes int) (int, error) {
+	type entrada struct {
+		tipo string
+		cod  string
+		nome string
+	}
+
+	empresaShort := spCtx.EmpresaID
+	if len(empresaShort) > 8 {
+		empresaShort = empresaShort[:8]
+	}
+
+	// Coleta pessoas únicas por hierarquia
+	var pessoas []entrada
+	queries := []struct {
+		tipo    string
+		colCod  string
+		colNome string
+	}{
+		{"ggv", "cod_gerente", "nome_gerente"},
+		{"supervisor", "cod_supervisor", "nome_supervisor"},
+		{"rca", "cod_rca", "nome_rca"},
+	}
+	for _, q := range queries {
+		sql := fmt.Sprintf(`
+			SELECT DISTINCT %s, %s FROM vendas_importadas
+			WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4
+			  AND %s != '' AND %s != ''`,
+			q.colCod, q.colNome, q.colCod, q.colNome)
+		rows, err := db.Query(sql, spCtx.EmpresaID, tipoBase, ano, mes)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var cod, nome string
+			if scanErr := rows.Scan(&cod, &nome); scanErr == nil && cod != "" {
+				pessoas = append(pessoas, entrada{q.tipo, cod, nome})
+			}
+		}
+		rows.Close()
+	}
+	if len(pessoas) == 0 {
+		return 0, nil
+	}
+
+	// Herda environment_id e empresa do usuário que fez o import
+	var envID sql.NullString
+	_ = db.QueryRow(`
+		SELECT environment_id FROM user_environments WHERE user_id=$1 LIMIT 1
+	`, spCtx.UserID).Scan(&envID)
+
+	trialEndsAt := time.Date(2099, 12, 31, 0, 0, 0, 0, time.UTC)
+	criados := 0
+
+	for _, p := range pessoas {
+		codSafe := strings.ToLower(strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return '-'
+		}, p.cod))
+		email := fmt.Sprintf("%s.%s@%s.farol.local", p.tipo, codSafe, empresaShort)
+
+		var exists bool
+		_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)`, email).Scan(&exists)
+		if exists {
+			continue
+		}
+
+		hash, err := HashPassword("Farol@" + p.cod)
+		if err != nil {
+			continue
+		}
+
+		var userID string
+		err = db.QueryRow(`
+			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
+			VALUES ($1, $2, $3, $4, TRUE, 'user', 'somente_leitura', $5, $6)
+			RETURNING id
+		`, email, hash, p.nome, trialEndsAt, p.tipo, p.cod).Scan(&userID)
+		if err != nil {
+			log.Printf("[SyncUsuarios] falha ao criar %s (%s): %v", email, p.nome, err)
+			continue
+		}
+
+		// Vincula ao environment herdado
+		if envID.Valid && envID.String != "" {
+			_, _ = db.Exec(`
+				INSERT INTO user_environments (user_id, environment_id, role, preferred_company_id)
+				VALUES ($1, $2, 'user', $3) ON CONFLICT DO NOTHING
+			`, userID, envID.String, spCtx.EmpresaID)
+		}
+
+		// Acesso a todas as filiais da empresa (somente_leitura — TI pode restringir depois)
+		_, _ = db.Exec(`
+			INSERT INTO farol.sp_user_filiais (user_id, empresa_id, filial_id, all_filiais)
+			VALUES ($1, $2, NULL, TRUE) ON CONFLICT DO NOTHING
+		`, userID, spCtx.EmpresaID)
+
+		criados++
+		log.Printf("[SyncUsuarios] criado: %s %s (%s) cod=%s", p.tipo, p.nome, email, p.cod)
+	}
+
+	return criados, nil
 }
 
 // ─── VendasPeriodosHandler — GET /api/v2/vendas/periodos ────────────────────
