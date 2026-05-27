@@ -258,7 +258,7 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 
 		res, err := db.Exec(
 			`UPDATE users SET
-			    sp_role        = $1::text::smartpick.sp_role_type,
+			    sp_role        = $1,
 			    full_name      = CASE WHEN $2 != '' THEN $2 ELSE full_name END,
 			    trial_ends_at  = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
 			    tipo_persona   = COALESCE(NULLIF($5, ''), tipo_persona),
