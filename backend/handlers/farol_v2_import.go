@@ -244,6 +244,16 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iPeriodo     := col(-1, "periodo")
 	iEstado      := col(-1, "estado")
 
+	// Log dos cabeçalhos detectados para diagnóstico de mapeamento de colunas
+	colLabel := func(idx int) string {
+		if idx < 0 || idx >= len(headerRow) {
+			return fmt.Sprintf("NÃO ENCONTRADO(idx=%d)", idx)
+		}
+		return fmt.Sprintf("%q (col %d)", headerRow[idx], idx)
+	}
+	log.Printf("[import:diag] colunas detectadas — qt=%s  pvenda=%s  codCli=%s  codFornec=%s  periodo=%s  estado=%s",
+		colLabel(iQt), colLabel(iPvenda), colLabel(iCodCli), colLabel(iCodFornec), colLabel(iPeriodo), colLabel(iEstado))
+
 	getField := func(row []string, idx int) string {
 		if idx < 0 || idx >= len(row) {
 			return ""
@@ -283,6 +293,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		vals [22]any
 	}
 	var allRows []vendaRaw
+	diagSamples := 0
 
 	for {
 		csvRow, err := csvReader.Read()
@@ -300,6 +311,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		periodo    := getField(csvRow, iPeriodo)
 		estadoF   := getField(csvRow, iEstado)
+
+		rawPvenda := getField(csvRow, iPvenda)
+		rawQt     := getField(csvRow, iQt)
+		if diagSamples < 5 {
+			log.Printf("[import:diag] amostra %d — pvenda_raw=%q→%.4f  qt_raw=%q→%.4f  cli=%s  fornec=%s",
+				diagSamples+1, rawPvenda, parseNum(rawPvenda), rawQt, parseNum(rawQt), codCli, codFornec)
+			diagSamples++
+		}
 
 		var r vendaRaw
 		r.vals[0]  = spCtx.EmpresaID
@@ -322,8 +341,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[17] = getField(csvRow, iEmpresa)
 		r.vals[18] = getField(csvRow, iCodProd)
 		r.vals[19] = getField(csvRow, iNomeProd)
-		r.vals[20] = parseNum(getField(csvRow, iQt))
-		r.vals[21] = parseNum(getField(csvRow, iPvenda))
+		r.vals[20] = parseNum(rawQt)
+		r.vals[21] = parseNum(rawPvenda)
 		allRows = append(allRows, r)
 	}
 
