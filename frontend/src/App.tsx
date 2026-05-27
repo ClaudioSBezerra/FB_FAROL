@@ -34,6 +34,7 @@ import FarolFornecRcas from './pages/farol/FarolFornecRcas'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolV2Import from './pages/farol/FarolV2Import'
+import FarolUsuarios from './pages/farol/FarolUsuarios'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -71,10 +72,19 @@ function MasterRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function ManagerRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, canManageUsers } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  if (!canManageUsers) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 // ── Barra de abas por módulo ─────────────────────────────────────────────────
 function ModuleTabs() {
   const location  = useLocation()
-  const { user, spRole, group }  = useAuth()
+  const { user, spRole, group, canManageUsers }  = useAuth()
   const isMaster  = group === 'MASTER'
   const isAdmin   = isMaster || spRole === 'admin_fbtax'
   const moduleId  = getActiveModule(location.pathname)
@@ -84,8 +94,9 @@ function ModuleTabs() {
   if (moduleCfg.adminOnly && !isAdmin) return null
 
   const visibleTabs = moduleCfg.tabs.filter(t =>
-    (!t.adminOnly  || isAdmin) &&
-    (!t.masterOnly || isMaster)
+    (!t.adminOnly    || isAdmin) &&
+    (!t.masterOnly   || isMaster) &&
+    (!t.managerOnly  || canManageUsers)
   )
 
   return (
@@ -196,6 +207,7 @@ function AppLayout() {
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
               <Route path="/farol/v2"       element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
               <Route path="/farol/importar" element={<ProtectedRoute><FarolV2Import /></ProtectedRoute>} />
+              <Route path="/farol/usuarios" element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
               <Route path="/farol"                              element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />

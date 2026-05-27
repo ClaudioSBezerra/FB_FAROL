@@ -4,7 +4,8 @@ export interface ModuleTab {
   disabled?: boolean
   danger?: boolean
   adminOnly?: boolean
-  masterOnly?: boolean   // visível apenas para admin de plataforma (MASTER)
+  masterOnly?: boolean    // visível apenas para admin de plataforma (MASTER)
+  managerOnly?: boolean   // visível para quem pode gerir usuários (TI, admin, admin_fbtax)
 }
 
 export interface ModuleConfig {
@@ -43,6 +44,7 @@ export const modules: Record<string, ModuleConfig> = {
     tabs: [
       { label: 'Painel',    path: '/farol/v2'        },
       { label: 'Importar',  path: '/farol/importar'  },
+      { label: 'Usuários',  path: '/farol/usuarios', managerOnly: true },
     ],
   },
   // ── Importação (objetivos legado) ────────────────────────────────────────
@@ -83,6 +85,7 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/objetivos'))             return 'obj_rca'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/importar'))        return 'farol'
+  if (pathname.startsWith('/farol/usuarios'))        return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/gestao'))                return 'gestao'
   if (pathname.startsWith('/config'))                return 'config'

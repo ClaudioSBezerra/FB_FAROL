@@ -29,11 +29,13 @@ const SpContextKey spCtxKey = "sp_context"
 
 // FarolContext é injetado no request context por FarolAuthMiddleware.
 type FarolContext struct {
-	UserID     string
-	SpRole     string  // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
-	EmpresaID  string
-	FilialIDs  []int   // IDs de filiais acessíveis; vazio quando AllFiliais = true
-	AllFiliais bool    // true para admin_fbtax e gestor_geral
+	UserID      string
+	SpRole      string  // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	EmpresaID   string
+	FilialIDs   []int   // IDs de filiais acessíveis; vazio quando AllFiliais = true
+	AllFiliais  bool    // true para admin_fbtax e gestor_geral
+	TipoPersona string  // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin | ""
+	CodReferencia string // código operacional (cod_gerente, cod_supervisor, etc.)
 }
 
 // GetSpContext extrai o FarolContext do request. Retorna nil se não encontrado.
@@ -70,6 +72,31 @@ func (s *FarolContext) CanApprove() bool {
 // IsAdminFbtax retorna true para admin_fbtax (acesso cross-tenant).
 func (s *FarolContext) IsAdminFbtax() bool {
 	return s.SpRole == "admin_fbtax"
+}
+
+// CanManageUsers retorna true para quem pode criar/editar usuários dentro do tenant.
+// admin_fbtax: sempre. Personas 'ti' e 'admin' com sp_role >= gestor_geral.
+func (s *FarolContext) CanManageUsers() bool {
+	if s.IsAdminFbtax() {
+		return true
+	}
+	if (s.TipoPersona == "ti" || s.TipoPersona == "admin") && hasSpRole(s.SpRole, "gestor_geral") {
+		return true
+	}
+	return false
+}
+
+// PersonaToSpRole retorna o sp_role recomendado para um tipo_persona.
+func PersonaToSpRole(persona string) string {
+	switch persona {
+	case "diretor", "gerente_geral", "ti", "admin":
+		return "gestor_geral"
+	case "ggv", "supervisor":
+		return "gestor_filial"
+	case "rca", "analista_negocios":
+		return "somente_leitura"
+	}
+	return "somente_leitura"
 }
 
 // IsMasterTenant retorna true quando a empresa ativa pertence ao grupo MASTER
@@ -153,12 +180,13 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 			return
 		}
 
-		// Carrega sp_role, role (auth geral) e trial_ends_at do banco
+		// Carrega sp_role, role, trial_ends_at, tipo_persona e cod_referencia
 		var spRole, userRole string
 		var trialEndsAt sql.NullTime
+		var tipoPersona, codReferencia sql.NullString
 		if err := db.QueryRow(
-			"SELECT sp_role, role, trial_ends_at FROM users WHERE id = $1", userID,
-		).Scan(&spRole, &userRole, &trialEndsAt); err != nil {
+			"SELECT sp_role, role, trial_ends_at, COALESCE(tipo_persona,''), COALESCE(cod_referencia,'') FROM users WHERE id = $1", userID,
+		).Scan(&spRole, &userRole, &trialEndsAt, &tipoPersona, &codReferencia); err != nil {
 			if err == sql.ErrNoRows {
 				http.Error(w, "User not found", http.StatusUnauthorized)
 			} else {
@@ -199,9 +227,11 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 
 		// Monta FarolContext com escopo de filiais (spRole já pode ter sido elevado para admin_fbtax)
 		spCtx := &FarolContext{
-			UserID:    userID,
-			SpRole:    spRole,
-			EmpresaID: empresaID,
+			UserID:        userID,
+			SpRole:        spRole,
+			EmpresaID:     empresaID,
+			TipoPersona:   tipoPersona.String,
+			CodReferencia: codReferencia.String,
 		}
 
 		// admin_fbtax e gestor_geral têm acesso irrestrito às filiais do tenant
@@ -255,11 +285,18 @@ func SpMeHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		// Retorna apenas o sp_role; outros campos já estão no /api/auth/me
 		type spMeResponse struct {
-			SpRole string `json:"sp_role"`
+			SpRole        string `json:"sp_role"`
+			TipoPersona   string `json:"tipo_persona"`
+			CodReferencia string `json:"cod_referencia"`
+			CanManageUsers bool  `json:"can_manage_users"`
 		}
-		json.NewEncoder(w).Encode(spMeResponse{SpRole: spCtx.SpRole})
+		json.NewEncoder(w).Encode(spMeResponse{
+			SpRole:         spCtx.SpRole,
+			TipoPersona:    spCtx.TipoPersona,
+			CodReferencia:  spCtx.CodReferencia,
+			CanManageUsers: spCtx.CanManageUsers(),
+		})
 	}
 }
 

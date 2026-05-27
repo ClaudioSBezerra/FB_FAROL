@@ -17,6 +17,7 @@ interface AuthContextType {
   companyId: string | null;
   cnpj: string | null;
   spRole: string | null;
+  canManageUsers: boolean;
   loading: boolean;
   login: (data: any) => void;
   logout: () => void;
@@ -35,12 +36,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [cnpj, setCnpj] = useState<string | null>(null);
   const [spRole, setSpRole] = useState<string | null>(null);
+  const [canManageUsers, setCanManageUsers] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchSpRole = (tok: string) => {
     fetch('/api/sp/me', { headers: { Authorization: `Bearer ${tok}` } })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.sp_role) setSpRole(d.sp_role) })
+      .then(d => {
+        if (d?.sp_role) setSpRole(d.sp_role)
+        setCanManageUsers(!!d?.can_manage_users)
+      })
       .catch(() => {});
   };
 
@@ -211,6 +216,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       companyId,
       cnpj,
       spRole,
+      canManageUsers,
       loading,
       login,
       logout,

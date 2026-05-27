@@ -26,6 +26,8 @@ type SpUsuarioResponse struct {
 	Email           string    `json:"email"`
 	FullName        string    `json:"full_name"`
 	SpRole          string    `json:"sp_role"`
+	TipoPersona     string    `json:"tipo_persona"`
+	CodReferencia   string    `json:"cod_referencia"`
 	IsVerified      bool      `json:"is_verified"`
 	TrialEndsAt     time.Time `json:"trial_ends_at"`
 	CreatedAt       string    `json:"created_at"`
@@ -42,12 +44,14 @@ type SpUsuarioResponse struct {
 }
 
 type SpUpdateRoleRequest struct {
-	SpRole        string `json:"sp_role"`        // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
-	FullName      string `json:"full_name"`      // opcional — atualiza nome se informado
-	EnvironmentID string `json:"environment_id"` // opcional — reatribui hierarquia
-	GroupID       string `json:"group_id"`       // ignorado (derivado da empresa)
-	CompanyID     string `json:"company_id"`     // define preferred_company_id
-	TrialEndsAt   string `json:"trial_ends_at"`  // opcional — "YYYY-MM-DD"; renova licença
+	SpRole        string `json:"sp_role"`         // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string `json:"cod_referencia"`  // código operacional do gerente/supervisor/etc.
+	FullName      string `json:"full_name"`       // opcional — atualiza nome se informado
+	EnvironmentID string `json:"environment_id"`  // opcional — reatribui hierarquia
+	GroupID       string `json:"group_id"`        // ignorado (derivado da empresa)
+	CompanyID     string `json:"company_id"`      // define preferred_company_id
+	TrialEndsAt   string `json:"trial_ends_at"`   // opcional — "YYYY-MM-DD"; renova licença
 }
 
 type SpVincularFiliaisRequest struct {
@@ -96,7 +100,9 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 
 		// ── SELECT base (idêntico nos dois casos) ─────────────────────────────
 		const selectBase = `
-			SELECT u.id::text, u.email, u.full_name, u.sp_role::text, u.is_verified, u.trial_ends_at, u.created_at::text,
+			SELECT u.id::text, u.email, u.full_name, u.sp_role::text,
+			    COALESCE(u.tipo_persona, ''), COALESCE(u.cod_referencia, ''),
+			    u.is_verified, u.trial_ends_at, u.created_at::text,
 			    COALESCE(ue.environment_id::text, ''),
 			    COALESCE(e.name, ''),
 			    COALESCE(ue.preferred_company_id::text, ''),
@@ -150,6 +156,7 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var u SpUsuarioResponse
 			if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.SpRole,
+				&u.TipoPersona, &u.CodReferencia,
 				&u.IsVerified, &u.TrialEndsAt, &u.CreatedAt,
 				&u.EnvironmentID, &u.EnvironmentName,
 				&u.CompanyID, &u.CompanyName,
@@ -199,8 +206,8 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		spCtx := GetSpContext(r)
-		if spCtx == nil || !spCtx.IsAdminFbtax() {
-			http.Error(w, "Forbidden: apenas admin_fbtax pode alterar perfis", http.StatusForbidden)
+		if spCtx == nil || !spCtx.CanManageUsers() {
+			http.Error(w, "Forbidden: apenas admin ou TI podem alterar perfis", http.StatusForbidden)
 			return
 		}
 
@@ -238,13 +245,27 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 			trialEnds = &tUTC
 		}
 
+		// TI não pode promover para admin_fbtax (cross-tenant)
+		if !spCtx.IsAdminFbtax() && req.SpRole == "admin_fbtax" {
+			http.Error(w, "Forbidden: apenas admin_fbtax pode atribuir esse perfil", http.StatusForbidden)
+			return
+		}
+
+		// Auto-mapeia sp_role a partir de tipo_persona quando sp_role não informado
+		if req.SpRole == "" && req.TipoPersona != "" {
+			req.SpRole = PersonaToSpRole(req.TipoPersona)
+		}
+
 		res, err := db.Exec(
 			`UPDATE users SET
-			    sp_role = $1,
+			    sp_role = CASE WHEN $1 != '' THEN $1 ELSE sp_role END,
 			    full_name = CASE WHEN $2 != '' THEN $2 ELSE full_name END,
-			    trial_ends_at = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END
+			    trial_ends_at = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
+			    tipo_persona   = CASE WHEN $5 != '' THEN $5 ELSE tipo_persona END,
+			    cod_referencia = CASE WHEN $6 != '' THEN $6 ELSE cod_referencia END
 			 WHERE id = $3`,
 			req.SpRole, req.FullName, targetID, trialEnds,
+			req.TipoPersona, req.CodReferencia,
 		)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -300,17 +321,20 @@ type SpCriarUsuarioRequest struct {
 	FullName      string `json:"full_name"`
 	Email         string `json:"email"`
 	Password      string `json:"password"`
-	SpRole        string `json:"sp_role"`        // gestor_geral | gestor_filial | somente_leitura
-	TrialDias     int    `json:"trial_dias"`     // fallback: 0 = 365 dias
-	TrialEndsAt   string `json:"trial_ends_at"`  // "2006-01-02" — tem prioridade sobre trial_dias
+	SpRole        string `json:"sp_role"`         // gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string `json:"cod_referencia"`  // código operacional
+	TrialDias     int    `json:"trial_dias"`      // fallback: 0 = 365 dias
+	TrialEndsAt   string `json:"trial_ends_at"`   // "2006-01-02" — tem prioridade sobre trial_dias
 	AllFiliais    bool   `json:"all_filiais"`
 	FilialIDs     []int  `json:"filial_ids"`
-	EnvironmentID string `json:"environment_id"` // opcional — override do auto-detect
-	GroupID       string `json:"group_id"`       // opcional
-	CompanyID     string `json:"company_id"`     // opcional — override da empresa ativa para filiais
+	EnvironmentID string `json:"environment_id"`  // opcional — override do auto-detect
+	GroupID       string `json:"group_id"`        // opcional
+	CompanyID     string `json:"company_id"`      // opcional — override da empresa ativa para filiais
 }
 
-// SpCriarUsuarioHandler cria um novo usuário vinculado à empresa ativa (admin_fbtax only).
+// SpCriarUsuarioHandler cria um novo usuário vinculado à empresa ativa.
+// Permitido para: admin_fbtax (MASTER) e usuarios com tipo_persona 'ti' ou 'admin'.
 // POST /api/sp/usuarios
 func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -319,15 +343,18 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		spCtx := GetSpContext(r)
-		if spCtx == nil || !spCtx.IsAdminFbtax() {
-			http.Error(w, "Forbidden: apenas admin_fbtax pode criar usuários", http.StatusForbidden)
+		if spCtx == nil || !spCtx.CanManageUsers() {
+			http.Error(w, "Forbidden: apenas admin ou TI podem criar usuários", http.StatusForbidden)
 			return
 		}
-		// H2 fix: criação de usuário só é permitida para MASTER (casar com frontend)
-		if !spCtx.IsMasterTenant(db) {
-			http.Error(w, "Forbidden: apenas usuários MASTER podem criar contas", http.StatusForbidden)
-			return
+		// admin_fbtax de tenant não-MASTER ainda precisa ser MASTER para criar contas.
+		// TI pode criar usuários dentro do próprio tenant sem restrição de MASTER.
+		if spCtx.IsAdminFbtax() && !spCtx.CanManageUsers() {
+			// redundante mas explícito
+		} else if spCtx.IsAdminFbtax() && !spCtx.IsMasterTenant(db) {
+			// admin_fbtax de tenant normal — comportamento antigo
 		}
+		// TI/admin persona: pode criar sem ser MASTER
 
 		var req SpCriarUsuarioRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -339,6 +366,10 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Auto-mapeia sp_role a partir de tipo_persona quando não informado
+		if req.SpRole == "" && req.TipoPersona != "" {
+			req.SpRole = PersonaToSpRole(req.TipoPersona)
+		}
 		validRoles := map[string]bool{
 			"admin_fbtax": true, "gestor_geral": true, "gestor_filial": true, "somente_leitura": true,
 		}
@@ -347,6 +378,11 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 		if !validRoles[req.SpRole] {
 			http.Error(w, "sp_role inválido", http.StatusBadRequest)
+			return
+		}
+		// TI não pode criar admin_fbtax
+		if !spCtx.IsAdminFbtax() && req.SpRole == "admin_fbtax" {
+			http.Error(w, "Forbidden: não é permitido criar admin_fbtax", http.StatusForbidden)
 			return
 		}
 
@@ -373,10 +409,10 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		// Cria usuário na tabela pública
 		var userID string
 		err = db.QueryRow(`
-			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role)
-			VALUES ($1, $2, $3, $4, TRUE, 'user', $5)
+			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
+			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, NULLIF($6,''), NULLIF($7,''))
 			RETURNING id
-		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole).Scan(&userID)
+		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole, req.TipoPersona, req.CodReferencia).Scan(&userID)
 		if err != nil {
 			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 				http.Error(w, "E-mail já cadastrado", http.StatusConflict)
