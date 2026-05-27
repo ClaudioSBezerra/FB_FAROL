@@ -11,11 +11,15 @@ package handlers
 //     drill       JSON: [{"level":"cod_fornec","value":"001","label":"MARCA X"}]
 //
 // GET /api/v2/farol/periodos — anos+meses disponíveis no banco
+//
+// Dados lidos de farol.mv_farol_resumo (materialized view) — GROUP BY feito no
+// Postgres, não em Go. A view é refreshed após cada importação.
 
 import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -66,42 +70,21 @@ type drillStep struct {
 	Label string `json:"label"`
 }
 
-type vendaMinRow struct {
-	CodFornec      string
-	NomeFornec     string
-	CodGerente     string
-	NomeGerente    string
-	CodSupervisor  string
-	NomeSupervisor string
-	CodRca         string
-	NomeRca        string
-	CodCli         string
-	NomeCli        string
-	Empresa        string
-	Uf             string
-	CodProd        string
-	NomeProd       string
-	Qt             float64
-	Pvenda         float64
-	Estado         string
-	QtcliRca       int
-}
-
 type cardItem struct {
-	Key            string  `json:"key"`
-	Label          string  `json:"label"`
-	Level          string  `json:"level"`
-	LevelLabel     string  `json:"level_label"`
-	ValorAtual     float64 `json:"valor_atual"`
-	ValorAnt       float64 `json:"valor_ant"`
-	Pct            float64 `json:"pct"`
-	Cor            string  `json:"cor"`
-	Faturado       float64 `json:"faturado"`
-	Transmitido    float64 `json:"transmitido"`
-	Positivados    int     `json:"positivados"`
-	BaseCli        int     `json:"base_cli"`
-	PositPct       float64 `json:"positpct"`
-	Mix            float64 `json:"mix"`
+	Key         string  `json:"key"`
+	Label       string  `json:"label"`
+	Level       string  `json:"level"`
+	LevelLabel  string  `json:"level_label"`
+	ValorAtual  float64 `json:"valor_atual"`
+	ValorAnt    float64 `json:"valor_ant"`
+	Pct         float64 `json:"pct"`
+	Cor         string  `json:"cor"`
+	Faturado    float64 `json:"faturado"`
+	Transmitido float64 `json:"transmitido"`
+	Positivados int     `json:"positivados"`
+	BaseCli     int     `json:"base_cli"`
+	PositPct    float64 `json:"positpct"`
+	Mix         float64 `json:"mix"`
 }
 
 type kpiSummary struct {
@@ -198,11 +181,10 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			projecaoFator = 12.0 / float64(refMes)
 		}
 
-		travas       := loadTravas(db, spCtx.EmpresaID)
-		atualRows    := fetchVendaRows(db, spCtx.EmpresaID, compMode, refAno, refMes, "atual", drillPath)
-		anteriorRows := fetchVendaRows(db, spCtx.EmpresaID, compMode, refAno, refMes, "anterior", drillPath)
-
-		cards := aggregateByLevel(atualRows, anteriorRows, currentLevel, projecaoFator, travas)
+		cards    := fetchCards(db, spCtx.EmpresaID, compMode, refAno, refMes, currentLevel, drillPath, projecaoFator)
+		kpi      := computeKPI(cards)
+		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
+		plabel   := buildPeriodoLabel(compMode, refAno, refMes)
 
 		sort.Slice(cards, func(i, j int) bool {
 			if cards[i].Cor != cards[j].Cor {
@@ -210,10 +192,6 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			}
 			return cards[i].Pct < cards[j].Pct
 		})
-
-		kpi      := computeKPI(cards)
-		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
-		plabel   := buildPeriodoLabel(compMode, refAno, refMes)
 
 		json.NewEncoder(w).Encode(cardsResponse{
 			Cards:          cards,
@@ -228,95 +206,9 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// ─── fetchVendaRows ──────────────────────────────────────────────────────────
-// Carrega as linhas do banco filtradas por empresa + período (calculado via compMode)
-// + drill path. bucket="atual" → período de referência; bucket="anterior" → comparação.
+// ─── safeColName ─────────────────────────────────────────────────────────────
+// Valida nomes de coluna antes de interpolá-los no SQL para evitar injeção.
 
-func fetchVendaRows(db *sql.DB, empresaID, compMode string, refAno, refMes int, bucket string, drill []drillStep) []vendaMinRow {
-	// args começa com empresaID; período e drill são adicionados dinamicamente.
-	args := []any{empresaID}
-	var periodCond string
-
-	switch bucket {
-	case "atual":
-		switch compMode {
-		case "ytd":
-			args = append(args, refAno, refMes)
-			periodCond = "tipo_base='ATUAL' AND ano=$2 AND mes<=$3"
-		default: // yoy, mom — um mês específico
-			args = append(args, refAno, refMes)
-			periodCond = "tipo_base='ATUAL' AND ano=$2 AND mes=$3"
-		}
-	case "anterior":
-		switch compMode {
-		case "yoy":
-			args = append(args, refMes)
-			periodCond = "tipo_base='COMPARATIVA' AND mes=$2"
-		case "ytd":
-			periodCond = "tipo_base='COMPARATIVA'"
-		case "mom":
-			prevMes, prevAno := refMes-1, refAno
-			if prevMes == 0 {
-				prevMes, prevAno = 12, refAno-1
-			}
-			args = append(args, prevAno, prevMes)
-			periodCond = "(tipo_base='ATUAL' OR tipo_base='COMPARATIVA') AND ano=$2 AND mes=$3"
-		default:
-			args = append(args, refMes)
-			periodCond = "tipo_base='COMPARATIVA' AND mes=$2"
-		}
-	}
-
-	// Drill filters — placeholders começam após os period args
-	var drillParts []string
-	for _, d := range drill {
-		col := safeColName(d.Level)
-		args = append(args, d.Value)
-		drillParts = append(drillParts, fmt.Sprintf("%s=$%d", col, len(args)))
-	}
-	drillCond := ""
-	if len(drillParts) > 0 {
-		drillCond = " AND " + strings.Join(drillParts, " AND ")
-	}
-
-	query := `
-		SELECT cod_fornec, nome_fornec,
-		       cod_gerente, nome_gerente,
-		       cod_supervisor, nome_supervisor,
-		       cod_rca, nome_rca,
-		       cod_cli, nome_cli,
-		       empresa, uf,
-		       cod_prod, nome_prod,
-		       qt, pvenda, estado, qtcli_rca
-		FROM vendas_importadas
-		WHERE empresa_id=$1 AND ` + periodCond + drillCond
-
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var result []vendaMinRow
-	for rows.Next() {
-		var row vendaMinRow
-		if err := rows.Scan(
-			&row.CodFornec, &row.NomeFornec,
-			&row.CodGerente, &row.NomeGerente,
-			&row.CodSupervisor, &row.NomeSupervisor,
-			&row.CodRca, &row.NomeRca,
-			&row.CodCli, &row.NomeCli,
-			&row.Empresa, &row.Uf,
-			&row.CodProd, &row.NomeProd,
-			&row.Qt, &row.Pvenda, &row.Estado, &row.QtcliRca,
-		); err == nil {
-			result = append(result, row)
-		}
-	}
-	return result
-}
-
-// safeColName valida o nome da coluna para evitar SQL injection.
 var allowedCols = map[string]bool{
 	"cod_fornec": true, "nome_fornec": true,
 	"cod_gerente": true, "nome_gerente": true,
@@ -334,192 +226,252 @@ func safeColName(col string) string {
 	return "cod_fornec"
 }
 
-// getRowField retorna o valor de um campo da vendaMinRow por nome de coluna.
-func getRowField(r *vendaMinRow, field string) string {
-	switch field {
-	case "cod_fornec":
-		return r.CodFornec
-	case "nome_fornec":
-		return r.NomeFornec
-	case "cod_gerente":
-		return r.CodGerente
-	case "nome_gerente":
-		return r.NomeGerente
-	case "cod_supervisor":
-		return r.CodSupervisor
-	case "nome_supervisor":
-		return r.NomeSupervisor
-	case "cod_rca":
-		return r.CodRca
-	case "nome_rca":
-		return r.NomeRca
-	case "cod_cli":
-		return r.CodCli
-	case "nome_cli":
-		return r.NomeCli
-	case "empresa":
-		return r.Empresa
-	case "uf":
-		return r.Uf
-	case "cod_prod":
-		return r.CodProd
-	case "nome_prod":
-		return r.NomeProd
-	}
-	return ""
-}
+// ─── Builders de condição SQL ─────────────────────────────────────────────────
 
-// ─── aggregateByLevel ────────────────────────────────────────────────────────
-
-func aggregateByLevel(atualRows, anteriorRows []vendaMinRow, level hierLevel, projecaoFator float64, travas map[string]float64) []cardItem {
-	type group struct {
-		label    string
-		atual    []vendaMinRow
-		anterior []vendaMinRow
-	}
-	groups := make(map[string]*group)
-
-	addRow := func(rows []vendaMinRow, bucket string) {
-		for i := range rows {
-			r := &rows[i]
-			key := getRowField(r, level.Level)
-			if key == "" {
-				continue
-			}
-			g, ok := groups[key]
-			if !ok {
-				lbl := getRowField(r, level.NameField)
-				if lbl == "" {
-					lbl = key
-				}
-				g = &group{label: lbl}
-				groups[key] = g
-			}
-			if bucket == "atual" {
-				g.atual = append(g.atual, *r)
-			} else {
-				g.anterior = append(g.anterior, *r)
-			}
-		}
-	}
-	addRow(atualRows, "atual")
-	addRow(anteriorRows, "anterior")
-
-	cards := make([]cardItem, 0, len(groups))
-	for key, g := range groups {
-		cards = append(cards, calcCardGo(key, g.label, level, g.atual, g.anterior, projecaoFator, travas))
-	}
-	return cards
-}
-
-// ─── calcCardGo ──────────────────────────────────────────────────────────────
-// Equivalente ao calcCard() do maquete.js — calcula todos os indicadores de um card.
-
-func calcCardGo(key, label string, level hierLevel, atualRows, anteriorRows []vendaMinRow, projecaoFator float64, travas map[string]float64) cardItem {
-	var valorAtual, faturado, transmitido, valorAnt float64
-	var maxQtcliRca int
-
-	positSet    := make(map[string]bool)
-	cliDistinct := make(map[string]bool)
-	type strSet = map[string]bool
-	cliProds := make(map[string]strSet) // cliente → set de produtos
-
-	for i := range atualRows {
-		r := &atualRows[i]
-		valorAtual += r.Pvenda
-		if r.Estado == "FATURADO" {
-			faturado += r.Pvenda
-		} else {
-			transmitido += r.Pvenda
-		}
-		if r.QtcliRca > maxQtcliRca {
-			maxQtcliRca = r.QtcliRca
-		}
-		if r.CodCli == "" {
-			continue
-		}
-		cliDistinct[r.CodCli] = true
-		trava := travas[r.CodFornec]
-		if trava <= 0 {
-			trava = 1
-		}
-		if r.Qt >= trava {
-			positSet[r.CodCli] = true
-		}
-		if r.Qt > 0 && r.CodProd != "" {
-			if cliProds[r.CodCli] == nil {
-				cliProds[r.CodCli] = make(strSet)
-			}
-			cliProds[r.CodCli][r.CodProd] = true
-		}
-	}
-	for i := range anteriorRows {
-		valorAnt += anteriorRows[i].Pvenda
-	}
-
-	valorAtual *= projecaoFator
-
-	var pct float64
-	if valorAnt > 0 {
-		pct = valorAtual / valorAnt * 100
-	} else if valorAtual > 0 {
-		pct = 100
-	}
-	cor := "vermelho"
-	if pct >= 100 {
-		cor = "verde"
-	}
-
-	baseCli := maxQtcliRca
-	if baseCli == 0 {
-		baseCli = len(cliDistinct)
-	}
-	positivados := len(positSet)
-	var positPct float64
-	if baseCli > 0 {
-		positPct = float64(positivados) / float64(baseCli) * 100
-	}
-
-	var mix float64
-	if len(cliProds) > 0 {
-		var total int
-		for _, prods := range cliProds {
-			total += len(prods)
-		}
-		mix = float64(total) / float64(len(cliProds))
-	}
-
-	return cardItem{
-		Key: key, Label: label,
-		Level: level.Level, LevelLabel: level.Label,
-		ValorAtual: valorAtual, ValorAnt: valorAnt,
-		Pct: pct, Cor: cor,
-		Faturado: faturado, Transmitido: transmitido,
-		Positivados: positivados, BaseCli: baseCli, PositPct: positPct,
-		Mix: mix,
+// buildAtualCond monta a cláusula WHERE de período para o bucket atual.
+// Apenda os args necessários em *args e retorna o fragmento SQL com $N.
+func buildAtualCond(compMode string, refAno, refMes int, args *[]any) string {
+	switch compMode {
+	case "ytd":
+		*args = append(*args, refAno, refMes)
+		n := len(*args)
+		return fmt.Sprintf("v.tipo_base='ATUAL' AND v.ano=$%d AND v.mes<=$%d", n-1, n)
+	default: // yoy, mom — mês exato
+		*args = append(*args, refAno, refMes)
+		n := len(*args)
+		return fmt.Sprintf("v.tipo_base='ATUAL' AND v.ano=$%d AND v.mes=$%d", n-1, n)
 	}
 }
 
-// ─── loadTravas ──────────────────────────────────────────────────────────────
+// buildAntCond monta a cláusula WHERE de período para o bucket anterior.
+func buildAntCond(compMode string, refAno, refMes int, args *[]any) string {
+	switch compMode {
+	case "yoy":
+		*args = append(*args, refMes)
+		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.mes=$%d", len(*args))
+	case "ytd":
+		return "v.tipo_base='COMPARATIVA'" // sem filtro de mês (acumula o ano todo)
+	case "mom":
+		prevMes, prevAno := refMes-1, refAno
+		if prevMes == 0 {
+			prevMes, prevAno = 12, refAno-1
+		}
+		*args = append(*args, prevAno, prevMes)
+		n := len(*args)
+		return fmt.Sprintf("(v.tipo_base='ATUAL' OR v.tipo_base='COMPARATIVA') AND v.ano=$%d AND v.mes=$%d", n-1, n)
+	default:
+		*args = append(*args, refMes)
+		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.mes=$%d", len(*args))
+	}
+}
 
-func loadTravas(db *sql.DB, empresaID string) map[string]float64 {
-	rows, err := db.Query(
-		`SELECT cod_fornec, trava_minima_qt FROM industrias_config WHERE empresa_id=$1`,
-		empresaID,
+// buildDrillCond monta os filtros de drill-path (AND v.col=$N ...).
+func buildDrillCond(drillPath []drillStep, args *[]any) string {
+	parts := make([]string, 0, len(drillPath))
+	for _, d := range drillPath {
+		col := safeColName(d.Level)
+		*args = append(*args, d.Value)
+		parts = append(parts, fmt.Sprintf("AND v.%s=$%d", col, len(*args)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// ─── aggResult — resultado de uma linha agregada no SQL ──────────────────────
+
+type aggResult struct {
+	label       string
+	valor       float64
+	faturado    float64
+	transmitido float64
+	baseCli     int
+	positivados int
+	mix         float64
+}
+
+// ─── queryAggregated ─────────────────────────────────────────────────────────
+// Executa a query principal contra mv_farol_resumo para o bucket "atual".
+// Retorna um map[key]aggResult (uma entrada por valor do groupCol).
+//
+// A query usa CTEs para calcular positivados (com trava por fornecedor) e mix
+// (média de produtos distintos por cliente), evitando carregar linhas brutas
+// no Go — o Postgres agrupa e entrega apenas as N colunas do nível atual.
+
+func queryAggregated(db *sql.DB, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
+	q := fmt.Sprintf(`
+WITH
+  pos AS (
+    -- Clientes positivados: compraram acima da trava mínima do fornecedor
+    SELECT v.%s AS k,
+           COUNT(DISTINCT CASE WHEN v.qt >= COALESCE(ic.trava_minima_qt, 1) THEN v.cod_cli END) AS n
+    FROM farol.mv_farol_resumo v
+    LEFT JOIN industrias_config ic
+           ON ic.empresa_id = v.empresa_id AND ic.cod_fornec = v.cod_fornec
+    WHERE v.empresa_id=$1 AND v.%s != '' AND v.cod_cli != ''
+    AND %s %s
+    GROUP BY v.%s
+  ),
+  mix_inner AS (
+    -- Produtos distintos por (grupo, cliente) para calcular a média
+    SELECT v.%s AS k, v.cod_cli, COUNT(DISTINCT v.cod_prod) AS np
+    FROM farol.mv_farol_resumo v
+    WHERE v.empresa_id=$1 AND v.%s != '' AND v.cod_cli != ''
+    AND v.qt > 0 AND v.cod_prod != ''
+    AND %s %s
+    GROUP BY v.%s, v.cod_cli
+  ),
+  mix AS (
+    SELECT k, AVG(np)::float AS avg_mix FROM mix_inner GROUP BY k
+  )
+SELECT
+  v.%s                                                                      AS key,
+  MAX(v.%s)                                                                 AS label,
+  SUM(v.pvenda)                                                             AS valor,
+  SUM(CASE WHEN v.estado = 'FATURADO' THEN v.pvenda ELSE 0 END)            AS faturado,
+  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END)           AS transmitido,
+  CASE WHEN MAX(v.qtcli_rca) > 0
+       THEN MAX(v.qtcli_rca)::int
+       ELSE COUNT(DISTINCT v.cod_cli)::int END                              AS base_cli,
+  COALESCE(MAX(pos.n), 0)                                                   AS positivados,
+  COALESCE(MAX(mix.avg_mix), 0)                                             AS mix
+FROM farol.mv_farol_resumo v
+LEFT JOIN pos  ON pos.k  = v.%s
+LEFT JOIN mix  ON mix.k  = v.%s
+WHERE v.empresa_id=$1 AND v.%s != ''
+AND %s %s
+GROUP BY v.%s`,
+		// pos CTE
+		groupCol,
+		groupCol, atualCond, drillCond,
+		groupCol,
+		// mix_inner CTE
+		groupCol,
+		groupCol,
+		atualCond, drillCond,
+		groupCol,
+		// main SELECT
+		groupCol, nameCol,
+		groupCol, groupCol,
+		groupCol, atualCond, drillCond,
+		groupCol,
 	)
+
+	rows, err := db.Query(q, args...)
 	if err != nil {
-		return map[string]float64{}
+		log.Printf("[farol] queryAggregated(%s): %v", groupCol, err)
+		return nil
 	}
 	defer rows.Close()
-	result := map[string]float64{}
+
+	result := make(map[string]aggResult)
 	for rows.Next() {
-		var cod string
-		var trava float64
-		if rows.Scan(&cod, &trava) == nil {
-			result[cod] = trava
+		var key string
+		var r aggResult
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.faturado, &r.transmitido,
+			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			result[key] = r
 		}
 	}
 	return result
+}
+
+// ─── queryAnteriorTotals ──────────────────────────────────────────────────────
+// Busca apenas o total de pvenda por grupo para o bucket anterior.
+// Query simples: uma linha por grupo.
+
+func queryAnteriorTotals(db *sql.DB, groupCol, antCond, drillCond string, args []any) map[string]float64 {
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, SUM(v.pvenda) AS valor_ant
+FROM farol.mv_farol_resumo v
+WHERE v.empresa_id=$1 AND v.%s != '' AND %s %s
+GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol] queryAnteriorTotals(%s): %v", groupCol, err)
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var key string
+		var val float64
+		if rows.Scan(&key, &val) == nil {
+			result[key] = val
+		}
+	}
+	return result
+}
+
+// ─── fetchCards ───────────────────────────────────────────────────────────────
+// Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
+
+func fetchCards(db *sql.DB, empresaID, compMode string, refAno, refMes int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
+	groupCol := safeColName(level.Level)
+	nameCol  := safeColName(level.NameField)
+
+	// Condições e args do bucket atual
+	atualArgs := []any{empresaID}
+	atualCond := buildAtualCond(compMode, refAno, refMes, &atualArgs)
+	drillCond := buildDrillCond(drillPath, &atualArgs)
+
+	// Condições e args do bucket anterior (args independentes para evitar conflito de $N)
+	antArgs  := []any{empresaID}
+	antCond  := buildAntCond(compMode, refAno, refMes, &antArgs)
+	antDrill := buildDrillCond(drillPath, &antArgs)
+
+	atualMap := queryAggregated(db, groupCol, nameCol, atualCond, drillCond, atualArgs)
+	antMap   := queryAnteriorTotals(db, groupCol, antCond, antDrill, antArgs)
+
+	seen := make(map[string]bool, len(atualMap))
+	cards := make([]cardItem, 0, len(atualMap)+len(antMap))
+
+	for key, r := range atualMap {
+		seen[key] = true
+		ant        := antMap[key]
+		valorAtual := r.valor * projecaoFator
+
+		pct := 0.0
+		if ant > 0 {
+			pct = valorAtual / ant * 100
+		} else if valorAtual > 0 {
+			pct = 100
+		}
+		cor := "vermelho"
+		if pct >= 100 {
+			cor = "verde"
+		}
+
+		positPct := 0.0
+		if r.baseCli > 0 {
+			positPct = float64(r.positivados) / float64(r.baseCli) * 100
+		}
+
+		cards = append(cards, cardItem{
+			Key: key, Label: r.label,
+			Level: level.Level, LevelLabel: level.Label,
+			ValorAtual: valorAtual, ValorAnt: ant,
+			Pct: pct, Cor: cor,
+			Faturado:    r.faturado * projecaoFator,
+			Transmitido: r.transmitido * projecaoFator,
+			Positivados: r.positivados, BaseCli: r.baseCli, PositPct: positPct,
+			Mix: r.mix,
+		})
+	}
+
+	// Grupos que venderam no período anterior mas zero no atual → vermelho
+	for key, ant := range antMap {
+		if seen[key] || ant == 0 {
+			continue
+		}
+		cards = append(cards, cardItem{
+			Key: key, Label: key,
+			Level: level.Level, LevelLabel: level.Label,
+			ValorAtual: 0, ValorAnt: ant, Pct: 0, Cor: "vermelho",
+		})
+	}
+
+	return cards
 }
 
 // ─── computeKPI ──────────────────────────────────────────────────────────────

@@ -237,7 +237,9 @@ function ImportForm({ onDone }: { onDone: () => void }) {
                 {uploading
                   ? 'Enviando arquivo...'
                   : job?.status === 'pending'     ? 'Aguardando processamento...'
-                  : job?.status === 'processing'  ? 'Processando...'
+                  : job?.status === 'processing' && (job.progress ?? 0) >= 91
+                                                  ? 'Consolidando dados...'
+                  : job?.status === 'processing'  ? 'Processando linhas...'
                   : job?.status === 'done'        ? 'Importação concluída'
                   : job?.status === 'error'       ? 'Erro na importação'
                   : job?.status === 'cancelled'   ? 'Cancelado'

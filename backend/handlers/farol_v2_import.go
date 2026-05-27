@@ -424,6 +424,16 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	importados := int(processed.Load())
 	log.Printf("[ImportJob:%s] concluído: %d linhas via COPY", jobID, importados)
 
+	// Sinaliza "Consolidando..." e faz REFRESH da view materializada.
+	// CONCURRENTLY não bloqueia leituras concorrentes (requer unique index, criado na migration 141).
+	db.Exec(`UPDATE vendas_import_jobs
+		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
+		WHERE id=$1`, jobID)
+
+	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
+		log.Printf("[ImportJob:%s] WARN: refresh view: %v", jobID, err)
+	}
+
 	db.Exec(`UPDATE vendas_import_jobs
 		SET status='done', progress=100, importados=$1, message='', atualizado_em=NOW()
 		WHERE id=$2`, importados, jobID)
