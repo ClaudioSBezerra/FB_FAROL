@@ -427,7 +427,7 @@ export default function FarolExecutivo() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
 
-  const [view, setView]               = useState<'V01' | 'V02'>('V01')
+  const [view, setView]               = useState<'V01' | 'V02' | 'V03'>('V03')
   const [compMode, setCompMode]       = useState('yoy')
   const [drillPath, setDrillPath]     = useState<DrillStep[]>([])
   const [refAno, setRefAno]           = useState(0)
@@ -472,8 +472,9 @@ export default function FarolExecutivo() {
         {/* Visão */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
+            { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V01' as const, label: 'Por Indústria' },
-            { id: 'V02' as const, label: 'Por RCA' },
+            { id: 'V02' as const, label: 'Por Equipe' },
           ]).map(v => (
             <button
               key={v.id}
@@ -493,7 +494,7 @@ export default function FarolExecutivo() {
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
             { id: 'yoy', label: 'Ano a Ano' },
-            { id: 'ytd', label: 'YTD' },
+            { id: 'ytd', label: 'Projeção Anual' },
             { id: 'mom', label: 'Mês a Mês' },
           ].map(m => (
             <button

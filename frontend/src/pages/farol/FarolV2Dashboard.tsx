@@ -260,7 +260,7 @@ export default function FarolV2Dashboard() {
   const navigate = useNavigate()
 
   // Hooks must always run in the same order — conditional return only after all hooks
-  const [view, setView]           = useState<'V01' | 'V02'>('V01')
+  const [view, setView]           = useState<'V01' | 'V02' | 'V03'>('V01')
   const [compMode, setCompMode]   = useState('yoy')
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [refAno, setRefAno]       = useState(0)
@@ -293,7 +293,7 @@ export default function FarolV2Dashboard() {
     }
   }
 
-  const handleViewChange = (v: 'V01' | 'V02') => {
+  const handleViewChange = (v: 'V01' | 'V02' | 'V03') => {
     setView(v)
     setDrillPath([])
   }
@@ -310,7 +310,8 @@ export default function FarolV2Dashboard() {
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
             { id: 'V01' as const, label: 'Por Indústria' },
-            { id: 'V02' as const, label: 'Por RCA' },
+            { id: 'V02' as const, label: 'Por Equipe' },
+            { id: 'V03' as const, label: 'Por Gerência' },
           ]).map(v => (
             <button
               key={v.id}
@@ -329,9 +330,9 @@ export default function FarolV2Dashboard() {
         {/* Modo de comparação */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
-            { id: 'yoy', label: 'YoY' },
-            { id: 'ytd', label: 'YTD' },
-            { id: 'mom', label: 'MoM' },
+            { id: 'yoy', label: 'Ano a Ano' },
+            { id: 'ytd', label: 'Projeção Anual' },
+            { id: 'mom', label: 'Mês a Mês' },
           ].map(m => (
             <button
               key={m.id}

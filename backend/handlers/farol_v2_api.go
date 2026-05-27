@@ -45,11 +45,18 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
 	},
-	// V02: visão por força de vendas — Supervisor → RCA → Fornecedor → Cliente
+	// V02: visão por equipe (força de vendas) — Supervisor → RCA → Fornecedor → Cliente
 	"V02": {
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
+		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
+	},
+	// V03: visão de gerência (organização) — Gerente/GGV → Supervisor → RCA → Cliente
+	"V03": {
+		{Level: "cod_gerente",    NameField: "nome_gerente",    Label: "Gerência"},
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
 	},
 }
@@ -60,6 +67,7 @@ var hierarquias = map[string][]hierLevel{
 var viewPorNivel = map[string][]string{
 	"V01": {"mv_v01_l0", "mv_v01_l1", "mv_v01_l2", "mv_v01_l3", "mv_farol_cli"},
 	"V02": {"mv_v02_l0", "mv_v02_l1", "mv_v02_l2", "mv_farol_cli"},
+	"V03": {"mv_v03_l0", "mv_v03_l1", "mv_v03_l2", "mv_v03_l3"},
 }
 
 // AllSummaryViews lista TODAS as views em ordem de REFRESH (base primeiro).
@@ -67,6 +75,7 @@ var AllSummaryViews = []string{
 	"farol.mv_farol_cli",
 	"farol.mv_v01_l0", "farol.mv_v01_l1", "farol.mv_v01_l2", "farol.mv_v01_l3",
 	"farol.mv_v02_l0", "farol.mv_v02_l1", "farol.mv_v02_l2",
+	"farol.mv_v03_l0", "farol.mv_v03_l1", "farol.mv_v03_l2", "farol.mv_v03_l3",
 }
 
 func getViewName(view string, drillIdx int) string {
@@ -153,7 +162,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		hier, ok := hierarquias[view]
 		if !ok {
-			http.Error(w, `{"error":"view inválida — use V01 ou V02"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"view inválida — use V01, V02 ou V03"}`, http.StatusBadRequest)
 			return
 		}
 
