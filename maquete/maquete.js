@@ -12,15 +12,19 @@
 
 // ─── State global ────────────────────────────────────────────────────────
 const state = {
-  baseComparativa: [],   // array de rows normalizadas
-  baseAtual:       [],
-  persona:         'diretoria',  // diretoria | ggv | supervisor
-  personaEntity:   null,         // código da entidade selecionada (cod_gerente OU cod_supervisor)
+  baseComparativa: [],   // array de rows normalizadas (base do ano anterior)
+  baseAtual:       [],   // base do ano corrente
+  persona:         'diretoria',  // diretoria | gerente | ggv | supervisor
+  personaEntity:   null,         // código da entidade selecionada
   view:            'V01',        // V01 | V02 | V03
   drillPath:       [],           // [{level, value, label}, ...]
   importMode:      'real',       // 'real' (2 arquivos) | 'sim' (1 arquivo + %)
-  simSourceRows:   [],           // rows carregadas no modo simulação (fonte do clone)
+  simSourceRows:   [],           // rows carregadas no modo simulação
   simPct:          10,           // % de acréscimo/decréscimo aplicado
+  // Comparativos temporais (apresentação ao gestor):
+  compMode:        'yoy',        // yoy | ytd | mom
+  refYear:         null,         // ano do mês de referência (default: mais recente)
+  refMonth:        null,         // mês de referência (1-12)
 }
 
 // ─── Definição das 3 visões hierárquicas ────────────────────────────────
@@ -74,6 +78,41 @@ function parseInt2(s) {
   return isNaN(n) ? 0 : n
 }
 
+// ─── Parser de período: extrai {ano, mes} de strings variadas ───────────
+// Aceita: "2026-05", "2026/05", "05/2026", "Mai/2026", "2026-T1", "2026-S1", "2026"
+const MES_ABREV = { JAN:1, FEV:2, MAR:3, ABR:4, MAI:5, JUN:6, JUL:7, AGO:8, SET:9, OUT:10, NOV:11, DEZ:12 }
+function parsePeriodo(s) {
+  if (!s) return null
+  const str = String(s).toUpperCase().trim()
+  let m
+  // YYYY-MM ou YYYY/MM ou YYYY-MM-DD
+  m = str.match(/(\d{4})[\/\-](\d{1,2})\b/)
+  if (m && +m[2] >= 1 && +m[2] <= 12) return { ano: +m[1], mes: +m[2] }
+  // MM/YYYY
+  m = str.match(/^(\d{1,2})[\/\-](\d{4})/)
+  if (m && +m[1] >= 1 && +m[1] <= 12) return { ano: +m[2], mes: +m[1] }
+  // MMM/YYYY ou MMM-YYYY (Mai/2026)
+  m = str.match(/([A-Z]{3})[\/\-](\d{4})/)
+  if (m && MES_ABREV[m[1]]) return { ano: +m[2], mes: MES_ABREV[m[1]] }
+  // YYYY-TN (trimestral) → primeiro mês do trimestre
+  m = str.match(/(\d{4})[\/\-]T(\d)/)
+  if (m && +m[2] >= 1 && +m[2] <= 4) return { ano: +m[1], mes: (+m[2] - 1) * 3 + 1 }
+  // YYYY-SN (semestral) → primeiro mês do semestre
+  m = str.match(/(\d{4})[\/\-]S(\d)/)
+  if (m && +m[2] >= 1 && +m[2] <= 2) return { ano: +m[1], mes: (+m[2] - 1) * 6 + 1 }
+  // Apenas YYYY
+  m = str.match(/^(\d{4})$/)
+  if (m) return { ano: +m[1], mes: 1 }
+  return null
+}
+
+const MES_NOMES = ['', 'Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+function fmtPeriodo(ano, mes) {
+  if (!ano) return '—'
+  if (!mes) return String(ano)
+  return `${MES_NOMES[mes]}/${ano}`
+}
+
 // Normaliza uma row do CSV. SLIM: só os campos usados pelo painel.
 // Campos descartados (não usados ainda): cnpj, cod_ramo, ramo, embalagem,
 // qt_unit, qt_unit_cx, ean, qtrca_supervisor, periodo. Adicione de volta
@@ -100,8 +139,16 @@ function normalizeRow(raw) {
     ? 'TRANSMITIDO'
     : 'FATURADO'
 
+  // Ano e mês — para os comparativos temporais (YoY, YTD, MoM)
+  const { ano, mes } = parsePeriodo(periodo) ||
+                       parsePeriodo(lk['data']) ||
+                       parsePeriodo(lk['mes_ref']) ||
+                       { ano: null, mes: null }
+
   return {
     estado,
+    ano,
+    mes,
     cod_gerente:     String(lk['codgerente']    || lk['cod_gerente']    || ''),
     nome_gerente:    lk['gerente']  || lk['nome_gerente']  || '',
     cod_supervisor:  String(lk['codsupervisor'] || lk['cod_supervisor'] || ''),
@@ -181,23 +228,64 @@ async function loadSamples() {
 }
 
 // ─── Lógica de agregação ────────────────────────────────────────────────
-// Cache de filtros (drillPath + persona) para não re-iterar 100k+ rows a cada render
-const filterCache = new Map()
-function drillCacheKey(rows) {
-  const drillKey = state.drillPath.map(p => `${p.level}=${p.value}`).join('|')
-  const personaKey = `${state.persona}:${state.personaEntity || ''}`
-  return `${rows === state.baseAtual ? 'A' : 'C'}|${personaKey}|${drillKey}`
-}
-function invalidateCache() { filterCache.clear() }
-
+// Cache de filtros usando WeakMap chaveado pelo array de origem (slice atual/anterior
+// gera array novo a cada render, mas o drillPath só precisa filtrar se for diferente).
+// Esta versão simplificada NÃO cacheia entre renders (slice gera arrays novos) mas
+// o filtro é O(N) e razoavelmente rápido — ainda é melhor que recalcular indicadores.
 function filterByDrill(rows) {
-  const key = drillCacheKey(rows)
-  if (filterCache.has(key)) return filterCache.get(key)
-  const result = state.drillPath.length === 0
-    ? rows
-    : rows.filter(row => state.drillPath.every(({level, value}) => row[level] === value))
-  filterCache.set(key, result)
-  return result
+  if (state.drillPath.length === 0) return rows
+  return rows.filter(row => state.drillPath.every(({level, value}) => row[level] === value))
+}
+function invalidateCache() { /* no-op nesta versão */ }
+
+// ─── Comparativos temporais (YoY, YTD, MoM) ──────────────────────────────
+
+// Lista de períodos (YYYY-MM) disponíveis em ambas as bases, ordenada do mais recente
+function listAvailablePeriods() {
+  const set = new Set()
+  const add = r => { if (r.ano && r.mes) set.add(`${r.ano}-${String(r.mes).padStart(2,'0')}`) }
+  state.baseAtual.forEach(add)
+  state.baseComparativa.forEach(add)
+  return Array.from(set).sort().reverse()
+}
+
+// Detecta período de referência mais recente nos dados
+function autoDetectRefPeriod() {
+  const periods = listAvailablePeriods()
+  if (periods.length === 0) return
+  const [y, m] = periods[0].split('-')
+  state.refYear  = +y
+  state.refMonth = +m
+}
+
+// Calcula slice atual/anterior + label + fator de projeção conforme o modo
+function computePeriodSlice() {
+  if (state.refYear == null || state.refMonth == null) autoDetectRefPeriod()
+  const ry = state.refYear, rm = state.refMonth
+  if (!ry || !rm) {
+    return { atual: state.baseAtual, anterior: state.baseComparativa, projecaoFator: 1, label: '' }
+  }
+  const all = state.baseAtual.length + state.baseComparativa.length > 0
+    ? state.baseAtual.concat(state.baseComparativa)
+    : []
+  let atual = [], anterior = [], projecaoFator = 1, label = ''
+  if (state.compMode === 'yoy') {
+    atual    = all.filter(r => r.ano === ry     && r.mes === rm)
+    anterior = all.filter(r => r.ano === ry - 1 && r.mes === rm)
+    label    = `${fmtPeriodo(ry, rm)} vs ${fmtPeriodo(ry - 1, rm)}`
+  } else if (state.compMode === 'ytd') {
+    atual    = all.filter(r => r.ano === ry     && r.mes <= rm)
+    anterior = all.filter(r => r.ano === ry - 1)
+    projecaoFator = rm > 0 ? 12 / rm : 1
+    label    = `Projeção ${ry} (${fmtPeriodo(ry, 1)}–${fmtPeriodo(ry, rm)}) vs Total ${ry - 1}`
+  } else if (state.compMode === 'mom') {
+    const pm = rm === 1 ? 12 : rm - 1
+    const py = rm === 1 ? ry - 1 : ry
+    atual    = all.filter(r => r.ano === ry && r.mes === rm)
+    anterior = all.filter(r => r.ano === py && r.mes === pm)
+    label    = `${fmtPeriodo(ry, rm)} vs ${fmtPeriodo(py, pm)}`
+  }
+  return { atual, anterior, projecaoFator, label }
 }
 
 // Persona scope: limita o que cada persona enxerga
@@ -281,21 +369,21 @@ function refreshPersonaUI() {
   }
 }
 
-// Agrega rows pelo próximo nível da hierarquia
+// Agrega rows pelo próximo nível da hierarquia (usando slice temporal)
 function aggregate() {
   const hierarquia = HIERARQUIAS[state.view]
   const nextIdx = state.drillPath.length
-  if (nextIdx >= hierarquia.length) return []  // chegou no fim
+  if (nextIdx >= hierarquia.length) return []
 
   const nextLevel = hierarquia[nextIdx]
-  const atual = applyPersonaScope(filterByDrill(state.baseAtual))
-  const compar = applyPersonaScope(filterByDrill(state.baseComparativa))
+  const slice = computePeriodSlice()
+  const atual  = applyPersonaScope(filterByDrill(slice.atual))
+  const compar = applyPersonaScope(filterByDrill(slice.anterior))
 
   const groups = new Map()
-
   function addToGroup(row, bucket) {
     const key = row[nextLevel.level]
-    if (!key) return  // pula rows sem identificação no nível
+    if (!key) return
     if (!groups.has(key)) {
       groups.set(key, {
         key,
@@ -309,11 +397,11 @@ function aggregate() {
   atual.forEach(r => addToGroup(r, 'atual'))
   compar.forEach(r => addToGroup(r, 'compar'))
 
-  return Array.from(groups.values()).map(calcCard)
+  return Array.from(groups.values()).map(g => calcCard(g, slice.projecaoFator))
 }
 
-// Calcula tudo em UMA passada O(N). Antes era O(N × clientes) por causa do mix nested.
-function calcCard(g) {
+// Calcula tudo em UMA passada O(N). projecaoFator aplica quando modo=YTD (atual = realizado × 12/mes_ref)
+function calcCard(g, projecaoFator = 1) {
   let valorAtual = 0, valorAnt = 0
   let faturado = 0, transmitido = 0
   let maxQtcliRca = 0
@@ -342,8 +430,13 @@ function calcCard(g) {
     valorAnt += g.compar[i].pvenda || 0
   }
 
-  const pct           = valorAnt > 0 ? (valorAtual / valorAnt) * 100 : (valorAtual > 0 ? 100 : 0)
+  // Aplica projeção quando modo YTD: valorAtual realizado é escalado para o ano todo
+  const valorAtualProj = valorAtual * projecaoFator
+  const pct           = valorAnt > 0 ? (valorAtualProj / valorAnt) * 100 : (valorAtualProj > 0 ? 100 : 0)
   const cor           = pct >= 100 ? 'verde' : 'vermelho'
+  const projetado     = projecaoFator > 1.01
+  // Sobrescreve valorAtual para refletir a projeção (cards mostram o número usado no cálculo)
+  if (projetado) valorAtual = valorAtualProj
   const baseCli       = maxQtcliRca || cliDistinct.size
   const positivados   = positSet.size
   const positPct      = baseCli > 0 ? (positivados / baseCli) * 100 : 0
@@ -353,7 +446,7 @@ function calcCard(g) {
     cliProds.forEach(set => total += set.size)
     mix = total / cliProds.size
   }
-  return { ...g, pct, cor, valorAtual, valorAnt, positivados, baseCli, positPct, mix, faturado, transmitido }
+  return { ...g, pct, cor, valorAtual, valorAnt, positivados, baseCli, positPct, mix, faturado, transmitido, projetado }
 }
 
 function sum(arr, field) { return arr.reduce((a, r) => a + (r[field] || 0), 0) }
@@ -373,6 +466,7 @@ function render() {
   document.getElementById('mainContent').classList.remove('hidden')
 
   try {
+    renderComparativeBar()
     renderTabs()
     renderBreadcrumb()
     renderKPIs()
@@ -387,6 +481,28 @@ function render() {
       </div>
     `
   }
+}
+
+function renderComparativeBar() {
+  // Botões de modo: marca o ativo
+  document.querySelectorAll('.comp-mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.comp === state.compMode)
+  })
+  // Dropdown de período de referência: popula com os meses presentes nas bases
+  const sel = document.getElementById('refPeriodoSelect')
+  const periods = listAvailablePeriods()
+  if (state.refYear == null || state.refMonth == null) autoDetectRefPeriod()
+  const currentKey = state.refYear ? `${state.refYear}-${String(state.refMonth).padStart(2,'0')}` : ''
+  sel.innerHTML = periods.map(p => {
+    const [y, m] = p.split('-')
+    const label = `${MES_NOMES[+m]}/${y}`
+    return `<option value="${p}"${p === currentKey ? ' selected' : ''}>${label}</option>`
+  }).join('') || '<option value="">Sem dados</option>'
+  // Label do comparativo
+  const slice = computePeriodSlice()
+  document.getElementById('compLabel').textContent = slice.label
+    ? `Comparando: ${slice.label}`
+    : ''
 }
 
 function renderTabs() {
@@ -433,8 +549,9 @@ function renderBreadcrumb() {
 }
 
 function renderKPIs() {
-  const atual = applyPersonaScope(filterByDrill(state.baseAtual))
-  const compar = applyPersonaScope(filterByDrill(state.baseComparativa))
+  const slice = computePeriodSlice()
+  const atual  = applyPersonaScope(filterByDrill(slice.atual))
+  const compar = applyPersonaScope(filterByDrill(slice.anterior))
 
   // Single-pass O(N) sobre atual: acumula tudo de uma vez
   let totAtual = 0, faturado = 0, transmitido = 0, maxQtcliRca = 0
@@ -459,8 +576,11 @@ function renderKPIs() {
   let totAnt = 0
   for (let i = 0, n = compar.length; i < n; i++) totAnt += compar[i].pvenda || 0
 
-  const pctTotal    = totAnt > 0 ? (totAtual / totAnt) * 100 : (totAtual > 0 ? 100 : 0)
+  // Aplica projeção no totAtual quando modo YTD
+  const totAtualProj = totAtual * slice.projecaoFator
+  const pctTotal    = totAnt > 0 ? (totAtualProj / totAnt) * 100 : (totAtualProj > 0 ? 100 : 0)
   const corTotal    = pctTotal >= 100 ? 'verde' : 'vermelho'
+  const projetado   = slice.projecaoFator > 1.01
   const positivados = positSet.size
   const baseCli     = maxQtcliRca || cliDistinct.size
   const positPct    = baseCli > 0 ? (positivados / baseCli) * 100 : 0
@@ -477,8 +597,8 @@ function renderKPIs() {
       <p class="kpi-value">${fmtBRL(totAnt)}</p>
     </div>
     <div class="kpi-card">
-      <p class="kpi-label">Obj. Atual</p>
-      <p class="kpi-value">${fmtBRL(totAtual)}</p>
+      <p class="kpi-label">${projetado ? 'Projeção ' + state.refYear : 'Obj. Atual'}</p>
+      <p class="kpi-value">${fmtBRL(projetado ? totAtualProj : totAtual)}${projetado ? '<span class="text-xs text-slate-400 ml-1">*</span>' : ''}</p>
     </div>
     <div class="kpi-card">
       <p class="kpi-label">Atingimento</p>
@@ -707,6 +827,27 @@ document.getElementById('simRange').addEventListener('input', (e) => updateSimPc
 document.getElementById('simStep').addEventListener('click',   () => updateSimPct(state.simPct - 5))
 document.getElementById('simStepUp').addEventListener('click', () => updateSimPct(state.simPct + 5))
 document.getElementById('btnApplySim').addEventListener('click', applySimulation)
+
+// Botões de comparativo (YoY / YTD / MoM)
+document.querySelectorAll('.comp-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.compMode = btn.dataset.comp
+    state.drillPath = []
+    invalidateCache()
+    render()
+  })
+})
+// Dropdown de período de referência
+document.getElementById('refPeriodoSelect').addEventListener('change', (e) => {
+  const v = e.target.value
+  if (!v) return
+  const [y, m] = v.split('-')
+  state.refYear  = +y
+  state.refMonth = +m
+  state.drillPath = []
+  invalidateCache()
+  render()
+})
 
 // Inicializa tab e layout
 state.view = 'V01'

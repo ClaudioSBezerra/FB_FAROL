@@ -6,7 +6,7 @@
 <title>FAROL — Maquete v0</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<link rel="stylesheet" href="maquete.css?v=7" />
+<link rel="stylesheet" href="maquete.css?v=8" />
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
 
@@ -115,6 +115,23 @@
   <!-- ─── Conteúdo principal (oculto até ter dados) ───────── -->
   <div id="mainContent" class="hidden space-y-5">
 
+    <!-- Barra de Comparativo Temporal -->
+    <section id="comparativeBar" class="bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap shadow-sm">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Comparativo</span>
+        <div class="inline-flex bg-slate-100 rounded-lg p-0.5">
+          <button data-comp="yoy" class="comp-mode-btn active px-3 py-1.5 rounded-md text-xs font-semibold" title="Mês atual vs mesmo mês do ano anterior">🗓️ Mês × Ano Anterior</button>
+          <button data-comp="ytd" class="comp-mode-btn         px-3 py-1.5 rounded-md text-xs font-semibold" title="YTD projetado vs ano anterior completo">📈 YTD Projetado × Total Ano</button>
+          <button data-comp="mom" class="comp-mode-btn         px-3 py-1.5 rounded-md text-xs font-semibold" title="Mês atual vs mês anterior">📅 Mês × Mês Anterior</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Período de referência</span>
+        <select id="refPeriodoSelect" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white font-semibold text-slate-700"></select>
+      </div>
+      <p id="compLabel" class="basis-full text-sm text-[#003366] font-semibold mt-1"></p>
+    </section>
+
     <!-- Tabs de visão -->
     <nav id="tabsNav" class="border-b border-slate-200 flex gap-1">
       <button data-view="V01" class="tab-btn relative py-3 px-5 text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors">
@@ -148,6 +165,6 @@
 
 </main>
 
-<script src="maquete.js?v=7"></script>
+<script src="maquete.js?v=8"></script>
 </body>
 </html>

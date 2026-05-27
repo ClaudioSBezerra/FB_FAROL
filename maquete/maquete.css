@@ -71,6 +71,27 @@ body.layout-desktop .entity-card .progress-track { height: 3px; }
   box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
 
+/* Comparative mode buttons (YoY / YTD / MoM) */
+.comp-mode-btn {
+  color: #64748b;
+  transition: all 0.15s;
+}
+.comp-mode-btn:hover { color: #1e293b; }
+.comp-mode-btn.active {
+  background: #fff;
+  color: #003366;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+/* Layout mobile: comparativeBar mais compacta */
+body.layout-mobile #comparativeBar {
+  padding: 0.75rem;
+  flex-direction: column;
+  align-items: stretch;
+}
+body.layout-mobile #comparativeBar > div { width: 100%; }
+body.layout-mobile .comp-mode-btn { padding: 0.5rem 0.625rem; font-size: 11px; flex: 1; }
+
 /* Tab ativa */
 .tab-btn.active {
   color: #003366;
