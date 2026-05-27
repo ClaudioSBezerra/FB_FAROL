@@ -556,6 +556,32 @@ func buildPeriodoLabel(compMode string, refAno, refMes int) string {
 	return cur
 }
 
+// ─── RefreshViewsHandler — POST /api/v2/farol/refresh-views ─────────────────
+// Dispara REFRESH MATERIALIZED VIEW CONCURRENTLY na mv_farol_resumo.
+// Necessário após deploy inicial ou quando a view ficou desatualizada.
+
+func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
+			log.Printf("[RefreshViews] %v", err)
+			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
 // ─── FarolV2PeriodosHandler — GET /api/v2/farol/periodos ─────────────────────
 
 func FarolV2PeriodosHandler(db *sql.DB) http.HandlerFunc {

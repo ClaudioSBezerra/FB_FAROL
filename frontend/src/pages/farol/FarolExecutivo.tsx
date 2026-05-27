@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -54,14 +54,21 @@ interface CardsResponse {
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
 function fmtBRL(v: number) {
-  if (v >= 1_000_000) return 'R$ ' + (v / 1_000_000).toFixed(1).replace('.', ',') + 'M'
-  if (v >= 1_000) return 'R$ ' + (v / 1_000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'K'
+  if (v >= 1_000_000_000) return 'R$ ' + (v / 1_000_000_000).toFixed(2).replace('.', ',') + 'B'
+  if (v >= 1_000_000)     return 'R$ ' + (v / 1_000_000).toFixed(1).replace('.', ',') + 'M'
+  if (v >= 1_000)         return 'R$ ' + (v / 1_000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'K'
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })
 }
 function fmtBRLFull(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 function fmtPct(v: number) { return v.toFixed(1) + '%' }
+// Pct compacto para exibição dentro de elementos pequenos (gauge, badge)
+function fmtPctShort(v: number) {
+  if (v >= 10_000) return '>9999%'
+  if (v >= 1_000)  return (v / 1_000).toFixed(1).replace('.', ',') + 'K%'
+  return Math.round(v) + '%'
+}
 function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
 
 function parsePeriodo(s: string): { ano: number; mes: number } {
@@ -191,8 +198,8 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
           <div className="relative flex-shrink-0">
             <ArcGauge pct={kpi.total_pct} cor={kpi.total_cor} size={160} />
             <div className="absolute inset-0 flex flex-col items-center justify-center pb-4">
-              <span className={`text-4xl font-black tabular-nums ${COR_TEXT[kpi.total_cor]}`}>
-                {kpi.total_pct.toFixed(0)}%
+              <span className={`font-black tabular-nums ${kpi.total_pct >= 1000 ? 'text-xl' : 'text-4xl'} ${COR_TEXT[kpi.total_cor]}`}>
+                {fmtPctShort(kpi.total_pct)}
               </span>
               <span className="text-slate-400 text-[10px] uppercase tracking-widest font-semibold mt-0.5">atingimento</span>
             </div>
@@ -417,12 +424,14 @@ function useCards(view: string, compMode: string, refAno: number, refMes: number
 // ─── FarolExecutivo ───────────────────────────────────────────────────────────
 
 export default function FarolExecutivo() {
-  const navigate = useNavigate()
+  const navigate    = useNavigate()
+  const queryClient = useQueryClient()
 
   // Executivos sempre iniciam na visão hierárquica principal (V03 = Diretoria)
-  const [compMode, setCompMode]   = useState('yoy')
-  const [drillPath, setDrillPath] = useState<DrillStep[]>([])
-  const [refAno, setRefAno]       = useState(0)
+  const [compMode, setCompMode]       = useState('yoy')
+  const [drillPath, setDrillPath]     = useState<DrillStep[]>([])
+  const [refAno, setRefAno]           = useState(0)
+  const [refreshing, setRefreshing]   = useState(false)
   const [refMes, setRefMes]       = useState(0)
 
   const { data, isLoading, error } = useCards('V03', compMode, refAno, refMes, drillPath)
@@ -444,6 +453,17 @@ export default function FarolExecutivo() {
   }
 
   const periodos = data?.periodos ?? []
+
+  const handleRefreshViews = async () => {
+    setRefreshing(true)
+    try {
+      await fetch('/api/v2/farol/refresh-views', { method: 'POST' })
+      await queryClient.invalidateQueries({ queryKey: ['farol-v2-cards'] })
+      setRefAno(0) // força re-detect do período após refresh
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <div className="min-h-full">
@@ -489,10 +509,21 @@ export default function FarolExecutivo() {
           </select>
         )}
 
+        {/* Botão consolidar view */}
+        <button
+          onClick={handleRefreshViews}
+          disabled={refreshing}
+          title="Reconstrói a view de dados (necessário após deploy ou importação sem refresh automático)"
+          className="ml-auto flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-amber-300 text-xs text-amber-600 hover:border-amber-500 hover:text-amber-700 transition-colors shrink-0 disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Consolidando...' : 'Consolidar view'}
+        </button>
+
         {/* Botão importar */}
         <button
           onClick={() => navigate('/farol/importar')}
-          className="ml-auto flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
         >
           <UploadCloud className="h-3.5 w-3.5" />
           Importar dados
