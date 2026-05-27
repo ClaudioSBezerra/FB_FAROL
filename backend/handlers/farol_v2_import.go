@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/lib/pq"
 )
 
 // ─── VendasImportHandler — POST /api/v2/vendas/import ───────────────────────
-
-const vendasBatchSize = 500
 
 func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -58,8 +58,8 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// ── Ler arquivo ───────────────────────────────────────────────────────
-		_ = r.ParseMultipartForm(256 << 20)
+		// ── Ler arquivo — suporta até 1 GB (350 MB típico) ───────────────────
+		_ = r.ParseMultipartForm(512 << 20) // 512 MB em memória; excesso vai para disco
 		var rawReader io.Reader
 		file, _, ferr := r.FormFile("file")
 		if ferr == nil {
@@ -79,9 +79,9 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
 			rawBytes = rawBytes[3:]
 		}
-		// Converte Latin-1/Windows-1252 → UTF-8
+		// Converte Latin-1/Windows-1252 → UTF-8 in-place (evita segunda alocação grande)
 		if !utf8.Valid(rawBytes) {
-			out := make([]byte, 0, len(rawBytes)*2)
+			out := make([]byte, 0, len(rawBytes)+len(rawBytes)/8)
 			for _, b := range rawBytes {
 				if b < 0x80 {
 					out = append(out, b)
@@ -102,8 +102,8 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		if estimatedRows < 0 {
 			estimatedRows = 0
 		}
-		log.Printf("[VendasImport] empresa=%s tipo=%s ano=%d mes=%d arquivo=%dKB ~%d linhas",
-			spCtx.EmpresaID, tipoBase, ano, mes, len(rawBytes)/1024, estimatedRows)
+		log.Printf("[VendasImport] empresa=%s tipo=%s ano=%d mes=%d arquivo=%dMB ~%d linhas",
+			spCtx.EmpresaID, tipoBase, ano, mes, len(rawBytes)/1024/1024, estimatedRows)
 
 		// ── SSE ───────────────────────────────────────────────────────────────
 		flusher, canFlush := w.(http.Flusher)
@@ -227,75 +227,39 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 			return "FATURADO"
 		}
 
-		// ── Apaga dados anteriores do mesmo tipo_base + periodo ────────────────
-		_, err = db.Exec(
+		// ── Transação única: DELETE + COPY ───────────────────────────────────
+		tx, err := db.Begin()
+		if err != nil {
+			sendEvent(map[string]any{"error": "erro ao iniciar transação: " + err.Error()})
+			return
+		}
+
+		_, err = tx.Exec(
 			`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4`,
 			spCtx.EmpresaID, tipoBase, ano, mes,
 		)
 		if err != nil {
+			tx.Rollback()
 			sendEvent(map[string]any{"error": "erro ao limpar dados anteriores: " + err.Error()})
 			return
 		}
 
-		// ── Batch insert ──────────────────────────────────────────────────────
-		type vendaRow struct {
-			codGerente, nomeGerente       string
-			codSup, nomeSup               string
-			codRca, nomeRca               string
-			qtcliRca                      int
-			codFornec, nomeFornec         string
-			codCli, nomeCli               string
-			uf, empresa                   string
-			codProd, nomeProd             string
-			qt, pvenda                    float64
-			estado                        string
+		// pq.CopyIn usa o protocolo COPY do Postgres — 20-50× mais rápido que INSERT
+		stmt, err := tx.Prepare(pq.CopyIn("vendas_importadas",
+			"empresa_id", "tipo_base", "ano", "mes", "estado",
+			"cod_gerente", "nome_gerente", "cod_supervisor", "nome_supervisor",
+			"cod_rca", "nome_rca", "qtcli_rca",
+			"cod_fornec", "nome_fornec", "cod_cli", "nome_cli", "uf", "empresa",
+			"cod_prod", "nome_prod", "qt", "pvenda",
+		))
+		if err != nil {
+			tx.Rollback()
+			sendEvent(map[string]any{"error": "erro ao preparar COPY: " + err.Error()})
+			return
 		}
 
-		var batch []vendaRow
-		processed, importados := 0, 0
-
-		flush := func() error {
-			if len(batch) == 0 {
-				return nil
-			}
-			// Build bulk insert
-			var sb strings.Builder
-			sb.WriteString(`INSERT INTO vendas_importadas
-				(empresa_id, tipo_base, ano, mes, estado,
-				 cod_gerente, nome_gerente, cod_supervisor, nome_supervisor,
-				 cod_rca, nome_rca, qtcli_rca,
-				 cod_fornec, nome_fornec, cod_cli, nome_cli, uf, empresa,
-				 cod_prod, nome_prod, qt, pvenda)
-				VALUES `)
-			args := make([]any, 0, len(batch)*22)
-			for i, row := range batch {
-				if i > 0 {
-					sb.WriteString(",")
-				}
-				base := i * 22
-				fmt.Fprintf(&sb, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-					base+1, base+2, base+3, base+4, base+5,
-					base+6, base+7, base+8, base+9,
-					base+10, base+11, base+12,
-					base+13, base+14, base+15, base+16, base+17, base+18,
-					base+19, base+20, base+21, base+22,
-				)
-				args = append(args,
-					spCtx.EmpresaID, tipoBase, ano, mes, row.estado,
-					row.codGerente, row.nomeGerente, row.codSup, row.nomeSup,
-					row.codRca, row.nomeRca, row.qtcliRca,
-					row.codFornec, row.nomeFornec, row.codCli, row.nomeCli, row.uf, row.empresa,
-					row.codProd, row.nomeProd, row.qt, row.pvenda,
-				)
-			}
-			_, err := db.Exec(sb.String(), args...)
-			if err != nil {
-				return err
-			}
-			importados += len(batch)
-			batch = batch[:0]
-			return nil
-		}
+		const progressEvery = 20_000 // ~115 eventos para 2,3M linhas (350 MB)
+		processed := 0
 
 		for {
 			csvRow, err := csvReader.Read()
@@ -309,63 +273,74 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornec := getField(csvRow, iCodFornec)
 			codRca    := getField(csvRow, iCodRca)
 			codCli    := getField(csvRow, iCodCli)
-			// Skip rows without any identifier
 			if codFornec == "" && codRca == "" && codCli == "" {
 				continue
 			}
 
-			periodo := getField(csvRow, iPeriodo)
+			periodo    := getField(csvRow, iPeriodo)
 			estadoField := getField(csvRow, iEstado)
 
-			row := vendaRow{
-				codGerente:  getField(csvRow, iCodGerente),
-				nomeGerente: getField(csvRow, iNomeGerente),
-				codSup:      getField(csvRow, iCodSup),
-				nomeSup:     getField(csvRow, iNomeSup),
-				codRca:      codRca,
-				nomeRca:     getField(csvRow, iNomeRca),
-				qtcliRca:    parseInt3(getField(csvRow, iQtcliRca)),
-				codFornec:   codFornec,
-				nomeFornec:  getField(csvRow, iNomeFornec),
-				codCli:      codCli,
-				nomeCli:     getField(csvRow, iNomeCli),
-				uf:          getField(csvRow, iUf),
-				empresa:     getField(csvRow, iEmpresa),
-				codProd:     getField(csvRow, iCodProd),
-				nomeProd:    getField(csvRow, iNomeProd),
-				qt:          parseNum(getField(csvRow, iQt)),
-				pvenda:      parseNum(getField(csvRow, iPvenda)),
-				estado:      detectEstado(periodo, estadoField),
+			_, err = stmt.Exec(
+				spCtx.EmpresaID, tipoBase, ano, mes, detectEstado(periodo, estadoField),
+				getField(csvRow, iCodGerente), getField(csvRow, iNomeGerente),
+				getField(csvRow, iCodSup),     getField(csvRow, iNomeSup),
+				codRca,                        getField(csvRow, iNomeRca),
+				parseInt3(getField(csvRow, iQtcliRca)),
+				codFornec, getField(csvRow, iNomeFornec),
+				codCli,    getField(csvRow, iNomeCli),
+				getField(csvRow, iUf), getField(csvRow, iEmpresa),
+				getField(csvRow, iCodProd), getField(csvRow, iNomeProd),
+				parseNum(getField(csvRow, iQt)), parseNum(getField(csvRow, iPvenda)),
+			)
+			if err != nil {
+				stmt.Close()
+				tx.Rollback()
+				sendEvent(map[string]any{"error": "erro ao enfileirar linha: " + err.Error()})
+				return
 			}
-			batch = append(batch, row)
 			processed++
 
-			if len(batch) >= vendasBatchSize {
-				if err := flush(); err != nil {
-					sendEvent(map[string]any{"error": "erro ao inserir batch: " + err.Error()})
-					return
-				}
-				sendEvent(map[string]any{"processed": processed, "importados": importados})
+			if processed%progressEvery == 0 {
+				sendEvent(map[string]any{"processed": processed, "importados": processed})
 			}
 		}
-		if err := flush(); err != nil {
-			sendEvent(map[string]any{"error": "erro ao inserir batch final: " + err.Error()})
+
+		// Flush do buffer COPY para o Postgres
+		if _, err = stmt.Exec(); err != nil {
+			stmt.Close()
+			tx.Rollback()
+			sendEvent(map[string]any{"error": "erro ao finalizar COPY: " + err.Error()})
+			return
+		}
+		stmt.Close()
+
+		if err = tx.Commit(); err != nil {
+			sendEvent(map[string]any{"error": "erro ao confirmar importação: " + err.Error()})
 			return
 		}
 
-		// Auto-cria usuários GGV / Supervisor / RCA encontrados no CSV
-		usuariosCriados, _ := syncUsuariosFromImport(db, spCtx, tipoBase, ano, mes)
+		importados := processed
+		log.Printf("[VendasImport] concluído: %d linhas importadas via COPY", importados)
 
-		log.Printf("[VendasImport] concluído: %d linhas → %d importadas, %d usuários criados", processed, importados, usuariosCriados)
+		// Responde done imediatamente; criação de usuários roda em background
 		sendEvent(map[string]any{
-			"done":             true,
-			"processed":        processed,
-			"importados":       importados,
-			"usuarios_criados": usuariosCriados,
-			"tipo_base":        tipoBase,
-			"ano":              ano,
-			"mes":              mes,
+			"done":      true,
+			"processed": processed,
+			"importados": importados,
+			"tipo_base": tipoBase,
+			"ano":       ano,
+			"mes":       mes,
 		})
+
+		// Auto-cria usuários GGV / Supervisor / RCA em goroutine (não bloqueia o cliente)
+		go func() {
+			criados, err := syncUsuariosFromImport(db, spCtx, tipoBase, ano, mes)
+			if err != nil {
+				log.Printf("[SyncUsuarios] erro: %v", err)
+			} else {
+				log.Printf("[SyncUsuarios] %d usuários criados", criados)
+			}
+		}()
 	}
 }
 
