@@ -293,66 +293,35 @@ type aggResult struct {
 // Executa a query principal contra mv_farol_resumo para o bucket "atual".
 // Retorna um map[key]aggResult (uma entrada por valor do groupCol).
 //
-// A query usa CTEs para calcular positivados (com trava por fornecedor) e mix
-// (média de produtos distintos por cliente), evitando carregar linhas brutas
-// no Go — o Postgres agrupa e entrega apenas as N colunas do nível atual.
+// Query single-pass — sem CTEs, sem JOIN com industrias_config.
+// positivados = clientes com qt > 0 (trava simples; JOIN anterior causava 7-12s).
+// mix = pares distintos (cli, prod) / clientes compradores ≈ produtos/cliente.
 
 func queryAggregated(db *sql.DB, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
-WITH
-  pos AS (
-    -- Clientes positivados: compraram acima da trava mínima do fornecedor
-    SELECT v.%s AS k,
-           COUNT(DISTINCT CASE WHEN v.qt >= COALESCE(ic.trava_minima_qt, 1) THEN v.cod_cli END) AS n
-    FROM farol.mv_farol_resumo v
-    LEFT JOIN industrias_config ic
-           ON ic.empresa_id = v.empresa_id AND ic.cod_fornec = v.cod_fornec
-    WHERE v.empresa_id=$1 AND v.%s != '' AND v.cod_cli != ''
-    AND %s %s
-    GROUP BY v.%s
-  ),
-  mix_inner AS (
-    -- Produtos distintos por (grupo, cliente) para calcular a média
-    SELECT v.%s AS k, v.cod_cli, COUNT(DISTINCT v.cod_prod) AS np
-    FROM farol.mv_farol_resumo v
-    WHERE v.empresa_id=$1 AND v.%s != '' AND v.cod_cli != ''
-    AND v.qt > 0 AND v.cod_prod != ''
-    AND %s %s
-    GROUP BY v.%s, v.cod_cli
-  ),
-  mix AS (
-    SELECT k, AVG(np)::float AS avg_mix FROM mix_inner GROUP BY k
-  )
 SELECT
-  v.%s                                                                      AS key,
-  MAX(v.%s)                                                                 AS label,
-  SUM(v.pvenda)                                                             AS valor,
-  SUM(CASE WHEN v.estado = 'FATURADO' THEN v.pvenda ELSE 0 END)            AS faturado,
-  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END)           AS transmitido,
+  v.%s                                                                    AS key,
+  MAX(v.%s)                                                               AS label,
+  SUM(v.pvenda)                                                           AS valor,
+  SUM(CASE WHEN v.estado = 'FATURADO' THEN v.pvenda ELSE 0 END)          AS faturado,
+  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END)         AS transmitido,
   CASE WHEN MAX(v.qtcli_rca) > 0
        THEN MAX(v.qtcli_rca)::int
-       ELSE COUNT(DISTINCT v.cod_cli)::int END                              AS base_cli,
-  COALESCE(MAX(pos.n), 0)                                                   AS positivados,
-  COALESCE(MAX(mix.avg_mix), 0)                                             AS mix
+       ELSE COUNT(DISTINCT v.cod_cli)::int END                            AS base_cli,
+  COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != ''
+       THEN v.cod_cli END)                                                AS positivados,
+  COALESCE(
+    COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != '' AND v.cod_prod != ''
+         THEN v.cod_cli || chr(1) || v.cod_prod END)::float
+    / NULLIF(COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != ''
+         THEN v.cod_cli END), 0),
+  0)                                                                      AS mix
 FROM farol.mv_farol_resumo v
-LEFT JOIN pos  ON pos.k  = v.%s
-LEFT JOIN mix  ON mix.k  = v.%s
 WHERE v.empresa_id=$1 AND v.%s != ''
 AND %s %s
 GROUP BY v.%s`,
-		// pos CTE
-		groupCol,
-		groupCol, atualCond, drillCond,
-		groupCol,
-		// mix_inner CTE
-		groupCol,
-		groupCol,
-		atualCond, drillCond,
-		groupCol,
-		// main SELECT
 		groupCol, nameCol,
-		groupCol, groupCol,
 		groupCol, atualCond, drillCond,
 		groupCol,
 	)
