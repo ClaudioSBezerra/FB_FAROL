@@ -22,6 +22,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"time"
 	"strconv"
 	"strings"
 )
@@ -297,6 +298,7 @@ type aggResult struct {
 // no Go — o Postgres agrupa e entrega apenas as N colunas do nível atual.
 
 func queryAggregated(db *sql.DB, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
+	t0 := time.Now()
 	q := fmt.Sprintf(`
 WITH
   pos AS (
@@ -357,7 +359,7 @@ GROUP BY v.%s`,
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
-		log.Printf("[farol] queryAggregated(%s): %v", groupCol, err)
+		log.Printf("[farol:view] queryAggregated nível=%s ERRO em %v: %v", groupCol, time.Since(t0), err)
 		return nil
 	}
 	defer rows.Close()
@@ -371,6 +373,7 @@ GROUP BY v.%s`,
 			result[key] = r
 		}
 	}
+	log.Printf("[farol:view] queryAggregated nível=%s → %d grupos em %v", groupCol, len(result), time.Since(t0))
 	return result
 }
 
@@ -379,6 +382,7 @@ GROUP BY v.%s`,
 // Query simples: uma linha por grupo.
 
 func queryAnteriorTotals(db *sql.DB, groupCol, antCond, drillCond string, args []any) map[string]float64 {
+	t0 := time.Now()
 	q := fmt.Sprintf(`
 SELECT v.%s AS key, SUM(v.pvenda) AS valor_ant
 FROM farol.mv_farol_resumo v
@@ -387,7 +391,7 @@ GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
-		log.Printf("[farol] queryAnteriorTotals(%s): %v", groupCol, err)
+		log.Printf("[farol:view] queryAnteriorTotals nível=%s ERRO em %v: %v", groupCol, time.Since(t0), err)
 		return nil
 	}
 	defer rows.Close()
@@ -400,6 +404,7 @@ GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
 			result[key] = val
 		}
 	}
+	log.Printf("[farol:view] queryAnteriorTotals nível=%s → %d grupos em %v", groupCol, len(result), time.Since(t0))
 	return result
 }
 
@@ -407,8 +412,12 @@ GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
 // Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
 
 func fetchCards(db *sql.DB, empresaID, compMode string, refAno, refMes int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
+	t0       := time.Now()
 	groupCol := safeColName(level.Level)
 	nameCol  := safeColName(level.NameField)
+
+	log.Printf("[farol:view] fetchCards empresa=%s nível=%s compMode=%s ref=%04d-%02d drill=%d",
+		empresaID, groupCol, compMode, refAno, refMes, len(drillPath))
 
 	// Condições e args do bucket atual
 	atualArgs := []any{empresaID}
@@ -471,6 +480,8 @@ func fetchCards(db *sql.DB, empresaID, compMode string, refAno, refMes int, leve
 		})
 	}
 
+	log.Printf("[farol:view] fetchCards nível=%s → %d cards (atual=%d ant-only=%d) total=%v",
+		groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0))
 	return cards
 }
 
@@ -573,12 +584,19 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 
+		t0 := time.Now()
+		log.Printf("[farol:view] RefreshViews início — solicitado por empresa=%s user=%s", spCtx.EmpresaID, spCtx.UserID)
+
 		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
-			log.Printf("[RefreshViews] %v", err)
+			log.Printf("[farol:view] RefreshViews ERRO em %v: %v", time.Since(t0), err)
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+
+		var rowCount int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
+		log.Printf("[farol:view] RefreshViews concluído — %d linhas na view em %v", rowCount, time.Since(t0))
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "rows": rowCount, "duration_ms": time.Since(t0).Milliseconds()})
 	}
 }
 

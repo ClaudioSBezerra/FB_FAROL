@@ -430,8 +430,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
 		WHERE id=$1`, jobID)
 
+	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH MATERIALIZED VIEW", jobID)
+	tRefresh := time.Now()
 	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
-		log.Printf("[ImportJob:%s] WARN: refresh view: %v", jobID, err)
+		log.Printf("[farol:view] ImportJob=%s REFRESH ERRO em %v: %v", jobID, time.Since(tRefresh), err)
+	} else {
+		var rowCount int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
+		log.Printf("[farol:view] ImportJob=%s REFRESH concluído — %d linhas na view em %v", jobID, rowCount, time.Since(tRefresh))
 	}
 
 	db.Exec(`UPDATE vendas_import_jobs
