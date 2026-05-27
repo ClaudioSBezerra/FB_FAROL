@@ -595,7 +595,8 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 
 		var rowCount int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
-		log.Printf("[farol:view] RefreshViews concluído — %d linhas na view em %v", rowCount, time.Since(t0))
+		db.Exec(`ANALYZE farol.mv_farol_resumo`)
+		log.Printf("[farol:view] RefreshViews concluído — %d linhas, ANALYZE OK, total %v", rowCount, time.Since(t0))
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "rows": rowCount, "duration_ms": time.Since(t0).Milliseconds()})
 	}
 }

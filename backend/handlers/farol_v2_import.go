@@ -457,6 +457,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		var rowCount int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
 		log.Printf("[farol:view] ImportJob=%s REFRESH concluído — %d linhas na view em %v", jobID, rowCount, time.Since(tRefresh))
+		db.Exec(`ANALYZE farol.mv_farol_resumo`)
+		log.Printf("[farol:view] ImportJob=%s ANALYZE concluído", jobID)
 	}
 
 	db.Exec(`UPDATE vendas_import_jobs

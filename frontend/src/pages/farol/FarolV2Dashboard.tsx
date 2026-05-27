@@ -260,7 +260,7 @@ export default function FarolV2Dashboard() {
   const navigate = useNavigate()
 
   // Hooks must always run in the same order — conditional return only after all hooks
-  const [view, setView]           = useState<'V01' | 'V02' | 'V03'>('V01')
+  const [view, setView]           = useState<'V01' | 'V02'>('V01')
   const [compMode, setCompMode]   = useState('yoy')
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [refAno, setRefAno]       = useState(0)
@@ -293,7 +293,7 @@ export default function FarolV2Dashboard() {
     }
   }
 
-  const handleViewChange = (v: 'V01' | 'V02' | 'V03') => {
+  const handleViewChange = (v: 'V01' | 'V02') => {
     setView(v)
     setDrillPath([])
   }
@@ -308,17 +308,20 @@ export default function FarolV2Dashboard() {
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {/* Abas de visão */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
-          {(['V01', 'V02', 'V03'] as const).map(v => (
+          {([
+            { id: 'V01' as const, label: 'Por Indústria' },
+            { id: 'V02' as const, label: 'Por RCA' },
+          ]).map(v => (
             <button
-              key={v}
-              onClick={() => handleViewChange(v)}
+              key={v.id}
+              onClick={() => handleViewChange(v.id)}
               className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === v
+                view === v.id
                   ? 'bg-primary text-white'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              {v === 'V01' ? 'Fornec →' : v === 'V02' ? 'RCA →' : 'Diretoria →'}
+              {v.label}
             </button>
           ))}
         </div>
