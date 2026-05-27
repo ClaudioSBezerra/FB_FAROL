@@ -22,12 +22,13 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 	"strconv"
 	"strings"
 )
 
-// ─── Definição de hierarquias ────────────────────────────────────────────────
+// ─── Definição de hierarquias e mapeamento de views ──────────────────────────
 
 type hierLevel struct {
 	Level     string
@@ -36,31 +37,43 @@ type hierLevel struct {
 }
 
 var hierarquias = map[string][]hierLevel{
+	// V01: visão por indústria — Fornecedor → Gerente → Supervisor → RCA → Cliente
 	"V01": {
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
-		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
+		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
+		{Level: "cod_gerente",    NameField: "nome_gerente",   Label: "Gerente"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
-		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
-		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
+		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
 	},
+	// V02: visão por força de vendas — Supervisor → RCA → Fornecedor → Cliente
 	"V02": {
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
-		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
-		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
+		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
+		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
 	},
-	"V03": {
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
-		{Level: "empresa", NameField: "empresa", Label: "Empresa"},
-		{Level: "uf", NameField: "uf", Label: "UF"},
-		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
-		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
-		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
-		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
-	},
+}
+
+// viewPorNivel mapeia (view, drillIdx) → nome da view materializada pré-agregada.
+// Cada view tem as métricas (pvenda, faturado, transmitido, base_cli, positivados, mix)
+// já calculadas — a API só lê as linhas prontas com um WHERE simples.
+var viewPorNivel = map[string][]string{
+	"V01": {"mv_v01_l0", "mv_v01_l1", "mv_v01_l2", "mv_v01_l3", "mv_farol_cli"},
+	"V02": {"mv_v02_l0", "mv_v02_l1", "mv_v02_l2", "mv_farol_cli"},
+}
+
+// AllSummaryViews lista TODAS as views em ordem de REFRESH (base primeiro).
+var AllSummaryViews = []string{
+	"farol.mv_farol_cli",
+	"farol.mv_v01_l0", "farol.mv_v01_l1", "farol.mv_v01_l2", "farol.mv_v01_l3",
+	"farol.mv_v02_l0", "farol.mv_v02_l1", "farol.mv_v02_l2",
+}
+
+func getViewName(view string, drillIdx int) string {
+	if levels, ok := viewPorNivel[view]; ok && drillIdx >= 0 && drillIdx < len(levels) {
+		return "farol." + levels[drillIdx]
+	}
+	return "farol.mv_farol_cli"
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -140,7 +153,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		hier, ok := hierarquias[view]
 		if !ok {
-			http.Error(w, `{"error":"view inválida — use V01, V02 ou V03"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"view inválida — use V01 ou V02"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -182,7 +195,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			projecaoFator = 12.0 / float64(refMes)
 		}
 
-		cards    := fetchCards(db, spCtx.EmpresaID, compMode, refAno, refMes, currentLevel, drillPath, projecaoFator)
+		cards    := fetchCards(db, spCtx.EmpresaID, view, compMode, refAno, refMes, drillIdx, currentLevel, drillPath, projecaoFator)
 		kpi      := computeKPI(cards)
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
 		plabel   := buildPeriodoLabel(compMode, refAno, refMes)
@@ -217,7 +230,6 @@ var allowedCols = map[string]bool{
 	"cod_rca": true, "nome_rca": true,
 	"cod_cli": true, "nome_cli": true,
 	"empresa": true, "uf": true,
-	"cod_prod": true, "nome_prod": true,
 }
 
 func safeColName(col string) string {
@@ -290,40 +302,29 @@ type aggResult struct {
 }
 
 // ─── queryAggregated ─────────────────────────────────────────────────────────
-// Executa a query principal contra mv_farol_resumo para o bucket "atual".
-// Retorna um map[key]aggResult (uma entrada por valor do groupCol).
-//
-// Query single-pass — sem CTEs, sem JOIN com industrias_config.
-// positivados = clientes com qt > 0 (trava simples; JOIN anterior causava 7-12s).
-// mix = pares distintos (cli, prod) / clientes compradores ≈ produtos/cliente.
+// Lê a view pré-agregada para o bucket "atual".
+// Cada view (migration 143) tem UMA linha por grupo com métricas pré-calculadas.
+// Não há GROUP BY aqui — apenas SELECT + WHERE sobre linhas prontas.
+// Tempo esperado: <10ms independente do volume de dados.
 
-func queryAggregated(db *sql.DB, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
+func queryAggregated(db *sql.DB, viewName, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
 SELECT
-  v.%s                                                                    AS key,
-  MAX(v.%s)                                                               AS label,
-  SUM(v.pvenda)                                                           AS valor,
-  SUM(CASE WHEN v.estado = 'FATURADO' THEN v.pvenda ELSE 0 END)          AS faturado,
-  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END)         AS transmitido,
-  CASE WHEN MAX(v.qtcli_rca) > 0
-       THEN MAX(v.qtcli_rca)::int
-       ELSE COUNT(DISTINCT v.cod_cli)::int END                            AS base_cli,
-  COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != ''
-       THEN v.cod_cli END)                                                AS positivados,
-  COALESCE(
-    COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != '' AND v.cod_prod != ''
-         THEN v.cod_cli || chr(1) || v.cod_prod END)::float
-    / NULLIF(COUNT(DISTINCT CASE WHEN v.qt > 0 AND v.cod_cli != ''
-         THEN v.cod_cli END), 0),
-  0)                                                                      AS mix
-FROM farol.mv_farol_resumo v
+  v.%s          AS key,
+  v.%s          AS label,
+  v.pvenda      AS valor,
+  v.faturado    AS faturado,
+  v.transmitido AS transmitido,
+  v.base_cli    AS base_cli,
+  v.positivados AS positivados,
+  v.mix         AS mix
+FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != ''
-AND %s %s
-GROUP BY v.%s`,
+AND %s %s`,
 		groupCol, nameCol,
+		viewName,
 		groupCol, atualCond, drillCond,
-		groupCol,
 	)
 
 	rows, err := db.Query(q, args...)
@@ -350,13 +351,13 @@ GROUP BY v.%s`,
 // Busca apenas o total de pvenda por grupo para o bucket anterior.
 // Query simples: uma linha por grupo.
 
-func queryAnteriorTotals(db *sql.DB, groupCol, antCond, drillCond string, args []any) map[string]float64 {
+func queryAnteriorTotals(db *sql.DB, viewName, groupCol, antCond, drillCond string, args []any) map[string]float64 {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
 SELECT v.%s AS key, SUM(v.pvenda) AS valor_ant
-FROM farol.mv_farol_resumo v
+FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != '' AND %s %s
-GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
+GROUP BY v.%s`, groupCol, viewName, groupCol, antCond, drillCond, groupCol)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -380,13 +381,14 @@ GROUP BY v.%s`, groupCol, groupCol, antCond, drillCond, groupCol)
 // ─── fetchCards ───────────────────────────────────────────────────────────────
 // Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
 
-func fetchCards(db *sql.DB, empresaID, compMode string, refAno, refMes int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
+func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, drillIdx int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
 	t0       := time.Now()
 	groupCol := safeColName(level.Level)
 	nameCol  := safeColName(level.NameField)
+	viewName := getViewName(view, drillIdx)
 
-	log.Printf("[farol:view] fetchCards empresa=%s nível=%s compMode=%s ref=%04d-%02d drill=%d",
-		empresaID, groupCol, compMode, refAno, refMes, len(drillPath))
+	log.Printf("[farol:view] fetchCards empresa=%s view=%s nível=%s compMode=%s ref=%04d-%02d drill=%d",
+		empresaID, viewName, groupCol, compMode, refAno, refMes, len(drillPath))
 
 	// Condições e args do bucket atual
 	atualArgs := []any{empresaID}
@@ -398,8 +400,8 @@ func fetchCards(db *sql.DB, empresaID, compMode string, refAno, refMes int, leve
 	antCond  := buildAntCond(compMode, refAno, refMes, &antArgs)
 	antDrill := buildDrillCond(drillPath, &antArgs)
 
-	atualMap := queryAggregated(db, groupCol, nameCol, atualCond, drillCond, atualArgs)
-	antMap   := queryAnteriorTotals(db, groupCol, antCond, antDrill, antArgs)
+	atualMap := queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs)
+	antMap   := queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs)
 
 	seen := make(map[string]bool, len(atualMap))
 	cards := make([]cardItem, 0, len(atualMap)+len(antMap))
@@ -554,18 +556,46 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		t0 := time.Now()
-		log.Printf("[farol:view] RefreshViews início — solicitado por empresa=%s user=%s", spCtx.EmpresaID, spCtx.UserID)
+		log.Printf("[farol:view] RefreshViews início — empresa=%s user=%s", spCtx.EmpresaID, spCtx.UserID)
 
-		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
-			log.Printf("[farol:view] RefreshViews ERRO em %v: %v", time.Since(t0), err)
+		// 1. Base view primeiro — as summary views dependem dela.
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
+			log.Printf("[farol:view] RefreshViews ERRO mv_farol_cli em %v: %v", time.Since(t0), err)
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
+		log.Printf("[farol:view] RefreshViews mv_farol_cli OK em %v", time.Since(t0))
+
+		// 2. Summary views em paralelo.
+		summaryViews := AllSummaryViews[1:] // tudo exceto mv_farol_cli (índice 0)
+		var wg sync.WaitGroup
+		errs := make([]string, len(summaryViews))
+		for i, vw := range summaryViews {
+			wg.Add(1)
+			go func(idx int, name string) {
+				defer wg.Done()
+				if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err != nil {
+					errs[idx] = err.Error()
+					log.Printf("[farol:view] RefreshViews ERRO %s: %v", name, err)
+				} else {
+					db.Exec(`ANALYZE ` + name)
+					log.Printf("[farol:view] RefreshViews %s OK", name)
+				}
+			}(i, vw)
+		}
+		wg.Wait()
+		db.Exec(`ANALYZE farol.mv_farol_cli`)
+
+		for _, e := range errs {
+			if e != "" {
+				json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": e})
+				return
+			}
+		}
 
 		var rowCount int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
-		db.Exec(`ANALYZE farol.mv_farol_resumo`)
-		log.Printf("[farol:view] RefreshViews concluído — %d linhas, ANALYZE OK, total %v", rowCount, time.Since(t0))
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_cli`).Scan(&rowCount)
+		log.Printf("[farol:view] RefreshViews concluído — %d linhas base, total %v", rowCount, time.Since(t0))
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "rows": rowCount, "duration_ms": time.Since(t0).Milliseconds()})
 	}
 }

@@ -449,16 +449,34 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
 		WHERE id=$1`, jobID)
 
-	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH MATERIALIZED VIEW", jobID)
+	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH views hierárquicas", jobID)
 	tRefresh := time.Now()
-	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_resumo`); err != nil {
-		log.Printf("[farol:view] ImportJob=%s REFRESH ERRO em %v: %v", jobID, time.Since(tRefresh), err)
+
+	// 1. Base view primeiro — as summary views dependem dela.
+	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
+		log.Printf("[farol:view] ImportJob=%s REFRESH mv_farol_cli ERRO em %v: %v", jobID, time.Since(tRefresh), err)
 	} else {
 		var rowCount int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_resumo`).Scan(&rowCount)
-		log.Printf("[farol:view] ImportJob=%s REFRESH concluído — %d linhas na view em %v", jobID, rowCount, time.Since(tRefresh))
-		db.Exec(`ANALYZE farol.mv_farol_resumo`)
-		log.Printf("[farol:view] ImportJob=%s ANALYZE concluído", jobID)
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_cli`).Scan(&rowCount)
+		log.Printf("[farol:view] ImportJob=%s mv_farol_cli OK — %d linhas em %v", jobID, rowCount, time.Since(tRefresh))
+
+		// 2. Summary views em paralelo.
+		var wg sync.WaitGroup
+		for _, vw := range AllSummaryViews[1:] {
+			wg.Add(1)
+			go func(name string) {
+				defer wg.Done()
+				if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err2 != nil {
+					log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, name, err2)
+				} else {
+					db.Exec(`ANALYZE ` + name)
+					log.Printf("[farol:view] ImportJob=%s %s OK", jobID, name)
+				}
+			}(vw)
+		}
+		wg.Wait()
+		db.Exec(`ANALYZE farol.mv_farol_cli`)
+		log.Printf("[farol:view] ImportJob=%s REFRESH+ANALYZE concluído em %v", jobID, time.Since(tRefresh))
 	}
 
 	db.Exec(`UPDATE vendas_import_jobs
