@@ -21,8 +21,15 @@ export const modules: Record<string, ModuleConfig> = {
   farol: {
     label: 'Farol',
     tabs: [
-      { label: 'Painel',    path: '/farol/v2'       },
-      { label: 'Importar',  path: '/farol/importar' },
+      { label: 'Painel', path: '/farol/v2' },
+    ],
+  },
+  // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
+  importar: {
+    label: 'Importar dados',
+    adminOnly: true,
+    tabs: [
+      { label: 'Vendas (CSV)', path: '/farol/importar' },
     ],
   },
   // ── Objetivo RCA (em desenvolvimento) ────────────────────────────────────
@@ -51,20 +58,20 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Log de Auditoria',  path: '/config/audit-log',        masterOnly: true },
       { label: 'Bloqueio Empresas', path: '/config/empresas-bloqueio', masterOnly: true },
       { label: 'Uso do Sistema',    path: '/config/uso',              masterOnly: true },
-      { label: 'Manutenção',        path: '/config/manutencao'        },
+      { label: 'Limpar Dados',      path: '/config/limpar-dados',     masterOnly: true, danger: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
     ],
   },
 }
 
 export function getActiveModule(pathname: string): string {
+  if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
-  if (pathname.startsWith('/farol/importar'))        return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'
   if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
   if (pathname.startsWith('/objetivos/manutencao'))  return 'config'
-  if (pathname.startsWith('/objetivos/importar'))    return 'farol'
+  if (pathname.startsWith('/objetivos/importar'))    return 'importar'
   if (pathname.startsWith('/gestao'))                return 'config'
   if (pathname.startsWith('/config'))                return 'config'
   return 'farol'

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
+import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -451,6 +452,8 @@ function useCards(
 export default function FarolExecutivo() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
+  const { user, spRole, tipoPersona } = useAuth()
+  const canImport = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
 
   const [view, setView]               = useState<'V01' | 'V02' | 'V03'>('V01')
   const [compMode, setCompMode]       = useState('yoy')
@@ -598,14 +601,16 @@ export default function FarolExecutivo() {
           {refreshing ? 'Consolidando...' : 'Consolidar view'}
         </button>
 
-        {/* Botão importar */}
-        <button
-          onClick={() => navigate('/farol/importar')}
-          className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
-        >
-          <UploadCloud className="h-3.5 w-3.5" />
-          Importar dados
-        </button>
+        {/* Botão importar — somente admin/TI */}
+        {canImport && (
+          <button
+            onClick={() => navigate('/farol/importar')}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
+          >
+            <UploadCloud className="h-3.5 w-3.5" />
+            Importar dados
+          </button>
+        )}
       </div>
 
       {/* ── Loading skeleton ─────────────────────────────────────────────── */}
@@ -628,14 +633,20 @@ export default function FarolExecutivo() {
       {!isLoading && !error && data?.cards.length === 0 && (
         <div className="bg-gradient-to-br from-slate-950 to-slate-900 rounded-2xl p-16 text-center shadow-2xl">
           <p className="text-slate-400 text-sm font-medium mb-2">Nenhum dado disponível</p>
-          <p className="text-slate-600 text-xs mb-6">Importe um arquivo CSV para visualizar o painel executivo.</p>
-          <button
-            onClick={() => navigate('/farol/importar')}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors"
-          >
-            <UploadCloud className="h-4 w-4" />
-            Ir para importação
-          </button>
+          {canImport ? (
+            <>
+              <p className="text-slate-600 text-xs mb-6">Importe um arquivo CSV para visualizar o painel executivo.</p>
+              <button
+                onClick={() => navigate('/farol/importar')}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors"
+              >
+                <UploadCloud className="h-4 w-4" />
+                Ir para importação
+              </button>
+            </>
+          ) : (
+            <p className="text-slate-600 text-xs">Solicite ao administrador a importação dos dados.</p>
+          )}
         </div>
       )}
 

@@ -315,8 +315,11 @@ function ImportForm({ onDone }: { onDone: () => void }) {
 }
 
 // ─── PeriodosTable ────────────────────────────────────────────────────────────
+// Tabela só de visualização — as ações de limpeza vivem em
+// Configurações Gerais → Limpar Dados, para evitar exclusões acidentais no
+// fluxo de importação.
 
-function PeriodosTable({ periodos, onDelete }: { periodos: PeriodoItem[]; onDelete: (p: PeriodoItem) => void }) {
+function PeriodosTable({ periodos }: { periodos: PeriodoItem[] }) {
   if (periodos.length === 0) {
     return <p className="text-sm text-slate-400 text-center py-8">Nenhum dado importado ainda.</p>
   }
@@ -327,7 +330,6 @@ function PeriodosTable({ periodos, onDelete }: { periodos: PeriodoItem[]; onDele
           <th className="text-left py-2 text-xs text-slate-400 font-medium">Tipo</th>
           <th className="text-left py-2 text-xs text-slate-400 font-medium">Período</th>
           <th className="text-right py-2 text-xs text-slate-400 font-medium">Linhas</th>
-          <th className="py-2" />
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-50">
@@ -345,14 +347,6 @@ function PeriodosTable({ periodos, onDelete }: { periodos: PeriodoItem[]; onDele
             <td className="py-2 text-slate-700">{p.label}</td>
             <td className="py-2 text-right text-slate-500 tabular-nums">
               {p.total.toLocaleString('pt-BR')}
-            </td>
-            <td className="py-2 text-right">
-              <button
-                onClick={() => onDelete(p)}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors"
-              >
-                Remover
-              </button>
             </td>
           </tr>
         ))}
@@ -373,24 +367,6 @@ export default function FarolV2Import() {
     qc.invalidateQueries({ queryKey: ['v2-periodos'] })
   }
 
-  const handleDelete = async (p: PeriodoItem) => {
-    if (!confirm(`Remover ${p.tipo_base} ${p.label}? Esta ação não pode ser desfeita.`)) return
-    await fetch(
-      `/api/v2/vendas/clear?tipo_base=${p.tipo_base}&ano=${p.ano}&mes=${p.mes}`,
-      { method: 'DELETE' }
-    )
-    refetch()
-    qc.invalidateQueries({ queryKey: ['farol-v2-cards'] })
-  }
-
-  const handleClearAll = async () => {
-    if (periodos.length === 0) return
-    if (!confirm(`Limpar TODA a base (${periodos.length} períodos importados)? Esta ação não pode ser desfeita.`)) return
-    await fetch(`/api/v2/vendas/clear`, { method: 'DELETE' })
-    refetch()
-    qc.invalidateQueries({ queryKey: ['farol-v2-cards'] })
-  }
-
   return (
     <div className="max-w-2xl">
       <div className="grid gap-6">
@@ -406,18 +382,11 @@ export default function FarolV2Import() {
 
         {/* Card de períodos existentes */}
         <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-slate-800">Dados Importados</h2>
-            {periodos.length > 0 && (
-              <button
-                onClick={handleClearAll}
-                className="text-xs font-medium text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-lg px-3 py-1.5 transition-colors"
-              >
-                Limpar tudo
-              </button>
-            )}
-          </div>
-          <PeriodosTable periodos={periodos} onDelete={handleDelete} />
+          <h2 className="text-base font-semibold text-slate-800 mb-4">Dados Importados</h2>
+          <PeriodosTable periodos={periodos} />
+          <p className="text-xs text-slate-400 mt-3">
+            Para apagar dados use <span className="font-medium">Configurações → Limpar Dados</span>.
+          </p>
         </div>
 
         {/* Formato */}

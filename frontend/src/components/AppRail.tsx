@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -31,18 +31,32 @@ import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-const mainItems = [
-  { id: 'farol',          icon: Lightbulb, label: 'Farol',               path: '/farol/v2',            dev: false },
-  { id: 'obj_rca',        icon: Target,    label: 'Objetivo RCA',        path: '/objetivos/rca',       dev: true  },
-  { id: 'obj_supervisor', icon: BarChart3, label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true },
+interface RailItem {
+  id: string
+  icon: React.ElementType
+  label: string
+  path: string
+  dev: boolean
+  /** quando true, só aparece para admin OU TI */
+  adminOrTI?: boolean
+}
+
+const mainItems: RailItem[] = [
+  { id: 'farol',          icon: Lightbulb,   label: 'Farol',               path: '/farol/v2',             dev: false },
+  { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
+  { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
+  { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
 ]
 
 export function AppRail() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, company, logout, token, spRole } = useAuth()
+  const { user, company, logout, token, spRole, tipoPersona } = useAuth()
   // isAdmin: plataforma admin OU admin_fbtax Farol → acessa configurações e manutenção
   const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+  const isTI    = tipoPersona === 'ti'
+  const canImport = isAdmin || isTI
+  const visibleItems = mainItems.filter(it => !it.adminOrTI || canImport)
   const active = getActiveModule(location.pathname)
 
   const [pwDialog,  setPwDialog]  = useState(false)
@@ -95,7 +109,7 @@ export function AppRail() {
 
         {/* Nav principal */}
         <nav className="flex flex-col items-center gap-1 p-2 flex-1 pt-3">
-          {mainItems.map(item => (
+          {visibleItems.map(item => (
               <Tooltip key={item.id}>
                 <TooltipTrigger asChild>
                   <div className="relative">

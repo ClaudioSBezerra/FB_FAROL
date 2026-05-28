@@ -66,6 +66,18 @@ function MasterRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// AdminOrTIRoute — libera para admin de plataforma, admin_fbtax do Farol, ou
+// usuário com tipo_persona='ti'. Usado pela tela de Importar.
+function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user, spRole, tipoPersona } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  const ok = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
+  if (!ok) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function ManagerRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading, canManageUsers } = useAuth()
   const location = useLocation()
@@ -196,7 +208,7 @@ function AppLayout() {
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
               <Route path="/farol/v2"       element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
-              <Route path="/farol/importar" element={<ProtectedRoute><FarolV2Import /></ProtectedRoute>} />
+              <Route path="/farol/importar" element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
               <Route path="/farol/usuarios" element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}

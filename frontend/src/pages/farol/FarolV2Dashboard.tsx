@@ -274,7 +274,8 @@ export function Breadcrumb({
 // ─── FarolV2Dashboard ─────────────────────────────────────────────────────────
 
 export default function FarolV2Dashboard() {
-  const { tipoPersona, spRole } = useAuth()
+  const { tipoPersona, spRole, user } = useAuth()
+  const canImport = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
   const navigate = useNavigate()
 
   // Hooks must always run in the same order — conditional return only after all hooks
@@ -417,13 +418,15 @@ export default function FarolV2Dashboard() {
           </>
         )}
 
-        {/* Botão importar */}
-        <button
-          onClick={() => navigate('/farol/importar')}
-          className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
-        >
-          + Importar dados
-        </button>
+        {/* Botão importar — somente admin/TI */}
+        {canImport && (
+          <button
+            onClick={() => navigate('/farol/importar')}
+            className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
+          >
+            + Importar dados
+          </button>
+        )}
       </div>
 
       {/* ── KPI Bar ─────────────────────────────────────────────────────── */}
@@ -464,13 +467,19 @@ export default function FarolV2Dashboard() {
           <p className="text-4xl mb-3">📊</p>
           <p className="text-sm font-medium text-slate-500">Nenhum dado encontrado</p>
           <p className="text-xs mt-1">
-            Importe um CSV de vendas para começar.{' '}
-            <button
-              onClick={() => navigate('/farol/importar')}
-              className="text-primary hover:underline"
-            >
-              Ir para importação →
-            </button>
+            {canImport ? (
+              <>
+                Importe um CSV de vendas para começar.{' '}
+                <button
+                  onClick={() => navigate('/farol/importar')}
+                  className="text-primary hover:underline"
+                >
+                  Ir para importação →
+                </button>
+              </>
+            ) : (
+              <>Solicite ao administrador a importação dos dados.</>
+            )}
           </p>
         </div>
       )}
