@@ -337,16 +337,63 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
   )
 }
 
+// ─── Wall Street Bar ─────────────────────────────────────────────────────────
+
+// Heights pattern for "trading volume" feel — static so it's consistent per position
+const WS_HEIGHTS = [52,84,46,93,67,78,54,88,72,61,95,56,81,69,43,87,63,77,58,96,62,85,48,76,90,60,73,51,83,66,55,89,71,58,94,64,79,53,86,70]
+
+function WallStreetBar({ pct, maxPct, cor }: { pct: number; maxPct: number; cor: Cor }) {
+  const TICKS = 32
+  const col = COR_HEX[cor]
+  const barFill = Math.min(pct / maxPct, 1)
+  const target100Pct = Math.min(100 / maxPct, 1) * 100
+
+  return (
+    <div className="flex-1 min-w-0 relative">
+      <div className="flex items-end gap-[2px] h-7">
+        {Array.from({ length: TICKS }).map((_, i) => {
+          const pos = (i + 0.5) / TICKS
+          const filled = pos <= barFill
+          const h = WS_HEIGHTS[i % WS_HEIGHTS.length]
+          return (
+            <div
+              key={i}
+              className="flex-1 rounded-[1px]"
+              style={{
+                height: filled ? `${h}%` : `${Math.max(Math.round(h * 0.22), 8)}%`,
+                backgroundColor: filled ? col : 'rgba(148,163,184,0.18)',
+                opacity: filled ? Math.min(0.42 + 0.58 * (pos / barFill), 1) : 0.7,
+                transition: 'height 0.55s cubic-bezier(0.4,0,0.2,1)',
+              }}
+            />
+          )
+        })}
+      </div>
+      {/* Objetivo 100% marker — só exibido quando alguém ultrapassou 100% */}
+      {maxPct > 105 && (
+        <div
+          className="absolute inset-y-0 flex flex-col items-center pointer-events-none"
+          style={{ left: `${target100Pct}%` }}
+        >
+          <div className="w-px h-full bg-slate-400/50" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Performance Ranking ──────────────────────────────────────────────────────
 
 function PerformanceRanking({
   cards,
   levelLabel,
   onDrill,
+  wallStreet,
 }: {
   cards: CardItem[]
   levelLabel: string
   onDrill: (card: CardItem) => void
+  wallStreet?: boolean
 }) {
   const sorted = [...cards].sort((a, b) => b.pct - a.pct)
   const maxPct = Math.max(...sorted.map(c => c.pct), 100)
@@ -405,14 +452,19 @@ function PerformanceRanking({
               </div>
 
               {/* Bar */}
-              <div className="flex-1 min-w-0">
-                <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${COR_BAR[cor]} rounded-full transition-all duration-700`}
-                    style={{ width: `${barW}%` }}
-                  />
-                </div>
-              </div>
+              {wallStreet
+                ? <WallStreetBar pct={card.pct} maxPct={maxPct} cor={cor} />
+                : (
+                  <div className="flex-1 min-w-0">
+                    <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${COR_BAR[cor]} rounded-full transition-all duration-700`}
+                        style={{ width: `${barW}%` }}
+                      />
+                    </div>
+                  </div>
+                )
+              }
 
               {/* % */}
               <div className="w-16 flex-shrink-0 text-right">
@@ -741,6 +793,7 @@ export default function FarolExecutivo() {
             cards={data.cards}
             levelLabel={data.next_level_label}
             onDrill={handleDrill}
+            wallStreet={view === 'V01'}
           />
         </>
       )}
