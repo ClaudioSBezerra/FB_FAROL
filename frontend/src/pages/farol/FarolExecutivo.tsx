@@ -337,63 +337,80 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
   )
 }
 
-// ─── ECG Bar ─────────────────────────────────────────────────────────────────
+// ─── Stock Bar ────────────────────────────────────────────────────────────────
 
-function ecgPath(W: number, H: number): string {
-  // 4 ciclos P-QRS-T ao longo de W unidades; baseline em 75% da altura
-  const b = H * 0.75     // baseline y
-  const cw = W / 4       // largura de cada ciclo
-  const s = cw / 50      // escala horizontal (referência: ciclo de 50u)
+// Pequenas variações para simular movimentação de preço (stock chart feel)
+const STOCK_NOISE = [0,2,-1,3,-2,1,-3,2,0,-1,3,-2,1,2,-1,0,3,-2,1,-1,2,3,0,-1,2,-2,1,-3,2,1,0]
 
-  function cycle(x: number) {
-    return [
-      `L ${x + 9*s},${b}`,
-      `L ${x + 11*s},${b - H*0.22}`,         // P — pequeno bump
-      `L ${x + 13*s},${b}`,
-      `L ${x + 17*s},${b}`,
-      `L ${x + 18*s},${b + H*0.12}`,          // Q — leve queda
-      `L ${x + 20*s},${H*0.07}`,              // R — pico alto
-      `L ${x + 22*s},${b + H*0.18}`,          // S — vale
-      `L ${x + 24*s},${b}`,
-      `L ${x + 29*s},${b}`,
-      `Q ${x + 34*s},${b - H*0.34} ${x + 38*s},${b}`, // T — bump médio
-      `L ${x + cw},${b}`,
-    ].join(' ')
-  }
+function StockBar({ pct, maxPct, cor, uid }: { pct: number; maxPct: number; cor: Cor; uid: string }) {
+  const W = 200, H = 30
+  const col   = COR_HEX[cor]
+  const ratio = Math.min(pct / maxPct, 1)
+  const fillX = ratio * W
+  const sid   = uid.replace(/[^a-z0-9]/gi, '-')
+  const NPTS  = 30
 
-  return `M 0,${b} ${[0, cw, cw*2, cw*3].map(cycle).join(' ')}`
-}
+  // Linha sobe do canto inferior-esquerdo até a altura proporcional ao atingimento
+  const startY = H * 0.88
+  const endY   = H * (1 - ratio * 0.76)
+  const noise  = H * 0.055
 
-function EcgBar({ pct, maxPct, cor, uid }: { pct: number; maxPct: number; cor: Cor; uid: string }) {
-  const W = 200
-  const H = 30
-  const col = COR_HEX[cor]
-  const fillX = Math.min(pct / maxPct, 1) * W
-  const target100X = Math.min(100 / maxPct, 1) * W
-  const clipId = `ecg-${uid.replace(/[^a-z0-9]/gi, '-')}`
-  const path = ecgPath(W, H)
+  const pts: Array<[number, number]> = Array.from({ length: NPTS + 1 }, (_, i) => {
+    const t = i / NPTS
+    const base = startY + (endY - startY) * t
+    return [t * W, Math.max(2, Math.min(H - 2, base + STOCK_NOISE[i % STOCK_NOISE.length] * noise))]
+  })
+
+  const line = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
+
+  // Área de gradiente abaixo da linha (apenas na parte colorida)
+  const visiblePts = pts.filter(([x]) => x <= fillX + W / NPTS)
+  const area = visiblePts.length > 1
+    ? `M0,${H} ${visiblePts.map(([x, y]) => `L${x.toFixed(1)},${y.toFixed(1)}`).join(' ')} L${fillX.toFixed(1)},${H}Z`
+    : ''
+
+  // Ponto brilhante na ponta da linha colorida
+  const dotPt = pts.reduce((best, p) => p[0] <= fillX ? p : best, pts[0])
 
   return (
     <div className="flex-1 min-w-0">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-7" preserveAspectRatio="none">
         <defs>
-          <clipPath id={clipId}>
+          <linearGradient id={`sg-${sid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor={col} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={col} stopOpacity="0.02" />
+          </linearGradient>
+          <clipPath id={`sc-${sid}`}>
             <rect x="0" y="0" width={fillX} height={H} />
           </clipPath>
+          <filter id={`glow-${sid}`} x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
         </defs>
-        {/* Traçado de fundo — toda a extensão, quase invisível */}
-        <path d={path} stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" fill="none"
+
+        {/* Linha fantasma — potencial completo */}
+        <path d={line} stroke="rgba(148,163,184,0.13)" strokeWidth="0.8" fill="none"
+              strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Gradiente de área */}
+        {area && <path d={area} fill={`url(#sg-${sid})`} />}
+
+        {/* Linha colorida da bolsa */}
+        <path d={line} stroke={col} strokeWidth="1.6" fill="none"
               strokeLinecap="round" strokeLinejoin="round"
-              strokeDasharray="4,3" />
-        {/* Traçado colorido — clipado até o atingimento */}
-        <path d={path} stroke={col} strokeWidth="1" fill="none"
-              strokeLinecap="round" strokeLinejoin="round"
-              strokeDasharray="4,3"
-              clipPath={`url(#${clipId})`} />
-        {/* Linha de 100% — só quando alguém ultrapassou */}
+              clipPath={`url(#sc-${sid})`} />
+
+        {/* Ponto brilhante na ponta */}
+        {ratio > 0.02 && (
+          <circle cx={dotPt[0].toFixed(1)} cy={dotPt[1].toFixed(1)} r="2.5"
+                  fill={col} filter={`url(#glow-${sid})`} />
+        )}
+
+        {/* Marcador de 100% quando há ultrapassagem */}
         {maxPct > 105 && (
-          <line x1={target100X} y1="2" x2={target100X} y2={H - 2}
-                stroke="rgba(100,116,139,0.55)" strokeWidth="1" strokeDasharray="3,2" />
+          <line x1={(100 / maxPct) * W} y1="2" x2={(100 / maxPct) * W} y2={H - 2}
+                stroke="rgba(100,116,139,0.5)" strokeWidth="1" strokeDasharray="2,2" />
         )}
       </svg>
     </div>
@@ -476,7 +493,7 @@ function PerformanceRanking({
 
               {/* Bar */}
               {wallStreet
-                ? <EcgBar pct={card.pct} maxPct={maxPct} cor={cor} uid={card.key} />
+                ? <StockBar pct={card.pct} maxPct={maxPct} cor={cor} uid={card.key} />
                 : (
                   <div className="flex-1 min-w-0">
                     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
