@@ -196,8 +196,8 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
 		if refAno == 0 || refMes == 0 {
 			_ = db.QueryRow(`
-				SELECT ano, mes FROM vendas_importadas
-				WHERE empresa_id=$1 AND tipo_base='ATUAL'
+				SELECT ano, mes FROM vendas_import_jobs
+				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
 				ORDER BY ano DESC, mes DESC LIMIT 1
 			`, spCtx.EmpresaID).Scan(&refAno, &refMes)
 		}
@@ -292,13 +292,16 @@ func resolveCompPeriod(refAno, refMes, compAno, compMes int) (int, int) {
 
 // buildAntCond monta a cláusula WHERE de período para o bucket anterior.
 // Para mom aceita override explícito (compAno/compMes) — quando 0, calcula mês-1.
+// yoy/ytd comparam contra refAno-1 para evitar somar múltiplos anos de COMPARATIVA.
 func buildAntCond(compMode string, refAno, refMes, compAno, compMes int, args *[]any) string {
 	switch compMode {
 	case "yoy":
-		*args = append(*args, refMes)
-		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.mes=$%d", len(*args))
+		*args = append(*args, refAno-1, refMes)
+		n := len(*args)
+		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.ano=$%d AND v.mes=$%d", n-1, n)
 	case "ytd":
-		return "v.tipo_base='COMPARATIVA'" // sem filtro de mês (acumula o ano todo)
+		*args = append(*args, refAno-1)
+		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.ano=$%d", len(*args))
 	case "mom":
 		prevAno, prevMes := resolveCompPeriod(refAno, refMes, compAno, compMes)
 		*args = append(*args, prevAno, prevMes)
@@ -616,9 +619,12 @@ func computeKPI(cards []cardItem) kpiSummary {
 // ─── fetchPeriodosDisponiveis ─────────────────────────────────────────────────
 
 func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
+	// vendas_import_jobs é minúscula (~10-100 linhas/empresa) e tem índice em
+	// (empresa_id, status). Evita SELECT DISTINCT sobre vendas_importadas (1M+ linhas).
 	rows, err := db.Query(`
-		SELECT DISTINCT ano, mes FROM vendas_importadas
-		WHERE empresa_id=$1
+		SELECT ano, mes FROM vendas_import_jobs
+		WHERE empresa_id=$1 AND status='done'
+		GROUP BY ano, mes
 		ORDER BY ano DESC, mes DESC
 	`, empresaID)
 	if err != nil {
@@ -836,8 +842,8 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
 		if refAno == 0 || refMes == 0 {
 			_ = db.QueryRow(`
-				SELECT ano, mes FROM vendas_importadas
-				WHERE empresa_id=$1 AND tipo_base='ATUAL'
+				SELECT ano, mes FROM vendas_import_jobs
+				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
 				ORDER BY ano DESC, mes DESC LIMIT 1`, empresaID).Scan(&refAno, &refMes)
 		}
 		if refAno == 0 {
