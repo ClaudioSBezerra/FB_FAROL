@@ -21,7 +21,8 @@ export const modules: Record<string, ModuleConfig> = {
   farol: {
     label: 'Farol',
     tabs: [
-      { label: 'Painel', path: '/farol/v2' },
+      { label: 'Painel',   path: '/farol/v2' },
+      { label: 'Usuários', path: '/farol/usuarios', managerOnly: true },
     ],
   },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
@@ -58,7 +59,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Log de Auditoria',  path: '/config/audit-log',        masterOnly: true },
       { label: 'Bloqueio Empresas', path: '/config/empresas-bloqueio', masterOnly: true },
       { label: 'Uso do Sistema',    path: '/config/uso',              masterOnly: true },
-      { label: 'Limpar Dados',      path: '/config/limpar-dados',     masterOnly: true, danger: true },
+      { label: 'Limpar Dados',      path: '/config/limpar-dados',     adminOnly: true,  danger: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
     ],
   },

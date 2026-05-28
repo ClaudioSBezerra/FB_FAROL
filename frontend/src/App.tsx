@@ -78,6 +78,18 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// AdminFbtaxRoute — libera para admin de plataforma (MASTER) ou admin_fbtax do Farol.
+// Usado por telas de limpeza de dados e outras operações administrativas de tenant.
+function AdminFbtaxRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user, spRole } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  const ok = user?.role === 'admin' || spRole === 'admin_fbtax'
+  if (!ok) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function ManagerRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading, canManageUsers } = useAuth()
   const location = useLocation()
@@ -231,7 +243,7 @@ function AppLayout() {
               <Route path="/config/usuarios-admin" element={<MasterRoute><AdminUsers /></MasterRoute>} />
               <Route path="/config/audit-log"   element={<MasterRoute><SpAuditLog /></MasterRoute>} />
               <Route path="/config/empresas-bloqueio" element={<MasterRoute><SpEmpresasBloqueio /></MasterRoute>} />
-              <Route path="/config/limpar-dados" element={<MasterRoute><LimparDados /></MasterRoute>} />
+              <Route path="/config/limpar-dados" element={<AdminFbtaxRoute><LimparDados /></AdminFbtaxRoute>} />
               <Route path="/config/uso"         element={<MasterRoute><SpUsoSistema /></MasterRoute>} />
               <Route path="/config/destinatarios" element={<MasterRoute><SpDestinatarios /></MasterRoute>} />
 
