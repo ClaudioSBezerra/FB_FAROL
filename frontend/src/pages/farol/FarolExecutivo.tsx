@@ -382,11 +382,13 @@ function EcgBar({ pct, maxPct, cor, uid }: { pct: number; maxPct: number; cor: C
           </clipPath>
         </defs>
         {/* Traçado de fundo — toda a extensão, quase invisível */}
-        <path d={path} stroke="rgba(148,163,184,0.2)" strokeWidth="1.5" fill="none"
-              strokeLinecap="round" strokeLinejoin="round" />
-        {/* Traçado colorido — clipado até o atingimento */}
-        <path d={path} stroke={col} strokeWidth="2" fill="none"
+        <path d={path} stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" fill="none"
               strokeLinecap="round" strokeLinejoin="round"
+              strokeDasharray="4,3" />
+        {/* Traçado colorido — clipado até o atingimento */}
+        <path d={path} stroke={col} strokeWidth="1" fill="none"
+              strokeLinecap="round" strokeLinejoin="round"
+              strokeDasharray="4,3"
               clipPath={`url(#${clipId})`} />
         {/* Linha de 100% — só quando alguém ultrapassou */}
         {maxPct > 105 && (
