@@ -424,8 +424,13 @@ function PerformanceRanking({
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-50">
         <div>
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Ranking de Desempenho</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Por {levelLabel} · ordenado por atingimento</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Ranking de Desempenho</h2>
+            <span className="inline-flex items-center text-xs font-black text-red-600 bg-red-50 border border-red-200 px-2.5 py-0.5 rounded-full uppercase tracking-widest">
+              {levelLabel}
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">ordenado por atingimento</p>
         </div>
         <div className="flex gap-3 text-[11px]">
           <span className="flex items-center gap-1 text-emerald-600 font-medium">
@@ -551,7 +556,8 @@ function DrillBreadcrumb({
       </button>
       <span className="text-slate-300">/</span>
       <span className="text-sm font-semibold text-slate-700">{last.label}</span>
-      <span className="text-slate-400 text-xs ml-1">→ por {nextLevelLabel}</span>
+      <span className="text-slate-400 text-xs ml-1">→ por</span>
+      <span className="text-sm font-black text-red-600 uppercase tracking-wide">{nextLevelLabel}</span>
     </div>
   )
 }
