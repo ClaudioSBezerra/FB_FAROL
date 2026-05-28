@@ -427,7 +427,7 @@ export default function FarolExecutivo() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
 
-  const [view, setView]               = useState<'V01' | 'V02' | 'V03'>('V03')
+  const [view, setView]               = useState<'V01' | 'V02' | 'V03'>('V01')
   const [compMode, setCompMode]       = useState('yoy')
   const [drillPath, setDrillPath]     = useState<DrillStep[]>([])
   const [refAno, setRefAno]           = useState(0)
@@ -445,6 +445,7 @@ export default function FarolExecutivo() {
   if (data && refAno === 0) autoRef(data)
 
   const handleDrill = (card: CardItem) => {
+    if (card.level === 'cod_prod') return // Produto é o nível folha
     setDrillPath(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
 
@@ -472,8 +473,8 @@ export default function FarolExecutivo() {
         {/* Visão */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
-            { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V01' as const, label: 'Por Indústria' },
+            { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V02' as const, label: 'Por Equipe' },
           ]).map(v => (
             <button

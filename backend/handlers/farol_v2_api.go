@@ -37,27 +37,30 @@ type hierLevel struct {
 }
 
 var hierarquias = map[string][]hierLevel{
-	// V01: visão por indústria — Fornecedor → Gerente → Supervisor → RCA → Cliente
+	// V01: visão por indústria — Fornecedor → Gerente → Supervisor → RCA → Cliente → Produto
 	"V01": {
 		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
 		{Level: "cod_gerente",    NameField: "nome_gerente",   Label: "Gerente"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
+		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
 	},
-	// V02: visão por equipe (força de vendas) — Supervisor → RCA → Fornecedor → Cliente
+	// V02: visão por equipe (força de vendas) — Supervisor → RCA → Fornecedor → Cliente → Produto
 	"V02": {
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
+		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
 	},
-	// V03: visão de gerência (organização) — Gerente/GGV → Supervisor → RCA → Cliente
+	// V03: visão de gerência (organização) — Gerente/GGV → Supervisor → RCA → Cliente → Produto
 	"V03": {
 		{Level: "cod_gerente",    NameField: "nome_gerente",    Label: "Gerência"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
+		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
 	},
 }
 
@@ -238,6 +241,7 @@ var allowedCols = map[string]bool{
 	"cod_supervisor": true, "nome_supervisor": true,
 	"cod_rca": true, "nome_rca": true,
 	"cod_cli": true, "nome_cli": true,
+	"cod_prod": true, "nome_prod": true,
 	"empresa": true, "uf": true,
 }
 
@@ -387,6 +391,72 @@ GROUP BY v.%s`, groupCol, viewName, groupCol, antCond, drillCond, groupCol)
 	return result
 }
 
+// ─── queryProdutos / queryProdutosAnterior ───────────────────────────────────
+// Nível folha "Produto": não existe view pré-agregada (o cod_prod foi agregado
+// no mix). Lê de vendas_importadas, escopado ao cliente do drill (poucas linhas).
+
+func queryProdutos(db *sql.DB, atualCond, drillCond string, args []any) map[string]aggResult {
+	t0 := time.Now()
+	q := fmt.Sprintf(`
+SELECT
+  v.cod_prod                                                   AS key,
+  MAX(v.nome_prod)                                             AS label,
+  SUM(v.pvenda)                                                AS valor,
+  SUM(CASE WHEN v.estado = 'FATURADO'  THEN v.pvenda ELSE 0 END) AS faturado,
+  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END) AS transmitido,
+  0::int                                                       AS base_cli,
+  0::int                                                       AS positivados,
+  0::float                                                     AS mix
+FROM vendas_importadas v
+WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
+GROUP BY v.cod_prod`, atualCond, drillCond)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:view] queryProdutos ERRO em %v: %v", time.Since(t0), err)
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]aggResult)
+	for rows.Next() {
+		var key string
+		var r aggResult
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.faturado, &r.transmitido,
+			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			result[key] = r
+		}
+	}
+	log.Printf("[farol:view] queryProdutos → %d produtos em %v", len(result), time.Since(t0))
+	return result
+}
+
+func queryProdutosAnterior(db *sql.DB, antCond, drillCond string, args []any) map[string]float64 {
+	t0 := time.Now()
+	q := fmt.Sprintf(`
+SELECT v.cod_prod AS key, SUM(v.pvenda) AS valor_ant
+FROM vendas_importadas v
+WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
+GROUP BY v.cod_prod`, antCond, drillCond)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:view] queryProdutosAnterior ERRO em %v: %v", time.Since(t0), err)
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var key string
+		var val float64
+		if rows.Scan(&key, &val) == nil {
+			result[key] = val
+		}
+	}
+	return result
+}
+
 // ─── fetchCards ───────────────────────────────────────────────────────────────
 // Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
 
@@ -410,12 +480,19 @@ func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, dr
 	antDrill := buildDrillCond(drillPath, &antArgs)
 
 	// As duas queries são independentes (buckets atual e anterior) — rodam em paralelo.
+	// O nível Produto não existe nas views pré-agregadas (mix agrega o cod_prod),
+	// então lê direto de vendas_importadas, escopado ao cliente do drill (volume pequeno).
 	var atualMap map[string]aggResult
 	var antMap map[string]float64
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); atualMap = queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs) }()
-	go func() { defer wg.Done(); antMap = queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs) }()
+	if groupCol == "cod_prod" {
+		go func() { defer wg.Done(); atualMap = queryProdutos(db, atualCond, drillCond, atualArgs) }()
+		go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, antCond, antDrill, antArgs) }()
+	} else {
+		go func() { defer wg.Done(); atualMap = queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs) }()
+		go func() { defer wg.Done(); antMap = queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs) }()
+	}
 	wg.Wait()
 
 	seen := make(map[string]bool, len(atualMap))

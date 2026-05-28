@@ -59,6 +59,7 @@ export default function FarolPublicPanel() {
   const periodos    = data?.periodos ?? []
 
   const handleDrill = (card: CardItem) => {
+    if (card.level === 'cod_prod') return // Produto é o nível folha
     setUserDrill(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
   const handleBreadcrumb = (idx: number) => {

@@ -282,6 +282,7 @@ export default function FarolV2Dashboard() {
   if (data && refAno === 0) autoRef(data)
 
   const handleDrill = (card: CardItem) => {
+    if (card.level === 'cod_prod') return // Produto é o nível folha
     setDrillPath(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
 
@@ -310,8 +311,8 @@ export default function FarolV2Dashboard() {
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
             { id: 'V01' as const, label: 'Por Indústria' },
-            { id: 'V02' as const, label: 'Por Equipe' },
             { id: 'V03' as const, label: 'Por Gerência' },
+            { id: 'V02' as const, label: 'Por Equipe' },
           ]).map(v => (
             <button
               key={v.id}
