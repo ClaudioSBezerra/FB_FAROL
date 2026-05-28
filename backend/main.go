@@ -471,6 +471,9 @@ func main() {
 	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler,      "gestor_geral"))
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
 	http.HandleFunc("/api/v2/farol/public/cards",  gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
+	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
+	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
+	http.HandleFunc("/api/v2/farol/cleanup",           withSP(handlers.CleanupExecuteHandler,   "gestor_geral"))
 
 	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
 	// /api/cadastros/* desativado em 2026-05-27

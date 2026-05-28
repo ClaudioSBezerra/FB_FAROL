@@ -89,7 +89,6 @@ export default function SpAmbiente() {
   const isFiliais   = path === '/gestao/filiais'
   const isRegras    = path === '/gestao/regras' || path === '/config/parametros-motor'
   const isPlanos    = path === '/config/planos'
-  const isManutencao = path === '/config/manutencao'
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [expandedFilial, setExpandedFilial] = useState<number | null>(null)
@@ -106,8 +105,6 @@ export default function SpAmbiente() {
   const [newCDDesc,      setNewCDDesc]      = useState('')
   const [dupNome,        setDupNome]        = useState('')
   const [editParams,     setEditParams]     = useState<Partial<SpMotorParams>>({})
-  const [limparCadDialog,     setLimparCadDialog]      = useState(false)
-  const [limparCadConfirm,    setLimparCadConfirm]     = useState('')
 
   // ── Simulador da fórmula ─────────────────────────────────────────────────────
   const [showHelp,        setShowHelp]        = useState(true)
@@ -276,22 +273,6 @@ export default function SpAmbiente() {
     onSuccess: () => {
       toast.success('Filial desativada')
       qc.invalidateQueries({ queryKey: ['sp-filiais'] })
-    },
-    onError: (e: Error) => toast.error(e.message),
-  })
-
-  const limparCadastros = useMutation({
-    mutationFn: async () => {
-      const r = await fetch('/api/cadastros/limpar', { method: 'DELETE', headers })
-      if (!r.ok) throw new Error(await r.text())
-      return r.json() as Promise<{ gestores_removidos: number; rcas_removidos: number; vinculos_removidos: number }>
-    },
-    onSuccess: (data) => {
-      toast.success(`Cadastros limpos: ${data.gestores_removidos} gestores, ${data.rcas_removidos} RCAs, ${data.vinculos_removidos} vínculos removidos`)
-      qc.invalidateQueries({ queryKey: ['cadastros-gestores'] })
-      qc.invalidateQueries({ queryKey: ['cadastros-rcas'] })
-      setLimparCadDialog(false)
-      setLimparCadConfirm('')
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -974,75 +955,6 @@ export default function SpAmbiente() {
           </Table>
         </div>
       )}
-    </div>
-  )
-
-  // ── Render: Manutenção ───────────────────────────────────────────────────────
-  if (isManutencao) return (
-    <div className="space-y-4 max-w-lg">
-      {/* ── Limpeza de Cadastros ── */}
-      <div className="border rounded-md p-4 space-y-3">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Limpar Cadastros de RCAs e Gestores</p>
-            <p className="text-xs text-muted-foreground">
-              Remove todos os RCAs, Gestores e vínculos entre eles.
-              <strong> Use antes de reimportar</strong> o CSV de RCAS_ATIVOS do zero.
-              <strong className="text-destructive"> Irreversível.</strong>
-            </p>
-          </div>
-        </div>
-        <Button variant="destructive" size="sm" onClick={() => setLimparCadDialog(true)}>
-          <Trash2 className="h-4 w-4 mr-1.5" />
-          Limpar cadastros
-        </Button>
-      </div>
-
-      <Dialog open={limparCadDialog} onOpenChange={v => { setLimparCadDialog(v); if (!v) setLimparCadConfirm('') }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
-              Limpar Cadastros de RCAs e Gestores
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Confirmação obrigatória para limpar todos os cadastros de RCAs e Gestores.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <p className="text-sm text-muted-foreground">
-              Esta ação irá remover <strong>todos</strong> os RCAs, Gestores e vínculos cadastrados.
-              Utilize quando precisar reimportar o CSV completo do zero.{' '}
-              <strong className="text-destructive">Essa operação é irreversível.</strong>
-            </p>
-            <div className="space-y-1.5">
-              <Label className="text-sm">
-                Digite <span className="font-mono font-bold text-destructive">CONFIRMO</span> para habilitar a limpeza
-              </Label>
-              <Input
-                value={limparCadConfirm}
-                onChange={e => setLimparCadConfirm(e.target.value)}
-                placeholder="CONFIRMO"
-                className="font-mono"
-                autoComplete="off"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setLimparCadDialog(false); setLimparCadConfirm('') }}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={limparCadConfirm !== 'CONFIRMO' || limparCadastros.isPending}
-              onClick={() => limparCadastros.mutate()}
-            >
-              {limparCadastros.isPending ? 'Limpando...' : 'Confirmar limpeza'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 

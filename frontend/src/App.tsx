@@ -24,6 +24,7 @@ import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolPublicPanel from './pages/farol/FarolPublicPanel'
+import LimparDados from './pages/LimparDados'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolV2Import from './pages/farol/FarolV2Import'
@@ -212,12 +213,13 @@ function AppLayout() {
 
               {/* Configurações (admin) */}
               <Route path="/config/planos"      element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
-              <Route path="/config/manutencao"  element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
+              <Route path="/config/manutencao"  element={<Navigate to="/config/limpar-dados" replace />} />
               <Route path="/config/ambiente"    element={<ProtectedRoute><GestaoAmbiente /></ProtectedRoute>} />
               <Route path="/config/usuarios"    element={<MasterRoute><SpUsuarios /></MasterRoute>} />
               <Route path="/config/usuarios-admin" element={<MasterRoute><AdminUsers /></MasterRoute>} />
               <Route path="/config/audit-log"   element={<MasterRoute><SpAuditLog /></MasterRoute>} />
               <Route path="/config/empresas-bloqueio" element={<MasterRoute><SpEmpresasBloqueio /></MasterRoute>} />
+              <Route path="/config/limpar-dados" element={<MasterRoute><LimparDados /></MasterRoute>} />
               <Route path="/config/uso"         element={<MasterRoute><SpUsoSistema /></MasterRoute>} />
               <Route path="/config/destinatarios" element={<MasterRoute><SpDestinatarios /></MasterRoute>} />
 
