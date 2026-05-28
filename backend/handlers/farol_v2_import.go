@@ -260,10 +260,26 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return strings.TrimSpace(row[idx])
 	}
+	// parseNum detecta o separador decimal pelo ÚLTIMO separador presente, então
+	// funciona tanto para ponto-decimal (ex.: "31.69" do WinThor) quanto para
+	// pt-BR vírgula-decimal (ex.: "1.234.567,89"). NÃO assume formato fixo: tirar
+	// o ponto cegamente inflava os valores (100x em 2 casas, 10x em 1 casa, etc.).
 	parseNum := func(s string) float64 {
 		s = strings.TrimSpace(s)
-		s = strings.ReplaceAll(s, ".", "")
-		s = strings.ReplaceAll(s, ",", ".")
+		if s == "" {
+			return 0
+		}
+		lastDot := strings.LastIndex(s, ".")
+		lastComma := strings.LastIndex(s, ",")
+		switch {
+		case lastComma > lastDot:
+			// vírgula é o decimal (pt-BR): ponto é milhar → remove ponto, vírgula→ponto
+			s = strings.ReplaceAll(s, ".", "")
+			s = strings.ReplaceAll(s, ",", ".")
+		case lastDot > lastComma:
+			// ponto é o decimal (formato numérico): vírgula seria milhar → remove vírgula
+			s = strings.ReplaceAll(s, ",", "")
+		}
 		v, _ := strconv.ParseFloat(s, 64)
 		return v
 	}
