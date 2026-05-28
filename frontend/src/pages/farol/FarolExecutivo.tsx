@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw, Info } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw, Info, Search, SlidersHorizontal, X } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -625,6 +625,15 @@ export default function FarolExecutivo() {
   // Override do mês de comparação (mom). 0 = automático (mês anterior).
   const [compAno, setCompAno]         = useState(0)
   const [compMes, setCompMes]         = useState(0)
+  // Filtros de busca (frontend-only, operam sobre os cards já em memória)
+  const [filterOpen, setFilterOpen]   = useState(false)
+  const [filters, setFilters]         = useState({
+    fornec:  '',   // Indústria
+    gerente: '',   // Gerente GGV
+    sup:     '',   // Equipe / Supervisor
+    rca:     '',   // RCA
+    cli:     '',   // Cliente
+  })
 
   const { data, isLoading, error } = useCards(
     view, compMode, refAno, refMes,
@@ -641,14 +650,42 @@ export default function FarolExecutivo() {
   }, [refAno])
   if (data && refAno === 0) autoRef(data)
 
+  const resetFilters = () => setFilters({ fornec: '', gerente: '', sup: '', rca: '', cli: '' })
+
   const handleDrill = (card: CardItem) => {
-    if (card.level === 'cod_prod') return // Produto é o nível folha
+    if (card.level === 'cod_prod') return
+    resetFilters()
     setDrillPath(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
 
   const handleBack = () => {
+    resetFilters()
     setDrillPath(prev => prev.slice(0, -1))
   }
+
+  // Determina qual campo de filtro está ativo com base no nível atual
+  const activeFilterKey = useMemo((): keyof typeof filters | null => {
+    const lv = data?.next_level?.toLowerCase() ?? ''
+    if (lv.includes('fornec'))     return 'fornec'
+    if (lv.includes('gerente'))    return 'gerente'
+    if (lv.includes('supervisor')) return 'sup'
+    if (lv.includes('rca'))        return 'rca'
+    if (lv.includes('cli'))        return 'cli'
+    return null
+  }, [data?.next_level])
+
+  const activeSearch = activeFilterKey ? filters[activeFilterKey] : ''
+
+  const visibleCards = useMemo(
+    () => {
+      const term = activeSearch.trim().toLowerCase()
+      if (!term || !data?.cards) return data?.cards ?? []
+      return data.cards.filter(c => c.label.toLowerCase().includes(term))
+    },
+    [data?.cards, activeSearch]
+  )
+
+  const hasActiveFilter = Object.values(filters).some(v => v.trim() !== '')
 
   const periodos = data?.periodos ?? []
 
@@ -759,6 +796,28 @@ export default function FarolExecutivo() {
           </>
         )}
 
+        {/* Botão Filtros */}
+        {data && (
+          <button
+            onClick={() => setFilterOpen(o => !o)}
+            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg border text-xs font-medium transition-colors shrink-0 ${
+              hasActiveFilter
+                ? 'border-primary bg-primary/10 text-primary'
+                : filterOpen
+                  ? 'border-slate-400 bg-slate-100 text-slate-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filtros
+            {hasActiveFilter && (
+              <span className="ml-0.5 w-4 h-4 rounded-full bg-primary text-white text-[10px] flex items-center justify-center">
+                {Object.values(filters).filter(v => v.trim()).length}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Botão consolidar view */}
         <button
           onClick={handleRefreshViews}
@@ -781,6 +840,74 @@ export default function FarolExecutivo() {
           </button>
         )}
       </div>
+
+      {/* ── Painel de filtros ─────────────────────────────────────────────── */}
+      {filterOpen && data && (() => {
+        const FILTER_FIELDS: Array<{ key: keyof typeof filters; label: string; levelMatch: string }> = [
+          { key: 'fornec',  label: 'Indústria',      levelMatch: 'fornec'     },
+          { key: 'gerente', label: 'Gerente (GGV)',   levelMatch: 'gerente'    },
+          { key: 'sup',     label: 'Equipe (SUPV)',   levelMatch: 'supervisor' },
+          { key: 'rca',     label: 'RCA',             levelMatch: 'rca'        },
+          { key: 'cli',     label: 'Cliente',         levelMatch: 'cli'        },
+        ]
+        const lv = data.next_level?.toLowerCase() ?? ''
+
+        return (
+          <div className="mb-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                <Search className="h-3.5 w-3.5" /> Filtrar por
+              </p>
+              {hasActiveFilter && (
+                <button onClick={resetFilters} className="text-[11px] text-red-500 hover:text-red-700 flex items-center gap-0.5">
+                  <X className="h-3 w-3" /> Limpar filtros
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {FILTER_FIELDS.map(f => {
+                const isActive = lv.includes(f.levelMatch)
+                return (
+                  <div key={f.key}>
+                    <label className={`block text-[11px] font-medium mb-1 ${isActive ? 'text-primary' : 'text-slate-400'}`}>
+                      {f.label}
+                      {isActive && <span className="ml-1 text-[10px] text-primary/70">(nível atual)</span>}
+                    </label>
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={filters[f.key]}
+                        onChange={e => setFilters(prev => ({ ...prev, [f.key]: e.target.value }))}
+                        placeholder={isActive ? `Buscar ${f.label}...` : '—'}
+                        disabled={!isActive}
+                        className={`w-full h-7 pl-6 pr-6 rounded-lg border text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                          isActive
+                            ? 'border-slate-200 bg-white text-slate-700 placeholder:text-slate-400'
+                            : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                        }`}
+                      />
+                      {filters[f.key] && (
+                        <button
+                          onClick={() => setFilters(prev => ({ ...prev, [f.key]: '' }))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {activeSearch && (
+              <p className="mt-2 text-[11px] text-slate-500">
+                Exibindo <span className="font-semibold text-primary">{visibleCards.length}</span> de {data.cards.length} {data.next_level_label?.toLowerCase() ?? 'itens'}
+              </p>
+            )}
+          </div>
+        )
+      })()}
 
       {/* ── Loading skeleton ─────────────────────────────────────────────── */}
       {isLoading && (
@@ -831,7 +958,7 @@ export default function FarolExecutivo() {
           />
 
           <PerformanceRanking
-            cards={data.cards}
+            cards={visibleCards}
             levelLabel={data.next_level_label}
             onDrill={handleDrill}
             wallStreet={view === 'V01'}
