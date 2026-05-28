@@ -62,6 +62,17 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
 		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
 	},
+	// V04: visão flat por RCA — todos os RCAs da empresa sem filtro de hierarquia
+	"V04": {
+		{Level: "cod_rca",  NameField: "nome_rca",  Label: "RCA"},
+		{Level: "cod_cli",  NameField: "nome_cli",  Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
+	// V05: visão flat por Cliente — todos os clientes da empresa sem filtro de hierarquia
+	"V05": {
+		{Level: "cod_cli",  NameField: "nome_cli",  Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
 }
 
 // viewPorNivel mapeia (view, drillIdx) → nome da view materializada pré-agregada.
@@ -71,6 +82,10 @@ var viewPorNivel = map[string][]string{
 	"V01": {"mv_v01_l0", "mv_v01_l1", "mv_v01_l2", "mv_v01_l3", "mv_farol_cli"},
 	"V02": {"mv_v02_l0", "mv_v02_l1", "mv_v02_l2", "mv_farol_cli"},
 	"V03": {"mv_v03_l0", "mv_v03_l1", "mv_v03_l2", "mv_v03_l3"},
+	// V04: RCA flat — usa mv_v02_l1 (RCA×supervisor) sem filtro de pai; GROUP BY cod_rca
+	// V05: Cliente flat — usa mv_farol_cli sem filtro de pai; GROUP BY cod_cli
+	"V04": {"mv_v02_l1", "mv_farol_cli"},
+	"V05": {"mv_farol_cli"},
 }
 
 // AllSummaryViews lista TODAS as views em ordem de REFRESH (base primeiro).
@@ -169,7 +184,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		hier, ok := hierarquias[view]
 		if !ok {
-			http.Error(w, `{"error":"view inválida — use V01, V02 ou V03"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"view inválida — use V01, V02, V03, V04 ou V05"}`, http.StatusBadRequest)
 			return
 		}
 

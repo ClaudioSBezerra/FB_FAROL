@@ -599,7 +599,7 @@ export default function FarolExecutivo() {
   const { user, spRole, tipoPersona } = useAuth()
   const canImport = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
 
-  const [view, setView]               = useState<'V01' | 'V02' | 'V03'>('V01')
+  const [view, setView]               = useState<'V01' | 'V02' | 'V03' | 'V04' | 'V05'>('V01')
   const [compMode, setCompMode]       = useState('yoy')
   const [drillPath, setDrillPath]     = useState<DrillStep[]>([])
   const [refAno, setRefAno]           = useState(0)
@@ -650,27 +650,6 @@ export default function FarolExecutivo() {
     <div className="min-h-full">
       {/* ── Controles ────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
-        {/* Visão */}
-        <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
-          {([
-            { id: 'V01' as const, label: 'Por Indústria' },
-            { id: 'V03' as const, label: 'Por Gerência' },
-            { id: 'V02' as const, label: 'Por Equipe' },
-          ]).map(v => (
-            <button
-              key={v.id}
-              onClick={() => { setView(v.id); setDrillPath([]) }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === v.id
-                  ? 'bg-primary text-white'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
-
         {/* Comparação */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
@@ -697,6 +676,29 @@ export default function FarolExecutivo() {
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+          ))}
+        </div>
+
+        {/* Filtros de nível */}
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
+          {([
+            { id: 'V01' as const, label: 'Indústria' },
+            { id: 'V03' as const, label: 'Gerente GGV' },
+            { id: 'V02' as const, label: 'Equipe SUPV' },
+            { id: 'V04' as const, label: 'RCA' },
+            { id: 'V05' as const, label: 'Cliente' },
+          ]).map(v => (
+            <button
+              key={v.id}
+              onClick={() => { setView(v.id); setDrillPath([]) }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === v.id
+                  ? 'bg-primary text-white'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {v.label}
+            </button>
           ))}
         </div>
 
@@ -817,7 +819,7 @@ export default function FarolExecutivo() {
             cards={data.cards}
             levelLabel={data.next_level_label}
             onDrill={handleDrill}
-            wallStreet={view === 'V01'}
+            wallStreet={view === 'V01' || view === 'V04' || view === 'V05'}
           />
         </>
       )}
