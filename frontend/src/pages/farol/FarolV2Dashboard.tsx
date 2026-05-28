@@ -10,9 +10,9 @@ const PERSONAS_EXECUTIVO = new Set(['diretor', 'gerente_geral'])
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-interface DrillStep { level: string; value: string; label: string }
+export interface DrillStep { level: string; value: string; label: string }
 
-interface CardItem {
+export interface CardItem {
   key: string
   label: string
   level: string
@@ -29,7 +29,7 @@ interface CardItem {
   mix: number
 }
 
-interface KPI {
+export interface KPI {
   total_atual: number
   total_ant: number
   total_pct: number
@@ -44,7 +44,7 @@ interface KPI {
   vermelhos: number
 }
 
-interface CardsResponse {
+export interface CardsResponse {
   cards: CardItem[]
   kpi: KPI
   periodo: { ref_ano: number; ref_mes: number; label: string; comp_mode: string }
@@ -66,13 +66,13 @@ function fmtBRL(v: number) {
 function fmtPct(v: number) { return v.toFixed(1) + '%' }
 function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
 
-function parsePeriodo(s: string): { ano: number; mes: number } {
+export function parsePeriodo(s: string): { ano: number; mes: number } {
   const [y, m] = s.split('-')
   return { ano: +y, mes: +m }
 }
 
 const MES_NOMES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-function fmtMesAno(ano: number, mes: number) {
+export function fmtMesAno(ano: number, mes: number) {
   return `${MES_NOMES[mes] ?? mes}/${ano}`
 }
 
@@ -119,7 +119,7 @@ function useCards(view: string, compMode: string, refAno: number, refMes: number
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
 
-function KPIBar({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'] }) {
+export function KPIBar({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'] }) {
   return (
     <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-4 mb-4">
       <p className="text-xs text-slate-400 mb-3 font-medium">{periodo.label}</p>
@@ -159,7 +159,7 @@ function KPIBar({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'] 
   )
 }
 
-function CardVenda({ card, onClick }: { card: CardItem; onClick: () => void }) {
+export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => void }) {
   const barW = Math.min(100, card.pct)
   return (
     <button
@@ -218,7 +218,7 @@ function CardVenda({ card, onClick }: { card: CardItem; onClick: () => void }) {
   )
 }
 
-function Breadcrumb({
+export function Breadcrumb({
   drillPath,
   onNavigate,
 }: {

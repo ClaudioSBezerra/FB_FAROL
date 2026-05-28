@@ -629,3 +629,155 @@ func FarolV2PeriodosHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]any{"periodos": periodos})
 	}
 }
+
+// ─── Acesso público ION VENDAS ───────────────────────────────────────────────
+// O app ION abre um link parametrizado SEM login (RCAs em campo) que cai no
+// painel novo já escopado ao supervisor ou ao RCA. Mesmas views, mesma
+// nomenclatura do painel principal — apenas com o escopo fixado pela URL.
+
+// resolveEmpresaCNPJ resolve empresa_id a partir do CNPJ (dígitos, com ou sem máscara).
+func resolveEmpresaCNPJ(db *sql.DB, cnpj string) string {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, cnpj)
+	if digits == "" {
+		return ""
+	}
+	var id string
+	_ = db.QueryRow(
+		`SELECT id FROM companies WHERE regexp_replace(cnpj, '[^0-9]', '', 'g') = $1 LIMIT 1`,
+		digits,
+	).Scan(&id)
+	return id
+}
+
+// lookupNome busca o nome de um código na view base (ex.: cod_supervisor → nome_supervisor).
+func lookupNome(db *sql.DB, empresaID, codCol, nomeCol, cod string) string {
+	if cod == "" {
+		return ""
+	}
+	codCol, nomeCol = safeColName(codCol), safeColName(nomeCol)
+	var nome string
+	q := fmt.Sprintf(
+		`SELECT %s FROM farol.mv_farol_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+		nomeCol, codCol, nomeCol)
+	_ = db.QueryRow(q, empresaID, cod).Scan(&nome)
+	if nome == "" {
+		nome = cod
+	}
+	return nome
+}
+
+// lookupParent descobre o código pai de um código (ex.: o supervisor de um RCA).
+func lookupParent(db *sql.DB, empresaID, codCol, cod, parentCol string) string {
+	codCol, parentCol = safeColName(codCol), safeColName(parentCol)
+	var p string
+	q := fmt.Sprintf(
+		`SELECT %s FROM farol.mv_farol_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+		parentCol, codCol, parentCol)
+	_ = db.QueryRow(q, empresaID, cod).Scan(&p)
+	return p
+}
+
+// FarolV2PublicCardsHandler — GET /api/v2/farol/public/cards (SEM auth)
+//   cnpj, scope (sup|rca), cod  → escopo fixo; drill adicional opcional.
+func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query()
+
+		empresaID := resolveEmpresaCNPJ(db, q.Get("cnpj"))
+		if empresaID == "" {
+			http.Error(w, `{"error":"empresa não encontrada para este CNPJ"}`, http.StatusNotFound)
+			return
+		}
+
+		scope := strings.ToLower(strings.TrimSpace(q.Get("scope")))
+		cod := strings.TrimSpace(q.Get("cod"))
+		if cod == "" || (scope != "sup" && scope != "rca") {
+			http.Error(w, `{"error":"scope (sup|rca) e cod obrigatórios"}`, http.StatusBadRequest)
+			return
+		}
+
+		// ION sempre usa a visão por equipe (força de vendas).
+		view := "V02"
+		hier := hierarquias[view]
+
+		compMode := q.Get("comp_mode")
+		if compMode == "" {
+			compMode = "yoy"
+		}
+
+		refAno, _ := strconv.Atoi(q.Get("ref_ano"))
+		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
+		if refAno == 0 || refMes == 0 {
+			_ = db.QueryRow(`
+				SELECT ano, mes FROM vendas_importadas
+				WHERE empresa_id=$1 AND tipo_base='ATUAL'
+				ORDER BY ano DESC, mes DESC LIMIT 1`, empresaID).Scan(&refAno, &refMes)
+		}
+		if refAno == 0 {
+			json.NewEncoder(w).Encode(cardsResponse{Cards: []cardItem{}, View: view})
+			return
+		}
+
+		projecaoFator := 1.0
+		if compMode == "ytd" && refMes > 0 {
+			projecaoFator = 12.0 / float64(refMes)
+		}
+
+		// Drill base fixado pela URL (não pode ser removido pelo usuário).
+		var baseDrill []drillStep
+		switch scope {
+		case "sup":
+			baseDrill = []drillStep{
+				{Level: "cod_supervisor", Value: cod, Label: lookupNome(db, empresaID, "cod_supervisor", "nome_supervisor", cod)},
+			}
+		case "rca":
+			sup := lookupParent(db, empresaID, "cod_rca", cod, "cod_supervisor")
+			baseDrill = []drillStep{
+				{Level: "cod_supervisor", Value: sup, Label: lookupNome(db, empresaID, "cod_supervisor", "nome_supervisor", sup)},
+				{Level: "cod_rca", Value: cod, Label: lookupNome(db, empresaID, "cod_rca", "nome_rca", cod)},
+			}
+		}
+
+		// Drill adicional do usuário, apensado após o escopo fixo.
+		var userDrill []drillStep
+		if dj := q.Get("drill"); dj != "" {
+			_ = json.Unmarshal([]byte(dj), &userDrill)
+		}
+		drillPath := append(baseDrill, userDrill...)
+		drillIdx := len(drillPath)
+
+		if drillIdx >= len(hier) {
+			json.NewEncoder(w).Encode(cardsResponse{Cards: []cardItem{}, DrillPath: drillPath, View: view})
+			return
+		}
+		currentLevel := hier[drillIdx]
+
+		cards := fetchCards(db, empresaID, view, compMode, refAno, refMes, drillIdx, currentLevel, drillPath, projecaoFator)
+		kpi := computeKPI(cards)
+		plabel := buildPeriodoLabel(compMode, refAno, refMes)
+
+		sort.Slice(cards, func(i, j int) bool {
+			if cards[i].Cor != cards[j].Cor {
+				return cards[i].Cor == "vermelho"
+			}
+			return cards[i].Pct < cards[j].Pct
+		})
+
+		json.NewEncoder(w).Encode(cardsResponse{
+			Cards:          cards,
+			KPI:            kpi,
+			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode},
+			Periodos:       fetchPeriodosDisponiveis(db, empresaID),
+			View:           view,
+			DrillPath:      drillPath,
+			NextLevel:      currentLevel.Level,
+			NextLevelLabel: currentLevel.Label,
+		})
+	}
+}

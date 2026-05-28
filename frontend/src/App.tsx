@@ -23,9 +23,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
-import FarolDashboard from './pages/farol/FarolDashboard'
-import FarolRcaDetail from './pages/farol/FarolRcaDetail'
-import FarolFornecRcas from './pages/farol/FarolFornecRcas'
+import FarolPublicPanel from './pages/farol/FarolPublicPanel'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolV2Import from './pages/farol/FarolV2Import'
@@ -248,16 +246,16 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-senha"     element={<ResetPassword />} />
 
-            {/* Farol Mobile (público — chamado via WebView do ION VENDAS).
+            {/* Farol ION VENDAS (público — link parametrizado, sem login).
                 Os redirects /701 → /m/701 e /CNPJ/SUP|RCA/cod → /m/... são feitos
-                server-side em main.go.
-                A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU cod=CNPJ);
-                o componente detecta pela quantidade de dígitos. */}
-            <Route path="/m/:cnpj/sup/:cod"                element={<FarolDashboard />} />
-            <Route path="/m/:cnpj/sup/:cod/forn/:codFornec" element={<FarolFornecRcas />} />
-            <Route path="/m/:cod"                          element={<FarolDashboard />} />
-            <Route path="/m/:cod/forn/:codFornec"          element={<FarolFornecRcas />} />
-            <Route path="/m/:cod/rca/:codRca"              element={<FarolRcaDetail />} />
+                server-side em main.go. Todas as rotas /m/... abrem o painel novo
+                (FarolPublicPanel) escopado por CNPJ + SUPV/RCA, sobre as views novas.
+                A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU CNPJ). */}
+            <Route path="/m/:cnpj/sup/:cod"                 element={<FarolPublicPanel />} />
+            <Route path="/m/:cnpj/sup/:cod/forn/:codFornec" element={<FarolPublicPanel />} />
+            <Route path="/m/:cod"                           element={<FarolPublicPanel />} />
+            <Route path="/m/:cod/forn/:codFornec"           element={<FarolPublicPanel />} />
+            <Route path="/m/:cod/rca/:codRca"               element={<FarolPublicPanel />} />
             <Route path="/*" element={
               <ProtectedRoute>
                 <FilialProvider>
