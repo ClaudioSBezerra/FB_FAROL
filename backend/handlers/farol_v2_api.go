@@ -630,8 +630,45 @@ func buildPeriodoLabel(compMode string, refAno, refMes int) string {
 	return cur
 }
 
+// refreshAllFarolViews recria todas as views materializadas: base (mv_farol_cli)
+// primeiro — as de resumo dependem dela — depois as de resumo em paralelo.
+// Usado após importação, após limpeza e pelo botão "Consolidar view".
+func refreshAllFarolViews(db *sql.DB) error {
+	t0 := time.Now()
+	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
+		log.Printf("[farol:view] refresh mv_farol_cli ERRO em %v: %v", time.Since(t0), err)
+		return err
+	}
+
+	summaryViews := AllSummaryViews[1:] // tudo exceto mv_farol_cli (índice 0)
+	var wg sync.WaitGroup
+	errs := make([]error, len(summaryViews))
+	for i, vw := range summaryViews {
+		wg.Add(1)
+		go func(idx int, name string) {
+			defer wg.Done()
+			if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err != nil {
+				errs[idx] = err
+				log.Printf("[farol:view] refresh %s ERRO: %v", name, err)
+			} else {
+				db.Exec(`ANALYZE ` + name)
+			}
+		}(i, vw)
+	}
+	wg.Wait()
+	db.Exec(`ANALYZE farol.mv_farol_cli`)
+
+	for _, e := range errs {
+		if e != nil {
+			return e
+		}
+	}
+	log.Printf("[farol:view] refreshAllFarolViews concluído em %v", time.Since(t0))
+	return nil
+}
+
 // ─── RefreshViewsHandler — POST /api/v2/farol/refresh-views ─────────────────
-// REFRESH CONCURRENTLY de mv_farol_cli (base) e depois as 7 views de resumo em
+// REFRESH CONCURRENTLY de mv_farol_cli (base) e depois as views de resumo em
 // paralelo. Necessário após deploy inicial ou quando as views desatualizaram.
 
 func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
@@ -650,39 +687,9 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		t0 := time.Now()
 		log.Printf("[farol:view] RefreshViews início — empresa=%s user=%s", spCtx.EmpresaID, spCtx.UserID)
 
-		// 1. Base view primeiro — as summary views dependem dela.
-		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
-			log.Printf("[farol:view] RefreshViews ERRO mv_farol_cli em %v: %v", time.Since(t0), err)
+		if err := refreshAllFarolViews(db); err != nil {
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
-		}
-		log.Printf("[farol:view] RefreshViews mv_farol_cli OK em %v", time.Since(t0))
-
-		// 2. Summary views em paralelo.
-		summaryViews := AllSummaryViews[1:] // tudo exceto mv_farol_cli (índice 0)
-		var wg sync.WaitGroup
-		errs := make([]string, len(summaryViews))
-		for i, vw := range summaryViews {
-			wg.Add(1)
-			go func(idx int, name string) {
-				defer wg.Done()
-				if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err != nil {
-					errs[idx] = err.Error()
-					log.Printf("[farol:view] RefreshViews ERRO %s: %v", name, err)
-				} else {
-					db.Exec(`ANALYZE ` + name)
-					log.Printf("[farol:view] RefreshViews %s OK", name)
-				}
-			}(i, vw)
-		}
-		wg.Wait()
-		db.Exec(`ANALYZE farol.mv_farol_cli`)
-
-		for _, e := range errs {
-			if e != "" {
-				json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": e})
-				return
-			}
 		}
 
 		var rowCount int

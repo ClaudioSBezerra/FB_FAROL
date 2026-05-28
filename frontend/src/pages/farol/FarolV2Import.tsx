@@ -383,6 +383,14 @@ export default function FarolV2Import() {
     qc.invalidateQueries({ queryKey: ['farol-v2-cards'] })
   }
 
+  const handleClearAll = async () => {
+    if (periodos.length === 0) return
+    if (!confirm(`Limpar TODA a base (${periodos.length} períodos importados)? Esta ação não pode ser desfeita.`)) return
+    await fetch(`/api/v2/vendas/clear`, { method: 'DELETE' })
+    refetch()
+    qc.invalidateQueries({ queryKey: ['farol-v2-cards'] })
+  }
+
   return (
     <div className="max-w-2xl">
       <div className="grid gap-6">
@@ -398,7 +406,17 @@ export default function FarolV2Import() {
 
         {/* Card de períodos existentes */}
         <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-6">
-          <h2 className="text-base font-semibold text-slate-800 mb-4">Dados Importados</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-semibold text-slate-800">Dados Importados</h2>
+            {periodos.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                className="text-xs font-medium text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Limpar tudo
+              </button>
+            )}
+          </div>
           <PeriodosTable periodos={periodos} onDelete={handleDelete} />
         </div>
 

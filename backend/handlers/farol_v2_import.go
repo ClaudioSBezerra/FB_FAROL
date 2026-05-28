@@ -754,14 +754,27 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		tipoBase := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_base")))
+		ano, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
+		mes, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
+		validTipo := tipoBase == "ATUAL" || tipoBase == "COMPARATIVA"
+
 		var res sql.Result
 		var err error
-		if tipoBase == "ATUAL" || tipoBase == "COMPARATIVA" {
+		switch {
+		case validTipo && ano > 0 && mes > 0:
+			// Período específico (botão "Remover" de uma linha da tabela).
+			res, err = db.Exec(
+				`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4`,
+				spCtx.EmpresaID, tipoBase, ano, mes,
+			)
+		case validTipo:
+			// Toda uma base (ATUAL ou COMPARATIVA).
 			res, err = db.Exec(
 				`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2`,
 				spCtx.EmpresaID, tipoBase,
 			)
-		} else {
+		default:
+			// Base inteira da empresa ("Limpar tudo").
 			res, err = db.Exec(
 				`DELETE FROM vendas_importadas WHERE empresa_id=$1`,
 				spCtx.EmpresaID,
@@ -772,6 +785,12 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		n, _ := res.RowsAffected()
+
+		// Reconstrói as views materializadas para o painel refletir a limpeza —
+		// sem isso o dashboard continua mostrando os dados apagados (views = stale).
+		if rerr := refreshAllFarolViews(db); rerr != nil {
+			log.Printf("[VendasClear] delete OK (%d linhas) mas REFRESH falhou: %v", n, rerr)
+		}
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n})
 	}
 }
