@@ -337,47 +337,63 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
   )
 }
 
-// ─── Wall Street Bar ─────────────────────────────────────────────────────────
+// ─── ECG Bar ─────────────────────────────────────────────────────────────────
 
-// Heights pattern for "trading volume" feel — static so it's consistent per position
-const WS_HEIGHTS = [52,84,46,93,67,78,54,88,72,61,95,56,81,69,43,87,63,77,58,96,62,85,48,76,90,60,73,51,83,66,55,89,71,58,94,64,79,53,86,70]
+function ecgPath(W: number, H: number): string {
+  // 4 ciclos P-QRS-T ao longo de W unidades; baseline em 75% da altura
+  const b = H * 0.75     // baseline y
+  const cw = W / 4       // largura de cada ciclo
+  const s = cw / 50      // escala horizontal (referência: ciclo de 50u)
 
-function WallStreetBar({ pct, maxPct, cor }: { pct: number; maxPct: number; cor: Cor }) {
-  const TICKS = 32
+  function cycle(x: number) {
+    return [
+      `L ${x + 9*s},${b}`,
+      `L ${x + 11*s},${b - H*0.22}`,         // P — pequeno bump
+      `L ${x + 13*s},${b}`,
+      `L ${x + 17*s},${b}`,
+      `L ${x + 18*s},${b + H*0.12}`,          // Q — leve queda
+      `L ${x + 20*s},${H*0.07}`,              // R — pico alto
+      `L ${x + 22*s},${b + H*0.18}`,          // S — vale
+      `L ${x + 24*s},${b}`,
+      `L ${x + 29*s},${b}`,
+      `Q ${x + 34*s},${b - H*0.34} ${x + 38*s},${b}`, // T — bump médio
+      `L ${x + cw},${b}`,
+    ].join(' ')
+  }
+
+  return `M 0,${b} ${[0, cw, cw*2, cw*3].map(cycle).join(' ')}`
+}
+
+function EcgBar({ pct, maxPct, cor, uid }: { pct: number; maxPct: number; cor: Cor; uid: string }) {
+  const W = 200
+  const H = 30
   const col = COR_HEX[cor]
-  const barFill = Math.min(pct / maxPct, 1)
-  const target100Pct = Math.min(100 / maxPct, 1) * 100
+  const fillX = Math.min(pct / maxPct, 1) * W
+  const target100X = Math.min(100 / maxPct, 1) * W
+  const clipId = `ecg-${uid.replace(/[^a-z0-9]/gi, '-')}`
+  const path = ecgPath(W, H)
 
   return (
-    <div className="flex-1 min-w-0 relative">
-      <div className="flex items-end gap-[2px] h-7">
-        {Array.from({ length: TICKS }).map((_, i) => {
-          const pos = (i + 0.5) / TICKS
-          const filled = pos <= barFill
-          const h = WS_HEIGHTS[i % WS_HEIGHTS.length]
-          return (
-            <div
-              key={i}
-              className="flex-1 rounded-[1px]"
-              style={{
-                height: filled ? `${h}%` : `${Math.max(Math.round(h * 0.22), 8)}%`,
-                backgroundColor: filled ? col : 'rgba(148,163,184,0.18)',
-                opacity: filled ? Math.min(0.42 + 0.58 * (pos / barFill), 1) : 0.7,
-                transition: 'height 0.55s cubic-bezier(0.4,0,0.2,1)',
-              }}
-            />
-          )
-        })}
-      </div>
-      {/* Objetivo 100% marker — só exibido quando alguém ultrapassou 100% */}
-      {maxPct > 105 && (
-        <div
-          className="absolute inset-y-0 flex flex-col items-center pointer-events-none"
-          style={{ left: `${target100Pct}%` }}
-        >
-          <div className="w-px h-full bg-slate-400/50" />
-        </div>
-      )}
+    <div className="flex-1 min-w-0">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-7" preserveAspectRatio="none">
+        <defs>
+          <clipPath id={clipId}>
+            <rect x="0" y="0" width={fillX} height={H} />
+          </clipPath>
+        </defs>
+        {/* Traçado de fundo — toda a extensão, quase invisível */}
+        <path d={path} stroke="rgba(148,163,184,0.2)" strokeWidth="1.5" fill="none"
+              strokeLinecap="round" strokeLinejoin="round" />
+        {/* Traçado colorido — clipado até o atingimento */}
+        <path d={path} stroke={col} strokeWidth="2" fill="none"
+              strokeLinecap="round" strokeLinejoin="round"
+              clipPath={`url(#${clipId})`} />
+        {/* Linha de 100% — só quando alguém ultrapassou */}
+        {maxPct > 105 && (
+          <line x1={target100X} y1="2" x2={target100X} y2={H - 2}
+                stroke="rgba(100,116,139,0.55)" strokeWidth="1" strokeDasharray="3,2" />
+        )}
+      </svg>
     </div>
   )
 }
@@ -453,7 +469,7 @@ function PerformanceRanking({
 
               {/* Bar */}
               {wallStreet
-                ? <WallStreetBar pct={card.pct} maxPct={maxPct} cor={cor} />
+                ? <EcgBar pct={card.pct} maxPct={maxPct} cor={cor} uid={card.key} />
                 : (
                   <div className="flex-1 min-w-0">
                     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
