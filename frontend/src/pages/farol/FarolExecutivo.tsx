@@ -1,9 +1,10 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronLeft, UploadCloud, RefreshCw, Info } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,61 @@ function parsePeriodo(s: string): { ano: number; mes: number } {
 const MES_NOMES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 function fmtMesAno(ano: number, mes: number) { return `${MES_NOMES[mes] ?? mes}/${String(ano).slice(2)}` }
 
+const MODE_LABEL: Record<string, string> = {
+  yoy: 'Ano a Ano',
+  ytd: 'Projeção Anual',
+  mom: 'Mês a Mês',
+}
+const MODE_DESC: Record<string, string> = {
+  yoy: 'Compara o mesmo mês do ano atual com o mesmo mês do ano anterior.',
+  ytd: 'Extrapola o acumulado do ano atual (Jan ao mês selecionado) para projetar o total anual. Compara com o total real do ano anterior.',
+  mom: 'Compara o mês atual com o mês imediatamente anterior.',
+}
+
+function getPeriodoTooltips(p: CardsResponse['periodo']) {
+  const mes = MES_NOMES[p.ref_mes] ?? String(p.ref_mes)
+  const fator = p.ref_mes > 0 ? (12 / p.ref_mes).toFixed(1) : '1'
+  switch (p.comp_mode) {
+    case 'yoy':
+      return {
+        ant: `Faturamento de ${p.ant_label ?? '—'} — mesmo mês do ano anterior`,
+        cur: `Faturamento de ${p.cur_label ?? '—'} — mês de referência atual`,
+      }
+    case 'ytd':
+      return {
+        ant: `Total faturado em ${p.ant_label ?? '—'} — ano completo (12 meses)`,
+        cur: `Projeção ${p.ref_ano}: acumulado Jan–${mes}/${p.ref_ano} × ${fator}`,
+      }
+    case 'mom':
+      return {
+        ant: `Faturamento de ${p.ant_label ?? '—'} — mês anterior`,
+        cur: `Faturamento de ${p.cur_label ?? '—'} — mês atual`,
+      }
+    default:
+      return { ant: '', cur: '' }
+  }
+}
+
+// ─── InfoTooltip ──────────────────────────────────────────────────────────────
+
+function InfoTooltip({ text, iconClassName }: { text: string; iconClassName?: string }) {
+  if (!text) return null
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex items-center cursor-help">
+            <Info className={`h-3 w-3 ${iconClassName ?? 'text-slate-400 hover:text-slate-600'}`} />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 const COR_HEX: Record<Cor, string> = {
   verde:    '#10b981',
   amarelo:  '#f59e0b',
@@ -164,6 +220,7 @@ function ArcGauge({ pct, cor, size = 148 }: { pct: number; cor: Cor; size?: numb
 function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'] }) {
   const d = delta(kpi.total_atual, kpi.total_ant)
   const isUp = d >= 0
+  const tips = getPeriodoTooltips(periodo)
 
   return (
     <div className="relative bg-gradient-to-br from-slate-950 via-slate-900 to-slate-900 rounded-2xl overflow-hidden mb-6 shadow-2xl">
@@ -184,7 +241,10 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
             <p className="text-white/80 text-sm font-medium">{periodo.label}</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500 uppercase tracking-wider">{periodo.comp_mode.toUpperCase()}</span>
+            <span className="flex items-center gap-1 text-xs text-slate-300 font-semibold">
+              {MODE_LABEL[periodo.comp_mode] ?? periodo.comp_mode}
+              <InfoTooltip text={MODE_DESC[periodo.comp_mode] ?? ''} iconClassName="text-slate-500 hover:text-slate-300" />
+            </span>
             <div className="flex items-center gap-1.5">
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
@@ -220,7 +280,10 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
 
           {/* Bloco Anterior */}
           <div className="flex-shrink-0">
-            <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Total Anterior</p>
+            <div className="flex items-center gap-1 mb-1">
+              <p className="text-slate-400 text-xs uppercase tracking-widest">Total Anterior</p>
+              <InfoTooltip text={tips.ant} iconClassName="text-slate-500 hover:text-slate-300" />
+            </div>
             <p className="text-slate-300 text-3xl font-bold tabular-nums leading-none">{fmtBRL(kpi.total_ant)}</p>
             <p className="text-slate-500 text-xs mt-2 truncate" title={periodo.ant_label || ''}>{periodo.ant_label || '—'}</p>
           </div>
@@ -230,7 +293,12 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
 
           {/* Bloco Atual */}
           <div className="flex-shrink-0">
-            <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Total Atual</p>
+            <div className="flex items-center gap-1 mb-1">
+              <p className="text-slate-400 text-xs uppercase tracking-widest">
+                {periodo.comp_mode === 'ytd' ? 'Projeção Anual' : 'Total Atual'}
+              </p>
+              <InfoTooltip text={tips.cur} iconClassName="text-slate-500 hover:text-slate-300" />
+            </div>
             <p className="text-white text-4xl font-black tabular-nums leading-none">{fmtBRL(kpi.total_atual)}</p>
             <div className={`flex items-center gap-1.5 mt-2 ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
               {isUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
@@ -534,17 +602,25 @@ export default function FarolExecutivo() {
             { id: 'ytd', label: 'Projeção Anual' },
             { id: 'mom', label: 'Mês a Mês' },
           ].map(m => (
-            <button
-              key={m.id}
-              onClick={() => { setCompMode(m.id); setDrillPath([]) }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                compMode === m.id
-                  ? 'bg-slate-800 text-white'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {m.label}
-            </button>
+            <TooltipProvider key={m.id} delayDuration={400}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => { setCompMode(m.id); setDrillPath([]) }}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      compMode === m.id
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+                  {MODE_DESC[m.id]}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ))}
         </div>
 
