@@ -197,7 +197,7 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
           {/* Arc gauge + main % */}
           <div className="relative flex-shrink-0">
             <ArcGauge pct={kpi.total_pct} cor={kpi.total_cor} size={160} />
-            <div className="absolute inset-0 flex flex-col items-center justify-center pb-4">
+            <div className="absolute inset-0 flex flex-col items-center justify-center pt-10">
               <span className={`font-black tabular-nums ${
                 kpi.total_pct >= 1000 ? 'text-xl'
                   : kpi.total_pct >= 100 ? 'text-3xl'
