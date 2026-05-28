@@ -341,22 +341,27 @@ type aggResult struct {
 
 func queryAggregated(db *sql.DB, viewName, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
+	// GROUP BY é necessário para o modo ytd (mes <= N), onde a view tem uma linha
+	// por mês e a query retorna N linhas por grupo. Nos modos yoy/mom (mes exato),
+	// o GROUP BY é inócuo — cada grupo já tem uma única linha.
 	q := fmt.Sprintf(`
 SELECT
-  v.%s          AS key,
-  v.%s          AS label,
-  v.pvenda      AS valor,
-  v.faturado    AS faturado,
-  v.transmitido AS transmitido,
-  v.base_cli    AS base_cli,
-  v.positivados AS positivados,
-  v.mix         AS mix
+  v.%s                           AS key,
+  MAX(v.%s)                      AS label,
+  SUM(v.pvenda)                  AS valor,
+  SUM(v.faturado)                AS faturado,
+  SUM(v.transmitido)             AS transmitido,
+  ROUND(AVG(v.base_cli))::int    AS base_cli,
+  ROUND(AVG(v.positivados))::int AS positivados,
+  AVG(v.mix)                     AS mix
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != ''
-AND %s %s`,
+AND %s %s
+GROUP BY v.%s`,
 		groupCol, nameCol,
 		viewName,
 		groupCol, atualCond, drillCond,
+		groupCol,
 	)
 
 	rows, err := db.Query(q, args...)
