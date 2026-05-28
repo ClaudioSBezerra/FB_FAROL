@@ -326,6 +326,20 @@ export default function SpUsuarios() {
     }
   }
 
+  // ── Busca ────────────────────────────────────────────────────────────────────
+  // Filtro client-side por nome, e-mail ou empresa. Normaliza acentos para que
+  // "jose" case com "JOSÉ" (importação cria RCAs com nomes acentuados).
+  const [search, setSearch] = useState('')
+  const norm = (s: string) => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+  const q = norm(search.trim())
+  const filtered = q === ''
+    ? usuarios
+    : usuarios.filter(u =>
+        norm(u.full_name).includes(q) ||
+        norm(u.email).includes(q) ||
+        norm(u.company_name).includes(q)
+      )
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
@@ -334,6 +348,20 @@ export default function SpUsuarios() {
         <Button size="sm" onClick={() => setNovoDialog(true)}>
           <UserPlus className="h-4 w-4 mr-1" /> Novo Usuário
         </Button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar por nome, e-mail ou empresa…"
+          className="max-w-md"
+        />
+        <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+          {q === ''
+            ? `${usuarios.length.toLocaleString('pt-BR')} usuários`
+            : `${filtered.length.toLocaleString('pt-BR')} de ${usuarios.length.toLocaleString('pt-BR')}`}
+        </span>
       </div>
 
       {isLoading ? (
@@ -351,7 +379,7 @@ export default function SpUsuarios() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {usuarios.map(u => (
+            {filtered.map(u => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.full_name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
@@ -379,10 +407,10 @@ export default function SpUsuarios() {
                 </TableCell>
               </TableRow>
             ))}
-            {usuarios.length === 0 && (
+            {filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground text-sm py-8">
-                  Nenhum usuário encontrado.
+                  {q === '' ? 'Nenhum usuário encontrado.' : `Nenhum resultado para "${search}".`}
                 </TableCell>
               </TableRow>
             )}

@@ -198,7 +198,11 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
           <div className="relative flex-shrink-0">
             <ArcGauge pct={kpi.total_pct} cor={kpi.total_cor} size={160} />
             <div className="absolute inset-0 flex flex-col items-center justify-center pb-4">
-              <span className={`font-black tabular-nums ${kpi.total_pct >= 1000 ? 'text-xl' : 'text-4xl'} ${COR_TEXT[kpi.total_cor]}`}>
+              <span className={`font-black tabular-nums ${
+                kpi.total_pct >= 1000 ? 'text-xl'
+                  : kpi.total_pct >= 100 ? 'text-3xl'
+                  : 'text-4xl'
+              } ${COR_TEXT[kpi.total_cor]}`}>
                 {fmtPctShort(kpi.total_pct)}
               </span>
               <span className="text-slate-400 text-[10px] uppercase tracking-widest font-semibold mt-0.5">atingimento</span>
