@@ -43,7 +43,12 @@ interface KPI {
 interface CardsResponse {
   cards: CardItem[]
   kpi: KPI
-  periodo: { ref_ano: number; ref_mes: number; label: string; comp_mode: string }
+  periodo: {
+    ref_ano: number; ref_mes: number;
+    label: string; comp_mode: string;
+    cur_label?: string; ant_label?: string;
+    comp_ano?: number; comp_mes?: number;
+  }
   periodos: string[]
   view: string
   drill_path: DrillStep[]
@@ -212,14 +217,24 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
           {/* Divisor */}
           <div className="w-px h-20 bg-white/10 self-center hidden md:block" />
 
-          {/* Revenue block */}
+          {/* Bloco Anterior */}
+          <div className="flex-shrink-0">
+            <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Total Anterior</p>
+            <p className="text-slate-300 text-3xl font-bold tabular-nums leading-none">{fmtBRL(kpi.total_ant)}</p>
+            <p className="text-slate-500 text-xs mt-2 truncate" title={periodo.ant_label || ''}>{periodo.ant_label || '—'}</p>
+          </div>
+
+          {/* Divisor */}
+          <div className="w-px h-20 bg-white/10 self-center hidden md:block" />
+
+          {/* Bloco Atual */}
           <div className="flex-shrink-0">
             <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Total Atual</p>
             <p className="text-white text-4xl font-black tabular-nums leading-none">{fmtBRL(kpi.total_atual)}</p>
             <div className={`flex items-center gap-1.5 mt-2 ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
               {isUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
               <span className="text-sm font-bold tabular-nums">{isUp ? '+' : ''}{d.toFixed(1)}%</span>
-              <span className="text-slate-500 text-xs">vs {fmtBRL(kpi.total_ant)}</span>
+              <span className="text-slate-500 text-xs truncate" title={periodo.cur_label || ''}>{periodo.cur_label || ''}</span>
             </div>
           </div>
 
@@ -404,15 +419,21 @@ function DrillBreadcrumb({
 
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
 
-function useCards(view: string, compMode: string, refAno: number, refMes: number, drillPath: DrillStep[]) {
+function useCards(
+  view: string, compMode: string,
+  refAno: number, refMes: number,
+  compAno: number, compMes: number,
+  drillPath: DrillStep[],
+) {
   return useQuery<CardsResponse>({
-    queryKey: ['farol-v2-cards', view, compMode, refAno, refMes, JSON.stringify(drillPath)],
+    queryKey: ['farol-v2-cards', view, compMode, refAno, refMes, compAno, compMes, JSON.stringify(drillPath)],
     queryFn: async () => {
       const params = new URLSearchParams({
         view,
         comp_mode: compMode,
         ...(refAno > 0 && { ref_ano: String(refAno) }),
         ...(refMes > 0 && { ref_mes: String(refMes) }),
+        ...(compAno > 0 && compMes > 0 && { comp_ano: String(compAno), comp_mes: String(compMes) }),
         ...(drillPath.length > 0 && { drill: JSON.stringify(drillPath) }),
       })
       const r = await fetch(`/api/v2/farol/cards?${params}`)
@@ -437,8 +458,16 @@ export default function FarolExecutivo() {
   const [refAno, setRefAno]           = useState(0)
   const [refreshing, setRefreshing]   = useState(false)
   const [refMes, setRefMes]       = useState(0)
+  // Override do mês de comparação (mom). 0 = automático (mês anterior).
+  const [compAno, setCompAno]         = useState(0)
+  const [compMes, setCompMes]         = useState(0)
 
-  const { data, isLoading, error } = useCards(view, compMode, refAno, refMes, drillPath)
+  const { data, isLoading, error } = useCards(
+    view, compMode, refAno, refMes,
+    compMode === 'mom' ? compAno : 0,
+    compMode === 'mom' ? compMes : 0,
+    drillPath,
+  )
 
   const autoRef = useCallback((d: CardsResponse) => {
     if (refAno === 0 && d.periodo.ref_ano) {
@@ -533,6 +562,29 @@ export default function FarolExecutivo() {
               return <option key={p} value={p}>{fmtMesAno(ano, mes)}</option>
             })}
           </select>
+        )}
+
+        {/* Seletor "Comparar com" — só no mês a mês */}
+        {compMode === 'mom' && periodos.length > 0 && (
+          <>
+            <span className="text-xs text-slate-400">comparar com</span>
+            <select
+              value={compAno > 0 ? `${compAno}-${String(compMes).padStart(2, '0')}` : ''}
+              onChange={e => {
+                if (e.target.value === '') { setCompAno(0); setCompMes(0); return }
+                const p = parsePeriodo(e.target.value)
+                setCompAno(p.ano)
+                setCompMes(p.mes)
+              }}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Mês anterior (auto)</option>
+              {periodos.map(p => {
+                const { ano, mes } = parsePeriodo(p)
+                return <option key={p} value={p}>{fmtMesAno(ano, mes)}</option>
+              })}
+            </select>
+          </>
         )}
 
         {/* Botão consolidar view */}

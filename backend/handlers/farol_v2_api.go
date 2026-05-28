@@ -133,6 +133,10 @@ type periodoInfo struct {
 	RefMes   int    `json:"ref_mes"`
 	Label    string `json:"label"`
 	CompMode string `json:"comp_mode"`
+	CurLabel string `json:"cur_label"`           // ex.: "Mai/2026"
+	AntLabel string `json:"ant_label"`           // ex.: "Mai/2025" (yoy) | "Total 2025" (ytd) | "Abr/2026" (mom)
+	CompAno  int    `json:"comp_ano,omitempty"`  // override do mom — quando setado pelo usuário
+	CompMes  int    `json:"comp_mes,omitempty"`
 }
 
 type cardsResponse struct {
@@ -202,15 +206,19 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Override opcional do período de comparação (só usado em mom).
+		compAno, _ := strconv.Atoi(q.Get("comp_ano"))
+		compMes, _ := strconv.Atoi(q.Get("comp_mes"))
+
 		projecaoFator := 1.0
 		if compMode == "ytd" && refMes > 0 {
 			projecaoFator = 12.0 / float64(refMes)
 		}
 
-		cards    := fetchCards(db, spCtx.EmpresaID, view, compMode, refAno, refMes, drillIdx, currentLevel, drillPath, projecaoFator)
+		cards    := fetchCards(db, spCtx.EmpresaID, view, compMode, refAno, refMes, compAno, compMes, drillIdx, currentLevel, drillPath, projecaoFator)
 		kpi      := computeKPI(cards)
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
-		plabel   := buildPeriodoLabel(compMode, refAno, refMes)
+		curLabel, antLabel, plabel := buildPeriodoLabels(compMode, refAno, refMes, compAno, compMes)
 
 		sort.Slice(cards, func(i, j int) bool {
 			if cards[i].Cor != cards[j].Cor {
@@ -222,7 +230,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(cardsResponse{
 			Cards:          cards,
 			KPI:            kpi,
-			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode},
+			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode, CurLabel: curLabel, AntLabel: antLabel, CompAno: compAno, CompMes: compMes},
 			Periodos:       periodos,
 			View:           view,
 			DrillPath:      drillPath,
@@ -269,8 +277,22 @@ func buildAtualCond(compMode string, refAno, refMes int, args *[]any) string {
 	}
 }
 
+// resolveCompPeriod retorna (ano, mes) do bucket "anterior" para o mom.
+// Aplica override do usuário se compAno+compMes vierem setados; senão usa mês-1.
+func resolveCompPeriod(refAno, refMes, compAno, compMes int) (int, int) {
+	if compAno > 0 && compMes > 0 {
+		return compAno, compMes
+	}
+	prevMes, prevAno := refMes-1, refAno
+	if prevMes == 0 {
+		prevMes, prevAno = 12, refAno-1
+	}
+	return prevAno, prevMes
+}
+
 // buildAntCond monta a cláusula WHERE de período para o bucket anterior.
-func buildAntCond(compMode string, refAno, refMes int, args *[]any) string {
+// Para mom aceita override explícito (compAno/compMes) — quando 0, calcula mês-1.
+func buildAntCond(compMode string, refAno, refMes, compAno, compMes int, args *[]any) string {
 	switch compMode {
 	case "yoy":
 		*args = append(*args, refMes)
@@ -278,10 +300,7 @@ func buildAntCond(compMode string, refAno, refMes int, args *[]any) string {
 	case "ytd":
 		return "v.tipo_base='COMPARATIVA'" // sem filtro de mês (acumula o ano todo)
 	case "mom":
-		prevMes, prevAno := refMes-1, refAno
-		if prevMes == 0 {
-			prevMes, prevAno = 12, refAno-1
-		}
+		prevAno, prevMes := resolveCompPeriod(refAno, refMes, compAno, compMes)
 		*args = append(*args, prevAno, prevMes)
 		n := len(*args)
 		return fmt.Sprintf("(v.tipo_base='ATUAL' OR v.tipo_base='COMPARATIVA') AND v.ano=$%d AND v.mes=$%d", n-1, n)
@@ -460,7 +479,7 @@ GROUP BY v.cod_prod`, antCond, drillCond)
 // ─── fetchCards ───────────────────────────────────────────────────────────────
 // Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
 
-func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, drillIdx int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
+func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, compAno, compMes, drillIdx int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
 	t0       := time.Now()
 	groupCol := safeColName(level.Level)
 	nameCol  := safeColName(level.NameField)
@@ -476,7 +495,7 @@ func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, dr
 
 	// Condições e args do bucket anterior (args independentes para evitar conflito de $N)
 	antArgs  := []any{empresaID}
-	antCond  := buildAntCond(compMode, refAno, refMes, &antArgs)
+	antCond  := buildAntCond(compMode, refAno, refMes, compAno, compMes, &antArgs)
 	antDrill := buildDrillCond(drillPath, &antArgs)
 
 	// As duas queries são independentes (buckets atual e anterior) — rodam em paralelo.
@@ -611,23 +630,36 @@ func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
 	return result
 }
 
-// ─── buildPeriodoLabel ────────────────────────────────────────────────────────
+// ─── buildPeriodoLabels ───────────────────────────────────────────────────────
+// Produz três rótulos derivados do modo + período:
+//   curLabel — descreve o bucket atual (ex.: "Mai/2026" ou "Projeção 2026 (Jan–Mai)")
+//   antLabel — descreve o bucket anterior  (ex.: "Mai/2025" | "Total 2025" | "Abr/2026")
+//   label    — string única "Anterior: X × Atual: Y" pra exibir no cabeçalho
+//
+// O compAno/compMes só importa no mom (quando o usuário escolheu o mês de comparação).
 
-func buildPeriodoLabel(compMode string, refAno, refMes int) string {
+func buildPeriodoLabels(compMode string, refAno, refMes, compAno, compMes int) (curLabel, antLabel, label string) {
 	cur := fmtMesAno(refMes, refAno)
 	switch compMode {
 	case "yoy":
-		return fmt.Sprintf("%s vs %s", cur, fmtMesAno(refMes, refAno-1))
+		curLabel = cur
+		antLabel = fmtMesAno(refMes, refAno-1)
+		label = fmt.Sprintf("Ano Anterior: %s × Ano Atual: %s", antLabel, curLabel)
 	case "ytd":
-		return fmt.Sprintf("Projeção %d (%s–%s) vs Total %d", refAno, fmtMesAno(1, refAno), cur, refAno-1)
+		curLabel = fmt.Sprintf("Projeção %d (%s–%s)", refAno, fmtMesAno(1, refAno), cur)
+		antLabel = fmt.Sprintf("Total %d", refAno-1)
+		label = fmt.Sprintf("Período Anterior: %s × %s", antLabel, curLabel)
 	case "mom":
-		pm, py := refMes-1, refAno
-		if pm == 0 {
-			pm, py = 12, refAno-1
-		}
-		return fmt.Sprintf("%s vs %s", cur, fmtMesAno(pm, py))
+		pa, pm := resolveCompPeriod(refAno, refMes, compAno, compMes)
+		curLabel = cur
+		antLabel = fmtMesAno(pm, pa)
+		label = fmt.Sprintf("Mês Anterior: %s × Mês Atual: %s", antLabel, curLabel)
+	default:
+		curLabel = cur
+		antLabel = ""
+		label = cur
 	}
-	return cur
+	return
 }
 
 // refreshAllFarolViews recria todas as views materializadas: base (mv_farol_cli)
@@ -842,9 +874,13 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		currentLevel := hier[drillIdx]
 
-		cards := fetchCards(db, empresaID, view, compMode, refAno, refMes, drillIdx, currentLevel, drillPath, projecaoFator)
+		// Override opcional do período de comparação (mom).
+		compAno, _ := strconv.Atoi(q.Get("comp_ano"))
+		compMes, _ := strconv.Atoi(q.Get("comp_mes"))
+
+		cards := fetchCards(db, empresaID, view, compMode, refAno, refMes, compAno, compMes, drillIdx, currentLevel, drillPath, projecaoFator)
 		kpi := computeKPI(cards)
-		plabel := buildPeriodoLabel(compMode, refAno, refMes)
+		curLabel, antLabel, plabel := buildPeriodoLabels(compMode, refAno, refMes, compAno, compMes)
 
 		sort.Slice(cards, func(i, j int) bool {
 			if cards[i].Cor != cards[j].Cor {
@@ -856,7 +892,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(cardsResponse{
 			Cards:          cards,
 			KPI:            kpi,
-			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode},
+			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode, CurLabel: curLabel, AntLabel: antLabel, CompAno: compAno, CompMes: compMes},
 			Periodos:       fetchPeriodosDisponiveis(db, empresaID),
 			View:           view,
 			DrillPath:      drillPath,
