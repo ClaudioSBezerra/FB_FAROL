@@ -22,10 +22,12 @@ interface Company {
   name: string;
   cnpj: string;
   is_default: boolean;
+  environment?: string;
+  group?: string;
 }
 
 export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
-  const { token, companyId, switchCompany } = useAuth();
+  const { token, companyId, environment, group, switchCompany } = useAuth();
   const [open, setOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
@@ -42,7 +44,7 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
             const current = data.find((c) => c.id === companyId);
             if (current) setSelectedCompany(current);
             else if (data.length > 0 && !companyId) {
-                // If no company selected but list available, select first? 
+                // If no company selected but list available, select first?
                 // Better not auto-switch to avoid loops, just show placeholder or first in UI without triggering switch
                 setSelectedCompany(data[0]);
             }
@@ -52,7 +54,14 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
     }
   }, [token, companyId]);
 
-  if (companies.length <= 1) return null;
+  // Modo estrito: só permite trocar entre empresas do MESMO ambiente+grupo da sessão.
+  // Trocar de ambiente/grupo exige novo login. Se env/group não estiverem setados
+  // na sessão (caso legado), fallback não filtra para não bloquear.
+  const visibleCompanies = (environment && group)
+    ? companies.filter(c => c.environment === environment && c.group === group)
+    : companies;
+
+  if (visibleCompanies.length <= 1) return null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -88,13 +97,13 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
           </Button>
         )}
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0">
+      <PopoverContent className="w-[260px] p-0">
         <Command>
           <CommandInput placeholder="Buscar empresa..." />
           <CommandList>
             <CommandEmpty>Nenhuma empresa encontrada.</CommandEmpty>
-            <CommandGroup>
-              {companies.map((company) => (
+            <CommandGroup heading={environment && group ? `${environment} » ${group}` : undefined}>
+              {visibleCompanies.map((company) => (
                 <CommandItem
                   key={company.id}
                   value={company.name}
@@ -110,7 +119,14 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
                       companyId === company.id ? "opacity-100" : "opacity-0"
                     )}
                   />
-                  {company.name}
+                  <div className="flex flex-col min-w-0">
+                    <span className="truncate">{company.name}</span>
+                    {(company.environment || company.group) && (
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {company.environment}{company.environment && company.group ? ' · ' : ''}{company.group}
+                      </span>
+                    )}
+                  </div>
                 </CommandItem>
               ))}
             </CommandGroup>
