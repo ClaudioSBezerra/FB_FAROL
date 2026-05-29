@@ -54,7 +54,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Refs para o interceptor de fetch (sem stale closure)
   const tokenRef = useRef<string | null>(null);
-  const companyIdRef = useRef<string | null>(null);
+  // Inicializa do localStorage de forma síncrona para evitar race condition:
+  // effects de filhos rodam ANTES do useEffect de AuthProvider, então se o ref
+  // começar null o primeiro fetch de qualquer página filha vai sem X-Company-ID.
+  const companyIdRef = useRef<string | null>(localStorage.getItem('companyId'));
 
   // Mantém refs atualizados com o estado mais recente
   useEffect(() => { tokenRef.current = token; }, [token]);

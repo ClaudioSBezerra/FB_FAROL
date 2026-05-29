@@ -157,6 +157,7 @@ function AppHeader() {
   const location  = useLocation()
   const moduleId  = getActiveModule(location.pathname)
   const moduleCfg = modules[moduleId]
+  const { company } = useAuth()
 
   return (
     <header className="flex items-center justify-between h-12 border-b bg-white px-4 shrink-0">
@@ -164,6 +165,18 @@ function AppHeader() {
         {moduleCfg?.label ?? 'Farol'}
       </span>
       <div className="flex items-center gap-2">
+        {/* Empresa ativa — sempre visível, independente de quantas empresas existem */}
+        {company && (
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-full max-w-[220px]"
+            title={company}
+          >
+            <svg className="h-3 w-3 shrink-0 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 21V7l9-4 9 4v14M9 21V12h6v9" />
+            </svg>
+            <span className="truncate">{company}</span>
+          </span>
+        )}
         <CompanySwitcher compact />
       </div>
     </header>
