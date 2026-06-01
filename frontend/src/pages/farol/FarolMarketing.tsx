@@ -533,6 +533,15 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
           <div>
             <p className="text-slate-400 text-xs font-medium uppercase tracking-widest mb-1">Painel Marketing</p>
             <p className="text-white/80 text-sm font-medium">{periodo.label}</p>
+            {periodo.ant_label && (
+              <p className="text-[11px] mt-1 tracking-wide">
+                <span className="text-slate-500 uppercase font-semibold">Ano Anterior:</span>
+                {' '}<span className="text-white/60 font-bold uppercase">{periodo.ant_label}</span>
+                <span className="text-slate-500 mx-2">×</span>
+                <span className="text-slate-500 uppercase font-semibold">Ano Atual:</span>
+                {' '}<span className="text-white/60 font-bold uppercase">{periodo.cur_label}</span>
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full">
@@ -647,11 +656,11 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-50">
         <div>
           <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-            Penetração de Mercado
+            Ranking de Desempenho de{' '}
+            <span className="text-red-600">{headerLabel}</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Por <span className="font-black text-red-600 uppercase tracking-wide">{headerLabel}</span>
-            {' '}· ordenado por {metricLabel.toLowerCase()}
+            ordenado por {metricLabel.toLowerCase()}
           </p>
         </div>
         <div className="flex gap-3 text-[11px]">
