@@ -48,7 +48,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext"
 import { CompanySwitcher } from "@/components/CompanySwitcher"
 import { cn } from "@/lib/utils"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { toast } from "sonner"
 
 // ---------------------------------------------------------------------------
@@ -173,25 +173,27 @@ export function AppSidebar() {
   const isMaster = group === "MASTER"
 
   const [logoURL, setLogoURL] = useState<string | null>(null)
-  const prevLogoURL = useRef<string | null>(null)
+  const [logoTick, setLogoTick] = useState(0)
 
+  // Listener do evento de upload — separado do fetch para não depender de closure do token
+  useEffect(() => {
+    const refresh = () => setLogoTick(n => n + 1)
+    window.addEventListener('empresa-logo-updated', refresh)
+    return () => window.removeEventListener('empresa-logo-updated', refresh)
+  }, [])
+
+  // Fetch do logo — re-executa quando token ou logoTick mudam
   useEffect(() => {
     if (!token) return
-    const load = () => {
-      fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => res.ok ? res.blob() : null)
-        .then(blob => {
-          if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current)
-          const url = blob ? URL.createObjectURL(blob) : null
-          prevLogoURL.current = url
-          setLogoURL(url)
-        })
-        .catch(() => {})
-    }
-    load()
-    window.addEventListener('empresa-logo-updated', load)
-    return () => window.removeEventListener('empresa-logo-updated', load)
-  }, [token])
+    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
+      .then(async res => {
+        if (!res.ok) return
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+      })
+      .catch(() => {})
+  }, [token, logoTick])
 
   // Estado de expansão de cada seção (todas abertas por padrão)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(
