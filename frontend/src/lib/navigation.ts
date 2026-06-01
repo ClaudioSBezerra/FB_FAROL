@@ -33,6 +33,11 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Marketing', path: '/farol/marketing' },
     ],
   },
+  // ── Painel BI — War Room para CEO/Diretoria ───────────────────────────────
+  bi: {
+    label: 'Painel BI',
+    tabs: [],
+  },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
   importar: {
     label: 'Importar dados',
@@ -76,6 +81,7 @@ export const modules: Record<string, ModuleConfig> = {
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/marketing'))       return 'marketing'
+  if (pathname.startsWith('/farol/bi'))              return 'bi'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
