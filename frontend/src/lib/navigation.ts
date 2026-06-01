@@ -21,8 +21,9 @@ export const modules: Record<string, ModuleConfig> = {
   farol: {
     label: 'Farol',
     tabs: [
-      { label: 'Painel',   path: '/farol/v2' },
-      { label: 'Usuários', path: '/farol/usuarios', managerOnly: true },
+      { label: 'Painel Vendas',    path: '/farol/v2' },
+      { label: 'Painel Marketing', path: '/farol/marketing' },
+      { label: 'Usuários',         path: '/farol/usuarios', managerOnly: true },
     ],
   },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
@@ -68,6 +69,7 @@ export const modules: Record<string, ModuleConfig> = {
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
+  if (pathname.startsWith('/farol/marketing'))       return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'
   if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'

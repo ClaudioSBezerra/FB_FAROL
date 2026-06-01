@@ -237,7 +237,7 @@ function HeroBand({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'
         {/* Header row */}
         <div className="flex items-start justify-between mb-6">
           <div>
-            <p className="text-slate-400 text-xs font-medium uppercase tracking-widest mb-1">Painel Executivo</p>
+            <p className="text-slate-400 text-xs font-medium uppercase tracking-widest mb-1">Painel Vendas</p>
             <p className="text-white/80 text-sm font-medium">{periodo.label}</p>
           </div>
           <div className="flex items-center gap-3">

@@ -29,6 +29,7 @@ import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas,
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolV2Import from './pages/farol/FarolV2Import'
 import FarolUsuarios from './pages/farol/FarolUsuarios'
+import FarolMarketing from './pages/farol/FarolMarketing'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -232,9 +233,10 @@ function AppLayout() {
 
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
-              <Route path="/farol/v2"       element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
-              <Route path="/farol/importar" element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
-              <Route path="/farol/usuarios" element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
+              <Route path="/farol/v2"         element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
+              <Route path="/farol/marketing"  element={<ProtectedRoute><FarolMarketing /></ProtectedRoute>} />
+              <Route path="/farol/importar"   element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
+              <Route path="/farol/usuarios"   element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
               <Route path="/farol"                              element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />
