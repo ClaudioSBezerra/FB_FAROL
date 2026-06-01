@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { TrendingUp, TrendingDown, Minus, Users, UserCheck, UserX, Package } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Users, UserCheck, UserX, Package, ChevronLeft, Target, Zap } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -83,6 +83,36 @@ const MODE_DESC: Record<string, string> = {
   mom: 'Compara o mês atual com o mês imediatamente anterior.',
 }
 
+// ─── Tipos detalhe de produto ─────────────────────────────────────────────────
+
+interface ProdDetalheKPI {
+  total_base: number
+  total_compradores: number
+  total_oportunidades: number
+  penetr_pct: number
+  total_faturado: number
+  qt_cli_ant: number
+  delta_pct: number
+  potencial_estimado: number
+}
+interface ProdClienteItem {
+  key: string; label: string
+  faturado: number; transmitido: number
+  nome_sup: string; nome_rca: string
+}
+interface ProdOportunidade {
+  key: string; label: string
+  faturado_total: number
+  nome_rca: string; nome_sup: string
+  n_outros_prod: number
+}
+interface ProdDetalheResponse {
+  cod_prod: string; nome_prod: string; nome_fornec: string
+  kpi: ProdDetalheKPI
+  compradores: ProdClienteItem[]
+  oportunidades: ProdOportunidade[]
+}
+
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
 
 function useMktCards(view: string, compMode: string, refAno: number, refMes: number, compAno: number, compMes: number) {
@@ -103,6 +133,182 @@ function useMktCards(view: string, compMode: string, refAno: number, refMes: num
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   })
+}
+
+function useProdDetalhe(
+  codProd: string, compMode: string, refAno: number, refMes: number, compAno: number, compMes: number
+) {
+  return useQuery<ProdDetalheResponse>({
+    queryKey: ['mkt-prod-detalhe', codProd, compMode, refAno, refMes],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        cod_prod: codProd, comp_mode: compMode,
+        ...(refAno > 0 && { ref_ano: String(refAno) }),
+        ...(refMes > 0 && { ref_mes: String(refMes) }),
+        ...(compAno > 0 && compMes > 0 && { comp_ano: String(compAno), comp_mes: String(compMes) }),
+      })
+      const r = await fetch(`/api/v2/marketing/produto-detalhe?${p}`)
+      if (!r.ok) throw new Error('Falha ao carregar detalhe do produto')
+      return r.json()
+    },
+    enabled: codProd !== '',
+    staleTime: 2 * 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// ─── Produto Detalhe ──────────────────────────────────────────────────────────
+
+function ProdutoDetalhe({
+  codProd, nomeProd, nomeFornec, compMode, refAno, refMes, compAno, compMes, onVoltar,
+}: {
+  codProd: string; nomeProd: string; nomeFornec: string
+  compMode: string; refAno: number; refMes: number; compAno: number; compMes: number
+  onVoltar: () => void
+}) {
+  const { data, isLoading, error } = useProdDetalhe(codProd, compMode, refAno, refMes, compAno, compMes)
+
+  return (
+    <div>
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 mb-5">
+        <button onClick={onVoltar}
+          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-primary transition-colors font-medium">
+          <ChevronLeft className="h-4 w-4" /> Voltar
+        </button>
+        <span className="text-slate-300">/</span>
+        <span className="text-sm font-semibold text-slate-700 truncate">{nomeProd || codProd}</span>
+        {nomeFornec && <span className="text-xs text-slate-400">· {nomeFornec}</span>}
+      </div>
+
+      {isLoading && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl h-24 animate-pulse border border-slate-100" />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-2xl h-80 animate-pulse border border-slate-100" />
+            <div className="bg-white rounded-2xl h-80 animate-pulse border border-slate-100" />
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-700 text-sm">
+          {(error as Error).message}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* KPI strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Compradores</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums">{data.kpi.total_compradores}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">{fmtPct(data.kpi.penetr_pct)} da base</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Oportunidades</p>
+              <p className="text-2xl font-black text-amber-600 tabular-nums">{data.kpi.total_oportunidades}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">{data.kpi.total_base - data.kpi.total_compradores - data.kpi.total_oportunidades > 0
+                ? `+${data.kpi.total_base - data.kpi.total_compradores - data.kpi.total_oportunidades} sem dados`
+                : 'clientes ativos sem este produto'}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Faturado</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums">{fmtBRL(data.kpi.total_faturado)}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">neste produto</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Variação clientes</p>
+              <p className={`text-2xl font-black tabular-nums ${data.kpi.delta_pct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {data.kpi.delta_pct >= 0 ? '+' : ''}{data.kpi.delta_pct.toFixed(1)}%
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5">vs {data.kpi.qt_cli_ant} período ant.</p>
+            </div>
+            <div className="bg-amber-50 rounded-xl border border-amber-200 shadow-sm p-4 hidden lg:block">
+              <p className="text-[11px] text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Zap className="h-3 w-3" /> Potencial estimado
+              </p>
+              <p className="text-2xl font-black text-amber-700 tabular-nums">{fmtBRL(data.kpi.potencial_estimado)}</p>
+              <p className="text-[11px] text-amber-600 mt-0.5">faturamento total das oportunidades</p>
+            </div>
+          </div>
+
+          {/* Duas colunas */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Compradores */}
+            <div className="bg-white rounded-2xl shadow-sm border border-emerald-100 overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-emerald-50 bg-emerald-50/50">
+                <UserCheck className="h-4 w-4 text-emerald-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-emerald-800">Já compram este produto</h3>
+                  <p className="text-xs text-emerald-600">{data.compradores.length} clientes · ordenado por faturado</p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-50 max-h-[480px] overflow-y-auto">
+                {data.compradores.map((c, i) => (
+                  <div key={c.key} className="flex items-center gap-3 px-5 py-3 hover:bg-emerald-50/30 transition-colors">
+                    <span className="w-5 text-xs font-bold text-slate-300 flex-shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{c.label}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {c.nome_rca && `RCA: ${c.nome_rca}`}
+                        {c.nome_sup && ` · Sup: ${c.nome_sup}`}
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-emerald-700 tabular-nums">{fmtBRL(c.faturado)}</p>
+                      {c.transmitido > 0 && (
+                        <p className="text-[10px] text-slate-400 tabular-nums">{fmtBRL(c.transmitido)} transm.</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {data.compradores.length === 0 && (
+                  <p className="px-5 py-8 text-sm text-slate-400 text-center">Nenhum comprador no período</p>
+                )}
+              </div>
+            </div>
+
+            {/* Oportunidades */}
+            <div className="bg-white rounded-2xl shadow-sm border border-amber-100 overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-50 bg-amber-50/50">
+                <Target className="h-4 w-4 text-amber-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-amber-800">Oportunidades de ativação</h3>
+                  <p className="text-xs text-amber-600">
+                    {data.oportunidades.length} clientes ativos que <strong>não compram</strong> este produto · ordenado por potencial
+                  </p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-50 max-h-[480px] overflow-y-auto">
+                {data.oportunidades.map((o, i) => (
+                  <div key={o.key} className="flex items-center gap-3 px-5 py-3 hover:bg-amber-50/30 transition-colors">
+                    <span className="w-5 text-xs font-bold text-slate-300 flex-shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{o.label}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {o.nome_rca && `RCA: ${o.nome_rca}`}
+                        {o.n_outros_prod > 0 && ` · ${o.n_outros_prod} outras indústrias`}
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-amber-700 tabular-nums">{fmtBRL(o.faturado_total)}</p>
+                      <p className="text-[10px] text-slate-400">total com distribuidora</p>
+                    </div>
+                  </div>
+                ))}
+                {data.oportunidades.length === 0 && (
+                  <p className="px-5 py-8 text-sm text-slate-400 text-center">Todos os clientes ativos já compram este produto</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 // ─── Hero Band ────────────────────────────────────────────────────────────────
@@ -218,7 +424,11 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
 
 // ─── Ranking de Penetração ────────────────────────────────────────────────────
 
-function MktRanking({ cards, view }: { cards: MktCard[]; view: string }) {
+function MktRanking({ cards, view, onSelectProd }: {
+  cards: MktCard[]
+  view: string
+  onSelectProd: (card: MktCard) => void
+}) {
   const maxPenetr = Math.max(...cards.map(c => c.penetr_pct), 1)
   const medals = ['🥇', '🥈', '🥉']
 
@@ -260,7 +470,13 @@ function MktRanking({ cards, view }: { cards: MktCard[]; view: string }) {
           const d = card.delta_pct
 
           return (
-            <div key={card.key} className="flex items-center gap-4 px-6 py-3.5">
+            <div
+              key={card.key}
+              onClick={() => view === 'produto' && onSelectProd(card)}
+              className={`flex items-center gap-4 px-6 py-3.5 transition-colors ${
+                view === 'produto' ? 'cursor-pointer hover:bg-amber-50/40 group' : ''
+              }`}
+            >
               {/* Rank */}
               <div className="w-8 flex-shrink-0 text-center">
                 {idx < 3
@@ -378,11 +594,12 @@ function ClientesInativos({ clientes }: { clientes: ClienteInativo[] }) {
 // ─── FarolMarketing ───────────────────────────────────────────────────────────
 
 export default function FarolMarketing() {
-  const [view, setView]         = useState<'produto' | 'cliente' | 'fornec'>('produto')
-  const [compMode, setCompMode] = useState('yoy')
-  const [refAno, setRefAno]     = useState(0)
-  const [refMes, setRefMes]     = useState(0)
-  const [compAno, setCompAno]   = useState(0)
+  const [view, setView]               = useState<'produto' | 'cliente' | 'fornec'>('produto')
+  const [compMode, setCompMode]       = useState('yoy')
+  const [refAno, setRefAno]           = useState(0)
+  const [refMes, setRefMes]           = useState(0)
+  const [compAno, setCompAno]         = useState(0)
+  const [selectedProd, setSelectedProd] = useState<MktCard | null>(null)
   const [compMes, setCompMes]   = useState(0)
   const [search, setSearch]     = useState('')
 
@@ -522,11 +739,24 @@ export default function FarolMarketing() {
         </div>
       )}
 
+      {/* ── Detalhe de produto ─────────────────────────────────────────── */}
+      {selectedProd && (
+        <ProdutoDetalhe
+          codProd={selectedProd.key}
+          nomeProd={selectedProd.label}
+          nomeFornec={selectedProd.nome_fornec ?? ''}
+          compMode={compMode}
+          refAno={refAno} refMes={refMes}
+          compAno={compAno} compMes={compMes}
+          onVoltar={() => setSelectedProd(null)}
+        />
+      )}
+
       {/* ── Conteúdo ───────────────────────────────────────────────────── */}
-      {!isLoading && !error && data && data.cards.length > 0 && (
+      {!selectedProd && !isLoading && !error && data && data.cards.length > 0 && (
         <>
           <MktHeroBand kpi={data.kpi} periodo={data.periodo} />
-          <MktRanking cards={visibleCards} view={view} />
+          <MktRanking cards={visibleCards} view={view} onSelectProd={setSelectedProd} />
           <ClientesInativos clientes={data.clientes_inativos} />
         </>
       )}

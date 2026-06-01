@@ -469,7 +469,8 @@ func main() {
 	http.HandleFunc("/api/v2/farol/cards",         gz(withSP(handlers.FarolV2CardsHandler,   "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos",      withSP(handlers.FarolV2PeriodosHandler,   "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler,      "gestor_geral"))
-	http.HandleFunc("/api/v2/marketing/cards",     gz(withSP(handlers.MarketingCardsHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/marketing/cards",           gz(withSP(handlers.MarketingCardsHandler,          "gestor_filial")))
+	http.HandleFunc("/api/v2/marketing/produto-detalhe", gz(withSP(handlers.MarketingProdutoDetalheHandler, "gestor_filial")))
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
 	http.HandleFunc("/api/v2/farol/public/cards",  gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)

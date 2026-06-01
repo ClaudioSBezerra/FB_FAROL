@@ -451,3 +451,217 @@ func fetchClientesInativos(db *sql.DB, empresaID string, refAno, refMes int) []m
 	log.Printf("[marketing] fetchClientesInativos %d inativos em %v", len(result), time.Since(t0))
 	return result
 }
+
+// ─── Produto Detalhe ─────────────────────────────────────────────────────────
+// GET /api/v2/marketing/produto-detalhe?cod_prod=X&ref_ano=X&ref_mes=X&comp_mode=X
+// Retorna compradores e oportunidades para um produto específico.
+
+type prodDetalheKPI struct {
+	TotalBase          int     `json:"total_base"`
+	TotalCompradores   int     `json:"total_compradores"`
+	TotalOportunidades int     `json:"total_oportunidades"`
+	PenetrPct          float64 `json:"penetr_pct"`
+	TotalFaturado      float64 `json:"total_faturado"`
+	QtCliAnt           int     `json:"qt_cli_ant"`
+	DeltaPct           float64 `json:"delta_pct"`
+	PotencialEstimado  float64 `json:"potencial_estimado"`
+}
+
+type prodClienteItem struct {
+	Key         string  `json:"key"`
+	Label       string  `json:"label"`
+	Faturado    float64 `json:"faturado"`
+	Transmitido float64 `json:"transmitido"`
+	NomeSup     string  `json:"nome_sup"`
+	NomeRca     string  `json:"nome_rca"`
+}
+
+type prodOportunidade struct {
+	Key          string  `json:"key"`
+	Label        string  `json:"label"`
+	FaturadoTotal float64 `json:"faturado_total"`
+	NomeRca      string  `json:"nome_rca"`
+	NomeSup      string  `json:"nome_sup"`
+	NOutrosProd  int     `json:"n_outros_prod"`
+}
+
+type prodDetalheResponse struct {
+	CodProd       string            `json:"cod_prod"`
+	NomeProd      string            `json:"nome_prod"`
+	NomeFornec    string            `json:"nome_fornec"`
+	KPI           prodDetalheKPI    `json:"kpi"`
+	Compradores   []prodClienteItem `json:"compradores"`
+	Oportunidades []prodOportunidade `json:"oportunidades"`
+}
+
+func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		q := r.URL.Query()
+		codProd := q.Get("cod_prod")
+		if codProd == "" {
+			http.Error(w, `{"error":"cod_prod obrigatório"}`, http.StatusBadRequest)
+			return
+		}
+		refAno, _  := strconv.Atoi(q.Get("ref_ano"))
+		refMes, _  := strconv.Atoi(q.Get("ref_mes"))
+		compMode   := q.Get("comp_mode")
+		if compMode == "" { compMode = "yoy" }
+		compAno, _ := strconv.Atoi(q.Get("comp_ano"))
+		compMes, _ := strconv.Atoi(q.Get("comp_mes"))
+
+		if refAno == 0 || refMes == 0 {
+			_ = db.QueryRow(`
+				SELECT ano, mes FROM vendas_import_jobs
+				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
+				ORDER BY ano DESC, mes DESC LIMIT 1
+			`, spCtx.EmpresaID).Scan(&refAno, &refMes)
+		}
+
+		t0 := time.Now()
+
+		// ── Nome do produto e indústria ─────────────────────────────────────
+		var nomeProd, nomeFornec string
+		_ = db.QueryRow(`
+			SELECT MAX(nome_prod), MAX(nome_fornec)
+			FROM vendas_importadas
+			WHERE empresa_id=$1 AND cod_prod=$2 AND tipo_base='ATUAL' AND ano=$3 AND mes=$4
+		`, spCtx.EmpresaID, codProd, refAno, refMes).Scan(&nomeProd, &nomeFornec)
+
+		// ── Base total de clientes no período ──────────────────────────────
+		var totalBase int
+		_ = db.QueryRow(`
+			SELECT COUNT(DISTINCT cod_cli) FROM farol.mv_farol_cli
+			WHERE empresa_id=$1 AND tipo_base='ATUAL' AND ano=$2 AND mes=$3
+		`, spCtx.EmpresaID, refAno, refMes).Scan(&totalBase)
+
+		// ── Compradores (clientes que compraram este produto) ──────────────
+		rows, err := db.Query(`
+			SELECT
+			    cod_cli,
+			    MAX(nome_cli)                                                    AS nome,
+			    MAX(COALESCE(nome_supervisor,''))                                AS nome_sup,
+			    MAX(COALESCE(nome_rca,''))                                       AS nome_rca,
+			    SUM(CASE WHEN estado='FATURADO'  THEN pvenda ELSE 0 END)        AS faturado,
+			    SUM(CASE WHEN estado!='FATURADO' THEN pvenda ELSE 0 END)        AS transmitido
+			FROM vendas_importadas
+			WHERE empresa_id=$1 AND tipo_base='ATUAL' AND ano=$2 AND mes=$3
+			    AND cod_prod=$4 AND qt > 0
+			GROUP BY cod_cli
+			ORDER BY SUM(CASE WHEN estado='FATURADO' THEN pvenda ELSE 0 END) DESC
+		`, spCtx.EmpresaID, refAno, refMes, codProd)
+
+		compradores := []prodClienteItem{}
+		compradoresSet := map[string]bool{}
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var c prodClienteItem
+				if err := rows.Scan(&c.Key, &c.Label, &c.NomeSup, &c.NomeRca,
+					&c.Faturado, &c.Transmitido); err == nil {
+					compradores = append(compradores, c)
+					compradoresSet[c.Key] = true
+				}
+			}
+		} else {
+			log.Printf("[marketing:detalhe] compradores ERRO: %v", err)
+		}
+
+		// ── Período anterior (para delta) ──────────────────────────────────
+		antAno, antMes := refAno-1, refMes
+		if compMode == "mom" {
+			antAno, antMes = resolveCompPeriod(refAno, refMes, compAno, compMes)
+		}
+		antTipoCond := "tipo_base='COMPARATIVA'"
+		if compMode == "mom" {
+			antTipoCond = "(tipo_base='ATUAL' OR tipo_base='COMPARATIVA')"
+		}
+		var qtCliAnt int
+		_ = db.QueryRow(fmt.Sprintf(`
+			SELECT COUNT(DISTINCT cod_cli) FROM vendas_importadas
+			WHERE empresa_id=$1 AND %s AND ano=$2 AND mes=$3 AND cod_prod=$4 AND qt > 0
+		`, antTipoCond), spCtx.EmpresaID, antAno, antMes, codProd).Scan(&qtCliAnt)
+
+		// ── Oportunidades (ativos que NÃO compraram este produto) ──────────
+		// Busca clientes positivados no período, exclui quem já comprou o produto
+		oRows, err2 := db.Query(`
+			SELECT
+			    f.cod_cli,
+			    MAX(f.nome_cli)                AS nome,
+			    SUM(f.faturado)                AS faturado_total,
+			    MAX(f.nome_supervisor)         AS nome_sup,
+			    MAX(f.nome_rca)                AS nome_rca,
+			    COUNT(DISTINCT f.cod_fornec)   AS n_outros
+			FROM farol.mv_farol_cli f
+			WHERE f.empresa_id=$1 AND f.tipo_base='ATUAL' AND f.ano=$2 AND f.mes=$3
+			    AND f.positivados=1 AND f.cod_cli != ''
+			    AND NOT EXISTS (
+			        SELECT 1 FROM vendas_importadas v
+			        WHERE v.empresa_id=f.empresa_id AND v.tipo_base=f.tipo_base
+			            AND v.ano=f.ano AND v.mes=f.mes
+			            AND v.cod_cli=f.cod_cli AND v.cod_prod=$4 AND v.qt > 0
+			    )
+			GROUP BY f.cod_cli
+			ORDER BY SUM(f.faturado) DESC
+			LIMIT 200
+		`, spCtx.EmpresaID, refAno, refMes, codProd)
+
+		oportunidades := []prodOportunidade{}
+		var potencialEstimado float64
+		if err2 == nil {
+			defer oRows.Close()
+			for oRows.Next() {
+				var o prodOportunidade
+				if err := oRows.Scan(&o.Key, &o.Label, &o.FaturadoTotal,
+					&o.NomeSup, &o.NomeRca, &o.NOutrosProd); err == nil {
+					oportunidades = append(oportunidades, o)
+					potencialEstimado += o.FaturadoTotal
+				}
+			}
+		} else {
+			log.Printf("[marketing:detalhe] oportunidades ERRO: %v", err2)
+		}
+
+		// ── KPI ────────────────────────────────────────────────────────────
+		var totalFaturado float64
+		for _, c := range compradores {
+			totalFaturado += c.Faturado
+		}
+		nComp := len(compradores)
+		var penetrPct float64
+		if totalBase > 0 {
+			penetrPct = float64(nComp) / float64(totalBase) * 100
+		}
+		var deltaPct float64
+		if qtCliAnt > 0 {
+			deltaPct = float64(nComp-qtCliAnt) / float64(qtCliAnt) * 100
+		}
+
+		log.Printf("[marketing:detalhe] prod=%s comp=%d opor=%d em %v",
+			codProd, nComp, len(oportunidades), time.Since(t0))
+
+		json.NewEncoder(w).Encode(prodDetalheResponse{
+			CodProd:    codProd,
+			NomeProd:   nomeProd,
+			NomeFornec: nomeFornec,
+			KPI: prodDetalheKPI{
+				TotalBase:          totalBase,
+				TotalCompradores:   nComp,
+				TotalOportunidades: len(oportunidades),
+				PenetrPct:          penetrPct,
+				TotalFaturado:      totalFaturado,
+				QtCliAnt:           qtCliAnt,
+				DeltaPct:           deltaPct,
+				PotencialEstimado:  potencialEstimado,
+			},
+			Compradores:   compradores,
+			Oportunidades: oportunidades,
+		})
+	}
+}
