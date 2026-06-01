@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { TrendingUp, TrendingDown, Minus, Users, UserCheck, UserX, Package, ChevronLeft, Target, Zap } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -143,22 +143,28 @@ interface CliDetalheResponse {
 
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
 
+function mktFetcher(view: string, compMode: string, refAno: number, refMes: number, compAno: number, compMes: number) {
+  return async (): Promise<MktResponse> => {
+    const p = new URLSearchParams({
+      view, comp_mode: compMode,
+      ...(refAno > 0 && { ref_ano: String(refAno) }),
+      ...(refMes > 0 && { ref_mes: String(refMes) }),
+      ...(compAno > 0 && compMes > 0 && { comp_ano: String(compAno), comp_mes: String(compMes) }),
+    })
+    const r = await fetch(`/api/v2/marketing/cards?${p}`)
+    if (!r.ok) throw new Error('Falha ao carregar dados de Marketing')
+    return r.json()
+  }
+}
+
+const MKT_VIEWS = ['produto', 'cliente', 'fornec'] as const
+
 function useMktCards(view: string, compMode: string, refAno: number, refMes: number, compAno: number, compMes: number) {
   return useQuery<MktResponse>({
     queryKey: ['marketing-cards', view, compMode, refAno, refMes, compAno, compMes],
-    queryFn: async () => {
-      const p = new URLSearchParams({
-        view, comp_mode: compMode,
-        ...(refAno > 0 && { ref_ano: String(refAno) }),
-        ...(refMes > 0 && { ref_mes: String(refMes) }),
-        ...(compAno > 0 && compMes > 0 && { comp_ano: String(compAno), comp_mes: String(compMes) }),
-      })
-      const r = await fetch(`/api/v2/marketing/cards?${p}`)
-      if (!r.ok) throw new Error('Falha ao carregar dados de Marketing')
-      return r.json()
-    },
+    queryFn: mktFetcher(view, compMode, refAno, refMes, compAno, compMes),
     staleTime: 2 * 60_000,
-    gcTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
   })
 }
@@ -824,10 +830,11 @@ export default function FarolMarketing() {
   const [compMes, setCompMes]   = useState(0)
   const [search, setSearch]     = useState('')
 
-  const { data, isLoading, error } = useMktCards(
-    view, compMode, refAno, refMes,
-    compMode === 'mom' ? compAno : 0,
-    compMode === 'mom' ? compMes : 0,
+  const cAno = compMode === 'mom' ? compAno : 0
+  const cMes = compMode === 'mom' ? compMes : 0
+
+  const { data, isLoading, isFetching, error } = useMktCards(
+    view, compMode, refAno, refMes, cAno, cMes,
   )
 
   // Auto-seleciona período ao receber dados pela primeira vez
@@ -835,6 +842,20 @@ export default function FarolMarketing() {
     setRefAno(data.periodo.ref_ano)
     setRefMes(data.periodo.ref_mes)
   }
+
+  // Prefetch das outras duas views em paralelo assim que o período é conhecido
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (refAno === 0 || refMes === 0) return
+    for (const v of MKT_VIEWS) {
+      if (v === view) continue
+      queryClient.prefetchQuery({
+        queryKey: ['marketing-cards', v, compMode, refAno, refMes, cAno, cMes],
+        queryFn: mktFetcher(v, compMode, refAno, refMes, cAno, cMes),
+        staleTime: 2 * 60_000,
+      })
+    }
+  }, [refAno, refMes, compMode, cAno, cMes, view, queryClient])
 
   const periodos = data?.periodos ?? []
 
@@ -937,11 +958,17 @@ export default function FarolMarketing() {
         )}
       </div>
 
-      {/* ── Loading ────────────────────────────────────────────────────── */}
-      {isLoading && (
+      {/* ── Loading: skeleton apenas na carga inicial sem dados ────────── */}
+      {isLoading && !data && (
         <div className="space-y-4">
           <div className="bg-slate-900 rounded-2xl h-44 animate-pulse" />
           <div className="bg-white rounded-2xl h-64 animate-pulse border border-slate-100" />
+        </div>
+      )}
+      {/* Spinner sutil enquanto troca de view com dados já em tela */}
+      {isFetching && data && (
+        <div className="flex justify-center py-2">
+          <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
       )}
 
