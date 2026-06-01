@@ -665,3 +665,170 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// ─── Cliente Detalhe ──────────────────────────────────────────────────────────
+// GET /api/v2/marketing/cliente-detalhe?cod_cli=X&ref_ano=X&ref_mes=X
+// Retorna produtos comprados e produtos não comprados (cross-sell).
+
+type cliDetalheKPI struct {
+	TotalProdutos      int     `json:"total_produtos"`
+	TotalOportunidades int     `json:"total_oportunidades"`
+	TotalFaturado      float64 `json:"total_faturado"`
+	TotalTransmitido   float64 `json:"total_transmitido"`
+	NomeRca            string  `json:"nome_rca"`
+	NomeSup            string  `json:"nome_sup"`
+	PotencialEstimado  float64 `json:"potencial_estimado"`
+}
+
+type cliProdutoItem struct {
+	Key         string  `json:"key"`
+	Label       string  `json:"label"`
+	NomeFornec  string  `json:"nome_fornec"`
+	Faturado    float64 `json:"faturado"`
+	Transmitido float64 `json:"transmitido"`
+}
+
+type cliOportunidade struct {
+	Key              string  `json:"key"`
+	Label            string  `json:"label"`
+	NomeFornec       string  `json:"nome_fornec"`
+	QtOutrosClientes int     `json:"qt_outros_clientes"`
+	TicketMedio      float64 `json:"ticket_medio"`
+	PenetrPct        float64 `json:"penetr_pct"`
+}
+
+type cliDetalheResponse struct {
+	CodCli        string            `json:"cod_cli"`
+	NomeCli       string            `json:"nome_cli"`
+	KPI           cliDetalheKPI     `json:"kpi"`
+	Comprados     []cliProdutoItem  `json:"comprados"`
+	Oportunidades []cliOportunidade `json:"oportunidades"`
+}
+
+func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		q := r.URL.Query()
+		codCli := q.Get("cod_cli")
+		if codCli == "" {
+			http.Error(w, `{"error":"cod_cli obrigatório"}`, http.StatusBadRequest)
+			return
+		}
+		refAno, _ := strconv.Atoi(q.Get("ref_ano"))
+		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
+		if refAno == 0 || refMes == 0 {
+			_ = db.QueryRow(`SELECT ano, mes FROM vendas_import_jobs
+				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
+				ORDER BY ano DESC, mes DESC LIMIT 1`,
+				spCtx.EmpresaID).Scan(&refAno, &refMes)
+		}
+		t0 := time.Now()
+
+		// ── Produtos comprados por este cliente ────────────────────────────
+		rows, err := db.Query(`
+			SELECT
+			    cod_prod,
+			    MAX(nome_prod)                                             AS nome,
+			    MAX(COALESCE(nome_fornec,''))                              AS nome_fornec,
+			    SUM(CASE WHEN estado='FATURADO'  THEN pvenda ELSE 0 END)  AS faturado,
+			    SUM(CASE WHEN estado!='FATURADO' THEN pvenda ELSE 0 END)  AS transmitido
+			FROM vendas_importadas
+			WHERE empresa_id=$1 AND tipo_base='ATUAL' AND ano=$2 AND mes=$3
+			    AND cod_cli=$4 AND qt > 0
+			GROUP BY cod_prod
+			ORDER BY SUM(CASE WHEN estado='FATURADO' THEN pvenda ELSE 0 END) DESC
+		`, spCtx.EmpresaID, refAno, refMes, codCli)
+
+		comprados := []cliProdutoItem{}
+		var totalFaturado, totalTransmitido float64
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var c cliProdutoItem
+				if err := rows.Scan(&c.Key, &c.Label, &c.NomeFornec, &c.Faturado, &c.Transmitido); err == nil {
+					comprados = append(comprados, c)
+					totalFaturado += c.Faturado
+					totalTransmitido += c.Transmitido
+				}
+			}
+		}
+
+		// Nome do cliente, RCA e supervisor
+		var nomeCli, nomeRca, nomeSup string
+		_ = db.QueryRow(`
+			SELECT MAX(nome_cli), MAX(COALESCE(nome_rca,'')), MAX(COALESCE(nome_supervisor,''))
+			FROM farol.mv_farol_cli
+			WHERE empresa_id=$1 AND tipo_base='ATUAL' AND ano=$2 AND mes=$3 AND cod_cli=$4
+		`, spCtx.EmpresaID, refAno, refMes, codCli).Scan(&nomeCli, &nomeRca, &nomeSup)
+
+		// Base total de clientes (para penetrPct das oportunidades)
+		var totalBase int
+		_ = db.QueryRow(`SELECT COUNT(DISTINCT cod_cli) FROM farol.mv_farol_cli
+			WHERE empresa_id=$1 AND tipo_base='ATUAL' AND ano=$2 AND mes=$3`,
+			spCtx.EmpresaID, refAno, refMes).Scan(&totalBase)
+
+		// ── Oportunidades: produtos mais populares que este cliente não compra ──
+		oRows, err2 := db.Query(`
+			SELECT
+			    p.cod_prod,
+			    MAX(p.nome_prod)    AS nome,
+			    MAX(p.nome_fornec)  AS nome_fornec,
+			    SUM(p.qt_positivados) AS qt_outros,
+			    CASE WHEN SUM(p.qt_positivados) > 0
+			         THEN SUM(p.faturado) / SUM(p.qt_positivados)
+			         ELSE 0 END    AS ticket_medio
+			FROM farol.mv_mkt_produto p
+			WHERE p.empresa_id=$1 AND p.tipo_base='ATUAL' AND p.ano=$2 AND p.mes=$3
+			    AND p.cod_prod != ''
+			    AND NOT EXISTS (
+			        SELECT 1 FROM vendas_importadas v
+			        WHERE v.empresa_id=$1 AND v.tipo_base='ATUAL' AND v.ano=$2 AND v.mes=$3
+			            AND v.cod_cli=$4 AND v.cod_prod=p.cod_prod AND v.qt > 0
+			    )
+			GROUP BY p.cod_prod
+			ORDER BY SUM(p.qt_positivados) DESC
+			LIMIT 100
+		`, spCtx.EmpresaID, refAno, refMes, codCli)
+
+		oportunidades := []cliOportunidade{}
+		var potencialEstimado float64
+		if err2 == nil {
+			defer oRows.Close()
+			for oRows.Next() {
+				var o cliOportunidade
+				if err := oRows.Scan(&o.Key, &o.Label, &o.NomeFornec,
+					&o.QtOutrosClientes, &o.TicketMedio); err == nil {
+					if totalBase > 0 {
+						o.PenetrPct = float64(o.QtOutrosClientes) / float64(totalBase) * 100
+					}
+					oportunidades = append(oportunidades, o)
+					potencialEstimado += o.TicketMedio
+				}
+			}
+		}
+
+		log.Printf("[marketing:cli-detalhe] cli=%s comprados=%d opor=%d em %v",
+			codCli, len(comprados), len(oportunidades), time.Since(t0))
+
+		json.NewEncoder(w).Encode(cliDetalheResponse{
+			CodCli:  codCli,
+			NomeCli: nomeCli,
+			KPI: cliDetalheKPI{
+				TotalProdutos:      len(comprados),
+				TotalOportunidades: len(oportunidades),
+				TotalFaturado:      totalFaturado,
+				TotalTransmitido:   totalTransmitido,
+				NomeRca:            nomeRca,
+				NomeSup:            nomeSup,
+				PotencialEstimado:  potencialEstimado,
+			},
+			Comprados:     comprados,
+			Oportunidades: oportunidades,
+		})
+	}
+}

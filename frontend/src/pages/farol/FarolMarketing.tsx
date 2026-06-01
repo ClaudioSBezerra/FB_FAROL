@@ -113,6 +113,32 @@ interface ProdDetalheResponse {
   oportunidades: ProdOportunidade[]
 }
 
+// ─── Tipos detalhe de cliente ─────────────────────────────────────────────────
+
+interface CliDetalheKPI {
+  total_produtos: number
+  total_oportunidades: number
+  total_faturado: number
+  total_transmitido: number
+  nome_rca: string
+  nome_sup: string
+  potencial_estimado: number
+}
+interface CliProdutoItem {
+  key: string; label: string; nome_fornec: string
+  faturado: number; transmitido: number
+}
+interface CliOportunidade {
+  key: string; label: string; nome_fornec: string
+  qt_outros_clientes: number; ticket_medio: number; penetr_pct: number
+}
+interface CliDetalheResponse {
+  cod_cli: string; nome_cli: string
+  kpi: CliDetalheKPI
+  comprados: CliProdutoItem[]
+  oportunidades: CliOportunidade[]
+}
+
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
 
 function useMktCards(view: string, compMode: string, refAno: number, refMes: number, compAno: number, compMes: number) {
@@ -311,6 +337,173 @@ function ProdutoDetalhe({
   )
 }
 
+function useCliDetalhe(codCli: string, refAno: number, refMes: number) {
+  return useQuery<CliDetalheResponse>({
+    queryKey: ['mkt-cli-detalhe', codCli, refAno, refMes],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        cod_cli: codCli,
+        ...(refAno > 0 && { ref_ano: String(refAno) }),
+        ...(refMes > 0 && { ref_mes: String(refMes) }),
+      })
+      const r = await fetch(`/api/v2/marketing/cliente-detalhe?${p}`)
+      if (!r.ok) throw new Error('Falha ao carregar detalhe do cliente')
+      return r.json()
+    },
+    enabled: codCli !== '',
+    staleTime: 2 * 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// ─── Cliente Detalhe ──────────────────────────────────────────────────────────
+
+function ClienteDetalhe({
+  codCli, nomeCli, refAno, refMes, onVoltar,
+}: {
+  codCli: string; nomeCli: string
+  refAno: number; refMes: number
+  onVoltar: () => void
+}) {
+  const { data, isLoading, error } = useCliDetalhe(codCli, refAno, refMes)
+
+  return (
+    <div>
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 mb-5">
+        <button onClick={onVoltar}
+          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-primary transition-colors font-medium">
+          <ChevronLeft className="h-4 w-4" /> Voltar
+        </button>
+        <span className="text-slate-300">/</span>
+        <span className="text-sm font-semibold text-slate-700 truncate">{nomeCli || codCli}</span>
+        {data?.kpi.nome_rca && <span className="text-xs text-slate-400">· RCA: {data.kpi.nome_rca}</span>}
+      </div>
+
+      {isLoading && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl h-24 animate-pulse border border-slate-100" />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-2xl h-80 animate-pulse border border-slate-100" />
+            <div className="bg-white rounded-2xl h-80 animate-pulse border border-slate-100" />
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-700 text-sm">
+          {(error as Error).message}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* KPI strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Produtos comprados</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums">{data.kpi.total_produtos}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">no período</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Oportunidades</p>
+              <p className="text-2xl font-black text-amber-600 tabular-nums">{data.kpi.total_oportunidades}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">produtos populares não comprados</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Faturado</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums">{fmtBRL(data.kpi.total_faturado)}</p>
+              {data.kpi.total_transmitido > 0 && (
+                <p className="text-[11px] text-slate-500 mt-0.5">{fmtBRL(data.kpi.total_transmitido)} transm.</p>
+              )}
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Responsável</p>
+              <p className="text-sm font-bold text-slate-800 truncate">{data.kpi.nome_rca || '—'}</p>
+              <p className="text-[11px] text-slate-500 truncate">Sup: {data.kpi.nome_sup || '—'}</p>
+            </div>
+            <div className="bg-amber-50 rounded-xl border border-amber-200 shadow-sm p-4 hidden lg:block">
+              <p className="text-[11px] text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Zap className="h-3 w-3" /> Potencial cross-sell
+              </p>
+              <p className="text-2xl font-black text-amber-700 tabular-nums">{fmtBRL(data.kpi.potencial_estimado)}</p>
+              <p className="text-[11px] text-amber-600 mt-0.5">ticket médio dos produtos não comprados</p>
+            </div>
+          </div>
+
+          {/* Duas colunas */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Produtos comprados */}
+            <div className="bg-white rounded-2xl shadow-sm border border-emerald-100 overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-emerald-50 bg-emerald-50/50">
+                <Package className="h-4 w-4 text-emerald-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-emerald-800">Produtos comprados</h3>
+                  <p className="text-xs text-emerald-600">{data.comprados.length} produtos · ordenado por faturado</p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-50 max-h-[480px] overflow-y-auto">
+                {data.comprados.map((c, i) => (
+                  <div key={c.key} className="flex items-center gap-3 px-5 py-3 hover:bg-emerald-50/30 transition-colors">
+                    <span className="w-5 text-xs font-bold text-slate-300 flex-shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{c.label}</p>
+                      <p className="text-[10px] text-slate-400 truncate">{c.nome_fornec}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-emerald-700 tabular-nums">{fmtBRL(c.faturado)}</p>
+                      {c.transmitido > 0 && (
+                        <p className="text-[10px] text-slate-400 tabular-nums">{fmtBRL(c.transmitido)} transm.</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {data.comprados.length === 0 && (
+                  <p className="px-5 py-8 text-sm text-slate-400 text-center">Nenhum produto comprado no período</p>
+                )}
+              </div>
+            </div>
+
+            {/* Oportunidades cross-sell */}
+            <div className="bg-white rounded-2xl shadow-sm border border-amber-100 overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-50 bg-amber-50/50">
+                <Target className="h-4 w-4 text-amber-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-amber-800">Oportunidades de cross-sell</h3>
+                  <p className="text-xs text-amber-600">
+                    Produtos populares que <strong>este cliente não compra</strong> · ordenado por popularidade
+                  </p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-50 max-h-[480px] overflow-y-auto">
+                {data.oportunidades.map((o, i) => (
+                  <div key={o.key} className="flex items-center gap-3 px-5 py-3 hover:bg-amber-50/30 transition-colors">
+                    <span className="w-5 text-xs font-bold text-slate-300 flex-shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{o.label}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {o.nome_fornec} · {o.qt_outros_clientes} clientes compram · {fmtPct(o.penetr_pct)} da base
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-amber-700 tabular-nums">{fmtBRL(o.ticket_medio)}</p>
+                      <p className="text-[10px] text-slate-400">ticket médio</p>
+                    </div>
+                  </div>
+                ))}
+                {data.oportunidades.length === 0 && (
+                  <p className="px-5 py-8 text-sm text-slate-400 text-center">Cliente compra todos os produtos disponíveis</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Hero Band ────────────────────────────────────────────────────────────────
 
 function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['periodo'] }) {
@@ -424,10 +617,11 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
 
 // ─── Ranking de Penetração ────────────────────────────────────────────────────
 
-function MktRanking({ cards, view, onSelectProd }: {
+function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
   cards: MktCard[]
   view: string
   onSelectProd: (card: MktCard) => void
+  onSelectCli: (card: MktCard) => void
 }) {
   const maxPenetr = Math.max(...cards.map(c => c.penetr_pct), 1)
   const medals = ['🥇', '🥈', '🥉']
@@ -472,9 +666,14 @@ function MktRanking({ cards, view, onSelectProd }: {
           return (
             <div
               key={card.key}
-              onClick={() => view === 'produto' && onSelectProd(card)}
+              onClick={() => {
+                if (view === 'produto') onSelectProd(card)
+                if (view === 'cliente') onSelectCli(card)
+              }}
               className={`flex items-center gap-4 px-6 py-3.5 transition-colors ${
-                view === 'produto' ? 'cursor-pointer hover:bg-amber-50/40 group' : ''
+                view === 'produto' || view === 'cliente'
+                  ? 'cursor-pointer hover:bg-amber-50/40 group'
+                  : ''
               }`}
             >
               {/* Rank */}
@@ -600,6 +799,7 @@ export default function FarolMarketing() {
   const [refMes, setRefMes]           = useState(0)
   const [compAno, setCompAno]         = useState(0)
   const [selectedProd, setSelectedProd] = useState<MktCard | null>(null)
+  const [selectedCli,  setSelectedCli]  = useState<MktCard | null>(null)
   const [compMes, setCompMes]   = useState(0)
   const [search, setSearch]     = useState('')
 
@@ -752,11 +952,21 @@ export default function FarolMarketing() {
         />
       )}
 
+      {/* ── Detalhe de cliente ─────────────────────────────────────────── */}
+      {selectedCli && (
+        <ClienteDetalhe
+          codCli={selectedCli.key}
+          nomeCli={selectedCli.label}
+          refAno={refAno} refMes={refMes}
+          onVoltar={() => setSelectedCli(null)}
+        />
+      )}
+
       {/* ── Conteúdo ───────────────────────────────────────────────────── */}
-      {!selectedProd && !isLoading && !error && data && data.cards.length > 0 && (
+      {!selectedProd && !selectedCli && !isLoading && !error && data && data.cards.length > 0 && (
         <>
           <MktHeroBand kpi={data.kpi} periodo={data.periodo} />
-          <MktRanking cards={visibleCards} view={view} onSelectProd={setSelectedProd} />
+          <MktRanking cards={visibleCards} view={view} onSelectProd={setSelectedProd} onSelectCli={setSelectedCli} />
           <ClientesInativos clientes={data.clientes_inativos} />
         </>
       )}
