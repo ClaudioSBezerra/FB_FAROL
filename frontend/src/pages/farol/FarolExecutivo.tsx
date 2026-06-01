@@ -633,6 +633,7 @@ export default function FarolExecutivo() {
     sup:     '',   // Equipe / Supervisor
     rca:     '',   // RCA
     cli:     '',   // Cliente
+    prod:    '',   // Produto
   })
 
   const { data, isLoading, error } = useCards(
@@ -650,16 +651,14 @@ export default function FarolExecutivo() {
   }, [refAno])
   if (data && refAno === 0) autoRef(data)
 
-  const resetFilters = () => setFilters({ fornec: '', gerente: '', sup: '', rca: '', cli: '' })
+  const resetFilters = () => setFilters({ fornec: '', gerente: '', sup: '', rca: '', cli: '', prod: '' })
 
   const handleDrill = (card: CardItem) => {
     if (card.level === 'cod_prod') return
-    resetFilters()
     setDrillPath(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
 
   const handleBack = () => {
-    resetFilters()
     setDrillPath(prev => prev.slice(0, -1))
   }
 
@@ -670,6 +669,7 @@ export default function FarolExecutivo() {
     if (lv.includes('gerente'))    return 'gerente'
     if (lv.includes('supervisor')) return 'sup'
     if (lv.includes('rca'))        return 'rca'
+    if (lv.includes('prod'))       return 'prod'
     if (lv.includes('cli'))        return 'cli'
     return null
   }, [data?.cards])
@@ -861,14 +861,14 @@ export default function FarolExecutivo() {
 
       {/* ── Painel de filtros ─────────────────────────────────────────────── */}
       {filterOpen && data && (() => {
-        const FILTER_FIELDS: Array<{ key: keyof typeof filters; label: string; levelMatch: string }> = [
-          { key: 'fornec',  label: 'Indústria',      levelMatch: 'fornec'     },
-          { key: 'gerente', label: 'Gerente (GGV)',   levelMatch: 'gerente'    },
-          { key: 'sup',     label: 'Equipe (SUPV)',   levelMatch: 'supervisor' },
-          { key: 'rca',     label: 'RCA',             levelMatch: 'rca'        },
-          { key: 'cli',     label: 'Cliente',         levelMatch: 'cli'        },
+        const FILTER_FIELDS: Array<{ key: keyof typeof filters; label: string }> = [
+          { key: 'fornec',  label: 'Indústria'     },
+          { key: 'gerente', label: 'Gerente (GGV)' },
+          { key: 'sup',     label: 'Equipe (SUPV)' },
+          { key: 'rca',     label: 'RCA'           },
+          { key: 'cli',     label: 'Cliente'       },
+          { key: 'prod',    label: 'Produto'       },
         ]
-        const lv = data.next_level?.toLowerCase() ?? ''
 
         return (
           <div className="mb-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
@@ -882,14 +882,14 @@ export default function FarolExecutivo() {
                 </button>
               )}
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               {FILTER_FIELDS.map(f => {
-                const isActive = lv.includes(f.levelMatch)
+                const isCurrent = activeFilterKey === f.key
                 return (
                   <div key={f.key}>
-                    <label className={`block text-[11px] font-medium mb-1 ${isActive ? 'text-primary' : 'text-slate-400'}`}>
+                    <label className={`block text-[11px] font-medium mb-1 ${isCurrent ? 'text-primary' : 'text-slate-500'}`}>
                       {f.label}
-                      {isActive && <span className="ml-1 text-[10px] text-primary/70">(nível atual)</span>}
+                      {isCurrent && <span className="ml-1 text-[10px] text-primary/60">● ativo</span>}
                     </label>
                     <div className="relative">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
@@ -897,12 +897,9 @@ export default function FarolExecutivo() {
                         type="text"
                         value={filters[f.key]}
                         onChange={e => setFilters(prev => ({ ...prev, [f.key]: e.target.value }))}
-                        placeholder={isActive ? `Buscar ${f.label}...` : '—'}
-                        disabled={!isActive}
-                        className={`w-full h-7 pl-6 pr-6 rounded-lg border text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                          isActive
-                            ? 'border-slate-200 bg-white text-slate-700 placeholder:text-slate-400'
-                            : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                        placeholder={`Buscar ${f.label}...`}
+                        className={`w-full h-7 pl-6 pr-6 rounded-lg border text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white text-slate-700 placeholder:text-slate-400 ${
+                          isCurrent ? 'border-primary/40' : 'border-slate-200'
                         }`}
                       />
                       {filters[f.key] && (
@@ -922,6 +919,7 @@ export default function FarolExecutivo() {
               Dica: use <span className="font-mono bg-slate-100 px-1 rounded">%</span> como curinga —{' '}
               <span className="font-mono bg-slate-100 px-1 rounded">mini%</span> começa com,{' '}
               <span className="font-mono bg-slate-100 px-1 rounded">%mercado</span> termina com.
+              Os filtros persistem durante o drill — configure antes de navegar.
             </p>
             {activeSearch && (
               <p className="mt-1 text-[11px] text-slate-500">
