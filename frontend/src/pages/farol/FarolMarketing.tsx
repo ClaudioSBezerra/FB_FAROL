@@ -281,7 +281,8 @@ function ProdutoDetalhe({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{c.label}</p>
                       <p className="text-[10px] text-slate-400 truncate">
-                        {c.nome_rca && `RCA: ${c.nome_rca}`}
+                        <span className="font-mono">{c.key}</span>
+                        {c.nome_rca && ` · RCA: ${c.nome_rca}`}
                         {c.nome_sup && ` · Sup: ${c.nome_sup}`}
                       </p>
                     </div>
@@ -317,7 +318,8 @@ function ProdutoDetalhe({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{o.label}</p>
                       <p className="text-[10px] text-slate-400 truncate">
-                        {o.nome_rca && `RCA: ${o.nome_rca}`}
+                        <span className="font-mono">{o.key}</span>
+                        {o.nome_rca && ` · RCA: ${o.nome_rca}`}
                         {o.n_outros_prod > 0 && ` · ${o.n_outros_prod} outras indústrias`}
                       </p>
                     </div>
@@ -451,7 +453,9 @@ function ClienteDetalhe({
                     <span className="w-5 text-xs font-bold text-slate-300 flex-shrink-0">{i + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{c.label}</p>
-                      <p className="text-[10px] text-slate-400 truncate">{c.nome_fornec}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        <span className="font-mono">{c.key}</span>{c.nome_fornec && ` · ${c.nome_fornec}`}
+                      </p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-bold text-emerald-700 tabular-nums">{fmtBRL(c.faturado)}</p>
@@ -485,7 +489,7 @@ function ClienteDetalhe({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{o.label}</p>
                       <p className="text-[10px] text-slate-400 truncate">
-                        {o.nome_fornec} · {o.qt_outros_clientes} clientes compram · {fmtPct(o.penetr_pct)} da base
+                        <span className="font-mono">{o.key}</span>{o.nome_fornec && ` · ${o.nome_fornec}`} · {o.qt_outros_clientes} clientes compram · {fmtPct(o.penetr_pct)} da base
                       </p>
                     </div>
                     <div className="text-right flex-shrink-0">
@@ -706,12 +710,9 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
               {/* Nome */}
               <div className="w-44 flex-shrink-0">
                 <p className="text-sm font-semibold text-slate-800 truncate">{card.label}</p>
-                {card.nome_fornec && (
-                  <p className="text-[10px] text-slate-400 truncate">{card.nome_fornec}</p>
-                )}
-                {!card.nome_fornec && (
-                  <p className="text-[10px] text-slate-400">{card.key}</p>
-                )}
+                <p className="text-[10px] text-slate-400 truncate font-mono">
+                  {card.key}{card.nome_fornec && <span className="font-sans"> · {card.nome_fornec}</span>}
+                </p>
               </div>
 
               {/* Barra de penetração */}
