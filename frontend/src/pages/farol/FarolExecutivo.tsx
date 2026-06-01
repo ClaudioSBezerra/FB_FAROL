@@ -663,24 +663,42 @@ export default function FarolExecutivo() {
     setDrillPath(prev => prev.slice(0, -1))
   }
 
-  // Determina qual campo de filtro está ativo com base no nível atual
+  // Usa o level do primeiro card (nível ATUAL exibido), não o next_level (nível filho)
   const activeFilterKey = useMemo((): keyof typeof filters | null => {
-    const lv = data?.next_level?.toLowerCase() ?? ''
+    const lv = (data?.cards?.[0]?.level ?? '').toLowerCase()
     if (lv.includes('fornec'))     return 'fornec'
     if (lv.includes('gerente'))    return 'gerente'
     if (lv.includes('supervisor')) return 'sup'
     if (lv.includes('rca'))        return 'rca'
     if (lv.includes('cli'))        return 'cli'
     return null
-  }, [data?.next_level])
+  }, [data?.cards])
 
   const activeSearch = activeFilterKey ? filters[activeFilterKey] : ''
 
+  // Busca com suporte a wildcard %:
+  //   "mercado"   → contém (padrão amigável)
+  //   "mercado%"  → começa com
+  //   "%mercado"  → termina com
+  //   "%mercado%" → contém (explícito)
+  function matchTerm(label: string, raw: string): boolean {
+    const t = raw.trim().toLowerCase()
+    const l = label.toLowerCase()
+    if (!t) return true
+    const startsWild = t.startsWith('%')
+    const endsWild   = t.endsWith('%')
+    const core = t.replace(/^%|%$/g, '')
+    if (!core) return true
+    if (startsWild && endsWild) return l.includes(core)
+    if (startsWild)             return l.endsWith(core)
+    if (endsWild)               return l.startsWith(core)
+    return l.includes(core)
+  }
+
   const visibleCards = useMemo(
     () => {
-      const term = activeSearch.trim().toLowerCase()
-      if (!term || !data?.cards) return data?.cards ?? []
-      return data.cards.filter(c => c.label.toLowerCase().includes(term))
+      if (!activeSearch.trim() || !data?.cards) return data?.cards ?? []
+      return data.cards.filter(c => matchTerm(c.label, activeSearch))
     },
     [data?.cards, activeSearch]
   )
@@ -900,8 +918,13 @@ export default function FarolExecutivo() {
                 )
               })}
             </div>
+            <p className="mt-3 text-[10px] text-slate-400">
+              Dica: use <span className="font-mono bg-slate-100 px-1 rounded">%</span> como curinga —{' '}
+              <span className="font-mono bg-slate-100 px-1 rounded">mini%</span> começa com,{' '}
+              <span className="font-mono bg-slate-100 px-1 rounded">%mercado</span> termina com.
+            </p>
             {activeSearch && (
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="mt-1 text-[11px] text-slate-500">
                 Exibindo <span className="font-semibold text-primary">{visibleCards.length}</span> de {data.cards.length} {data.next_level_label?.toLowerCase() ?? 'itens'}
               </p>
             )}
