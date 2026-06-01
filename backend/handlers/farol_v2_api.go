@@ -691,7 +691,13 @@ func refreshAllFarolViews(db *sql.DB) error {
 		wg.Add(1)
 		go func(idx int, name string) {
 			defer wg.Done()
-			if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err != nil {
+			_, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name)
+			if err != nil {
+				// MV nunca populada (WITH NO DATA) → tenta sem CONCURRENTLY
+				log.Printf("[farol:view] refresh CONCURRENTLY %s falhou (%v), tentando sem CONCURRENTLY", name, err)
+				_, err = db.Exec(`REFRESH MATERIALIZED VIEW ` + name)
+			}
+			if err != nil {
 				errs[idx] = err
 				log.Printf("[farol:view] refresh %s ERRO: %v", name, err)
 			} else {
