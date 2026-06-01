@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -94,8 +94,54 @@ export default function GestaoAmbiente() {
   const [editCompanyTradeName, setEditCompanyTradeName] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [userHierarchy, setUserHierarchy] = useState<UserHierarchy | null>(null);
+
+  // ── Logo ──────────────────────────────────────────────────────────────────
+  const [logoURL, setLogoURL] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const prevLogoURL = useRef<string | null>(null);
+
+  const loadLogo = () => {
+    const t = token || localStorage.getItem("token");
+    if (!t) return;
+    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${t}` } })
+      .then(res => res.ok ? res.blob() : null)
+      .then(blob => {
+        if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current);
+        const url = blob ? URL.createObjectURL(blob) : null;
+        prevLogoURL.current = url;
+        setLogoURL(url);
+      })
+      .catch(() => {});
+  };
+
+  const handleLogoUpload = async (file: File) => {
+    const t = token || localStorage.getItem("token");
+    if (!t) return;
+    setLogoUploading(true);
+    try {
+      const form = new FormData();
+      form.append("logo", file);
+      const res = await fetch("/api/config/empresa/logo", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t}` },
+        body: form,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        toast.error(text || "Erro ao enviar logo");
+        return;
+      }
+      toast.success("Logotipo atualizado");
+      loadLogo();
+    } catch {
+      toast.error("Erro ao enviar logo");
+    } finally {
+      setLogoUploading(false);
+    }
+  };
 
   // Initial Load
   useEffect(() => {
@@ -104,6 +150,7 @@ export default function GestaoAmbiente() {
     } else if (user) {
       fetchUserHierarchy();
     }
+    loadLogo();
   }, [user]);
 
   // Load Groups when Env selected
@@ -490,6 +537,47 @@ export default function GestaoAmbiente() {
           Configuração Hierárquica: Ambiente &gt; Grupo &gt; Empresa
         </p>
       </div>
+
+      {/* ── Logotipo da empresa ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building className="h-5 w-5" />
+            Logotipo da Empresa
+          </CardTitle>
+          <CardDescription>
+            Imagem exibida na sidebar do sistema. Formatos aceitos: JPEG, PNG, WebP, SVG (máx. 5 MB).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-6">
+            {logoURL ? (
+              <img src={logoURL} alt="Logotipo atual" className="h-16 w-16 rounded-lg object-cover border" />
+            ) : (
+              <div className="h-16 w-16 rounded-lg border-2 border-dashed flex items-center justify-center text-muted-foreground text-xs">
+                Sem logo
+              </div>
+            )}
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={logoUploading}
+                onClick={() => logoInputRef.current?.click()}
+              >
+                {logoUploading ? "Enviando..." : "Alterar logotipo"}
+              </Button>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
         {/* Column 1: Environments */}

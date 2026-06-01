@@ -48,7 +48,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext"
 import { CompanySwitcher } from "@/components/CompanySwitcher"
 import { cn } from "@/lib/utils"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { toast } from "sonner"
 
 // ---------------------------------------------------------------------------
@@ -172,6 +172,22 @@ export function AppSidebar() {
   const isAdmin = user?.role === "admin"
   const isMaster = group === "MASTER"
 
+  const [logoURL, setLogoURL] = useState<string | null>(null)
+  const prevLogoURL = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.blob() : null)
+      .then(blob => {
+        if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current)
+        const url = blob ? URL.createObjectURL(blob) : null
+        prevLogoURL.current = url
+        setLogoURL(url)
+      })
+      .catch(() => {})
+  }, [token])
+
   // Estado de expansão de cada seção (todas abertas por padrão)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(
     () => Object.fromEntries(sections.map((s) => [s.id, false]))
@@ -231,8 +247,8 @@ export function AppSidebar() {
       <SidebarHeader className="border-b pb-2">
         <div className="flex items-center gap-2.5 px-3 py-2">
           <img
-            src="/logo-fb.png"
-            alt="Fortes Bezerra"
+            src={logoURL ?? "/logo-fb.png"}
+            alt="Logotipo"
             className="size-8 rounded-lg shrink-0 object-cover"
           />
           <div className="grid flex-1 text-left leading-tight">

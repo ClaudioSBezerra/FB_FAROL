@@ -404,6 +404,20 @@ func main() {
 		}
 	}, ""))
 
+	// ── Config — Logo da empresa ─────────────────────────────────────────────
+	http.HandleFunc("/api/config/empresa/logo", func(w http.ResponseWriter, r *http.Request) {
+		database := getDB()
+		if database == nil {
+			http.Error(w, "Database initializing...", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodPost {
+			handlers.AuthMiddleware(handlers.UploadEmpresaLogoHandler(database), "admin")(w, r)
+		} else {
+			handlers.AuthMiddleware(handlers.ServeEmpresaLogoHandler(database), "")(w, r)
+		}
+	})
+
 	// ── Filiais (selector global) ─────────────────────────────────────────────
 	http.HandleFunc("/api/filiais", withAuth(handlers.GetFiliaisHandler, ""))
 
