@@ -39,14 +39,16 @@ type mktCard struct {
 }
 
 type mktKPI struct {
-	TotalBaseCli    int     `json:"total_base_cli"`
-	TotalAtivos     int     `json:"total_ativos"`
-	TotalInativos   int     `json:"total_inativos"`
-	TaxaPositivacao float64 `json:"taxa_positivacao"`
-	AvgMix          float64 `json:"avg_mix"`
-	TotalPvenda     float64 `json:"total_pvenda"`
-	TotalFaturado   float64 `json:"total_faturado"`
-	TotalTransmitido float64 `json:"total_transmitido"`
+	TotalBaseCli      int     `json:"total_base_cli"`
+	TotalAtivos       int     `json:"total_ativos"`
+	TotalInativos     int     `json:"total_inativos"`
+	TaxaPositivacao   float64 `json:"taxa_positivacao"`
+	TaxaPositivacaoAnt float64 `json:"taxa_positivacao_ant"`
+	DeltaPositivacao  float64 `json:"delta_positivacao"`
+	AvgMix            float64 `json:"avg_mix"`
+	TotalPvenda       float64 `json:"total_pvenda"`
+	TotalFaturado     float64 `json:"total_faturado"`
+	TotalTransmitido  float64 `json:"total_transmitido"`
 }
 
 type mktClienteInativo struct {
@@ -140,7 +142,7 @@ func MarketingCardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// KPI geral (base de clientes do período)
-		kpi := fetchMktKPI(db, spCtx.EmpresaID, refAno, refMes, compMode)
+		kpi := fetchMktKPI(db, spCtx.EmpresaID, refAno, refMes, compMode, compAno, compMes)
 
 		// Cards do ranking
 		var cards []mktCard
@@ -182,7 +184,7 @@ func MarketingCardsHandler(db *sql.DB) http.HandlerFunc {
 
 // ─── KPI geral ────────────────────────────────────────────────────────────────
 
-func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode string) mktKPI {
+func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode string, compAno, compMes int) mktKPI {
 	t0 := time.Now()
 	atualCond := fmt.Sprintf("tipo_base='ATUAL' AND ano=%d AND mes=%d", refAno, refMes)
 	if compMode == "ytd" {
@@ -206,8 +208,38 @@ func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode stri
 	k.TotalInativos = k.TotalBaseCli - k.TotalAtivos
 	if k.TotalBaseCli > 0 {
 		k.TaxaPositivacao = float64(k.TotalAtivos) / float64(k.TotalBaseCli) * 100
+		if k.TaxaPositivacao > 100 { k.TaxaPositivacao = 100 }
 	}
-	log.Printf("[marketing] fetchMktKPI base=%d ativos=%d em %v", k.TotalBaseCli, k.TotalAtivos, time.Since(t0))
+
+	// ── Período anterior (para delta de positivação no hero band) ──────────────
+	antAno, antMes := refAno-1, refMes
+	if compMode == "mom" {
+		antAno, antMes = resolveCompPeriod(refAno, refMes, compAno, compMes)
+	}
+	var antCond string
+	switch compMode {
+	case "ytd":
+		antCond = fmt.Sprintf("tipo_base='COMPARATIVA' AND ano=%d AND mes<=%d", antAno, refMes)
+	case "mom":
+		antCond = fmt.Sprintf("(tipo_base='ATUAL' OR tipo_base='COMPARATIVA') AND ano=%d AND mes=%d", antAno, antMes)
+	default:
+		antCond = fmt.Sprintf("tipo_base='COMPARATIVA' AND ano=%d AND mes=%d", antAno, antMes)
+	}
+	var baseAnt, ativosAnt int
+	_ = db.QueryRow(fmt.Sprintf(`
+		SELECT COUNT(DISTINCT cod_cli),
+		       COUNT(DISTINCT CASE WHEN positivados=1 THEN cod_cli END)
+		FROM farol.mv_farol_cli
+		WHERE empresa_id=$1 AND %s
+	`, antCond), empresaID).Scan(&baseAnt, &ativosAnt)
+	if baseAnt > 0 {
+		k.TaxaPositivacaoAnt = float64(ativosAnt) / float64(baseAnt) * 100
+		if k.TaxaPositivacaoAnt > 100 { k.TaxaPositivacaoAnt = 100 }
+	}
+	k.DeltaPositivacao = k.TaxaPositivacao - k.TaxaPositivacaoAnt
+
+	log.Printf("[marketing] fetchMktKPI base=%d ativos=%d posit=%.1f%% delta=%.1fpp em %v",
+		k.TotalBaseCli, k.TotalAtivos, k.TaxaPositivacao, k.DeltaPositivacao, time.Since(t0))
 	return k
 }
 
@@ -228,13 +260,21 @@ func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode 
 		atualWhere = "tipo_base='ATUAL' AND ano=$2 AND mes=$3"
 	}
 
+	// Usa vendas_importadas com COUNT(DISTINCT cod_cli) para evitar dupla contagem
+	// quando o mesmo produto aparece sob múltiplos cod_fornec na mv_mkt_produto.
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT cod_prod, MAX(nome_prod), MAX(cod_fornec), MAX(nome_fornec),
-		       SUM(qt_positivados), SUM(pvenda), SUM(faturado), SUM(transmitido)
-		FROM farol.mv_mkt_produto
+		SELECT cod_prod,
+		       MAX(nome_prod)   AS nome_prod,
+		       MAX(cod_fornec)  AS cod_fornec,
+		       MAX(nome_fornec) AS nome_fornec,
+		       COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END) AS qt_positivados,
+		       SUM(pvenda)      AS pvenda,
+		       SUM(CASE WHEN estado='FATURADO'  THEN pvenda ELSE 0 END) AS faturado,
+		       SUM(CASE WHEN estado!='FATURADO' THEN pvenda ELSE 0 END) AS transmitido
+		FROM vendas_importadas
 		WHERE empresa_id=$1 AND %s AND cod_prod != ''
 		GROUP BY cod_prod
-		ORDER BY SUM(qt_positivados) DESC
+		ORDER BY COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END) DESC
 	`, atualWhere), atualArgs...)
 	if err != nil {
 		log.Printf("[marketing] fetchMktProduto ERRO atual: %v", err)
@@ -279,8 +319,9 @@ func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode 
 	}
 
 	antRows, err := db.Query(fmt.Sprintf(`
-		SELECT cod_prod, SUM(qt_positivados)
-		FROM farol.mv_mkt_produto
+		SELECT cod_prod,
+		       COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END)
+		FROM vendas_importadas
 		WHERE empresa_id=$1 AND %s AND cod_prod != ''
 		GROUP BY cod_prod
 	`, antWhere), antArgs...)
@@ -311,6 +352,7 @@ func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode 
 		}
 		if totalBase > 0 {
 			c.PenetrPct = float64(p.qtAtual) / float64(totalBase) * 100
+			if c.PenetrPct > 100 { c.PenetrPct = 100 }
 		}
 		cards = append(cards, c)
 	}
@@ -408,6 +450,7 @@ func fetchMktFornec(db *sql.DB, empresaID string, refAno, refMes int, compMode s
 		} else if base > 0 {
 			c.PenetrPct = float64(qtAtivos) / float64(base) * 100
 		}
+		if c.PenetrPct > 100 { c.PenetrPct = 100 }
 		cards = append(cards, c)
 	}
 	log.Printf("[marketing] fetchMktFornec %d fornecedores em %v", len(cards), time.Since(t0))

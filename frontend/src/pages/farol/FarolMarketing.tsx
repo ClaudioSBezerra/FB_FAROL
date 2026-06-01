@@ -26,6 +26,8 @@ interface MktKPI {
   total_ativos: number
   total_inativos: number
   taxa_positivacao: number
+  taxa_positivacao_ant: number
+  delta_positivacao: number
   avg_mix: number
   total_pvenda: number
   total_faturado: number
@@ -510,8 +512,12 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
   const cx = 80, cy = 80, r = 56, sw = 10
   const total = 2 * Math.PI * r
   const arc = total * 0.75
-  const filled = arc * Math.min(kpi.taxa_positivacao / 100, 1)
-  const col = kpi.taxa_positivacao >= 75 ? '#10b981' : kpi.taxa_positivacao >= 50 ? '#f59e0b' : '#ef4444'
+  // Clamp a 100% e reduz ligeiramente no máximo para evitar artefato visual
+  // do strokeLinecap="round" quando filled = arc (caps se sobrepõem)
+  const clampedPct = Math.min(kpi.taxa_positivacao, 100)
+  const filled = arc * (clampedPct / 100) * (clampedPct >= 99.5 ? 0.998 : 1)
+  const col = clampedPct >= 75 ? '#10b981' : clampedPct >= 50 ? '#f59e0b' : '#ef4444'
+  const delta = kpi.delta_positivacao
 
   return (
     <div className="relative bg-gradient-to-br from-slate-950 via-slate-900 to-slate-900 rounded-2xl overflow-hidden mb-6 shadow-2xl">
@@ -565,9 +571,14 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center pt-10">
               <span className="text-3xl font-black tabular-nums" style={{ color: col }}>
-                {fmtPct(kpi.taxa_positivacao)}
+                {fmtPct(clampedPct)}
               </span>
               <span className="text-slate-400 text-[10px] uppercase tracking-widest font-semibold mt-0.5">positivação</span>
+              {kpi.taxa_positivacao_ant > 0 && (
+                <span className={`text-[10px] font-semibold mt-1 ${delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {delta >= 0 ? '+' : ''}{delta.toFixed(1)}pp
+                </span>
+              )}
             </div>
           </div>
 
@@ -623,7 +634,8 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
   onSelectProd: (card: MktCard) => void
   onSelectCli: (card: MktCard) => void
 }) {
-  const maxPenetr = Math.max(...cards.map(c => c.penetr_pct), 1)
+  // Escala sempre 0-100 — penetr_pct já vem capado a 100 do backend
+  const maxPenetr = 100
   const medals = ['🥇', '🥈', '🥉']
 
   const headerLabel = view === 'produto' ? 'Produto'
@@ -659,8 +671,9 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
 
       <div className="divide-y divide-slate-50">
         {cards.map((card, idx) => {
-          const barW = Math.min((card.penetr_pct / maxPenetr) * 100, 100)
-          const { bar, text } = corPenetr(card.penetr_pct)
+          const safePct = Math.min(card.penetr_pct, 100)
+          const barW = safePct  // maxPenetr = 100, então barW = penetr_pct diretamente
+          const { bar, text } = corPenetr(safePct)
           const d = card.delta_pct
 
           return (
@@ -707,7 +720,7 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
                 <span className={`text-base font-black tabular-nums ${text}`}>
                   {view === 'cliente'
                     ? fmtNum(card.mix)
-                    : fmtPct(card.penetr_pct)}
+                    : fmtPct(safePct)}
                 </span>
                 {view !== 'cliente' && (
                   <p className="text-[10px] text-slate-400 tabular-nums">{card.qt_clientes} cli</p>
