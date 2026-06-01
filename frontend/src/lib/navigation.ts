@@ -19,12 +19,18 @@ export interface ModuleConfig {
 export const modules: Record<string, ModuleConfig> = {
   // ── Farol V2 — sistema principal de vendas ───────────────────────────────
   farol: {
-    label: 'Farol',
+    label: 'Painel Vendas',
     tabs: [
-      { label: 'Painel Vendas',    path: '/farol/v2' },
-      { label: 'Painel Marketing', path: '/farol/marketing' },
-      { label: 'Assistente IA',    path: '/farol/assistente' },
-      { label: 'Usuários',         path: '/farol/usuarios', managerOnly: true },
+      { label: 'Painel Vendas',  path: '/farol/v2' },
+      { label: 'Assistente IA',  path: '/farol/assistente' },
+      { label: 'Usuários',       path: '/farol/usuarios', managerOnly: true },
+    ],
+  },
+  // ── Painel Marketing — módulo separado ───────────────────────────────────
+  marketing: {
+    label: 'Painel Marketing',
+    tabs: [
+      { label: 'Marketing', path: '/farol/marketing' },
     ],
   },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
@@ -69,8 +75,8 @@ export const modules: Record<string, ModuleConfig> = {
 
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
+  if (pathname.startsWith('/farol/marketing'))       return 'marketing'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
-  if (pathname.startsWith('/farol/marketing'))       return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'

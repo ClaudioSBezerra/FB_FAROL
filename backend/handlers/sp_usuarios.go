@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
@@ -41,17 +43,20 @@ type SpUsuarioResponse struct {
 	// Filiais vinculadas (preenchidas pela query de listagem)
 	AllFiliais bool  `json:"all_filiais"`
 	FilialIDs  []int `json:"filial_ids"`
+	// Módulos habilitados
+	Modulos []string `json:"modulos"`
 }
 
 type SpUpdateRoleRequest struct {
-	SpRole        string `json:"sp_role"`         // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
-	TipoPersona   string `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
-	CodReferencia string `json:"cod_referencia"`  // código operacional do gerente/supervisor/etc.
-	FullName      string `json:"full_name"`       // opcional — atualiza nome se informado
-	EnvironmentID string `json:"environment_id"`  // opcional — reatribui hierarquia
-	GroupID       string `json:"group_id"`        // ignorado (derivado da empresa)
-	CompanyID     string `json:"company_id"`      // define preferred_company_id
-	TrialEndsAt   string `json:"trial_ends_at"`   // opcional — "YYYY-MM-DD"; renova licença
+	SpRole        string   `json:"sp_role"`         // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string   `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string   `json:"cod_referencia"`  // código operacional do gerente/supervisor/etc.
+	FullName      string   `json:"full_name"`       // opcional — atualiza nome se informado
+	EnvironmentID string   `json:"environment_id"`  // opcional — reatribui hierarquia
+	GroupID       string   `json:"group_id"`        // ignorado (derivado da empresa)
+	CompanyID     string   `json:"company_id"`      // define preferred_company_id
+	TrialEndsAt   string   `json:"trial_ends_at"`   // opcional — "YYYY-MM-DD"; renova licença
+	Modulos       []string `json:"modulos"`         // módulos habilitados: vendas | marketing | bi
 }
 
 type SpVincularFiliaisRequest struct {
@@ -108,7 +113,8 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			    COALESCE(ue.preferred_company_id::text, ''),
 			    COALESCE(pc.name, ''),
 			    COALESCE(eg.id::text, ''),
-			    COALESCE(eg.name, '')
+			    COALESCE(eg.name, ''),
+			    COALESCE(u.modulos, ARRAY['vendas']::TEXT[])
 			FROM users u
 			LEFT JOIN LATERAL (
 			    SELECT environment_id, preferred_company_id
@@ -155,13 +161,18 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		var usuarios []SpUsuarioResponse
 		for rows.Next() {
 			var u SpUsuarioResponse
+			var modulos pq.StringArray
 			if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.SpRole,
 				&u.TipoPersona, &u.CodReferencia,
 				&u.IsVerified, &u.TrialEndsAt, &u.CreatedAt,
 				&u.EnvironmentID, &u.EnvironmentName,
 				&u.CompanyID, &u.CompanyName,
-				&u.GroupID, &u.GroupName); err != nil {
+				&u.GroupID, &u.GroupName, &modulos); err != nil {
 				continue
+			}
+			u.Modulos = []string(modulos)
+			if len(u.Modulos) == 0 {
+				u.Modulos = []string{"vendas"}
 			}
 			// Carrega filiais vinculadas para este usuário nessa empresa
 			fRows, err := db.Query(`
@@ -256,16 +267,21 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 			req.SpRole = PersonaToSpRole(req.TipoPersona)
 		}
 
+		var modulosArg interface{}
+		if len(req.Modulos) > 0 {
+			modulosArg = pq.StringArray(req.Modulos)
+		}
 		res, err := db.Exec(
 			`UPDATE users SET
 			    sp_role        = $1,
 			    full_name      = CASE WHEN $2 != '' THEN $2 ELSE full_name END,
 			    trial_ends_at  = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
 			    tipo_persona   = COALESCE(NULLIF($5, ''), tipo_persona),
-			    cod_referencia = COALESCE(NULLIF($6, ''), cod_referencia)
+			    cod_referencia = COALESCE(NULLIF($6, ''), cod_referencia),
+			    modulos        = CASE WHEN $7::TEXT[] IS NOT NULL THEN $7::TEXT[] ELSE modulos END
 			 WHERE id = $3`,
 			req.SpRole, req.FullName, targetID, trialEnds,
-			req.TipoPersona, req.CodReferencia,
+			req.TipoPersona, req.CodReferencia, modulosArg,
 		)
 		if err != nil {
 			log.Printf("SpUpdateRole: DB error updating user %s: %v", targetID, err)
@@ -319,19 +335,20 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 
 // SpCriarUsuarioRequest — payload para POST /api/sp/usuarios
 type SpCriarUsuarioRequest struct {
-	FullName      string `json:"full_name"`
-	Email         string `json:"email"`
-	Password      string `json:"password"`
-	SpRole        string `json:"sp_role"`         // gestor_geral | gestor_filial | somente_leitura
-	TipoPersona   string `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
-	CodReferencia string `json:"cod_referencia"`  // código operacional
-	TrialDias     int    `json:"trial_dias"`      // fallback: 0 = 365 dias
-	TrialEndsAt   string `json:"trial_ends_at"`   // "2006-01-02" — tem prioridade sobre trial_dias
-	AllFiliais    bool   `json:"all_filiais"`
-	FilialIDs     []int  `json:"filial_ids"`
-	EnvironmentID string `json:"environment_id"`  // opcional — override do auto-detect
-	GroupID       string `json:"group_id"`        // opcional
-	CompanyID     string `json:"company_id"`      // opcional — override da empresa ativa para filiais
+	FullName      string   `json:"full_name"`
+	Email         string   `json:"email"`
+	Password      string   `json:"password"`
+	SpRole        string   `json:"sp_role"`         // gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string   `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string   `json:"cod_referencia"`  // código operacional
+	TrialDias     int      `json:"trial_dias"`      // fallback: 0 = 365 dias
+	TrialEndsAt   string   `json:"trial_ends_at"`   // "2006-01-02" — tem prioridade sobre trial_dias
+	AllFiliais    bool     `json:"all_filiais"`
+	FilialIDs     []int    `json:"filial_ids"`
+	EnvironmentID string   `json:"environment_id"`  // opcional — override do auto-detect
+	GroupID       string   `json:"group_id"`        // opcional
+	CompanyID     string   `json:"company_id"`      // opcional — override da empresa ativa para filiais
+	Modulos       []string `json:"modulos"`         // módulos habilitados (default: ['vendas'])
 }
 
 // SpCriarUsuarioHandler cria um novo usuário vinculado à empresa ativa.
@@ -408,12 +425,16 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Cria usuário na tabela pública
+		modulos := req.Modulos
+		if len(modulos) == 0 {
+			modulos = []string{"vendas"}
+		}
 		var userID string
 		err = db.QueryRow(`
-			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
-			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, NULLIF($6,''), NULLIF($7,''))
+			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia, modulos)
+			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, NULLIF($6,''), NULLIF($7,''), $8)
 			RETURNING id
-		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole, req.TipoPersona, req.CodReferencia).Scan(&userID)
+		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole, req.TipoPersona, req.CodReferencia, pq.StringArray(modulos)).Scan(&userID)
 		if err != nil {
 			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 				http.Error(w, "E-mail já cadastrado", http.StatusConflict)

@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, Megaphone } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -39,10 +39,13 @@ interface RailItem {
   dev: boolean
   /** quando true, só aparece para admin OU TI */
   adminOrTI?: boolean
+  /** módulo necessário para exibir o item */
+  requiredModulo?: string
 }
 
 const mainItems: RailItem[] = [
-  { id: 'farol',          icon: Lightbulb,   label: 'Farol',               path: '/farol/v2',             dev: false },
+  { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
+  { id: 'marketing',      icon: Megaphone,   label: 'Painel Marketing',    path: '/farol/marketing',      dev: false, requiredModulo: 'marketing' },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
   { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
@@ -51,12 +54,15 @@ const mainItems: RailItem[] = [
 export function AppRail() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, company, logout, token, spRole, tipoPersona } = useAuth()
+  const { user, company, logout, token, spRole, tipoPersona, hasModulo } = useAuth()
   // isAdmin: plataforma admin OU admin_fbtax Farol → acessa configurações e manutenção
   const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
   const isTI    = tipoPersona === 'ti'
   const canImport = isAdmin || isTI
-  const visibleItems = mainItems.filter(it => !it.adminOrTI || canImport)
+  const visibleItems = mainItems.filter(it =>
+    (!it.adminOrTI || canImport) &&
+    (!it.requiredModulo || hasModulo(it.requiredModulo))
+  )
   const active = getActiveModule(location.pathname)
 
   const [pwDialog,  setPwDialog]  = useState(false)

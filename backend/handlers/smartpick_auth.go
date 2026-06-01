@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // ─── Contexto Farol ───────────────────────────────────────────────────────
@@ -29,13 +31,14 @@ const SpContextKey spCtxKey = "sp_context"
 
 // FarolContext é injetado no request context por FarolAuthMiddleware.
 type FarolContext struct {
-	UserID      string
-	SpRole      string  // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
-	EmpresaID   string
-	FilialIDs   []int   // IDs de filiais acessíveis; vazio quando AllFiliais = true
-	AllFiliais  bool    // true para admin_fbtax e gestor_geral
-	TipoPersona string  // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin | ""
-	CodReferencia string // código operacional (cod_gerente, cod_supervisor, etc.)
+	UserID        string
+	SpRole        string   // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	EmpresaID     string
+	FilialIDs     []int    // IDs de filiais acessíveis; vazio quando AllFiliais = true
+	AllFiliais    bool     // true para admin_fbtax e gestor_geral
+	TipoPersona   string   // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin | ""
+	CodReferencia string   // código operacional (cod_gerente, cod_supervisor, etc.)
+	Modulos       []string // módulos habilitados: vendas | marketing | bi
 }
 
 // GetSpContext extrai o FarolContext do request. Retorna nil se não encontrado.
@@ -180,13 +183,14 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 			return
 		}
 
-		// Carrega sp_role, role, trial_ends_at, tipo_persona e cod_referencia
+		// Carrega sp_role, role, trial_ends_at, tipo_persona, cod_referencia e modulos
 		var spRole, userRole string
 		var trialEndsAt sql.NullTime
 		var tipoPersona, codReferencia sql.NullString
+		var modulos pq.StringArray
 		if err := db.QueryRow(
-			"SELECT sp_role, role, trial_ends_at, COALESCE(tipo_persona,''), COALESCE(cod_referencia,'') FROM users WHERE id = $1", userID,
-		).Scan(&spRole, &userRole, &trialEndsAt, &tipoPersona, &codReferencia); err != nil {
+			"SELECT sp_role, role, trial_ends_at, COALESCE(tipo_persona,''), COALESCE(cod_referencia,''), COALESCE(modulos, ARRAY['vendas']::TEXT[]) FROM users WHERE id = $1", userID,
+		).Scan(&spRole, &userRole, &trialEndsAt, &tipoPersona, &codReferencia, &modulos); err != nil {
 			if err == sql.ErrNoRows {
 				http.Error(w, "User not found", http.StatusUnauthorized)
 			} else {
@@ -226,12 +230,17 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 		}
 
 		// Monta FarolContext com escopo de filiais (spRole já pode ter sido elevado para admin_fbtax)
+		modulosSlice := []string(modulos)
+		if len(modulosSlice) == 0 {
+			modulosSlice = []string{"vendas"}
+		}
 		spCtx := &FarolContext{
 			UserID:        userID,
 			SpRole:        spRole,
 			EmpresaID:     empresaID,
 			TipoPersona:   tipoPersona.String,
 			CodReferencia: codReferencia.String,
+			Modulos:       modulosSlice,
 		}
 
 		// admin_fbtax e gestor_geral têm acesso irrestrito às filiais do tenant
@@ -286,16 +295,18 @@ func SpMeHandler(db *sql.DB) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		type spMeResponse struct {
-			SpRole        string `json:"sp_role"`
-			TipoPersona   string `json:"tipo_persona"`
-			CodReferencia string `json:"cod_referencia"`
-			CanManageUsers bool  `json:"can_manage_users"`
+			SpRole         string   `json:"sp_role"`
+			TipoPersona    string   `json:"tipo_persona"`
+			CodReferencia  string   `json:"cod_referencia"`
+			CanManageUsers bool     `json:"can_manage_users"`
+			Modulos        []string `json:"modulos"`
 		}
 		json.NewEncoder(w).Encode(spMeResponse{
 			SpRole:         spCtx.SpRole,
 			TipoPersona:    spCtx.TipoPersona,
 			CodReferencia:  spCtx.CodReferencia,
 			CanManageUsers: spCtx.CanManageUsers(),
+			Modulos:        spCtx.Modulos,
 		})
 	}
 }

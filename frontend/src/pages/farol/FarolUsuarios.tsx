@@ -9,6 +9,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { UserPlus, Pencil } from 'lucide-react'
@@ -26,7 +27,14 @@ interface SpUsuario {
   is_verified: boolean
   trial_ends_at: string
   created_at: string
+  modulos: string[]
 }
+
+const MODULOS = [
+  { value: 'vendas',    label: 'Painel Vendas' },
+  { value: 'marketing', label: 'Painel Marketing' },
+  { value: 'bi',        label: 'Painel BI' },
+]
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -112,12 +120,14 @@ export default function FarolUsuarios() {
   const [novoSpRole,    setNovoSpRole]    = useState('somente_leitura')
   const [novoCodRef,    setNovoCodRef]    = useState('')
   const [novoTrialDate, setNovoTrialDate] = useState('2099-12-31')
+  const [novoModulos,   setNovoModulos]   = useState<string[]>(['vendas'])
 
   // Editar usuário
   const [editNome,    setEditNome]    = useState('')
   const [editPersona, setEditPersona] = useState('')
   const [editRole,    setEditRole]    = useState('')
   const [editCodRef,  setEditCodRef]  = useState('')
+  const [editModulos, setEditModulos] = useState<string[]>(['vendas'])
 
   // ── Query ────────────────────────────────────────────────────────────────────
   const { data: usuarios = [], isLoading } = useQuery<SpUsuario[]>({
@@ -144,6 +154,7 @@ export default function FarolUsuarios() {
           cod_referencia: novoCodRef,
           trial_ends_at:  novoTrialDate,
           all_filiais:    ['diretor', 'gerente_geral', 'ti', 'admin'].includes(novoPersona),
+          modulos:        novoModulos,
         }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao criar usuário')
@@ -169,6 +180,7 @@ export default function FarolUsuarios() {
           sp_role:        editRole,
           tipo_persona:   editPersona,
           cod_referencia: editCodRef,
+          modulos:        editModulos,
         }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao atualizar')
@@ -186,6 +198,7 @@ export default function FarolUsuarios() {
     setNovoNome(''); setNovoEmail(''); setNovaSenha('')
     setNovoPersona(''); setNovoSpRole('somente_leitura')
     setNovoCodRef(''); setNovoTrialDate('2099-12-31')
+    setNovoModulos(['vendas'])
   }
 
   function openEdit(u: SpUsuario) {
@@ -194,7 +207,12 @@ export default function FarolUsuarios() {
     setEditPersona(u.tipo_persona)
     setEditRole(u.sp_role)
     setEditCodRef(u.cod_referencia)
+    setEditModulos(u.modulos?.length > 0 ? u.modulos : ['vendas'])
     setEditDialog(true)
+  }
+
+  function toggleModulo(list: string[], mod: string): string[] {
+    return list.includes(mod) ? list.filter(m => m !== mod) : [...list, mod]
   }
 
   function onNovoPersonaChange(persona: string) {
@@ -307,6 +325,21 @@ export default function FarolUsuarios() {
               <Label>Código de referência <span className="text-muted-foreground text-xs">(opcional — cod_supervisor, cod_rca, etc.)</span></Label>
               <Input value={novoCodRef} onChange={e => setNovoCodRef(e.target.value)} placeholder="ex: 001, 042" />
             </div>
+            <div className="space-y-1.5">
+              <Label>Módulos</Label>
+              <div className="flex flex-wrap gap-3 pt-0.5">
+                {MODULOS.map(m => (
+                  <div key={m.value} className="flex items-center gap-1.5">
+                    <Checkbox
+                      id={`novo-mod-${m.value}`}
+                      checked={novoModulos.includes(m.value)}
+                      onCheckedChange={() => setNovoModulos(toggleModulo(novoModulos, m.value))}
+                    />
+                    <label htmlFor={`novo-mod-${m.value}`} className="text-sm cursor-pointer">{m.label}</label>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="space-y-1">
               <Label>Licença até</Label>
               <Input type="date" value={novoTrialDate} onChange={e => setNovoTrialDate(e.target.value)} />
@@ -357,6 +390,21 @@ export default function FarolUsuarios() {
               <div className="space-y-1">
                 <Label>Código de referência</Label>
                 <Input value={editCodRef} onChange={e => setEditCodRef(e.target.value)} placeholder="cod_supervisor, cod_rca, etc." />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Módulos</Label>
+                <div className="flex flex-wrap gap-3 pt-0.5">
+                  {MODULOS.map(m => (
+                    <div key={m.value} className="flex items-center gap-1.5">
+                      <Checkbox
+                        id={`edit-mod-${m.value}`}
+                        checked={editModulos.includes(m.value)}
+                        onCheckedChange={() => setEditModulos(toggleModulo(editModulos, m.value))}
+                      />
+                      <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer">{m.label}</label>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

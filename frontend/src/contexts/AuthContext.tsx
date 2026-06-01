@@ -18,12 +18,14 @@ interface AuthContextType {
   cnpj: string | null;
   spRole: string | null;
   tipoPersona: string | null;
+  modulos: string[];
   canManageUsers: boolean;
   loading: boolean;
   login: (data: any) => void;
   logout: () => void;
   switchCompany: (id: string, name: string, cnpj: string) => void;
   isAuthenticated: boolean;
+  hasModulo: (mod: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,6 +40,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [cnpj, setCnpj] = useState<string | null>(null);
   const [spRole, setSpRole] = useState<string | null>(null);
   const [tipoPersona, setTipoPersona] = useState<string | null>(null);
+  const [modulos, setModulos] = useState<string[]>(['vendas']);
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -47,6 +50,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       .then(d => {
         if (d?.sp_role) setSpRole(d.sp_role)
         if (d?.tipo_persona) setTipoPersona(d.tipo_persona)
+        if (Array.isArray(d?.modulos) && d.modulos.length > 0) setModulos(d.modulos)
         setCanManageUsers(!!d?.can_manage_users)
       })
       .catch(() => {});
@@ -187,6 +191,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setCompanyId(null);
     setCnpj(null);
     setSpRole(null);
+    setModulos(['vendas']);
     window.location.href = '/login';
   };
 
@@ -212,6 +217,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     window.location.reload();
   };
 
+  const hasModulo = (mod: string) => modulos.includes(mod);
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -223,12 +230,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       cnpj,
       spRole,
       tipoPersona,
+      modulos,
       canManageUsers,
       loading,
       login,
       logout,
       switchCompany,
-      isAuthenticated: !!user
+      isAuthenticated: !!user,
+      hasModulo,
     }}>
       {children}
     </AuthContext.Provider>
