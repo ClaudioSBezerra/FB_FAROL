@@ -168,7 +168,7 @@ const sections: NavSection[] = [
 // ---------------------------------------------------------------------------
 export function AppSidebar() {
   const location = useLocation()
-  const { user, group, company, logout, token } = useAuth()
+  const { user, group, company, logout, token, companyId } = useAuth()
   const isAdmin = user?.role === "admin"
   const isMaster = group === "MASTER"
 
@@ -182,15 +182,25 @@ export function AppSidebar() {
     return () => window.removeEventListener('empresa-logo-updated', refresh)
   }, [])
 
-  // Fetch do logo — re-executa quando token ou logoTick mudam
+  // Fetch do logo — re-executa quando token, companyId ou logoTick mudam.
+  // Headers explícitos (token + X-Company-ID) — não depende dos refs do
+  // interceptor do AuthProvider, que podem estar dessincronizados quando
+  // o sidebar monta antes do useEffect do provider rodar.
   useEffect(() => {
-    if (!token) return
+    if (!token || !companyId) return
     let cancelled = false
-    fetch("/api/config/empresa/logo")
+    fetch(`/api/config/empresa/logo?t=${logoTick}`, {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Company-ID': companyId,
+      },
+    })
       .then(async res => {
         if (!res.ok) {
           const txt = await res.text().catch(() => '')
           console.error('[Logo] fetch retornou', res.status, res.statusText, txt)
+          if (!cancelled) setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return null })
           return
         }
         const blob = await res.blob()
@@ -200,7 +210,7 @@ export function AppSidebar() {
       })
       .catch(err => console.error('[Logo] fetch error:', err))
     return () => { cancelled = true }
-  }, [token, logoTick])
+  }, [token, companyId, logoTick])
 
   // Estado de expansão de cada seção (todas abertas por padrão)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(
