@@ -94,7 +94,7 @@ export default function GestaoAmbiente() {
   const [editCompanyTradeName, setEditCompanyTradeName] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const { user, token } = useAuth();
+  const { user, token, company, companyId, cnpj } = useAuth();
   const [userHierarchy, setUserHierarchy] = useState<UserHierarchy | null>(null);
 
   // ── Logo ──────────────────────────────────────────────────────────────────
@@ -584,7 +584,44 @@ export default function GestaoAmbiente() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
+      {/* Minha Empresa — logo + upload direto para a empresa ativa do admin */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Factory className="h-4 w-4" />
+            Minha Empresa
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Logotipo exibido na barra lateral e nos painéis
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex items-center gap-4">
+            {logoURL ? (
+              <img src={logoURL} alt="Logo" className="h-16 w-16 rounded-lg object-cover border shrink-0" />
+            ) : (
+              <div className="h-16 w-16 rounded-lg border-2 border-dashed flex items-center justify-center text-muted-foreground text-[10px] shrink-0">
+                sem logo
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-base font-medium truncate">{company || "—"}</div>
+              {cnpj && <div className="text-xs text-muted-foreground font-mono">CNPJ: {cnpj}</div>}
+              <div className="text-[10px] text-gray-400 font-mono truncate" title={companyId || ""}>ID: {companyId || "—"}</div>
+            </div>
+            <div className="shrink-0">
+              <Button variant="outline" size="sm" disabled={logoUploading} onClick={() => logoInputRef.current?.click()}>
+                {logoUploading ? "Enviando..." : "Alterar logotipo"}
+              </Button>
+              <p className="text-[10px] text-muted-foreground mt-1 text-right">JPEG/PNG/WebP/SVG · 5MB</p>
+              <input ref={logoInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-22rem)]">
         {/* Column 1: Environments */}
         <div className="flex flex-col space-y-4 h-full">
           <div className="flex items-center justify-between">
