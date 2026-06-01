@@ -215,66 +215,102 @@ func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode stri
 
 func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode string, compAno, compMes int, totalBase int) []mktCard {
 	t0 := time.Now()
-	atualCond := fmt.Sprintf("tipo_base='ATUAL' AND ano=%d AND mes=%d", refAno, refMes)
-	if compMode == "ytd" {
-		atualCond = fmt.Sprintf("tipo_base='ATUAL' AND ano=%d AND mes<=%d", refAno, refMes)
-	}
 
-	// Período anterior
-	antAno := refAno - 1
-	antMes := refMes
-	if compMode == "mom" {
-		antAno, antMes = resolveCompPeriod(refAno, refMes, compAno, compMes)
-	}
-	var antCond string
-	if compMode == "ytd" {
-		antCond = fmt.Sprintf("tipo_base='COMPARATIVA' AND ano=%d AND mes<=%d", antAno, refMes)
-	} else if compMode == "mom" {
-		antCond = fmt.Sprintf("(tipo_base='ATUAL' OR tipo_base='COMPARATIVA') AND ano=%d AND mes=%d", antAno, antMes)
-	} else {
-		antCond = fmt.Sprintf("tipo_base='COMPARATIVA' AND ano=%d AND mes=%d", antAno, antMes)
+	// ── Query ATUAL ───────────────────────────────────────────────────────────
+	var atualArgs []interface{} = []interface{}{empresaID}
+	var atualWhere string
+	switch compMode {
+	case "ytd":
+		atualArgs = append(atualArgs, refAno, refMes)
+		atualWhere = "tipo_base='ATUAL' AND ano=$2 AND mes<=$3"
+	default:
+		atualArgs = append(atualArgs, refAno, refMes)
+		atualWhere = "tipo_base='ATUAL' AND ano=$2 AND mes=$3"
 	}
 
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT
-		    a.cod_prod,
-		    a.nome_prod,
-		    a.cod_fornec,
-		    a.nome_fornec,
-		    COALESCE(SUM(a.qt_positivados), 0)  AS qt_atual,
-		    COALESCE(SUM(b.qt_positivados), 0)  AS qt_ant,
-		    COALESCE(SUM(a.pvenda), 0)           AS pvenda,
-		    COALESCE(SUM(a.faturado), 0)         AS faturado,
-		    COALESCE(SUM(a.transmitido), 0)      AS transmitido
-		FROM farol.mv_mkt_produto a
-		LEFT JOIN farol.mv_mkt_produto b
-		    ON b.empresa_id=a.empresa_id AND b.cod_prod=a.cod_prod AND b.cod_fornec=a.cod_fornec
-		    AND b.%s
-		WHERE a.empresa_id=$1 AND a.%s AND a.cod_prod != ''
-		GROUP BY a.cod_prod, a.nome_prod, a.cod_fornec, a.nome_fornec
-		ORDER BY qt_atual DESC
-	`, antCond, atualCond), empresaID)
+		SELECT cod_prod, MAX(nome_prod), MAX(cod_fornec), MAX(nome_fornec),
+		       SUM(qt_positivados), SUM(pvenda), SUM(faturado), SUM(transmitido)
+		FROM farol.mv_mkt_produto
+		WHERE empresa_id=$1 AND %s AND cod_prod != ''
+		GROUP BY cod_prod
+		ORDER BY SUM(qt_positivados) DESC
+	`, atualWhere), atualArgs...)
 	if err != nil {
-		log.Printf("[marketing] fetchMktProduto ERRO: %v", err)
+		log.Printf("[marketing] fetchMktProduto ERRO atual: %v", err)
 		return nil
 	}
 	defer rows.Close()
 
-	var cards []mktCard
+	type prodRow struct {
+		key, label, fornec, nomeFornec string
+		qtAtual                        int
+		pvenda, faturado, transmitido  float64
+	}
+	byKey := map[string]*prodRow{}
+	var order []string
 	for rows.Next() {
-		var c mktCard
-		var qtAtual, qtAnt int
-		if err := rows.Scan(&c.Key, &c.Label, &c.Fornec, &c.NomeFornec, &qtAtual, &qtAnt,
-			&c.Pvenda, &c.Faturado, &c.Transmitido); err != nil {
+		var p prodRow
+		if err := rows.Scan(&p.key, &p.label, &p.fornec, &p.nomeFornec,
+			&p.qtAtual, &p.pvenda, &p.faturado, &p.transmitido); err != nil {
 			continue
 		}
-		c.QtClientes = qtAtual
-		c.QtCliAnt = qtAnt
+		byKey[p.key] = &p
+		order = append(order, p.key)
+	}
+
+	// ── Query ANTERIOR (para delta) ───────────────────────────────────────────
+	antAno, antMes := refAno-1, refMes
+	if compMode == "mom" {
+		antAno, antMes = resolveCompPeriod(refAno, refMes, compAno, compMes)
+	}
+	var antArgs []interface{} = []interface{}{empresaID}
+	var antWhere string
+	switch compMode {
+	case "ytd":
+		antArgs = append(antArgs, antAno, refMes)
+		antWhere = "tipo_base='COMPARATIVA' AND ano=$2 AND mes<=$3"
+	case "mom":
+		antArgs = append(antArgs, antAno, antMes)
+		antWhere = "(tipo_base='ATUAL' OR tipo_base='COMPARATIVA') AND ano=$2 AND mes=$3"
+	default:
+		antArgs = append(antArgs, antAno, antMes)
+		antWhere = "tipo_base='COMPARATIVA' AND ano=$2 AND mes=$3"
+	}
+
+	antRows, err := db.Query(fmt.Sprintf(`
+		SELECT cod_prod, SUM(qt_positivados)
+		FROM farol.mv_mkt_produto
+		WHERE empresa_id=$1 AND %s AND cod_prod != ''
+		GROUP BY cod_prod
+	`, antWhere), antArgs...)
+	qtAntMap := map[string]int{}
+	if err == nil {
+		defer antRows.Close()
+		for antRows.Next() {
+			var k string
+			var v int
+			if err := antRows.Scan(&k, &v); err == nil {
+				qtAntMap[k] = v
+			}
+		}
+	}
+
+	// ── Monta cards ───────────────────────────────────────────────────────────
+	var cards []mktCard
+	for _, k := range order {
+		p := byKey[k]
+		qtAnt := qtAntMap[k]
+		c := mktCard{
+			Key: p.key, Label: p.label, Fornec: p.fornec, NomeFornec: p.nomeFornec,
+			QtClientes: p.qtAtual, QtCliAnt: qtAnt,
+			Pvenda: p.pvenda, Faturado: p.faturado, Transmitido: p.transmitido,
+		}
 		if qtAnt > 0 {
-			c.DeltaPct = float64(qtAtual-qtAnt) / float64(qtAnt) * 100
+			c.DeltaPct = float64(p.qtAtual-qtAnt) / float64(qtAnt) * 100
 		}
 		if totalBase > 0 {
-			c.PenetrPct = float64(qtAtual) / float64(totalBase) * 100
+			c.PenetrPct = float64(p.qtAtual) / float64(totalBase) * 100
 		}
 		cards = append(cards, c)
 	}

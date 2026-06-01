@@ -30,4 +30,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_mkt_produto_pk
 CREATE INDEX IF NOT EXISTS idx_mv_mkt_produto_filter
     ON farol.mv_mkt_produto (empresa_id, tipo_base, ano, mes);
 
-ANALYZE farol.mv_mkt_produto;
+-- ANALYZE será executado automaticamente após o primeiro REFRESH MATERIALIZED VIEW
