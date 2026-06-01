@@ -62,7 +62,7 @@ function fmtBRL(v: number) {
   if (v >= 1_000)         return 'R$ ' + (v / 1_000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'K'
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })
 }
-function fmtPct(v: number) { return v.toFixed(1) + '%' }
+function fmtPct(v: number) { return v >= 99.95 ? '100%' : v.toFixed(1) + '%' }
 function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
 
 function parsePeriodo(s: string) {
@@ -509,13 +509,12 @@ function ClienteDetalhe({
 // ─── Hero Band ────────────────────────────────────────────────────────────────
 
 function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['periodo'] }) {
-  const cx = 80, cy = 80, r = 56, sw = 10
+  const cx = 80, cy = 75, r = 52, sw = 10
   const total = 2 * Math.PI * r
   const arc = total * 0.75
-  // Clamp a 100% e reduz ligeiramente no máximo para evitar artefato visual
-  // do strokeLinecap="round" quando filled = arc (caps se sobrepõem)
+  // Clamp visual a 99% para evitar que o cap final sobreponha o cap inicial
   const clampedPct = Math.min(kpi.taxa_positivacao, 100)
-  const filled = arc * (clampedPct / 100) * (clampedPct >= 99.5 ? 0.998 : 1)
+  const filled = arc * (Math.min(clampedPct, 99) / 100)
   const col = clampedPct >= 75 ? '#10b981' : clampedPct >= 50 ? '#f59e0b' : '#ef4444'
   const delta = kpi.delta_positivacao
 
@@ -548,7 +547,7 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
         <div className="flex items-end gap-10 flex-wrap">
           {/* Gauge de positivação */}
           <div className="relative flex-shrink-0">
-            <svg width="160" height="115" viewBox="0 0 160 115" className="overflow-visible">
+            <svg width="160" height="120" viewBox="0 0 160 120" className="overflow-visible">
               <defs>
                 <filter id="mkt-glow" x="-30%" y="-30%" width="160%" height="160%">
                   <feGaussianBlur stdDeviation="3" result="blur" />
@@ -634,8 +633,6 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
   onSelectProd: (card: MktCard) => void
   onSelectCli: (card: MktCard) => void
 }) {
-  // Escala sempre 0-100 — penetr_pct já vem capado a 100 do backend
-  const maxPenetr = 100
   const medals = ['🥇', '🥈', '🥉']
 
   const headerLabel = view === 'produto' ? 'Produto'
@@ -716,7 +713,7 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
               </div>
 
               {/* % Penetração */}
-              <div className="w-16 flex-shrink-0 text-right">
+              <div className="w-[4.5rem] flex-shrink-0 text-right">
                 <span className={`text-base font-black tabular-nums ${text}`}>
                   {view === 'cliente'
                     ? fmtNum(card.mix)
