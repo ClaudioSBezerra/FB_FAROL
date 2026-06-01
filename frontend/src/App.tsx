@@ -30,6 +30,7 @@ import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolV2Import from './pages/farol/FarolV2Import'
 import FarolUsuarios from './pages/farol/FarolUsuarios'
 import FarolMarketing from './pages/farol/FarolMarketing'
+import FarolAssistente from './pages/farol/FarolAssistente'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -234,7 +235,8 @@ function AppLayout() {
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
               <Route path="/farol/v2"         element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
-              <Route path="/farol/marketing"  element={<ProtectedRoute><FarolMarketing /></ProtectedRoute>} />
+              <Route path="/farol/marketing"   element={<ProtectedRoute><FarolMarketing /></ProtectedRoute>} />
+              <Route path="/farol/assistente" element={<ProtectedRoute><FarolAssistente /></ProtectedRoute>} />
               <Route path="/farol/importar"   element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
               <Route path="/farol/usuarios"   element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
 

@@ -23,6 +23,7 @@ export const modules: Record<string, ModuleConfig> = {
     tabs: [
       { label: 'Painel Vendas',    path: '/farol/v2' },
       { label: 'Painel Marketing', path: '/farol/marketing' },
+      { label: 'Assistente IA',    path: '/farol/assistente' },
       { label: 'Usuários',         path: '/farol/usuarios', managerOnly: true },
     ],
   },
@@ -70,6 +71,7 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/marketing'))       return 'farol'
+  if (pathname.startsWith('/farol/assistente'))      return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
   if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'
   if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
