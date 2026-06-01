@@ -110,6 +110,11 @@ function ArcGaugeDark({
 
   return (
     <div className="flex flex-col items-center">
+      {/* Título acima do arco */}
+      <p className="text-slate-400 uppercase tracking-widest font-bold mb-2 text-center"
+        style={{ fontSize: size * 0.072 }}>
+        {label}
+      </p>
       <div className="relative" style={{ width: size, height: size * 0.72 }}>
         <svg width={size} height={size * 0.72} viewBox={`0 0 ${size} ${size * 0.72}`} className="overflow-visible">
           <defs>
@@ -134,15 +139,11 @@ function ArcGaugeDark({
             />
           )}
         </svg>
-        {/* Center text */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center"
-          style={{ paddingTop: size * 0.25 }}>
-          <span className="font-black tabular-nums leading-none" style={{ fontSize: size * 0.175, color }}>
+        {/* Percentual no centro — só o número */}
+        <div className="absolute inset-0 flex items-center justify-center"
+          style={{ paddingTop: size * 0.22 }}>
+          <span className="font-black tabular-nums leading-none" style={{ fontSize: size * 0.2, color }}>
             {centerText}
-          </span>
-          <span className="text-slate-500 uppercase tracking-widest font-bold mt-1"
-            style={{ fontSize: size * 0.065 }}>
-            {label}
           </span>
         </div>
       </div>
@@ -190,7 +191,7 @@ function IndustryDonut({ cards }: { cards: CardItem[] }) {
               </Pie>
               <ReTooltip
                 contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, fontSize: 11 }}
-                formatter={(v: number) => [fmtBRL(v), '']}
+                formatter={(v: number | undefined) => [fmtBRL(v ?? 0), '']}
                 labelStyle={{ color: '#94a3b8' }}
               />
             </PieChart>
