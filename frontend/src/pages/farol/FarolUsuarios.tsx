@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { UserPlus, Pencil } from 'lucide-react'
+import { UserPlus, Pencil, LayoutGrid } from 'lucide-react'
+import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -90,6 +91,28 @@ function RoleBadge({ role }: { role: string }) {
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${ROLE_COLORS[role] ?? 'bg-gray-100'}`}>
       {ROLE_LABELS[role] ?? role}
     </span>
+  )
+}
+
+const MODULO_COLORS: Record<string, string> = {
+  vendas:    'bg-blue-50 text-blue-700 border-blue-200',
+  marketing: 'bg-pink-50 text-pink-700 border-pink-200',
+  bi:        'bg-violet-50 text-violet-700 border-violet-200',
+}
+
+function ModulosBadges({ modulos }: { modulos: string[] }) {
+  if (!modulos?.length) return <span className="text-xs text-muted-foreground">—</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {modulos.map(m => {
+        const cfg = MODULOS.find(x => x.value === m)
+        return (
+          <span key={m} className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${MODULO_COLORS[m] ?? 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+            {cfg?.label ?? m}
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
@@ -251,6 +274,7 @@ export default function FarolUsuarios() {
               <TableHead>E-mail</TableHead>
               <TableHead>Persona</TableHead>
               <TableHead>Perfil</TableHead>
+              <TableHead>Módulos</TableHead>
               <TableHead>Cód. Ref.</TableHead>
               <TableHead>Licença até</TableHead>
               <TableHead className="w-10" />
@@ -258,15 +282,16 @@ export default function FarolUsuarios() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow>
             ) : usuarios.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Nenhum usuário encontrado</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum usuário encontrado</TableCell></TableRow>
             ) : usuarios.map(u => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.full_name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
                 <TableCell><PersonaBadge persona={u.tipo_persona} /></TableCell>
                 <TableCell><RoleBadge role={u.sp_role} /></TableCell>
+                <TableCell><ModulosBadges modulos={u.modulos} /></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{u.cod_referencia || '—'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {u.trial_ends_at ? new Date(u.trial_ends_at).toLocaleDateString('pt-BR') : '—'}
@@ -325,17 +350,21 @@ export default function FarolUsuarios() {
               <Label>Código de referência <span className="text-muted-foreground text-xs">(opcional — cod_supervisor, cod_rca, etc.)</span></Label>
               <Input value={novoCodRef} onChange={e => setNovoCodRef(e.target.value)} placeholder="ex: 001, 042" />
             </div>
-            <div className="space-y-1.5">
-              <Label>Módulos</Label>
-              <div className="flex flex-wrap gap-3 pt-0.5">
+            <div className="pt-1">
+              <Separator className="mb-3" />
+              <div className="flex items-center gap-1.5 mb-2">
+                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Módulos de acesso</span>
+              </div>
+              <div className="flex flex-wrap gap-4">
                 {MODULOS.map(m => (
-                  <div key={m.value} className="flex items-center gap-1.5">
+                  <div key={m.value} className="flex items-center gap-2">
                     <Checkbox
                       id={`novo-mod-${m.value}`}
                       checked={novoModulos.includes(m.value)}
                       onCheckedChange={() => setNovoModulos(toggleModulo(novoModulos, m.value))}
                     />
-                    <label htmlFor={`novo-mod-${m.value}`} className="text-sm cursor-pointer">{m.label}</label>
+                    <label htmlFor={`novo-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
                   </div>
                 ))}
               </div>
@@ -391,17 +420,21 @@ export default function FarolUsuarios() {
                 <Label>Código de referência</Label>
                 <Input value={editCodRef} onChange={e => setEditCodRef(e.target.value)} placeholder="cod_supervisor, cod_rca, etc." />
               </div>
-              <div className="space-y-1.5">
-                <Label>Módulos</Label>
-                <div className="flex flex-wrap gap-3 pt-0.5">
+              <div className="pt-1">
+                <Separator className="mb-3" />
+                <div className="flex items-center gap-1.5 mb-2">
+                  <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Módulos de acesso</span>
+                </div>
+                <div className="flex flex-wrap gap-4">
                   {MODULOS.map(m => (
-                    <div key={m.value} className="flex items-center gap-1.5">
+                    <div key={m.value} className="flex items-center gap-2">
                       <Checkbox
                         id={`edit-mod-${m.value}`}
                         checked={editModulos.includes(m.value)}
                         onCheckedChange={() => setEditModulos(toggleModulo(editModulos, m.value))}
                       />
-                      <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer">{m.label}</label>
+                      <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
                     </div>
                   ))}
                 </div>
