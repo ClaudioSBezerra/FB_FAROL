@@ -509,12 +509,13 @@ function ClienteDetalhe({
 // ─── Hero Band ────────────────────────────────────────────────────────────────
 
 function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['periodo'] }) {
-  const cx = 80, cy = 75, r = 52, sw = 10
+  const size = 160
+  const cx = size / 2, cy = size / 2
+  const r = size * 0.37, sw = size * 0.065
   const total = 2 * Math.PI * r
   const arc = total * 0.75
-  // Clamp visual a 99% para evitar que o cap final sobreponha o cap inicial
   const clampedPct = Math.min(kpi.taxa_positivacao, 100)
-  const filled = arc * (Math.min(clampedPct, 99) / 100)
+  const filled = arc * Math.min(Math.max(clampedPct, 0) / 100, 1)
   const col = clampedPct >= 75 ? '#10b981' : clampedPct >= 50 ? '#f59e0b' : '#ef4444'
   const delta = kpi.delta_positivacao
 
@@ -547,7 +548,7 @@ function MktHeroBand({ kpi, periodo }: { kpi: MktKPI; periodo: MktResponse['peri
         <div className="flex items-end gap-10 flex-wrap">
           {/* Gauge de positivação */}
           <div className="relative flex-shrink-0">
-            <svg width="160" height="120" viewBox="0 0 160 120" className="overflow-visible">
+            <svg width={size} height={size * 0.72} viewBox={`0 0 ${size} ${size * 0.72}`} className="overflow-visible">
               <defs>
                 <filter id="mkt-glow" x="-30%" y="-30%" width="160%" height="160%">
                   <feGaussianBlur stdDeviation="3" result="blur" />
