@@ -191,16 +191,27 @@ func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode stri
 		atualCond = fmt.Sprintf("tipo_base='ATUAL' AND ano=%d AND mes<=%d", refAno, refMes)
 	}
 
+	// Subquery GROUP BY cod_cli primeiro (hash-agg), depois agrega — muito mais
+	// rápido do que COUNT(DISTINCT) diretamente na tabela grande.
 	row := db.QueryRow(fmt.Sprintf(`
 		SELECT
-		    COUNT(DISTINCT cod_cli)                                       AS total_base_cli,
-		    COUNT(DISTINCT CASE WHEN positivados=1 THEN cod_cli END)      AS total_ativos,
-		    COALESCE(AVG(CASE WHEN positivados=1 THEN mix END), 0)        AS avg_mix,
-		    COALESCE(SUM(pvenda), 0)                                      AS total_pvenda,
-		    COALESCE(SUM(faturado), 0)                                    AS total_faturado,
-		    COALESCE(SUM(transmitido), 0)                                 AS total_transmitido
-		FROM farol.mv_farol_cli
-		WHERE empresa_id=$1 AND %s
+		    COUNT(*)                                   AS total_base_cli,
+		    COUNT(*) FILTER (WHERE max_pos = 1)        AS total_ativos,
+		    COALESCE(AVG(CASE WHEN max_pos=1 THEN avg_mix END), 0) AS avg_mix,
+		    COALESCE(SUM(pvenda), 0)                   AS total_pvenda,
+		    COALESCE(SUM(faturado), 0)                 AS total_faturado,
+		    COALESCE(SUM(transmitido), 0)              AS total_transmitido
+		FROM (
+		    SELECT cod_cli,
+		           MAX(positivados)   AS max_pos,
+		           AVG(mix)           AS avg_mix,
+		           SUM(pvenda)        AS pvenda,
+		           SUM(faturado)      AS faturado,
+		           SUM(transmitido)   AS transmitido
+		    FROM farol.mv_farol_cli
+		    WHERE empresa_id=$1 AND %s
+		    GROUP BY cod_cli
+		) s
 	`, atualCond), empresaID)
 
 	var k mktKPI
@@ -227,10 +238,12 @@ func fetchMktKPI(db *sql.DB, empresaID string, refAno, refMes int, compMode stri
 	}
 	var baseAnt, ativosAnt int
 	_ = db.QueryRow(fmt.Sprintf(`
-		SELECT COUNT(DISTINCT cod_cli),
-		       COUNT(DISTINCT CASE WHEN positivados=1 THEN cod_cli END)
-		FROM farol.mv_farol_cli
-		WHERE empresa_id=$1 AND %s
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE max_pos=1)
+		FROM (
+		    SELECT cod_cli, MAX(positivados) AS max_pos
+		    FROM farol.mv_farol_cli WHERE empresa_id=$1 AND %s
+		    GROUP BY cod_cli
+		) s
 	`, antCond), empresaID).Scan(&baseAnt, &ativosAnt)
 	if baseAnt > 0 {
 		k.TaxaPositivacaoAnt = float64(ativosAnt) / float64(baseAnt) * 100
@@ -260,21 +273,14 @@ func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode 
 		atualWhere = "tipo_base='ATUAL' AND ano=$2 AND mes=$3"
 	}
 
-	// Usa vendas_importadas com COUNT(DISTINCT cod_cli) para evitar dupla contagem
-	// quando o mesmo produto aparece sob múltiplos cod_fornec na mv_mkt_produto.
+	// mv_mkt_prod_pen: pré-agrega por cod_prod apenas (sem cod_fornec),
+	// evitando dupla contagem. Refresh feito pelo "Consolidar view".
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT cod_prod,
-		       MAX(nome_prod)   AS nome_prod,
-		       MAX(cod_fornec)  AS cod_fornec,
-		       MAX(nome_fornec) AS nome_fornec,
-		       COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END) AS qt_positivados,
-		       SUM(pvenda)      AS pvenda,
-		       SUM(CASE WHEN estado='FATURADO'  THEN pvenda ELSE 0 END) AS faturado,
-		       SUM(CASE WHEN estado!='FATURADO' THEN pvenda ELSE 0 END) AS transmitido
-		FROM vendas_importadas
+		SELECT cod_prod, nome_prod, cod_fornec, nome_fornec,
+		       qt_positivados, pvenda, faturado, transmitido
+		FROM farol.mv_mkt_prod_pen
 		WHERE empresa_id=$1 AND %s AND cod_prod != ''
-		GROUP BY cod_prod
-		ORDER BY COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END) DESC
+		ORDER BY qt_positivados DESC
 	`, atualWhere), atualArgs...)
 	if err != nil {
 		log.Printf("[marketing] fetchMktProduto ERRO atual: %v", err)
@@ -319,10 +325,9 @@ func fetchMktProduto(db *sql.DB, empresaID string, refAno, refMes int, compMode 
 	}
 
 	antRows, err := db.Query(fmt.Sprintf(`
-		SELECT cod_prod,
-		       COUNT(DISTINCT CASE WHEN estado='FATURADO' AND qt>0 THEN cod_cli END)
-		FROM vendas_importadas
-		WHERE empresa_id=$1 AND %s AND cod_prod != ''
+		SELECT cod_prod, MAX(qt_positivados)
+		FROM farol.mv_mkt_prod_pen
+		WHERE empresa_id=$1 AND %s
 		GROUP BY cod_prod
 	`, antWhere), antArgs...)
 	qtAntMap := map[string]int{}

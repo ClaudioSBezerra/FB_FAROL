@@ -80,6 +80,7 @@ var AllSummaryViews = []string{
 	"farol.mv_v02_l0", "farol.mv_v02_l1", "farol.mv_v02_l2",
 	"farol.mv_v03_l0", "farol.mv_v03_l1", "farol.mv_v03_l2", "farol.mv_v03_l3",
 	"farol.mv_mkt_produto",
+	"farol.mv_mkt_prod_pen",
 }
 
 func getViewName(view string, drillIdx int) string {
