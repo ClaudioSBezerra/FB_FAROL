@@ -139,19 +139,19 @@ function ArcGaugeDark({
             />
           )}
         </svg>
-        {/* Percentual no centro — só o número */}
-        <div className="absolute inset-0 flex items-center justify-center"
+        {/* Percentual no centro — só o número, fonte ajustada para não vazar */}
+        <div className="absolute inset-0 flex items-center justify-center overflow-hidden"
           style={{ paddingTop: size * 0.22 }}>
-          <span className="font-black tabular-nums leading-none" style={{ fontSize: size * 0.2, color }}>
+          <span className="font-black tabular-nums leading-none" style={{ fontSize: size * 0.155, color }}>
             {centerText}
           </span>
         </div>
       </div>
-      {/* Below gauge */}
-      <div className="text-center -mt-1">
+      {/* Valores apurados — espaço extra abaixo do arco */}
+      <div className="text-center mt-5">
         <p className="text-white font-semibold" style={{ fontSize: size * 0.088 }}>{sublabel}</p>
         {subvalue && (
-          <p className="text-slate-500 mt-0.5" style={{ fontSize: size * 0.07 }}>{subvalue}</p>
+          <p className="text-slate-500 mt-1" style={{ fontSize: size * 0.07 }}>{subvalue}</p>
         )}
       </div>
     </div>
