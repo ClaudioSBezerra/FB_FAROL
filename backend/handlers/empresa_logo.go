@@ -5,9 +5,27 @@ import (
 	"io"
 	"log"
 	"net/http"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const maxLogoSize = 5 << 20 // 5 MB
+
+// logoCompanyID resolve qual empresa usar.
+// Admin com X-Company-ID pode acessar qualquer empresa diretamente.
+func logoCompanyID(db *sql.DB, r *http.Request) (string, error) {
+	userID := GetUserIDFromContext(r)
+	if userID == "" {
+		return "", nil
+	}
+	requested := r.Header.Get("X-Company-ID")
+	// Admin pode acessar empresa específica sem verificação de vínculo
+	claims, _ := r.Context().Value(ClaimsKey).(jwt.MapClaims)
+	if role, _ := claims["role"].(string); role == "admin" && requested != "" {
+		return requested, nil
+	}
+	return GetEffectiveCompanyID(db, userID, requested)
+}
 
 // ServeEmpresaLogoHandler serve o logotipo da empresa como imagem binária.
 // GET /api/config/empresa/logo
@@ -18,15 +36,9 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		userID := GetUserIDFromContext(r)
-		if userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		companyID, err := GetEffectiveCompanyID(db, userID, r.Header.Get("X-Company-ID"))
+		companyID, err := logoCompanyID(db, r)
 		if err != nil || companyID == "" {
-			http.Error(w, "Empresa não encontrada", http.StatusNotFound)
+			http.NotFound(w, r)
 			return
 		}
 
@@ -47,7 +59,7 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", logoMime)
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(logoData)
 	}
 }
@@ -61,13 +73,7 @@ func UploadEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		userID := GetUserIDFromContext(r)
-		if userID == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		companyID, err := GetEffectiveCompanyID(db, userID, r.Header.Get("X-Company-ID"))
+		companyID, err := logoCompanyID(db, r)
 		if err != nil || companyID == "" {
 			http.Error(w, "Empresa não encontrada", http.StatusNotFound)
 			return

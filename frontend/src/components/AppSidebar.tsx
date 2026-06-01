@@ -177,15 +177,20 @@ export function AppSidebar() {
 
   useEffect(() => {
     if (!token) return
-    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.ok ? res.blob() : null)
-      .then(blob => {
-        if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current)
-        const url = blob ? URL.createObjectURL(blob) : null
-        prevLogoURL.current = url
-        setLogoURL(url)
-      })
-      .catch(() => {})
+    const load = () => {
+      fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => res.ok ? res.blob() : null)
+        .then(blob => {
+          if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current)
+          const url = blob ? URL.createObjectURL(blob) : null
+          prevLogoURL.current = url
+          setLogoURL(url)
+        })
+        .catch(() => {})
+    }
+    load()
+    window.addEventListener('empresa-logo-updated', load)
+    return () => window.removeEventListener('empresa-logo-updated', load)
   }, [token])
 
   // Estado de expansão de cada seção (todas abertas por padrão)

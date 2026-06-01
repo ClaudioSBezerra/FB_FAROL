@@ -98,44 +98,68 @@ export default function GestaoAmbiente() {
   const [userHierarchy, setUserHierarchy] = useState<UserHierarchy | null>(null);
 
   // ── Logo ──────────────────────────────────────────────────────────────────
+  // logoURL = logo da empresa ativa do usuário (não-admin view + fallback)
+  // editLogoURL = logo da empresa sendo editada no dialog (admin)
   const [logoURL, setLogoURL] = useState<string | null>(null);
+  const [editLogoURL, setEditLogoURL] = useState<string | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const editLogoInputRef = useRef<HTMLInputElement>(null);
   const prevLogoURL = useRef<string | null>(null);
+  const prevEditLogoURL = useRef<string | null>(null);
 
-  const loadLogo = () => {
+  const fetchLogo = (companyId?: string, onDone?: (url: string | null) => void) => {
     const t = token || localStorage.getItem("token");
     if (!t) return;
-    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${t}` } })
+    const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
+    if (companyId) headers["X-Company-ID"] = companyId;
+    fetch("/api/config/empresa/logo", { headers })
       .then(res => res.ok ? res.blob() : null)
-      .then(blob => {
-        if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current);
-        const url = blob ? URL.createObjectURL(blob) : null;
-        prevLogoURL.current = url;
-        setLogoURL(url);
-      })
-      .catch(() => {});
+      .then(blob => { onDone?.(blob ? URL.createObjectURL(blob) : null); })
+      .catch(() => { onDone?.(null); });
   };
 
-  const handleLogoUpload = async (file: File) => {
+  const loadLogo = () => {
+    fetchLogo(undefined, url => {
+      if (prevLogoURL.current) URL.revokeObjectURL(prevLogoURL.current);
+      prevLogoURL.current = url;
+      setLogoURL(url);
+    });
+  };
+
+  const loadEditLogo = (companyId: string) => {
+    fetchLogo(companyId, url => {
+      if (prevEditLogoURL.current) URL.revokeObjectURL(prevEditLogoURL.current);
+      prevEditLogoURL.current = url;
+      setEditLogoURL(url);
+    });
+  };
+
+  const handleLogoUpload = async (file: File, companyId?: string) => {
     const t = token || localStorage.getItem("token");
     if (!t) return;
     setLogoUploading(true);
     try {
       const form = new FormData();
       form.append("logo", file);
+      const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
+      if (companyId) headers["X-Company-ID"] = companyId;
       const res = await fetch("/api/config/empresa/logo", {
         method: "POST",
-        headers: { Authorization: `Bearer ${t}` },
+        headers,
         body: form,
       });
       if (!res.ok) {
-        const text = await res.text();
-        toast.error(text || "Erro ao enviar logo");
+        toast.error((await res.text()) || "Erro ao enviar logo");
         return;
       }
       toast.success("Logotipo atualizado");
-      loadLogo();
+      window.dispatchEvent(new CustomEvent("empresa-logo-updated"));
+      if (companyId) {
+        loadEditLogo(companyId);
+      } else {
+        loadLogo();
+      }
     } catch {
       toast.error("Erro ao enviar logo");
     } finally {
@@ -352,6 +376,8 @@ export default function GestaoAmbiente() {
     setEditCompanyCNPJ(c.cnpj || "");
     setEditCompanyName(c.name || "");
     setEditCompanyTradeName(c.trade_name || "");
+    setEditLogoURL(null);
+    loadEditLogo(c.id);
   };
 
   const handleUpdateCompany = async () => {
@@ -491,9 +517,29 @@ export default function GestaoAmbiente() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                         <div className="text-lg font-medium">{userHierarchy.company.name}</div>
-                         <p className="text-[10px] text-gray-400 font-mono truncate mb-1" title={userHierarchy.company.id}>ID: {userHierarchy.company.id}</p>
-                         {userHierarchy.company.cnpj && <div className="text-sm text-muted-foreground">CNPJ: {userHierarchy.company.cnpj}</div>}
+                        <div className="flex items-center gap-4">
+                            {logoURL ? (
+                              <img src={logoURL} alt="Logo" className="h-12 w-12 rounded-lg object-cover border shrink-0" />
+                            ) : (
+                              <div className="h-12 w-12 rounded-lg border-2 border-dashed flex items-center justify-center text-muted-foreground text-[10px] shrink-0">
+                                logo
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-lg font-medium truncate">{userHierarchy.company.name}</div>
+                              <p className="text-[10px] text-gray-400 font-mono truncate" title={userHierarchy.company.id}>ID: {userHierarchy.company.id}</p>
+                              {userHierarchy.company.cnpj && <div className="text-sm text-muted-foreground">CNPJ: {userHierarchy.company.cnpj}</div>}
+                            </div>
+                        </div>
+                        {user?.role === "admin" && (
+                          <div className="mt-3">
+                            <Button variant="outline" size="sm" disabled={logoUploading} onClick={() => logoInputRef.current?.click()}>
+                              {logoUploading ? "Enviando..." : "Alterar logotipo"}
+                            </Button>
+                            <input ref={logoInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" className="hidden"
+                              onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }} />
+                          </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>
@@ -537,47 +583,6 @@ export default function GestaoAmbiente() {
           Configuração Hierárquica: Ambiente &gt; Grupo &gt; Empresa
         </p>
       </div>
-
-      {/* ── Logotipo da empresa ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building className="h-5 w-5" />
-            Logotipo da Empresa
-          </CardTitle>
-          <CardDescription>
-            Imagem exibida na sidebar do sistema. Formatos aceitos: JPEG, PNG, WebP, SVG (máx. 5 MB).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-6">
-            {logoURL ? (
-              <img src={logoURL} alt="Logotipo atual" className="h-16 w-16 rounded-lg object-cover border" />
-            ) : (
-              <div className="h-16 w-16 rounded-lg border-2 border-dashed flex items-center justify-center text-muted-foreground text-xs">
-                Sem logo
-              </div>
-            )}
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={logoUploading}
-                onClick={() => logoInputRef.current?.click()}
-              >
-                {logoUploading ? "Enviando..." : "Alterar logotipo"}
-              </Button>
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/svg+xml"
-                className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
         {/* Column 1: Environments */}
@@ -812,6 +817,27 @@ export default function GestaoAmbiente() {
             <DialogDescription>{editingCompany?.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* Logo */}
+            <div className="space-y-2">
+              <Label>Logotipo</Label>
+              <div className="flex items-center gap-4">
+                {editLogoURL ? (
+                  <img src={editLogoURL} alt="Logo" className="h-14 w-14 rounded-lg object-cover border shrink-0" />
+                ) : (
+                  <div className="h-14 w-14 rounded-lg border-2 border-dashed flex items-center justify-center text-muted-foreground text-[10px] shrink-0">
+                    sem logo
+                  </div>
+                )}
+                <div>
+                  <Button variant="outline" size="sm" disabled={logoUploading} onClick={() => editLogoInputRef.current?.click()}>
+                    {logoUploading ? "Enviando..." : "Alterar logotipo"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground mt-1">JPEG, PNG, WebP, SVG · máx 5 MB</p>
+                  <input ref={editLogoInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f, editingCompany?.id); e.target.value = ""; }} />
+                </div>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label>CNPJ (apenas números)</Label>
               <Input
