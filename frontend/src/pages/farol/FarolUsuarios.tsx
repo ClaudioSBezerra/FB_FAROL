@@ -40,6 +40,7 @@ const MODULOS = [
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PERSONAS: { value: string; label: string }[] = [
+  { value: 'ceo',               label: 'CEO' },
   { value: 'diretor',           label: 'Diretor' },
   { value: 'gerente_geral',     label: 'Gerente Geral' },
   { value: 'ggv',               label: 'GGV' },
@@ -53,6 +54,7 @@ const PERSONAS: { value: string; label: string }[] = [
 const PERSONA_LABEL: Record<string, string> = Object.fromEntries(PERSONAS.map(p => [p.value, p.label]))
 
 const PERSONA_COLOR: Record<string, string> = {
+  ceo:               'bg-amber-100 text-amber-800',
   diretor:           'bg-purple-100 text-purple-800',
   gerente_geral:     'bg-blue-100 text-blue-800',
   ggv:               'bg-indigo-100 text-indigo-800',
@@ -118,7 +120,7 @@ function ModulosBadges({ modulos }: { modulos: string[] }) {
 
 // sp_role sugerido por persona (espelha PersonaToSpRole no backend)
 function personaToRole(persona: string): string {
-  if (['diretor', 'gerente_geral', 'ti', 'admin'].includes(persona)) return 'gestor_geral'
+  if (['ceo', 'diretor', 'gerente_geral', 'ti', 'admin'].includes(persona)) return 'gestor_geral'
   if (['ggv', 'supervisor'].includes(persona)) return 'gestor_filial'
   return 'somente_leitura'
 }

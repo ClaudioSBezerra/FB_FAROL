@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { ShieldCheck, UserPlus, Layers, Trash2 } from 'lucide-react'
+import { ShieldCheck, UserPlus, Layers, Trash2, LayoutGrid } from 'lucide-react'
+import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ interface SpUsuario {
   group_name: string
   company_id: string
   company_name: string
+  modulos: string[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -59,7 +61,36 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
+const MODULOS = [
+  { value: 'vendas',    label: 'Painel Vendas' },
+  { value: 'marketing', label: 'Painel Marketing' },
+  { value: 'bi',        label: 'Painel BI' },
+]
+
+const MODULO_COLORS: Record<string, string> = {
+  vendas:    'bg-blue-50 text-blue-700 border-blue-200',
+  marketing: 'bg-pink-50 text-pink-700 border-pink-200',
+  bi:        'bg-violet-50 text-violet-700 border-violet-200',
+}
+
+function ModulosBadges({ modulos }: { modulos: string[] }) {
+  if (!modulos?.length) return <span className="text-xs text-muted-foreground">—</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {modulos.map(m => {
+        const cfg = MODULOS.find(x => x.value === m)
+        return (
+          <span key={m} className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${MODULO_COLORS[m] ?? 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+            {cfg?.label ?? m}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 const PERSONAS: { value: string; label: string }[] = [
+  { value: 'ceo',               label: 'CEO' },
   { value: 'diretor',           label: 'Diretor' },
   { value: 'gerente_geral',     label: 'Gerente Geral' },
   { value: 'ggv',               label: 'GGV' },
@@ -73,6 +104,7 @@ const PERSONAS: { value: string; label: string }[] = [
 const PERSONA_LABEL: Record<string, string> = Object.fromEntries(PERSONAS.map(p => [p.value, p.label]))
 
 const PERSONA_COLOR: Record<string, string> = {
+  ceo:               'bg-amber-100 text-amber-800',
   diretor:           'bg-purple-100 text-purple-800',
   gerente_geral:     'bg-blue-100 text-blue-800',
   ggv:               'bg-indigo-100 text-indigo-800',
@@ -93,7 +125,7 @@ function PersonaBadge({ persona }: { persona: string }) {
 }
 
 function personaToRole(persona: string): string {
-  if (['diretor', 'gerente_geral', 'ti', 'admin'].includes(persona)) return 'gestor_geral'
+  if (['ceo', 'diretor', 'gerente_geral', 'ti', 'admin'].includes(persona)) return 'gestor_geral'
   if (['ggv', 'supervisor'].includes(persona)) return 'gestor_filial'
   return 'somente_leitura'
 }
@@ -124,6 +156,10 @@ export default function SpUsuarios() {
   const [novoPersona,   setNovoPersona]   = useState('')
   const [novoCodRef,    setNovoCodRef]    = useState('')
   const [novoTrialDate, setNovoTrialDate] = useState('2099-12-31')
+  const [novoModulos,   setNovoModulos]   = useState<string[]>(['vendas'])
+
+  // Módulos do usuário editado
+  const [editModulos, setEditModulos] = useState<string[]>(['vendas'])
 
   // Hierarquia do novo usuário
   const [createEnvId,     setCreateEnvId]     = useState('')
@@ -205,7 +241,7 @@ export default function SpUsuarios() {
       const res = await fetch(`/api/sp/usuarios/${id}/role`, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at }),
+        body:    JSON.stringify({ sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at, modulos: editModulos }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao atualizar perfil')
     },
@@ -232,6 +268,7 @@ export default function SpUsuarios() {
           trial_ends_at:  novoTrialDate,
           all_filiais:    true,
           filial_ids:     [],
+          modulos:        novoModulos,
           ...(createEnvId     && { environment_id: createEnvId }),
           ...(createGroupId   && { group_id: createGroupId }),
           ...(createCompanyId && { company_id: createCompanyId }),
@@ -245,7 +282,7 @@ export default function SpUsuarios() {
       setNovoDialog(false)
       setNovoNome(''); setNovoEmail(''); setNovaSenha('')
       setNovoSpRole('somente_leitura'); setNovoPersona(''); setNovoCodRef('')
-      setNovoTrialDate('2099-12-31')
+      setNovoTrialDate('2099-12-31'); setNovoModulos(['vendas'])
       setCreateEnvId(''); setCreateGroupId(''); setCreateCompanyId('')
     },
     onError: (e: Error) => toast.error(e.message),
@@ -298,9 +335,14 @@ export default function SpUsuarios() {
     setEditPersona(u.tipo_persona || '')
     setEditCodRef(u.cod_referencia || '')
     setEditTrialDate(u.trial_ends_at ? u.trial_ends_at.slice(0, 10) : '')
+    setEditModulos(u.modulos?.length > 0 ? u.modulos : ['vendas'])
     setShowReassign(false)
     setReassignEnvId(''); setReassignGroupId(''); setReassignCompanyId('')
     setRoleDialog(true)
+  }
+
+  function toggleModulo(list: string[], mod: string): string[] {
+    return list.includes(mod) ? list.filter(m => m !== mod) : [...list, mod]
   }
 
   async function openVinculosDialog(u: SpUsuario) {
@@ -375,6 +417,7 @@ export default function SpUsuarios() {
               <TableHead>Empresa</TableHead>
               <TableHead>Persona</TableHead>
               <TableHead>Perfil</TableHead>
+              <TableHead>Módulos</TableHead>
               <TableHead className="w-32">Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -386,6 +429,7 @@ export default function SpUsuarios() {
                 <TableCell className="text-sm text-muted-foreground">{u.company_name || '—'}</TableCell>
                 <TableCell><PersonaBadge persona={u.tipo_persona} /></TableCell>
                 <TableCell><RoleBadge role={u.sp_role} /></TableCell>
+                <TableCell><ModulosBadges modulos={u.modulos ?? []} /></TableCell>
                 <TableCell>
                   <div className="flex gap-1">
                     <Button size="sm" variant="outline" onClick={() => openRoleDialog(u)}>
@@ -470,6 +514,23 @@ export default function SpUsuarios() {
               <Input type="date" value={novoTrialDate} onChange={e => setNovoTrialDate(e.target.value)} />
             </div>
 
+            <div className="pt-1">
+              <Separator className="mb-3" />
+              <div className="flex items-center gap-1.5 mb-2">
+                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Módulos de acesso</span>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                {MODULOS.map(m => (
+                  <div key={m.value} className="flex items-center gap-2">
+                    <Checkbox id={`novo-mod-${m.value}`}
+                      checked={novoModulos.includes(m.value)}
+                      onCheckedChange={() => setNovoModulos(toggleModulo(novoModulos, m.value))} />
+                    <label htmlFor={`novo-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="border-t pt-3 space-y-2">
               <Label className="text-sm font-semibold">Hierarquia</Label>
               <div className="grid gap-1.5">
@@ -556,6 +617,24 @@ export default function SpUsuarios() {
               <Label>Vencimento da licença</Label>
               <Input type="date" value={editTrialDate} onChange={e => setEditTrialDate(e.target.value)} />
               <p className="text-[10px] text-muted-foreground">Renovar não apaga dados — só estende o prazo de acesso.</p>
+            </div>
+
+            <div className="pt-1">
+              <Separator className="mb-3" />
+              <div className="flex items-center gap-1.5 mb-2">
+                <LayoutGrid className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Módulos de acesso</span>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                {MODULOS.map(m => (
+                  <div key={m.value} className="flex items-center gap-2">
+                    <Checkbox id={`edit-mod-${m.value}`}
+                      checked={editModulos.includes(m.value)}
+                      onCheckedChange={() => setEditModulos(toggleModulo(editModulos, m.value))} />
+                    <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="border-t pt-3 space-y-2">
