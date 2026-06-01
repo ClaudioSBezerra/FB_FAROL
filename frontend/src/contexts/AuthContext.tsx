@@ -75,7 +75,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (!headers.has('Authorization') && tokenRef.current) {
         headers.set('Authorization', `Bearer ${tokenRef.current}`);
       }
-      if (companyIdRef.current) {
+      if (companyIdRef.current && !headers.has('X-Company-ID')) {
         headers.set('X-Company-ID', companyIdRef.current);
       }
       return originalFetch(input, { ...init, headers });

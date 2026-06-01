@@ -185,14 +185,21 @@ export function AppSidebar() {
   // Fetch do logo — re-executa quando token ou logoTick mudam
   useEffect(() => {
     if (!token) return
-    fetch("/api/config/empresa/logo", { headers: { Authorization: `Bearer ${token}` } })
+    let cancelled = false
+    fetch("/api/config/empresa/logo")
       .then(async res => {
-        if (!res.ok) return
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '')
+          console.error('[Logo] fetch retornou', res.status, res.statusText, txt)
+          return
+        }
         const blob = await res.blob()
+        if (cancelled) return
         const url = URL.createObjectURL(blob)
         setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return url })
       })
-      .catch(() => {})
+      .catch(err => console.error('[Logo] fetch error:', err))
+    return () => { cancelled = true }
   }, [token, logoTick])
 
   // Estado de expansão de cada seção (todas abertas por padrão)
