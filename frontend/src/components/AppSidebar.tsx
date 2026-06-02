@@ -183,13 +183,16 @@ export function AppSidebar() {
   }, [])
 
   // Fetch do logo — re-executa quando token, companyId ou logoTick mudam.
-  // Headers explícitos (token + X-Company-ID) — não depende dos refs do
-  // interceptor do AuthProvider, que podem estar dessincronizados quando
-  // o sidebar monta antes do useEffect do provider rodar.
   useEffect(() => {
-    if (!token || !companyId) return
+    console.log('[Logo] effect rodou', { hasToken: !!token, companyId, logoTick })
+    if (!token || !companyId) {
+      console.log('[Logo] pulando fetch — token ou companyId ausente')
+      return
+    }
     let cancelled = false
-    fetch(`/api/config/empresa/logo?t=${logoTick}`, {
+    const url = `/api/config/empresa/logo?t=${logoTick}&_=${Date.now()}`
+    console.log('[Logo] fazendo fetch:', url, 'X-Company-ID:', companyId)
+    fetch(url, {
       cache: 'no-store',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -197,6 +200,7 @@ export function AppSidebar() {
       },
     })
       .then(async res => {
+        console.log('[Logo] resposta:', res.status, 'content-type:', res.headers.get('content-type'))
         if (!res.ok) {
           const txt = await res.text().catch(() => '')
           console.error('[Logo] fetch retornou', res.status, res.statusText, txt)
@@ -204,9 +208,11 @@ export function AppSidebar() {
           return
         }
         const blob = await res.blob()
+        console.log('[Logo] blob:', blob.size, 'bytes,', blob.type)
         if (cancelled) return
-        const url = URL.createObjectURL(blob)
-        setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+        const blobUrl = URL.createObjectURL(blob)
+        console.log('[Logo] blob URL criada:', blobUrl)
+        setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return blobUrl })
       })
       .catch(err => console.error('[Logo] fetch error:', err))
     return () => { cancelled = true }

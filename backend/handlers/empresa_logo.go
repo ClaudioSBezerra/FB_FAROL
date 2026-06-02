@@ -36,8 +36,11 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		userID := GetUserIDFromContext(r)
+		reqCompany := r.Header.Get("X-Company-ID")
 		companyID, err := logoCompanyID(db, r)
 		if err != nil || companyID == "" {
+			log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%q err=%v → 404 (resolve)", userID, reqCompany, companyID, err)
 			http.NotFound(w, r)
 			return
 		}
@@ -50,14 +53,17 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			WHERE id = $1::uuid AND logo_data IS NOT NULL
 		`, companyID).Scan(&logoData, &logoMime)
 		if err == sql.ErrNoRows {
+			log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%q → 404 (sem logo no DB)", userID, reqCompany, companyID)
 			http.NotFound(w, r)
 			return
 		}
 		if err != nil {
+			log.Printf("ServeEmpresaLogo: user=%s companyID=%s erro DB: %v", userID, companyID, err)
 			http.Error(w, "Erro no banco de dados", http.StatusInternalServerError)
 			return
 		}
 
+		log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%s mime=%s size=%dB → 200", userID, reqCompany, companyID, logoMime, len(logoData))
 		w.Header().Set("Content-Type", logoMime)
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(logoData)
