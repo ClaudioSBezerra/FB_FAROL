@@ -6,7 +6,7 @@ import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 import FarolExecutivo from './FarolExecutivo'
 
-const PERSONAS_EXECUTIVO = new Set(['diretor', 'gerente_geral'])
+const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral'])
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 

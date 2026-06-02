@@ -178,7 +178,7 @@ export default function FarolUsuarios() {
           sp_role:        novoSpRole,
           cod_referencia: novoCodRef,
           trial_ends_at:  novoTrialDate,
-          all_filiais:    ['diretor', 'gerente_geral', 'ti', 'admin'].includes(novoPersona),
+          all_filiais:    ['ceo', 'diretor', 'gerente_geral', 'ti', 'admin'].includes(novoPersona),
           modulos:        novoModulos,
         }),
       })

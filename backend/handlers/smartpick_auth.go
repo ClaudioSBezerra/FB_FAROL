@@ -92,7 +92,7 @@ func (s *FarolContext) CanManageUsers() bool {
 // PersonaToSpRole retorna o sp_role recomendado para um tipo_persona.
 func PersonaToSpRole(persona string) string {
 	switch persona {
-	case "diretor", "gerente_geral", "ti", "admin":
+	case "ceo", "diretor", "gerente_geral", "ti", "admin":
 		return "gestor_geral"
 	case "ggv", "supervisor":
 		return "gestor_filial"
