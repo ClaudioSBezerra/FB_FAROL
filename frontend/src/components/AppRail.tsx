@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
 import { getActiveModule } from '@/lib/navigation'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 
 interface RailItem {
@@ -55,9 +55,36 @@ const mainItems: RailItem[] = [
 export function AppRail() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, company, logout, token, spRole, tipoPersona, hasModulo } = useAuth()
+  const { user, company, logout, token, spRole, tipoPersona, hasModulo, companyId } = useAuth()
   // isAdmin: plataforma admin OU admin_fbtax Farol → acessa configurações e manutenção
   const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+
+  // Logo da empresa logada — busca do backend (com fallback de grupo no servidor).
+  // Cache-buster por companyId + evento de upload garante refresh sem reload.
+  const [logoURL, setLogoURL] = useState<string | null>(null)
+  const [logoTick, setLogoTick] = useState(0)
+  useEffect(() => {
+    const refresh = () => setLogoTick(n => n + 1)
+    window.addEventListener('empresa-logo-updated', refresh)
+    return () => window.removeEventListener('empresa-logo-updated', refresh)
+  }, [])
+  useEffect(() => {
+    if (!token) return
+    let blobURL: string | null = null
+    const bust = `${companyId ?? 'x'}-${logoTick}`
+    fetch(`/api/config/empresa/logo?v=${encodeURIComponent(bust)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    })
+      .then(async res => {
+        if (!res.ok) { setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return null }); return }
+        const blob = await res.blob()
+        blobURL = URL.createObjectURL(blob)
+        setLogoURL(prev => { if (prev) URL.revokeObjectURL(prev); return blobURL })
+      })
+      .catch(() => {})
+    return () => { if (blobURL) URL.revokeObjectURL(blobURL) }
+  }, [token, companyId, logoTick])
   const isTI    = tipoPersona === 'ti'
   const canImport = isAdmin || isTI
   const visibleItems = mainItems.filter(it =>
@@ -111,7 +138,12 @@ export function AppRail() {
 
         {/* Logo */}
         <div className="flex items-center justify-center h-14 border-b shrink-0">
-          <img src="/logo-fb.png" alt="Fortes Bezerra" className="size-8 rounded-lg object-cover" />
+          <img
+            src={logoURL ?? "/logo-fb.png"}
+            alt={company ?? "Fortes Bezerra"}
+            title={company ?? undefined}
+            className="h-[38px] w-[38px] rounded-lg object-cover"
+          />
         </div>
 
         {/* Nav principal */}
