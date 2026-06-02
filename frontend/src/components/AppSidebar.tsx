@@ -182,6 +182,11 @@ export function AppSidebar() {
     return () => window.removeEventListener('empresa-logo-updated', refresh)
   }, [])
 
+  // BUILD MARKER — se você não ver este log no console F12, o browser está em cache antigo
+  useEffect(() => {
+    console.log('%c[BUILD] AppSidebar v=LOGO-DEBUG-2 carregado', 'background:#0ea5e9;color:white;padding:2px 6px;border-radius:3px;font-weight:bold')
+  }, [])
+
   // Fetch do logo — re-executa quando token, companyId ou logoTick mudam.
   useEffect(() => {
     console.log('[Logo] effect rodou', { hasToken: !!token, companyId, logoTick })
