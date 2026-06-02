@@ -36,18 +36,14 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		userID := GetUserIDFromContext(r)
-		reqCompany := r.Header.Get("X-Company-ID")
 		companyID, err := logoCompanyID(db, r)
 		if err != nil || companyID == "" {
-			log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%q err=%v → 404 (resolve)", userID, reqCompany, companyID, err)
 			http.NotFound(w, r)
 			return
 		}
 
 		var logoData []byte
 		var logoMime string
-		source := "own"
 		err = db.QueryRow(`
 			SELECT logo_data, logo_mime
 			FROM companies
@@ -59,7 +55,6 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 		// o admin subiu o logo). Um grupo normalmente compartilha uma marca,
 		// então buscamos o logo mais recente de uma empresa-irmã do mesmo grupo.
 		if err == sql.ErrNoRows {
-			source = "group-fallback"
 			err = db.QueryRow(`
 				SELECT s.logo_data, s.logo_mime
 				FROM companies c
@@ -73,17 +68,15 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		if err == sql.ErrNoRows {
-			log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%q → 404 (sem logo próprio nem no grupo)", userID, reqCompany, companyID)
 			http.NotFound(w, r)
 			return
 		}
 		if err != nil {
-			log.Printf("ServeEmpresaLogo: user=%s companyID=%s erro DB: %v", userID, companyID, err)
+			log.Printf("ServeEmpresaLogo: companyID=%s erro DB: %v", companyID, err)
 			http.Error(w, "Erro no banco de dados", http.StatusInternalServerError)
 			return
 		}
 
-		log.Printf("ServeEmpresaLogo: user=%s X-Company-ID=%q resolvido=%s via=%s mime=%s size=%dB → 200", userID, reqCompany, companyID, source, logoMime, len(logoData))
 		w.Header().Set("Content-Type", logoMime)
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(logoData)
