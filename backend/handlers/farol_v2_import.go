@@ -250,6 +250,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iNomeFornec      := col(-1, "fornecedor", "nome_fornec")
 	iCodCli          := col(-1, "codcli", "cod_cli")
 	iNomeCli         := col(-1, "cliente", "nome_cli")
+	iCNPJ            := col(-1, "cnpj", "cnpj_cli", "cnpj_cliente")
 	iUf              := col(-1, "uf")
 	iEmpresa         := col(-1, "empresa")
 	iCodProd         := col(-1, "codprod", "cod_prod")
@@ -331,7 +332,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// correto conforme o PERIODO (FATURADO → vendas_faturadas; TRANSMITIDO →
 	// vendas_transmitidas).
 	//
-	// vals layout (22 colunas — IDÊNTICO para os dois fluxos; só muda o nome
+	// vals layout (23 colunas — IDÊNTICO para os dois fluxos; só muda o nome
 	// da coluna de data no DB):
 	//   0: empresa_id        1: data
 	//   2: cod_gerente       3: nome_gerente
@@ -341,8 +342,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	//  12: cod_cli           13: nome_cli        14: uf            15: empresa
 	//  16: cod_prod          17: nome_prod       18: ean
 	//  19: qt                20: pvenda          21: plucro
+	//  22: cnpj
 	type vendaRaw struct {
-		vals [22]any
+		vals [23]any
 	}
 	var allFat   []vendaRaw // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
@@ -419,6 +421,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[19] = parseNum(rawQt)
 		r.vals[20] = pvendaVal
 		r.vals[21] = pvendaVal * plucroPct / 100.0
+		r.vals[22] = getField(csvRow, iCNPJ)
 
 		dKey := dataProc.Format("2006-01-02")
 		if estado == "TRANSMITIDO" {
@@ -464,6 +467,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		"cod_cli", "nome_cli", "uf", "empresa",
 		"cod_prod", "nome_prod", "ean",
 		"qt", "pvenda", "plucro",
+		"cnpj",
 	}
 
 	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw) error {
@@ -556,8 +560,19 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
 		WHERE id=$1`, jobID)
 
-	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH das 28 MVs (14 fat + 14 trans)", jobID)
+	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH das MVs (carteira + 28 fat/trans)", jobID)
 	tRefresh := time.Now()
+
+	// Primeiro: MVs auxiliares de carteira (1 linha por RCA — base hierárquica).
+	// As derivadas v01_l0..l2, v02_l0, v03_l0..l1 usam essas via sub-SELECT.
+	for _, mv := range []string{"farol.mv_fat_carteira_rca", "farol.mv_trans_carteira_rca"} {
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + mv); err != nil {
+			if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + mv); err2 != nil {
+				log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, mv, err2)
+			}
+		}
+		db.Exec(`ANALYZE ` + mv)
+	}
 
 	// REFRESH cada fluxo em sequência interna (base → summaries) mas
 	// os dois fluxos podem rodar em paralelo (são independentes).

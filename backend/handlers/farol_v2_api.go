@@ -993,6 +993,21 @@ func fmtRangeBR(ini, fim time.Time) string {
 func refreshAllFarolViews(db *sql.DB) error {
 	t0 := time.Now()
 
+	// Refresh PRIMEIRO as MVs de carteira (1 linha por RCA) — base hierárquica
+	// usada pelos sub-SELECTs nas derivadas v01_l0..l2, v02_l0 e v03_l0..l1.
+	// São pequenas (~centenas de linhas), refresh rápido.
+	for _, mv := range []string{"farol.mv_fat_carteira_rca", "farol.mv_trans_carteira_rca"} {
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + mv); err != nil {
+			// Sem CONCURRENTLY se nunca foi populada
+			if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + mv); err2 != nil {
+				log.Printf("[farol:view] refresh %s ERRO: %v", mv, err2)
+				return err2
+			}
+		}
+		db.Exec(`ANALYZE ` + mv)
+	}
+
+
 	refreshFlow := func(views []string) []error {
 		errs := make([]error, len(views))
 		// base primeiro (índice 0)
