@@ -29,8 +29,10 @@ type cleanupTableSpec struct {
 
 // Allowlist de tabelas limpáveis. Só estas podem ser apagadas, e só por empresa_id.
 var cleanupTables = []cleanupTableSpec{
-	{Key: "vendas", Table: "vendas_importadas", Label: "Vendas importadas",
-		Description: "Base de vendas do Farol (ATUAL + COMPARATIVA). Limpar exige reimportar os períodos.", RefreshViews: true},
+	{Key: "vendas_faturadas", Table: "vendas_faturadas", Label: "Vendas faturadas",
+		Description: "Base de FATURAMENTO (NF emitida). Limpar exige reimportar.", RefreshViews: true},
+	{Key: "vendas_transmitidas", Table: "vendas_transmitidas", Label: "Vendas transmitidas",
+		Description: "Base de TRANSMISSÃO (pedido digitado pelo RCA). Limpar exige reimportar.", RefreshViews: true},
 	{Key: "objetivos", Table: "objetivos_importados", Label: "Objetivos importados",
 		Description: "Modelo antigo de objetivos. Não usado pelo painel novo."},
 	{Key: "jobs", Table: "vendas_import_jobs", Label: "Histórico de importações",

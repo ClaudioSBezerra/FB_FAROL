@@ -52,17 +52,13 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// ── Parâmetros ────────────────────────────────────────────────────────
-		tipoBase := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_base")))
-		if tipoBase != "ATUAL" && tipoBase != "COMPARATIVA" {
-			http.Error(w, `{"error":"tipo_base deve ser ATUAL ou COMPARATIVA"}`, http.StatusBadRequest)
-			return
-		}
-		ano, errA := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
-		mes, errM := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
-		if errA != nil || ano < 2000 || ano > 2100 || errM != nil || mes < 1 || mes > 12 {
-			http.Error(w, `{"error":"ano (2000-2100) e mes (1-12) obrigatórios"}`, http.StatusBadRequest)
-			return
-		}
+		// ano/mes aceitos por compat (UI antiga envia) mas agora são apenas
+		// FALLBACK para linhas sem data válida no CSV. A fonte de verdade é a
+		// coluna DATA do CSV + PERIODO (que define a tabela destino).
+		// tipo_base removido — comparativa agora é uma propriedade da QUERY
+		// (range de datas escolhido), não do dado.
+		fallbackAno, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
+		fallbackMes, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
 
 		// ── Ler arquivo — suporta até 1 GB (350 MB típico) ───────────────────
 		_ = r.ParseMultipartForm(512 << 20)
@@ -108,17 +104,19 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		if estimatedRows < 0 {
 			estimatedRows = 0
 		}
-		log.Printf("[VendasImport] empresa=%s tipo=%s %d/%d arquivo=%dMB ~%d linhas",
-			spCtx.EmpresaID, tipoBase, ano, mes, len(rawBytes)/1024/1024, estimatedRows)
+		log.Printf("[VendasImport] empresa=%s fallback=%d/%d arquivo=%dMB ~%d linhas",
+			spCtx.EmpresaID, fallbackAno, fallbackMes, len(rawBytes)/1024/1024, estimatedRows)
 
 		// ── Cria job no banco ─────────────────────────────────────────────────
+		// ano/mes do job representa o "balde de competência" do upload (mantido
+		// para a tela de histórico de importações). Não afeta semântica dos dados.
 		var jobID string
 		err = db.QueryRow(`
 			INSERT INTO vendas_import_jobs
-				(empresa_id, tipo_base, ano, mes, status, total_lines)
-			VALUES ($1, $2, $3, $4, 'pending', $5)
+				(empresa_id, ano, mes, status, total_lines)
+			VALUES ($1, $2, $3, 'pending', $4)
 			RETURNING id`,
-			spCtx.EmpresaID, tipoBase, ano, mes, estimatedRows,
+			spCtx.EmpresaID, fallbackAno, fallbackMes, estimatedRows,
 		).Scan(&jobID)
 		if err != nil {
 			http.Error(w, `{"error":"erro ao criar job: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -130,7 +128,7 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		importJobs.Store(jobID, cancel)
 
 		// rawBytes é passado por referência ao goroutine (GC mantém vivo até ele terminar)
-		go processImportJob(ctx, db, jobID, rawBytes, spCtx, tipoBase, ano, mes)
+		go processImportJob(ctx, db, jobID, rawBytes, spCtx, fallbackAno, fallbackMes)
 
 		// Retorna job_id imediatamente
 		w.Header().Set("Content-Type", "application/json")
@@ -145,8 +143,24 @@ const (
 	progressUpdate = 2 * time.Second
 )
 
+// parseDateBR aceita formatos dd/mm/yyyy, d/m/yyyy ou yyyy-mm-dd. Retorna zero
+// time.Time se não conseguir parsear. Importador usa zero como sinal de "sem data".
+func parseDateBR(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	// Tenta dd/mm/yyyy primeiro (formato do WinThor)
+	for _, layout := range []string{"02/01/2006", "2/1/2006", "02/01/06", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func processImportJob(ctx context.Context, db *sql.DB, jobID string,
-	rawBytes []byte, spCtx *FarolContext, tipoBase string, ano, mes int) {
+	rawBytes []byte, spCtx *FarolContext, fallbackAno, fallbackMes int) {
 
 	defer func() {
 		importJobs.Delete(jobID)
@@ -224,25 +238,32 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return def
 	}
 
-	iCodGerente  := col(-1, "codgerente", "cod_gerente")
-	iNomeGerente := col(-1, "gerente", "nome_gerente")
-	iCodSup      := col(-1, "codsupervisor", "cod_supervisor")
-	iNomeSup     := col(-1, "supervisor", "nome_supervisor")
-	iCodRca      := col(-1, "codusur", "cod_rca", "codrca")
-	iNomeRca     := col(-1, "rca", "nome_rca")
-	iQtcliRca    := col(-1, "qtclirca", "qtcli_rca")
-	iCodFornec   := col(-1, "codfornec", "cod_fornec")
-	iNomeFornec  := col(-1, "fornecedor", "nome_fornec")
-	iCodCli      := col(-1, "codcli", "cod_cli")
-	iNomeCli     := col(-1, "cliente", "nome_cli")
-	iUf          := col(-1, "uf")
-	iEmpresa     := col(-1, "empresa")
-	iCodProd     := col(-1, "codprod", "cod_prod")
-	iNomeProd    := col(-1, "produto", "nome_prod")
-	iQt          := col(-1, "qt", "quantidade")
-	iPvenda      := col(-1, "pvenda", "valor", "vl_venda")
-	iPeriodo     := col(-1, "periodo")
-	iEstado      := col(-1, "estado")
+	iCodGerente      := col(-1, "codgerente", "cod_gerente")
+	iNomeGerente     := col(-1, "gerente", "nome_gerente")
+	iCodSup          := col(-1, "codsupervisor", "cod_supervisor")
+	iNomeSup         := col(-1, "supervisor", "nome_supervisor")
+	iQtrcaSupervisor := col(-1, "qtrcasupervisor", "qtrca_supervisor")
+	iCodRca          := col(-1, "codusur", "cod_rca", "codrca")
+	iNomeRca         := col(-1, "rca", "nome_rca")
+	iQtcliRca        := col(-1, "qtclirca", "qtcli_rca")
+	iCodFornec       := col(-1, "codfornec", "cod_fornec")
+	iNomeFornec      := col(-1, "fornecedor", "nome_fornec")
+	iCodCli          := col(-1, "codcli", "cod_cli")
+	iNomeCli         := col(-1, "cliente", "nome_cli")
+	iUf              := col(-1, "uf")
+	iEmpresa         := col(-1, "empresa")
+	iCodProd         := col(-1, "codprod", "cod_prod")
+	iNomeProd        := col(-1, "produto", "nome_prod")
+	iEan             := col(-1, "ean", "codean", "cod_ean")
+	iQt              := col(-1, "qt", "quantidade")
+	iPvenda          := col(-1, "pvenda", "valor", "vl_venda")
+	iPlucro          := col(-1, "plucro", "lucro", "vl_lucro")
+	iPeriodo         := col(-1, "periodo")
+	iEstado          := col(-1, "estado")
+	// Coluna ÚNICA de data — semântica dada pelo PERIODO/ESTADO:
+	//   PERIODO=TRANSMITIDO → linha vai pra vendas_transmitidas
+	//   PERIODO=FATURADO    → linha vai pra vendas_faturadas
+	iData            := col(-1, "data", "data_processo", "dataprocesso", "dt", "data_movimento")
 
 	// Log dos cabeçalhos detectados para diagnóstico de mapeamento de colunas
 	colLabel := func(idx int) string {
@@ -251,8 +272,10 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return fmt.Sprintf("%q (col %d)", headerRow[idx], idx)
 	}
-	log.Printf("[import:diag] colunas detectadas — qt=%s  pvenda=%s  codCli=%s  codFornec=%s  periodo=%s  estado=%s",
-		colLabel(iQt), colLabel(iPvenda), colLabel(iCodCli), colLabel(iCodFornec), colLabel(iPeriodo), colLabel(iEstado))
+	log.Printf("[import:diag] colunas detectadas — qt=%s  pvenda=%s  plucro=%s  ean=%s  codCli=%s  codFornec=%s  periodo=%s  estado=%s  data=%s  qtrca_supervisor=%s",
+		colLabel(iQt), colLabel(iPvenda), colLabel(iPlucro), colLabel(iEan),
+		colLabel(iCodCli), colLabel(iCodFornec), colLabel(iPeriodo), colLabel(iEstado),
+		colLabel(iData), colLabel(iQtrcaSupervisor))
 
 	getField := func(row []string, idx int) string {
 		if idx < 0 || idx >= len(row) {
@@ -304,12 +327,29 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return "FATURADO"
 	}
 
-	// ── Lê todas as linhas do CSV em memória para poder fazer chunks ──────────
+	// ── Lê todas as linhas do CSV em memória; rota cada linha para o buffer
+	// correto conforme o PERIODO (FATURADO → vendas_faturadas; TRANSMITIDO →
+	// vendas_transmitidas).
+	//
+	// vals layout (22 colunas — IDÊNTICO para os dois fluxos; só muda o nome
+	// da coluna de data no DB):
+	//   0: empresa_id        1: data
+	//   2: cod_gerente       3: nome_gerente
+	//   4: cod_supervisor    5: nome_supervisor  6: qtrca_supervisor
+	//   7: cod_rca           8: nome_rca         9: qtcli_rca
+	//  10: cod_fornec        11: nome_fornec
+	//  12: cod_cli           13: nome_cli        14: uf            15: empresa
+	//  16: cod_prod          17: nome_prod       18: ean
+	//  19: qt                20: pvenda          21: plucro
 	type vendaRaw struct {
 		vals [22]any
 	}
-	var allRows []vendaRaw
+	var allFat   []vendaRaw // → vendas_faturadas
+	var allTrans []vendaRaw // → vendas_transmitidas
 	diagSamples := 0
+	skippedNoData := 0
+	uniqueFatDates   := make(map[string]struct{})
+	uniqueTransDates := make(map[string]struct{})
 
 	for {
 		csvRow, err := csvReader.Read()
@@ -325,52 +365,84 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		if codFornec == "" && codRca == "" && codCli == "" {
 			continue
 		}
-		periodo    := getField(csvRow, iPeriodo)
-		estadoF   := getField(csvRow, iEstado)
+		periodo := getField(csvRow, iPeriodo)
+		estadoF := getField(csvRow, iEstado)
+		estado  := detectEstado(periodo, estadoF)
+
+		// Data única — semântica dada pelo estado/tabela destino.
+		dataProc := parseDateBR(getField(csvRow, iData))
+		// Fallback: ano/mes da URL com dia=1 (compat com CSV antigo sem datas)
+		if dataProc.IsZero() && fallbackAno > 0 && fallbackMes > 0 {
+			dataProc = time.Date(fallbackAno, time.Month(fallbackMes), 1, 0, 0, 0, 0, time.UTC)
+		}
+		if dataProc.IsZero() {
+			skippedNoData++
+			continue
+		}
 
 		rawPvenda := getField(csvRow, iPvenda)
+		rawPlucro := getField(csvRow, iPlucro)
 		rawQt     := getField(csvRow, iQt)
 		if diagSamples < 5 {
-			log.Printf("[import:diag] amostra %d — pvenda_raw=%q→%.4f  qt_raw=%q→%.4f  cli=%s  fornec=%s",
-				diagSamples+1, rawPvenda, parseNum(rawPvenda), rawQt, parseNum(rawQt), codCli, codFornec)
+			log.Printf("[import:diag] amostra %d — data=%s estado=%s pvenda_raw=%q→%.4f plucro_raw=%q→%.4f qt_raw=%q→%.4f cli=%s fornec=%s",
+				diagSamples+1, dataProc.Format("2006-01-02"), estado,
+				rawPvenda, parseNum(rawPvenda), rawPlucro, parseNum(rawPlucro), rawQt, parseNum(rawQt),
+				codCli, codFornec)
 			diagSamples++
 		}
 
 		var r vendaRaw
 		r.vals[0]  = spCtx.EmpresaID
-		r.vals[1]  = tipoBase
-		r.vals[2]  = ano
-		r.vals[3]  = mes
-		r.vals[4]  = detectEstado(periodo, estadoF)
-		r.vals[5]  = getField(csvRow, iCodGerente)
-		r.vals[6]  = getField(csvRow, iNomeGerente)
-		r.vals[7]  = getField(csvRow, iCodSup)
-		r.vals[8]  = getField(csvRow, iNomeSup)
-		r.vals[9]  = codRca
-		r.vals[10] = getField(csvRow, iNomeRca)
-		r.vals[11] = parseInt3(getField(csvRow, iQtcliRca))
-		r.vals[12] = codFornec
-		r.vals[13] = getField(csvRow, iNomeFornec)
-		r.vals[14] = codCli
-		r.vals[15] = getField(csvRow, iNomeCli)
-		r.vals[16] = getField(csvRow, iUf)
-		r.vals[17] = getField(csvRow, iEmpresa)
-		r.vals[18] = getField(csvRow, iCodProd)
-		r.vals[19] = getField(csvRow, iNomeProd)
-		r.vals[20] = parseNum(rawQt)
-		r.vals[21] = parseNum(rawPvenda)
-		allRows = append(allRows, r)
+		r.vals[1]  = dataProc
+		r.vals[2]  = getField(csvRow, iCodGerente)
+		r.vals[3]  = getField(csvRow, iNomeGerente)
+		r.vals[4]  = getField(csvRow, iCodSup)
+		r.vals[5]  = getField(csvRow, iNomeSup)
+		r.vals[6]  = parseInt3(getField(csvRow, iQtrcaSupervisor))
+		r.vals[7]  = codRca
+		r.vals[8]  = getField(csvRow, iNomeRca)
+		r.vals[9]  = parseInt3(getField(csvRow, iQtcliRca))
+		r.vals[10] = codFornec
+		r.vals[11] = getField(csvRow, iNomeFornec)
+		r.vals[12] = codCli
+		r.vals[13] = getField(csvRow, iNomeCli)
+		r.vals[14] = getField(csvRow, iUf)
+		r.vals[15] = getField(csvRow, iEmpresa)
+		r.vals[16] = getField(csvRow, iCodProd)
+		r.vals[17] = getField(csvRow, iNomeProd)
+		r.vals[18] = getField(csvRow, iEan)
+		// plucro vem no CSV como PERCENTUAL (ex.: 20 = 20%). Convertemos para
+		// valor absoluto (R$) na inserção: lucroValor = pvenda * (% / 100).
+		// Isso mantém compatibilidade com todas as MVs/handlers que somam plucro.
+		pvendaVal := parseNum(rawPvenda)
+		plucroPct := parseNum(rawPlucro)
+		r.vals[19] = parseNum(rawQt)
+		r.vals[20] = pvendaVal
+		r.vals[21] = pvendaVal * plucroPct / 100.0
+
+		dKey := dataProc.Format("2006-01-02")
+		if estado == "TRANSMITIDO" {
+			uniqueTransDates[dKey] = struct{}{}
+			allTrans = append(allTrans, r)
+		} else {
+			uniqueFatDates[dKey] = struct{}{}
+			allFat = append(allFat, r)
+		}
 	}
+	if skippedNoData > 0 {
+		log.Printf("[import:diag] %d linhas puladas — sem data válida (coluna DATA ausente e sem fallback)", skippedNoData)
+	}
+	log.Printf("[import:diag] roteamento: %d linhas → vendas_faturadas, %d linhas → vendas_transmitidas", len(allFat), len(allTrans))
 
 	// Libera rawBytes da memória agora que o CSV foi parseado
 	rawBytes = nil
 
-	if len(allRows) == 0 {
+	if len(allFat) == 0 && len(allTrans) == 0 {
 		markStatus("error", "nenhuma linha válida encontrada no arquivo")
 		return
 	}
 
-	// ── Transação única: DELETE + COPY em chunks ──────────────────────────────
+	// ── Transação única: DELETE + COPY de AMBOS os fluxos atomicamente ────────
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -381,70 +453,89 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return
 	}
 
-	_, err = tx.ExecContext(ctx,
-		`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4`,
-		spCtx.EmpresaID, tipoBase, ano, mes,
-	)
-	if err != nil {
+	// Colunas comuns (idênticas para vendas_faturadas e vendas_transmitidas
+	// exceto pelo nome da coluna de data). Mantemos o mesmo vals layout pros
+	// dois COPYs.
+	copyCols := []string{
+		"empresa_id", "", // [1] é a data; preenchemos por fluxo
+		"cod_gerente", "nome_gerente", "cod_supervisor", "nome_supervisor", "qtrca_supervisor",
+		"cod_rca", "nome_rca", "qtcli_rca",
+		"cod_fornec", "nome_fornec",
+		"cod_cli", "nome_cli", "uf", "empresa",
+		"cod_prod", "nome_prod", "ean",
+		"qt", "pvenda", "plucro",
+	}
+
+	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw) error {
+		// DELETE atômico pelos dias presentes no CSV — preserva dias anteriores
+		// não incluídos neste upload (cliente sobe vendas diárias).
+		dateList := make([]string, 0, len(dates))
+		for d := range dates {
+			dateList = append(dateList, d)
+		}
+		if len(dateList) > 0 {
+			_, dErr := tx.ExecContext(ctx,
+				fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1 AND %s = ANY($2::date[])`,
+					tableName, dateColName),
+				spCtx.EmpresaID, pq.Array(dateList),
+			)
+			if dErr != nil {
+				return fmt.Errorf("DELETE %s: %w", tableName, dErr)
+			}
+			log.Printf("[ImportJob:%s] %s — DELETE prévio cobriu %d dia(s): %v",
+				jobID, tableName, len(dateList), dateList)
+		}
+
+		// COPY em chunks; cancelamento checado entre chunks.
+		cols := append([]string(nil), copyCols...)
+		cols[1] = dateColName
+		for start := 0; start < len(rows); start += copyChunkRows {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			end := start + copyChunkRows
+			if end > len(rows) {
+				end = len(rows)
+			}
+			chunk := rows[start:end]
+
+			stmt, sErr := tx.PrepareContext(ctx, pq.CopyIn(tableName, cols...))
+			if sErr != nil {
+				return fmt.Errorf("PREPARE COPY %s: %w", tableName, sErr)
+			}
+			for i := range chunk {
+				if _, eErr := stmt.Exec(chunk[i].vals[:]...); eErr != nil {
+					stmt.Close()
+					return fmt.Errorf("enfileirar %s: %w", tableName, eErr)
+				}
+				processed.Add(1)
+			}
+			if _, fErr := stmt.Exec(); fErr != nil { // flush
+				stmt.Close()
+				return fmt.Errorf("flush %s: %w", tableName, fErr)
+			}
+			stmt.Close()
+		}
+		return nil
+	}
+
+	if err = processFlow("vendas_faturadas", "data_faturamento", uniqueFatDates, allFat); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")
 		} else {
-			markStatus("error", "erro ao limpar dados anteriores: "+err.Error())
+			markStatus("error", err.Error())
 		}
 		return
 	}
-
-	// COPY em chunks de copyChunkRows — entre chunks checamos o contexto (cancelamento)
-	for start := 0; start < len(allRows); start += copyChunkRows {
-		// Verifica cancelamento entre chunks
+	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans); err != nil {
+		tx.Rollback()
 		if ctx.Err() != nil {
-			tx.Rollback()
 			markStatus("cancelled", "cancelado pelo usuário")
-			log.Printf("[ImportJob:%s] cancelado após %d linhas", jobID, processed.Load())
-			return
+		} else {
+			markStatus("error", err.Error())
 		}
-
-		end := start + copyChunkRows
-		if end > len(allRows) {
-			end = len(allRows)
-		}
-		chunk := allRows[start:end]
-
-		stmt, err := tx.PrepareContext(ctx, pq.CopyIn("vendas_importadas",
-			"empresa_id", "tipo_base", "ano", "mes", "estado",
-			"cod_gerente", "nome_gerente", "cod_supervisor", "nome_supervisor",
-			"cod_rca", "nome_rca", "qtcli_rca",
-			"cod_fornec", "nome_fornec", "cod_cli", "nome_cli", "uf", "empresa",
-			"cod_prod", "nome_prod", "qt", "pvenda",
-		))
-		if err != nil {
-			tx.Rollback()
-			if ctx.Err() != nil {
-				markStatus("cancelled", "cancelado pelo usuário")
-			} else {
-				markStatus("error", "erro ao preparar COPY: "+err.Error())
-			}
-			return
-		}
-
-		for i := range chunk {
-			if _, err = stmt.Exec(chunk[i].vals[:]...); err != nil {
-				stmt.Close()
-				tx.Rollback()
-				markStatus("error", "erro ao enfileirar linha: "+err.Error())
-				return
-			}
-			processed.Add(1)
-		}
-
-		if _, err = stmt.Exec(); err != nil { // flush buffer COPY
-			stmt.Close()
-			tx.Rollback()
-			markStatus("error", "erro ao finalizar COPY: "+err.Error())
-			return
-		}
-		stmt.Close()
+		return
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -465,20 +556,23 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
 		WHERE id=$1`, jobID)
 
-	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH views hierárquicas", jobID)
+	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH das 28 MVs (14 fat + 14 trans)", jobID)
 	tRefresh := time.Now()
 
-	// 1. Base view primeiro — as summary views dependem dela.
-	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
-		log.Printf("[farol:view] ImportJob=%s REFRESH mv_farol_cli ERRO em %v: %v", jobID, time.Since(tRefresh), err)
-	} else {
+	// REFRESH cada fluxo em sequência interna (base → summaries) mas
+	// os dois fluxos podem rodar em paralelo (são independentes).
+	refreshFlow := func(baseView string, summaryViews []string) {
+		t0 := time.Now()
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + baseView); err != nil {
+			log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO em %v: %v", jobID, baseView, time.Since(t0), err)
+			return
+		}
 		var rowCount int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_cli`).Scan(&rowCount)
-		log.Printf("[farol:view] ImportJob=%s mv_farol_cli OK — %d linhas em %v", jobID, rowCount, time.Since(tRefresh))
+		_ = db.QueryRow(`SELECT COUNT(*) FROM ` + baseView).Scan(&rowCount)
+		log.Printf("[farol:view] ImportJob=%s %s OK — %d linhas em %v", jobID, baseView, rowCount, time.Since(t0))
 
-		// 2. Summary views em paralelo.
 		var wg sync.WaitGroup
-		for _, vw := range AllSummaryViews[1:] {
+		for _, vw := range summaryViews {
 			wg.Add(1)
 			go func(name string) {
 				defer wg.Done()
@@ -486,22 +580,30 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 					log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, name, err2)
 				} else {
 					db.Exec(`ANALYZE ` + name)
-					log.Printf("[farol:view] ImportJob=%s %s OK", jobID, name)
 				}
 			}(vw)
 		}
 		wg.Wait()
-		db.Exec(`ANALYZE farol.mv_farol_cli`)
-		log.Printf("[farol:view] ImportJob=%s REFRESH+ANALYZE concluído em %v", jobID, time.Since(tRefresh))
+		db.Exec(`ANALYZE ` + baseView)
+		log.Printf("[farol:view] ImportJob=%s fluxo %s concluído em %v", jobID, baseView, time.Since(t0))
 	}
+
+	var wgFlows sync.WaitGroup
+	wgFlows.Add(2)
+	go func() { defer wgFlows.Done(); refreshFlow(AllFatViews[0], AllFatViews[1:]) }()
+	go func() { defer wgFlows.Done(); refreshFlow(AllTransViews[0], AllTransViews[1:]) }()
+	wgFlows.Wait()
+	log.Printf("[farol:view] ImportJob=%s REFRESH total (28 MVs) concluído em %v", jobID, time.Since(tRefresh))
 
 	db.Exec(`UPDATE vendas_import_jobs
 		SET status='done', progress=100, importados=$1, message='', atualizado_em=NOW()
 		WHERE id=$2`, importados, jobID)
 
-	// Criação de usuários em background — não bloqueia
+	// Criação de usuários em background — não bloqueia.
+	// Usa fallbackAno/fallbackMes (vindo da URL) como "competência do upload"
+	// para fins de sincronização de cadastros — mantém a semântica antiga.
 	go func() {
-		criados, err := syncUsuariosFromImport(db, spCtx, tipoBase, ano, mes)
+		criados, err := syncUsuariosFromImport(db, spCtx, fallbackAno, fallbackMes)
 		if err != nil {
 			log.Printf("[SyncUsuarios] erro: %v", err)
 		} else {
@@ -559,7 +661,6 @@ func VendasJobHandler(db *sql.DB) http.HandlerFunc {
 		if r.Method == http.MethodGet {
 			var job struct {
 				ID         string `json:"id"`
-				TipoBase   string `json:"tipo_base"`
 				Ano        int    `json:"ano"`
 				Mes        int    `json:"mes"`
 				Status     string `json:"status"`
@@ -569,11 +670,11 @@ func VendasJobHandler(db *sql.DB) http.HandlerFunc {
 				Message    string `json:"message"`
 			}
 			err := db.QueryRow(`
-				SELECT id, tipo_base, ano, mes, status, progress, total_lines, importados, message
+				SELECT id, ano, mes, status, progress, total_lines, importados, message
 				FROM vendas_import_jobs
 				WHERE id=$1 AND empresa_id=$2`,
 				jobID, spCtx.EmpresaID,
-			).Scan(&job.ID, &job.TipoBase, &job.Ano, &job.Mes,
+			).Scan(&job.ID, &job.Ano, &job.Mes,
 				&job.Status, &job.Progress, &job.TotalLines, &job.Importados, &job.Message)
 			if err != nil {
 				http.Error(w, `{"error":"job não encontrado"}`, http.StatusNotFound)
@@ -589,7 +690,7 @@ func VendasJobHandler(db *sql.DB) http.HandlerFunc {
 
 // ─── syncUsuariosFromImport ───────────────────────────────────────────────────
 
-func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, tipoBase string, ano, mes int) (int, error) {
+func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int, error) {
 	type entrada struct {
 		tipo string
 		cod  string
@@ -612,12 +713,25 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, tipoBase string, an
 		{"rca", "cod_rca", "nome_rca"},
 	}
 	for _, q := range queries {
+		// UNION das duas tabelas — gerentes/supervisores/RCAs aparecem em
+		// ambas (faturado e transmitido) e queremos cadastrar todos.
 		qSQL := fmt.Sprintf(`
-			SELECT DISTINCT %s, %s FROM vendas_importadas
-			WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4
-			  AND %s != '' AND %s != ''`,
+			SELECT DISTINCT cod, nome FROM (
+			    SELECT %s AS cod, %s AS nome FROM vendas_faturadas
+			     WHERE empresa_id=$1
+			       AND EXTRACT(YEAR FROM data_faturamento)::int=$2
+			       AND EXTRACT(MONTH FROM data_faturamento)::int=$3
+			       AND %s != '' AND %s != ''
+			    UNION
+			    SELECT %s AS cod, %s AS nome FROM vendas_transmitidas
+			     WHERE empresa_id=$1
+			       AND EXTRACT(YEAR FROM data_transmissao)::int=$2
+			       AND EXTRACT(MONTH FROM data_transmissao)::int=$3
+			       AND %s != '' AND %s != ''
+			) u`,
+			q.colCod, q.colNome, q.colCod, q.colNome,
 			q.colCod, q.colNome, q.colCod, q.colNome)
-		rows, err := db.Query(qSQL, spCtx.EmpresaID, tipoBase, ano, mes)
+		rows, err := db.Query(qSQL, spCtx.EmpresaID, ano, mes)
 		if err != nil {
 			continue
 		}
@@ -694,11 +808,10 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, tipoBase string, an
 // ─── VendasPeriodosHandler — GET /api/v2/vendas/periodos ────────────────────
 
 type v2PeriodoItem struct {
-	TipoBase string `json:"tipo_base"`
-	Ano      int    `json:"ano"`
-	Mes      int    `json:"mes"`
-	Label    string `json:"label"`
-	Total    int    `json:"total"`
+	Ano   int    `json:"ano"`
+	Mes   int    `json:"mes"`
+	Label string `json:"label"`
+	Total int    `json:"total"`
 }
 
 func VendasPeriodosHandler(db *sql.DB) http.HandlerFunc {
@@ -710,12 +823,28 @@ func VendasPeriodosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// UNION das duas tabelas — período é determinado pela data (ano/mes
+		// extraídos de data_faturamento ou data_transmissao). Soma de FAT+TRANS
+		// dá o total de linhas importadas naquele mês.
 		rows, err := db.Query(`
-			SELECT tipo_base, ano, mes, COUNT(*) as total
-			FROM vendas_importadas
-			WHERE empresa_id = $1
-			GROUP BY tipo_base, ano, mes
-			ORDER BY tipo_base, ano DESC, mes DESC
+			SELECT ano, mes, SUM(total)::int AS total
+			  FROM (
+			    SELECT EXTRACT(YEAR  FROM data_faturamento)::int AS ano,
+			           EXTRACT(MONTH FROM data_faturamento)::int AS mes,
+			           COUNT(*) AS total
+			      FROM vendas_faturadas
+			     WHERE empresa_id = $1
+			     GROUP BY ano, mes
+			    UNION ALL
+			    SELECT EXTRACT(YEAR  FROM data_transmissao)::int AS ano,
+			           EXTRACT(MONTH FROM data_transmissao)::int AS mes,
+			           COUNT(*) AS total
+			      FROM vendas_transmitidas
+			     WHERE empresa_id = $1
+			     GROUP BY ano, mes
+			  ) u
+			 GROUP BY ano, mes
+			 ORDER BY ano DESC, mes DESC
 		`, spCtx.EmpresaID)
 		if err != nil {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -726,7 +855,7 @@ func VendasPeriodosHandler(db *sql.DB) http.HandlerFunc {
 		items := []v2PeriodoItem{}
 		for rows.Next() {
 			var it v2PeriodoItem
-			if rows.Scan(&it.TipoBase, &it.Ano, &it.Mes, &it.Total) == nil {
+			if rows.Scan(&it.Ano, &it.Mes, &it.Total) == nil {
 				it.Label = fmtMesAno(it.Mes, it.Ano)
 				items = append(items, it)
 			}
@@ -753,30 +882,46 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		tipoBase := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_base")))
-		ano, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
-		mes, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
-		validTipo := tipoBase == "ATUAL" || tipoBase == "COMPARATIVA"
+		// Intervalo de datas — alinhado à nova granularidade diária.
+		//   ?data_inicio=YYYY-MM-DD&data_fim=YYYY-MM-DD  → apaga o intervalo
+		//   sem parâmetros                               → apaga a base inteira
+		// Para apagar 1 dia, passar mesma data nos dois campos.
+		dataInicio := strings.TrimSpace(r.URL.Query().Get("data_inicio"))
+		dataFim    := strings.TrimSpace(r.URL.Query().Get("data_fim"))
+		validRange := dataInicio != "" && dataFim != ""
 
-		var res sql.Result
+		// Apaga em AMBAS as tabelas — cada CSV importado povoou as duas.
+		var totalAffected int64
+		execBoth := func(qFat, qTrans string, args ...any) error {
+			r1, e1 := db.Exec(qFat, args...)
+			if e1 != nil {
+				return e1
+			}
+			n1, _ := r1.RowsAffected()
+			r2, e2 := db.Exec(qTrans, args...)
+			if e2 != nil {
+				return e2
+			}
+			n2, _ := r2.RowsAffected()
+			totalAffected = n1 + n2
+			return nil
+		}
+
 		var err error
 		switch {
-		case validTipo && ano > 0 && mes > 0:
-			// Período específico (botão "Remover" de uma linha da tabela).
-			res, err = db.Exec(
-				`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2 AND ano=$3 AND mes=$4`,
-				spCtx.EmpresaID, tipoBase, ano, mes,
-			)
-		case validTipo:
-			// Toda uma base (ATUAL ou COMPARATIVA).
-			res, err = db.Exec(
-				`DELETE FROM vendas_importadas WHERE empresa_id=$1 AND tipo_base=$2`,
-				spCtx.EmpresaID, tipoBase,
+		case validRange:
+			err = execBoth(
+				`DELETE FROM vendas_faturadas
+				  WHERE empresa_id=$1 AND data_faturamento BETWEEN $2::date AND $3::date`,
+				`DELETE FROM vendas_transmitidas
+				  WHERE empresa_id=$1 AND data_transmissao BETWEEN $2::date AND $3::date`,
+				spCtx.EmpresaID, dataInicio, dataFim,
 			)
 		default:
 			// Base inteira da empresa ("Limpar tudo").
-			res, err = db.Exec(
-				`DELETE FROM vendas_importadas WHERE empresa_id=$1`,
+			err = execBoth(
+				`DELETE FROM vendas_faturadas    WHERE empresa_id=$1`,
+				`DELETE FROM vendas_transmitidas WHERE empresa_id=$1`,
 				spCtx.EmpresaID,
 			)
 		}
@@ -784,7 +929,7 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
 		}
-		n, _ := res.RowsAffected()
+		n := totalAffected
 
 		// Reconstrói as views materializadas para o painel refletir a limpeza —
 		// sem isso o dashboard continua mostrando os dados apagados (views = stale).

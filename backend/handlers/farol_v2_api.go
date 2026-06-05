@@ -1,19 +1,28 @@
 package handlers
 
-// farol_v2_api.go — API de cards do novo Farol 2026.
+// farol_v2_api.go — API de cards do Farol 2026 (granularidade diária).
 //
 // GET /api/v2/farol/cards
-//   Parâmetros:
-//     view        V01 | V02 | V03
-//     comp_mode   yoy | ytd | mom  (default: yoy)
-//     ref_ano     ano de referência (default: mais recente no banco)
-//     ref_mes     mês de referência 1-12 (default: mais recente)
-//     drill       JSON: [{"level":"cod_fornec","value":"001","label":"MARCA X"}]
+//   Parâmetros (nova API — intervalos):
+//     view         V01 | V02 | V03
+//     fluxo        faturado | transmitido       (default: faturado)
+//     ref_inicio   YYYY-MM-DD                   (período principal)
+//     ref_fim      YYYY-MM-DD
+//     comp_inicio  YYYY-MM-DD                   (comparativo — opcional)
+//     comp_fim     YYYY-MM-DD
+//     drill        JSON: [{"level":"cod_fornec","value":"001","label":"MARCA X"}]
 //
-// GET /api/v2/farol/periodos — anos+meses disponíveis no banco
+//   Retrocompat (UI antiga ainda enviando):
+//     ref_ano + ref_mes                         → converte para ref_inicio/ref_fim
+//     comp_mode = yoy | mom | ytd               → deriva comp_inicio/comp_fim
+//     comp_ano + comp_mes                       → idem (mom override)
 //
-// Dados lidos de views materializadas pré-agregadas (uma por nível de drill,
-// migration 143). A API só faz SELECT/WHERE — sem GROUP BY. Refresh após import.
+// GET /api/v2/farol/periodos — lista de meses (YYYY-MM) com dados disponíveis
+//
+// Dados lidos de views materializadas pré-agregadas (migrations 158 + 159).
+// 28 MVs no total: 14 para vendas_faturadas (mv_fat_*) + 14 para
+// vendas_transmitidas (mv_trans_*). A API só faz SELECT/WHERE — sem GROUP BY
+// pesado, apenas SUM dos totais já pré-calculados.
 
 import (
 	"database/sql"
@@ -22,10 +31,12 @@ import (
 	"log"
 	"net/http"
 	"sort"
-	"sync"
-	"time"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/lib/pq"
 )
 
 // ─── Definição de hierarquias e mapeamento de views ──────────────────────────
@@ -39,55 +50,103 @@ type hierLevel struct {
 var hierarquias = map[string][]hierLevel{
 	// V01: visão por indústria — Fornecedor → Gerente → Supervisor → RCA → Cliente → Produto
 	"V01": {
-		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
-		{Level: "cod_gerente",    NameField: "nome_gerente",   Label: "Gerente"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
-		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
-		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
-	// V02: visão por equipe (força de vendas) — Supervisor → RCA → Fornecedor → Cliente → Produto
 	"V02": {
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
-		{Level: "cod_fornec",     NameField: "nome_fornec",    Label: "Fornecedor"},
-		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
-		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
-	// V03: visão de gerência (organização) — Gerente/GGV → Supervisor → RCA → Cliente → Produto
 	"V03": {
-		{Level: "cod_gerente",    NameField: "nome_gerente",    Label: "Gerência"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerência"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_rca",        NameField: "nome_rca",       Label: "RCA"},
-		{Level: "cod_cli",        NameField: "nome_cli",       Label: "Cliente"},
-		{Level: "cod_prod",       NameField: "nome_prod",      Label: "Produto"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
 }
 
-// viewPorNivel mapeia (view, drillIdx) → nome da view materializada pré-agregada.
-// Cada view tem as métricas (pvenda, faturado, transmitido, base_cli, positivados, mix)
-// já calculadas — a API só lê as linhas prontas com um WHERE simples.
-var viewPorNivel = map[string][]string{
-	"V01": {"mv_v01_l0", "mv_v01_l1", "mv_v01_l2", "mv_v01_l3", "mv_farol_cli"},
-	"V02": {"mv_v02_l0", "mv_v02_l1", "mv_v02_l2", "mv_farol_cli"},
-	"V03": {"mv_v03_l0", "mv_v03_l1", "mv_v03_l2", "mv_v03_l3"},
+// Mapas de MVs por fluxo + view + drillIdx → nome da MV de leitura.
+// Cada lista é indexada pelo drillIdx atual (0 = root, N = penúltimo nível).
+// O último nível (produto) lê direto da tabela base (vendas_faturadas/transmitidas).
+var viewPorNivelFat = map[string][]string{
+	"V01": {"mv_fat_v01_l0", "mv_fat_v01_l1", "mv_fat_v01_l2", "mv_fat_v01_l3", "mv_fat_cli"},
+	"V02": {"mv_fat_v02_l0", "mv_fat_v02_l1", "mv_fat_v02_l2", "mv_fat_cli"},
+	"V03": {"mv_fat_v03_l0", "mv_fat_v03_l1", "mv_fat_v03_l2", "mv_fat_v03_l3"},
 }
 
-// AllSummaryViews lista TODAS as views em ordem de REFRESH (base primeiro).
-var AllSummaryViews = []string{
-	"farol.mv_farol_cli",
-	"farol.mv_v01_l0", "farol.mv_v01_l1", "farol.mv_v01_l2", "farol.mv_v01_l3",
-	"farol.mv_v02_l0", "farol.mv_v02_l1", "farol.mv_v02_l2",
-	"farol.mv_v03_l0", "farol.mv_v03_l1", "farol.mv_v03_l2", "farol.mv_v03_l3",
-	"farol.mv_mkt_produto",
-	"farol.mv_mkt_prod_pen",
+var viewPorNivelTrans = map[string][]string{
+	"V01": {"mv_trans_v01_l0", "mv_trans_v01_l1", "mv_trans_v01_l2", "mv_trans_v01_l3", "mv_trans_cli"},
+	"V02": {"mv_trans_v02_l0", "mv_trans_v02_l1", "mv_trans_v02_l2", "mv_trans_cli"},
+	"V03": {"mv_trans_v03_l0", "mv_trans_v03_l1", "mv_trans_v03_l2", "mv_trans_v03_l3"},
 }
 
-func getViewName(view string, drillIdx int) string {
-	if levels, ok := viewPorNivel[view]; ok && drillIdx >= 0 && drillIdx < len(levels) {
+// AllFatViews / AllTransViews — 14 views por fluxo, em ordem de REFRESH
+// (base primeiro). O importador faz REFRESH dos dois fluxos em paralelo.
+var AllFatViews = []string{
+	"farol.mv_fat_cli",
+	"farol.mv_fat_v01_l0", "farol.mv_fat_v01_l1", "farol.mv_fat_v01_l2", "farol.mv_fat_v01_l3",
+	"farol.mv_fat_v02_l0", "farol.mv_fat_v02_l1", "farol.mv_fat_v02_l2",
+	"farol.mv_fat_v03_l0", "farol.mv_fat_v03_l1", "farol.mv_fat_v03_l2", "farol.mv_fat_v03_l3",
+	"farol.mv_fat_mkt_produto",
+	"farol.mv_fat_mkt_prod_pen",
+}
+
+var AllTransViews = []string{
+	"farol.mv_trans_cli",
+	"farol.mv_trans_v01_l0", "farol.mv_trans_v01_l1", "farol.mv_trans_v01_l2", "farol.mv_trans_v01_l3",
+	"farol.mv_trans_v02_l0", "farol.mv_trans_v02_l1", "farol.mv_trans_v02_l2",
+	"farol.mv_trans_v03_l0", "farol.mv_trans_v03_l1", "farol.mv_trans_v03_l2", "farol.mv_trans_v03_l3",
+	"farol.mv_trans_mkt_produto",
+	"farol.mv_trans_mkt_prod_pen",
+}
+
+var AllSummaryViews = append(append([]string{}, AllFatViews...), AllTransViews...)
+
+// fluxoCtx encapsula a escolha "faturado vs transmitido" e os artefatos derivados:
+//   tableName  → vendas_faturadas | vendas_transmitidas
+//   dateCol    → data_faturamento | data_transmissao
+//   viewPorNivel → mapa pra escolher a MV correta no drill
+//   baseView   → MV de cliente (mv_fat_cli ou mv_trans_cli)
+type fluxoCtx struct {
+	name         string
+	tableName    string
+	dateCol      string
+	viewPorNivel map[string][]string
+	baseView     string
+}
+
+func resolveFluxo(s string) fluxoCtx {
+	if strings.EqualFold(s, "transmitido") || strings.EqualFold(s, "trans") {
+		return fluxoCtx{
+			name:         "transmitido",
+			tableName:    "vendas_transmitidas",
+			dateCol:      "data_transmissao",
+			viewPorNivel: viewPorNivelTrans,
+			baseView:     "farol.mv_trans_cli",
+		}
+	}
+	return fluxoCtx{
+		name:         "faturado",
+		tableName:    "vendas_faturadas",
+		dateCol:      "data_faturamento",
+		viewPorNivel: viewPorNivelFat,
+		baseView:     "farol.mv_fat_cli",
+	}
+}
+
+func getViewName(fluxo fluxoCtx, view string, drillIdx int) string {
+	if levels, ok := fluxo.viewPorNivel[view]; ok && drillIdx >= 0 && drillIdx < len(levels) {
 		return "farol." + levels[drillIdx]
 	}
-	return "farol.mv_farol_cli"
+	return fluxo.baseView
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -106,38 +165,65 @@ type cardItem struct {
 	ValorAtual  float64 `json:"valor_atual"`
 	ValorAnt    float64 `json:"valor_ant"`
 	Pct         float64 `json:"pct"`
-	Cor         string  `json:"cor"`
+	Cor         string  `json:"cor"` // cor do KPI Venda
 	Faturado    float64 `json:"faturado"`
 	Transmitido float64 `json:"transmitido"`
-	Positivados int     `json:"positivados"`
-	BaseCli     int     `json:"base_cli"`
-	PositPct    float64 `json:"positpct"`
-	Mix         float64 `json:"mix"`
+	Plucro      float64 `json:"plucro"`
+	PlucroAnt   float64 `json:"plucro_ant"`
+	// Positivação — atual e comparativo + cor
+	Positivados    int     `json:"positivados"`
+	BaseCli        int     `json:"base_cli"`
+	PositPct       float64 `json:"positpct"`
+	PositivadosAnt int     `json:"positivados_ant"`
+	BaseCliAnt     int     `json:"base_cli_ant"`
+	PositPctAnt    float64 `json:"positpct_ant"`
+	PositCor       string  `json:"posit_cor"`
+	// Mix — atual e comparativo + cor
+	Mix    float64 `json:"mix"`
+	MixAnt float64 `json:"mix_ant"`
+	MixCor string  `json:"mix_cor"`
 }
 
 type kpiSummary struct {
+	// Venda
 	TotalAtual       float64 `json:"total_atual"`
 	TotalAnt         float64 `json:"total_ant"`
 	TotalPct         float64 `json:"total_pct"`
 	TotalCor         string  `json:"total_cor"`
 	TotalFaturado    float64 `json:"total_faturado"`
 	TotalTransmitido float64 `json:"total_transmitido"`
-	TotalPositivados int     `json:"total_positivados"`
-	TotalBaseCli     int     `json:"total_base_cli"`
-	TotalPositPct    float64 `json:"total_positpct"`
-	AvgMix           float64 `json:"avg_mix"`
-	Verdes           int     `json:"verdes"`
-	Vermelhos        int     `json:"vermelhos"`
+	TotalPlucro      float64 `json:"total_plucro"`
+	TotalPlucroAnt   float64 `json:"total_plucro_ant"`
+	// Positivação — atual + comparativo + cor
+	TotalPositivados    int     `json:"total_positivados"`
+	TotalBaseCli        int     `json:"total_base_cli"`
+	TotalPositPct       float64 `json:"total_positpct"`
+	TotalPositivadosAnt int     `json:"total_positivados_ant"`
+	TotalBaseCliAnt     int     `json:"total_base_cli_ant"`
+	TotalPositPctAnt    float64 `json:"total_positpct_ant"`
+	TotalPositCor       string  `json:"total_posit_cor"`
+	// Mix
+	AvgMix    float64 `json:"avg_mix"`
+	AvgMixAnt float64 `json:"avg_mix_ant"`
+	MixCor    string  `json:"mix_cor"`
+	Verdes    int     `json:"verdes"`
+	Vermelhos int     `json:"vermelhos"`
 }
 
 type periodoInfo struct {
-	RefAno   int    `json:"ref_ano"`
-	RefMes   int    `json:"ref_mes"`
-	Label    string `json:"label"`
-	CompMode string `json:"comp_mode"`
-	CurLabel string `json:"cur_label"`           // ex.: "Mai/2026"
-	AntLabel string `json:"ant_label"`           // ex.: "Mai/2025" (yoy) | "Total 2025" (ytd) | "Abr/2026" (mom)
-	CompAno  int    `json:"comp_ano,omitempty"`  // override do mom — quando setado pelo usuário
+	Fluxo      string `json:"fluxo"`       // faturado | transmitido
+	RefInicio  string `json:"ref_inicio"`  // YYYY-MM-DD
+	RefFim     string `json:"ref_fim"`     // YYYY-MM-DD
+	CompInicio string `json:"comp_inicio"` // YYYY-MM-DD (vazio se sem comparativo)
+	CompFim    string `json:"comp_fim"`    // YYYY-MM-DD
+	Label      string `json:"label"`
+	CurLabel   string `json:"cur_label"`
+	AntLabel   string `json:"ant_label"`
+	// Retrocompat — preenchidos quando inferidos a partir de mês inteiro
+	RefAno   int    `json:"ref_ano,omitempty"`
+	RefMes   int    `json:"ref_mes,omitempty"`
+	CompMode string `json:"comp_mode,omitempty"`
+	CompAno  int    `json:"comp_ano,omitempty"`
 	CompMes  int    `json:"comp_mes,omitempty"`
 }
 
@@ -150,6 +236,135 @@ type cardsResponse struct {
 	DrillPath      []drillStep `json:"drill_path"`
 	NextLevel      string      `json:"next_level"`
 	NextLevelLabel string      `json:"next_level_label"`
+}
+
+// ─── Parsing de datas/períodos a partir da URL ───────────────────────────────
+
+// parseDateISO aceita YYYY-MM-DD. Retorna zero se vazio/inválido.
+func parseDateISO(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// mesInteiro retorna (inicio, fim) cobrindo todo um mês (1º dia até último dia).
+func mesInteiro(ano, mes int) (time.Time, time.Time) {
+	inicio := time.Date(ano, time.Month(mes), 1, 0, 0, 0, 0, time.UTC)
+	fim := inicio.AddDate(0, 1, -1) // último dia do mês
+	return inicio, fim
+}
+
+// inferLastMonth descobre o último mês com dados importados (ATUAL) para a empresa.
+// Lê de vendas_import_jobs (tabela pequena). Retorna (ano, mes) ou (0, 0) se vazio.
+func inferLastMonth(db *sql.DB, empresaID string) (int, int) {
+	var ano, mes int
+	_ = db.QueryRow(`
+		SELECT ano, mes FROM vendas_import_jobs
+		 WHERE empresa_id=$1 AND status='done'
+		 ORDER BY ano DESC, mes DESC LIMIT 1
+	`, empresaID).Scan(&ano, &mes)
+	return ano, mes
+}
+
+// deriveCompRange calcula um intervalo comparativo a partir de (refInicio, refFim)
+// e do compMode (yoy | mom | ytd). Retorna (zero, zero) se mode for desconhecido.
+//   yoy → subtrai 1 ano nas duas pontas
+//   mom → range contíguo imediatamente anterior (mesma quantidade de dias)
+//   ytd → 1º jan do ano anterior até a mesma data (refFim com ano-1)
+func deriveCompRange(refInicio, refFim time.Time, mode string) (time.Time, time.Time) {
+	switch strings.ToLower(mode) {
+	case "yoy":
+		return refInicio.AddDate(-1, 0, 0), refFim.AddDate(-1, 0, 0)
+	case "mom":
+		diasRange := int(refFim.Sub(refInicio).Hours()/24) + 1
+		fim := refInicio.AddDate(0, 0, -1)
+		ini := fim.AddDate(0, 0, -(diasRange - 1))
+		return ini, fim
+	case "ytd":
+		ini := time.Date(refFim.Year()-1, 1, 1, 0, 0, 0, 0, time.UTC)
+		fim := time.Date(refFim.Year()-1, refFim.Month(), refFim.Day(), 0, 0, 0, 0, time.UTC)
+		return ini, fim
+	}
+	return time.Time{}, time.Time{}
+}
+
+// resolvePeriods extrai o intervalo principal e o comparativo da query,
+// honrando tanto o contrato novo (datas) quanto o antigo (ano/mes/comp_mode).
+// Também retorna metadados pra preencher periodoInfo (ano/mes/compMode quando aplicáveis).
+type periodResolution struct {
+	RefInicio  time.Time
+	RefFim     time.Time
+	CompInicio time.Time
+	CompFim    time.Time
+	// Metadados pra retrocompat no payload
+	RefAno   int
+	RefMes   int
+	CompMode string
+	CompAno  int
+	CompMes  int
+}
+
+func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodResolution {
+	get := func(k string) string {
+		if vs, ok := q[k]; ok && len(vs) > 0 {
+			return strings.TrimSpace(vs[0])
+		}
+		return ""
+	}
+	res := periodResolution{}
+
+	// 1) Período principal — preferência: datas explícitas; fallback ano/mes; senão último mês
+	refInicio := parseDateISO(get("ref_inicio"))
+	refFim := parseDateISO(get("ref_fim"))
+	if refInicio.IsZero() || refFim.IsZero() {
+		refAno, _ := strconv.Atoi(get("ref_ano"))
+		refMes, _ := strconv.Atoi(get("ref_mes"))
+		if refAno == 0 || refMes == 0 {
+			refAno, refMes = inferLastMonth(db, empresaID)
+		}
+		if refAno > 0 && refMes > 0 {
+			refInicio, refFim = mesInteiro(refAno, refMes)
+			res.RefAno = refAno
+			res.RefMes = refMes
+		}
+	} else {
+		// Se as datas cobrem um mês inteiro, preencher ano/mes pra retrocompat.
+		if refInicio.Day() == 1 && refFim.AddDate(0, 0, 1).Day() == 1 &&
+			refInicio.Year() == refFim.Year() && refInicio.Month() == refFim.Month() {
+			res.RefAno = refInicio.Year()
+			res.RefMes = int(refInicio.Month())
+		}
+	}
+	res.RefInicio = refInicio
+	res.RefFim = refFim
+
+	// 2) Comparativo — preferência: datas explícitas; depois comp_mode; depois nada
+	compInicio := parseDateISO(get("comp_inicio"))
+	compFim := parseDateISO(get("comp_fim"))
+	if (compInicio.IsZero() || compFim.IsZero()) && !refInicio.IsZero() && !refFim.IsZero() {
+		mode := strings.ToLower(get("comp_mode"))
+		// Suporte ao comp_ano/comp_mes (override mom) — produz um mês exato
+		compAno, _ := strconv.Atoi(get("comp_ano"))
+		compMes, _ := strconv.Atoi(get("comp_mes"))
+		if compAno > 0 && compMes > 0 {
+			compInicio, compFim = mesInteiro(compAno, compMes)
+			res.CompMode = "mom"
+			res.CompAno = compAno
+			res.CompMes = compMes
+		} else if mode != "" {
+			compInicio, compFim = deriveCompRange(refInicio, refFim, mode)
+			res.CompMode = mode
+		}
+	}
+	res.CompInicio = compInicio
+	res.CompFim = compFim
+	return res
 }
 
 // ─── FarolV2CardsHandler — GET /api/v2/farol/cards ──────────────────────────
@@ -175,10 +390,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		compMode := q.Get("comp_mode")
-		if compMode == "" {
-			compMode = "yoy"
-		}
+		fluxo := resolveFluxo(q.Get("fluxo"))
 
 		var drillPath []drillStep
 		if drillJSON := q.Get("drill"); drillJSON != "" {
@@ -194,33 +406,21 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		currentLevel := hier[drillIdx]
 
-		refAno, _ := strconv.Atoi(q.Get("ref_ano"))
-		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
-		if refAno == 0 || refMes == 0 {
-			_ = db.QueryRow(`
-				SELECT ano, mes FROM vendas_import_jobs
-				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
-				ORDER BY ano DESC, mes DESC LIMIT 1
-			`, spCtx.EmpresaID).Scan(&refAno, &refMes)
-		}
-		if refAno == 0 {
-			json.NewEncoder(w).Encode(cardsResponse{Cards: []cardItem{}, View: view, DrillPath: drillPath})
+		pr := resolvePeriods(db, spCtx.EmpresaID, q)
+		if pr.RefInicio.IsZero() || pr.RefFim.IsZero() {
+			// Sem dados — devolve resposta vazia em vez de erro pra UI poder render placeholder.
+			json.NewEncoder(w).Encode(cardsResponse{
+				Cards: []cardItem{}, View: view, DrillPath: drillPath,
+				Periodo: periodoInfo{Fluxo: fluxo.name},
+			})
 			return
 		}
 
-		// Override opcional do período de comparação (só usado em mom).
-		compAno, _ := strconv.Atoi(q.Get("comp_ano"))
-		compMes, _ := strconv.Atoi(q.Get("comp_mes"))
-
-		projecaoFator := 1.0
-		if compMode == "ytd" && refMes > 0 {
-			projecaoFator = 12.0 / float64(refMes)
-		}
-
-		cards    := fetchCards(db, spCtx.EmpresaID, view, compMode, refAno, refMes, compAno, compMes, drillIdx, currentLevel, drillPath, projecaoFator)
-		kpi      := computeKPI(cards)
+		filters := parseMultiFilters(q)
+		cards := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
+		kpi := computeKPI(cards, fluxo.name)
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
-		curLabel, antLabel, plabel := buildPeriodoLabels(compMode, refAno, refMes, compAno, compMes)
+		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
 		sort.Slice(cards, func(i, j int) bool {
 			if cards[i].Cor != cards[j].Cor {
@@ -230,9 +430,23 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		})
 
 		json.NewEncoder(w).Encode(cardsResponse{
-			Cards:          cards,
-			KPI:            kpi,
-			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode, CurLabel: curLabel, AntLabel: antLabel, CompAno: compAno, CompMes: compMes},
+			Cards: cards,
+			KPI:   kpi,
+			Periodo: periodoInfo{
+				Fluxo:      fluxo.name,
+				RefInicio:  pr.RefInicio.Format("2006-01-02"),
+				RefFim:     pr.RefFim.Format("2006-01-02"),
+				CompInicio: fmtDateOrEmpty(pr.CompInicio),
+				CompFim:    fmtDateOrEmpty(pr.CompFim),
+				Label:      plabel,
+				CurLabel:   curLabel,
+				AntLabel:   antLabel,
+				RefAno:     pr.RefAno,
+				RefMes:     pr.RefMes,
+				CompMode:   pr.CompMode,
+				CompAno:    pr.CompAno,
+				CompMes:    pr.CompMes,
+			},
 			Periodos:       periodos,
 			View:           view,
 			DrillPath:      drillPath,
@@ -242,8 +456,14 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func fmtDateOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
 // ─── safeColName ─────────────────────────────────────────────────────────────
-// Valida nomes de coluna antes de interpolá-los no SQL para evitar injeção.
 
 var allowedCols = map[string]bool{
 	"cod_fornec": true, "nome_fornec": true,
@@ -264,55 +484,11 @@ func safeColName(col string) string {
 
 // ─── Builders de condição SQL ─────────────────────────────────────────────────
 
-// buildAtualCond monta a cláusula WHERE de período para o bucket atual.
-// Apenda os args necessários em *args e retorna o fragmento SQL com $N.
-func buildAtualCond(compMode string, refAno, refMes int, args *[]any) string {
-	switch compMode {
-	case "ytd":
-		*args = append(*args, refAno, refMes)
-		n := len(*args)
-		return fmt.Sprintf("v.tipo_base='ATUAL' AND v.ano=$%d AND v.mes<=$%d", n-1, n)
-	default: // yoy, mom — mês exato
-		*args = append(*args, refAno, refMes)
-		n := len(*args)
-		return fmt.Sprintf("v.tipo_base='ATUAL' AND v.ano=$%d AND v.mes=$%d", n-1, n)
-	}
-}
-
-// resolveCompPeriod retorna (ano, mes) do bucket "anterior" para o mom.
-// Aplica override do usuário se compAno+compMes vierem setados; senão usa mês-1.
-func resolveCompPeriod(refAno, refMes, compAno, compMes int) (int, int) {
-	if compAno > 0 && compMes > 0 {
-		return compAno, compMes
-	}
-	prevMes, prevAno := refMes-1, refAno
-	if prevMes == 0 {
-		prevMes, prevAno = 12, refAno-1
-	}
-	return prevAno, prevMes
-}
-
-// buildAntCond monta a cláusula WHERE de período para o bucket anterior.
-// Para mom aceita override explícito (compAno/compMes) — quando 0, calcula mês-1.
-// yoy/ytd comparam contra refAno-1 para evitar somar múltiplos anos de COMPARATIVA.
-func buildAntCond(compMode string, refAno, refMes, compAno, compMes int, args *[]any) string {
-	switch compMode {
-	case "yoy":
-		*args = append(*args, refAno-1, refMes)
-		n := len(*args)
-		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.ano=$%d AND v.mes=$%d", n-1, n)
-	case "ytd":
-		*args = append(*args, refAno-1)
-		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.ano=$%d", len(*args))
-	case "mom":
-		prevAno, prevMes := resolveCompPeriod(refAno, refMes, compAno, compMes)
-		*args = append(*args, prevAno, prevMes)
-		n := len(*args)
-		return fmt.Sprintf("(v.tipo_base='ATUAL' OR v.tipo_base='COMPARATIVA') AND v.ano=$%d AND v.mes=$%d", n-1, n)
-	default:
-		*args = append(*args, refMes)
-		return fmt.Sprintf("v.tipo_base='COMPARATIVA' AND v.mes=$%d", len(*args))
-	}
+// buildRangeCond monta `v.<dateCol> BETWEEN $X AND $Y`. Apenda args.
+func buildRangeCond(dateCol string, inicio, fim time.Time, args *[]any) string {
+	*args = append(*args, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+	n := len(*args)
+	return fmt.Sprintf("v.%s BETWEEN $%d::date AND $%d::date", dateCol, n-1, n)
 }
 
 // buildDrillCond monta os filtros de drill-path (AND v.col=$N ...).
@@ -326,36 +502,78 @@ func buildDrillCond(drillPath []drillStep, args *[]any) string {
 	return strings.Join(parts, " ")
 }
 
-// ─── aggResult — resultado de uma linha agregada no SQL ──────────────────────
+// multiFilters representa filtros multi-select extraídos da query string.
+// Cada chave é um cod_* (allowed col), cada valor é a lista de seleções.
+type multiFilters map[string][]string
+
+// parseMultiFilters extrai dos URL params os filtros multi-select.
+// Aceita:
+//   ?cod_fornec=F01,F02  ?cod_supervisor=S01  ?cod_rca=R01,R02
+//   ?cod_gerente=...     ?cod_cli=...         ?uf=SP,RJ  ?empresa=NORDESTE
+func parseMultiFilters(q map[string][]string) multiFilters {
+	mf := multiFilters{}
+	cols := []string{"cod_fornec", "cod_gerente", "cod_supervisor", "cod_rca", "cod_cli", "uf", "empresa"}
+	for _, c := range cols {
+		raw := ""
+		if vs, ok := q[c]; ok && len(vs) > 0 {
+			raw = vs[0]
+		}
+		if raw == "" {
+			continue
+		}
+		// permite múltiplos valores separados por vírgula
+		parts := strings.Split(raw, ",")
+		vals := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				vals = append(vals, p)
+			}
+		}
+		if len(vals) > 0 {
+			mf[c] = vals
+		}
+	}
+	return mf
+}
+
+// buildMultiFilterCond — gera `AND v.col = ANY($N::text[])` por dimensão.
+// É aditivo ao drill: filtros multi e drill são aplicados juntos (AND).
+func buildMultiFilterCond(mf multiFilters, args *[]any) string {
+	if len(mf) == 0 {
+		return ""
+	}
+	parts := []string{}
+	for col, vals := range mf {
+		col = safeColName(col)
+		*args = append(*args, pq.Array(vals))
+		parts = append(parts, fmt.Sprintf("AND v.%s = ANY($%d::text[])", col, len(*args)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// ─── aggResult ────────────────────────────────────────────────────────────────
 
 type aggResult struct {
 	label       string
 	valor       float64
-	faturado    float64
-	transmitido float64
+	plucro      float64
 	baseCli     int
 	positivados int
 	mix         float64
 }
 
 // ─── queryAggregated ─────────────────────────────────────────────────────────
-// Lê a view pré-agregada para o bucket "atual".
-// Cada view (migration 143) tem UMA linha por grupo com métricas pré-calculadas.
-// Não há GROUP BY aqui — apenas SELECT + WHERE sobre linhas prontas.
-// Tempo esperado: <10ms independente do volume de dados.
+// Lê a MV pré-agregada para um intervalo de datas e um nível de hierarquia.
 
-func queryAggregated(db *sql.DB, viewName, groupCol, nameCol, atualCond, drillCond string, args []any) map[string]aggResult {
+func queryAggregated(db *sql.DB, viewName, groupCol, nameCol, rangeCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
-	// GROUP BY é necessário para o modo ytd (mes <= N), onde a view tem uma linha
-	// por mês e a query retorna N linhas por grupo. Nos modos yoy/mom (mes exato),
-	// o GROUP BY é inócuo — cada grupo já tem uma única linha.
 	q := fmt.Sprintf(`
 SELECT
   v.%s                           AS key,
   MAX(v.%s)                      AS label,
   SUM(v.pvenda)                  AS valor,
-  SUM(v.faturado)                AS faturado,
-  SUM(v.transmitido)             AS transmitido,
+  COALESCE(SUM(v.plucro), 0)     AS plucro,
   ROUND(AVG(v.base_cli))::int    AS base_cli,
   ROUND(AVG(v.positivados))::int AS positivados,
   AVG(v.mix)                     AS mix
@@ -365,7 +583,7 @@ AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol,
 		viewName,
-		groupCol, atualCond, drillCond,
+		groupCol, rangeCond, drillCond,
 		groupCol,
 	)
 
@@ -380,26 +598,32 @@ GROUP BY v.%s`,
 	for rows.Next() {
 		var key string
 		var r aggResult
-		if err := rows.Scan(&key, &r.label, &r.valor, &r.faturado, &r.transmitido,
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
 			result[key] = r
 		}
 	}
-	log.Printf("[farol:view] queryAggregated nível=%s → %d grupos em %v", groupCol, len(result), time.Since(t0))
+	log.Printf("[farol:view] queryAggregated view=%s nível=%s → %d grupos em %v",
+		viewName, groupCol, len(result), time.Since(t0))
 	return result
 }
 
-// ─── queryAnteriorTotals ──────────────────────────────────────────────────────
-// Busca apenas o total de pvenda por grupo para o bucket anterior.
-// Query simples: uma linha por grupo.
-
-func queryAnteriorTotals(db *sql.DB, viewName, groupCol, antCond, drillCond string, args []any) map[string]float64 {
+// queryAnteriorTotals — comparativo completo (pvenda + positivação + mix + base).
+// Mesma shape de queryAggregated pra permitir cor por KPI no fetchCards.
+func queryAnteriorTotals(db *sql.DB, viewName, groupCol, nameCol, rangeCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
-SELECT v.%s AS key, SUM(v.pvenda) AS valor_ant
+SELECT
+  v.%s                           AS key,
+  MAX(v.%s)                      AS label,
+  SUM(v.pvenda)                  AS valor,
+  COALESCE(SUM(v.plucro), 0)     AS plucro,
+  ROUND(AVG(v.base_cli))::int    AS base_cli,
+  ROUND(AVG(v.positivados))::int AS positivados,
+  AVG(v.mix)                     AS mix
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != '' AND %s %s
-GROUP BY v.%s`, groupCol, viewName, groupCol, antCond, drillCond, groupCol)
+GROUP BY v.%s`, groupCol, nameCol, viewName, groupCol, rangeCond, drillCond, groupCol)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -408,37 +632,37 @@ GROUP BY v.%s`, groupCol, viewName, groupCol, antCond, drillCond, groupCol)
 	}
 	defer rows.Close()
 
-	result := make(map[string]float64)
+	result := make(map[string]aggResult)
 	for rows.Next() {
 		var key string
-		var val float64
-		if rows.Scan(&key, &val) == nil {
-			result[key] = val
+		var r aggResult
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
+			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			result[key] = r
 		}
 	}
-	log.Printf("[farol:view] queryAnteriorTotals nível=%s → %d grupos em %v", groupCol, len(result), time.Since(t0))
+	log.Printf("[farol:view] queryAnteriorTotals view=%s nível=%s → %d grupos em %v",
+		viewName, groupCol, len(result), time.Since(t0))
 	return result
 }
 
-// ─── queryProdutos / queryProdutosAnterior ───────────────────────────────────
-// Nível folha "Produto": não existe view pré-agregada (o cod_prod foi agregado
-// no mix). Lê de vendas_importadas, escopado ao cliente do drill (poucas linhas).
+// queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
+// Lê direto da tabela base do fluxo, escopado por drill (volume pequeno).
 
-func queryProdutos(db *sql.DB, atualCond, drillCond string, args []any) map[string]aggResult {
+func queryProdutos(db *sql.DB, fluxo fluxoCtx, rangeCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
 SELECT
-  v.cod_prod                                                   AS key,
-  MAX(v.nome_prod)                                             AS label,
-  SUM(v.pvenda)                                                AS valor,
-  SUM(CASE WHEN v.estado = 'FATURADO'  THEN v.pvenda ELSE 0 END) AS faturado,
-  SUM(CASE WHEN v.estado != 'FATURADO' THEN v.pvenda ELSE 0 END) AS transmitido,
-  0::int                                                       AS base_cli,
-  0::int                                                       AS positivados,
-  0::float                                                     AS mix
-FROM vendas_importadas v
+  v.cod_prod                AS key,
+  MAX(v.nome_prod)          AS label,
+  SUM(v.pvenda)             AS valor,
+  COALESCE(SUM(v.plucro),0) AS plucro,
+  0::int                    AS base_cli,
+  0::int                    AS positivados,
+  0::float                  AS mix
+FROM %s v
 WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
-GROUP BY v.cod_prod`, atualCond, drillCond)
+GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -451,22 +675,29 @@ GROUP BY v.cod_prod`, atualCond, drillCond)
 	for rows.Next() {
 		var key string
 		var r aggResult
-		if err := rows.Scan(&key, &r.label, &r.valor, &r.faturado, &r.transmitido,
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
 			result[key] = r
 		}
 	}
-	log.Printf("[farol:view] queryProdutos → %d produtos em %v", len(result), time.Since(t0))
+	log.Printf("[farol:view] queryProdutos (%s) → %d produtos em %v", fluxo.tableName, len(result), time.Since(t0))
 	return result
 }
 
-func queryProdutosAnterior(db *sql.DB, antCond, drillCond string, args []any) map[string]float64 {
+func queryProdutosAnterior(db *sql.DB, fluxo fluxoCtx, rangeCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
 	q := fmt.Sprintf(`
-SELECT v.cod_prod AS key, SUM(v.pvenda) AS valor_ant
-FROM vendas_importadas v
+SELECT
+  v.cod_prod                AS key,
+  MAX(v.nome_prod)          AS label,
+  SUM(v.pvenda)             AS valor,
+  COALESCE(SUM(v.plucro),0) AS plucro,
+  0::int                    AS base_cli,
+  0::int                    AS positivados,
+  0::float                  AS mix
+FROM %s v
 WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
-GROUP BY v.cod_prod`, antCond, drillCond)
+GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -475,124 +706,191 @@ GROUP BY v.cod_prod`, antCond, drillCond)
 	}
 	defer rows.Close()
 
-	result := make(map[string]float64)
+	result := make(map[string]aggResult)
 	for rows.Next() {
 		var key string
-		var val float64
-		if rows.Scan(&key, &val) == nil {
-			result[key] = val
+		var r aggResult
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
+			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			result[key] = r
 		}
 	}
 	return result
 }
 
 // ─── fetchCards ───────────────────────────────────────────────────────────────
-// Orquestra as duas queries (atual + anterior) e monta os cardItems finais.
 
-func fetchCards(db *sql.DB, empresaID, view, compMode string, refAno, refMes, compAno, compMes, drillIdx int, level hierLevel, drillPath []drillStep, projecaoFator float64) []cardItem {
-	t0       := time.Now()
+func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
+	pr periodResolution, drillIdx int, level hierLevel, drillPath []drillStep,
+	filters multiFilters) []cardItem {
+
+	t0 := time.Now()
 	groupCol := safeColName(level.Level)
-	nameCol  := safeColName(level.NameField)
-	viewName := getViewName(view, drillIdx)
+	nameCol := safeColName(level.NameField)
+	viewName := getViewName(fluxo, view, drillIdx)
 
-	log.Printf("[farol:view] fetchCards empresa=%s view=%s nível=%s compMode=%s ref=%04d-%02d drill=%d",
-		empresaID, viewName, groupCol, compMode, refAno, refMes, len(drillPath))
+	log.Printf("[farol:view] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
+		empresaID, fluxo.name, viewName, groupCol,
+		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"),
+		fmtDateOrEmpty(pr.CompInicio), fmtDateOrEmpty(pr.CompFim),
+		len(drillPath), len(filters))
 
-	// Condições e args do bucket atual
+	// Bucket "atual" (período principal)
 	atualArgs := []any{empresaID}
-	atualCond := buildAtualCond(compMode, refAno, refMes, &atualArgs)
+	atualCond := buildRangeCond(fluxo.dateCol, pr.RefInicio, pr.RefFim, &atualArgs)
 	drillCond := buildDrillCond(drillPath, &atualArgs)
+	filterCond := buildMultiFilterCond(filters, &atualArgs)
+	if filterCond != "" {
+		drillCond = drillCond + " " + filterCond
+	}
 
-	// Condições e args do bucket anterior (args independentes para evitar conflito de $N)
-	antArgs  := []any{empresaID}
-	antCond  := buildAntCond(compMode, refAno, refMes, compAno, compMes, &antArgs)
-	antDrill := buildDrillCond(drillPath, &antArgs)
+	var atualMap, antMap map[string]aggResult
+	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
 
-	// As duas queries são independentes (buckets atual e anterior) — rodam em paralelo.
-	// O nível Produto não existe nas views pré-agregadas (mix agrega o cod_prod),
-	// então lê direto de vendas_importadas, escopado ao cliente do drill (volume pequeno).
-	var atualMap map[string]aggResult
-	var antMap map[string]float64
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	if groupCol == "cod_prod" {
-		go func() { defer wg.Done(); atualMap = queryProdutos(db, atualCond, drillCond, atualArgs) }()
-		go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, antCond, antDrill, antArgs) }()
+		go func() { defer wg.Done(); atualMap = queryProdutos(db, fluxo, atualCond, drillCond, atualArgs) }()
 	} else {
-		go func() { defer wg.Done(); atualMap = queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs) }()
-		go func() { defer wg.Done(); antMap = queryAnteriorTotals(db, viewName, groupCol, antCond, antDrill, antArgs) }()
+		go func() {
+			defer wg.Done()
+			atualMap = queryAggregated(db, viewName, groupCol, nameCol, atualCond, drillCond, atualArgs)
+		}()
+	}
+
+	if hasComp {
+		antArgs := []any{empresaID}
+		antCond := buildRangeCond(fluxo.dateCol, pr.CompInicio, pr.CompFim, &antArgs)
+		antDrill := buildDrillCond(drillPath, &antArgs)
+		antFilterCond := buildMultiFilterCond(filters, &antArgs)
+		if antFilterCond != "" {
+			antDrill = antDrill + " " + antFilterCond
+		}
+		wg.Add(1)
+		if groupCol == "cod_prod" {
+			go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, fluxo, antCond, antDrill, antArgs) }()
+		} else {
+			go func() {
+				defer wg.Done()
+				antMap = queryAnteriorTotals(db, viewName, groupCol, nameCol, antCond, antDrill, antArgs)
+			}()
+		}
 	}
 	wg.Wait()
+
+	// Cor binária: verde se atingiu ≥ 100% do anterior, vermelho caso contrário.
+	// Sem comparativo, considera neutro (verde — sem alerta).
+	pickCor := func(atual, ant float64) (float64, string) {
+		if !hasComp {
+			return 0, "verde"
+		}
+		var pct float64
+		if ant > 0 {
+			pct = atual / ant * 100
+		} else if atual > 0 {
+			pct = 100
+		}
+		if pct >= 100 {
+			return pct, "verde"
+		}
+		return pct, "vermelho"
+	}
 
 	seen := make(map[string]bool, len(atualMap))
 	cards := make([]cardItem, 0, len(atualMap)+len(antMap))
 
 	for key, r := range atualMap {
 		seen[key] = true
-		ant        := antMap[key]
-		valorAtual := r.valor * projecaoFator
+		ant := antMap[key] // aggResult zero se não existir
 
-		pct := 0.0
-		if ant > 0 {
-			pct = valorAtual / ant * 100
-		} else if valorAtual > 0 {
-			pct = 100
-		}
-		cor := "vermelho"
-		if pct >= 100 {
-			cor = "verde"
-		}
+		// Venda
+		pct, cor := pickCor(r.valor, ant.valor)
 
+		// Positivação — % de positivados sobre base de clientes ativos
 		positPct := 0.0
 		if r.baseCli > 0 {
 			positPct = float64(r.positivados) / float64(r.baseCli) * 100
 		}
+		positPctAnt := 0.0
+		if ant.baseCli > 0 {
+			positPctAnt = float64(ant.positivados) / float64(ant.baseCli) * 100
+		}
+		_, positCor := pickCor(positPct, positPctAnt)
 
-		cards = append(cards, cardItem{
+		// Mix médio
+		_, mixCor := pickCor(r.mix, ant.mix)
+
+		card := cardItem{
 			Key: key, Label: r.label,
 			Level: level.Level, LevelLabel: level.Label,
-			ValorAtual: valorAtual, ValorAnt: ant,
+			ValorAtual: r.valor, ValorAnt: ant.valor,
 			Pct: pct, Cor: cor,
-			Faturado:    r.faturado * projecaoFator,
-			Transmitido: r.transmitido * projecaoFator,
+			Plucro: r.plucro, PlucroAnt: ant.plucro,
 			Positivados: r.positivados, BaseCli: r.baseCli, PositPct: positPct,
-			Mix: r.mix,
-		})
+			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
+			PositCor: positCor,
+			Mix:      r.mix, MixAnt: ant.mix, MixCor: mixCor,
+		}
+		if fluxo.name == "transmitido" {
+			card.Transmitido = r.valor
+		} else {
+			card.Faturado = r.valor
+		}
+		cards = append(cards, card)
 	}
 
-	// Grupos que venderam no período anterior mas zero no atual → vermelho
+	// Grupos que existiam no comparativo mas zero no período principal → vermelho em tudo
 	for key, ant := range antMap {
-		if seen[key] || ant == 0 {
+		if seen[key] || ant.valor == 0 {
 			continue
 		}
+		positPctAnt := 0.0
+		if ant.baseCli > 0 {
+			positPctAnt = float64(ant.positivados) / float64(ant.baseCli) * 100
+		}
 		cards = append(cards, cardItem{
-			Key: key, Label: key,
+			Key: key, Label: ant.label,
 			Level: level.Level, LevelLabel: level.Label,
-			ValorAtual: 0, ValorAnt: ant, Pct: 0, Cor: "vermelho",
+			ValorAtual: 0, ValorAnt: ant.valor,
+			Pct: 0, Cor: "vermelho",
+			PlucroAnt:      ant.plucro,
+			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
+			PositCor: "vermelho", MixAnt: ant.mix, MixCor: "vermelho",
 		})
 	}
 
-	log.Printf("[farol:view] fetchCards nível=%s → %d cards (atual=%d ant-only=%d) total=%v",
-		groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0))
+	log.Printf("[farol:view] fetchCards fluxo=%s nível=%s → %d cards (atual=%d ant-only=%d) total=%v",
+		fluxo.name, groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0))
 	return cards
 }
 
 // ─── computeKPI ──────────────────────────────────────────────────────────────
 
-func computeKPI(cards []cardItem) kpiSummary {
+// computeKPI agrega os totais dos cards. fluxoName não é mais usado (os valores
+// Faturado/Transmitido já vêm preenchidos nos cards por fluxo) mas mantido na
+// assinatura por simetria/legibilidade do call site.
+func computeKPI(cards []cardItem, _ string) kpiSummary {
 	var kpi kpiSummary
-	var mixTotal float64
-	mixCount := 0
+	var mixTotal, mixAntTotal float64
+	mixCount, mixAntCount := 0, 0
 	for _, c := range cards {
 		kpi.TotalAtual += c.ValorAtual
 		kpi.TotalAnt += c.ValorAnt
 		kpi.TotalFaturado += c.Faturado
 		kpi.TotalTransmitido += c.Transmitido
+		kpi.TotalPlucro += c.Plucro
+		kpi.TotalPlucroAnt += c.PlucroAnt
 		kpi.TotalPositivados += c.Positivados
 		kpi.TotalBaseCli += c.BaseCli
+		kpi.TotalPositivadosAnt += c.PositivadosAnt
+		kpi.TotalBaseCliAnt += c.BaseCliAnt
 		if c.Mix > 0 {
 			mixTotal += c.Mix
 			mixCount++
+		}
+		if c.MixAnt > 0 {
+			mixAntTotal += c.MixAnt
+			mixAntCount++
 		}
 		if c.Cor == "verde" {
 			kpi.Verdes++
@@ -600,6 +898,7 @@ func computeKPI(cards []cardItem) kpiSummary {
 			kpi.Vermelhos++
 		}
 	}
+	// Venda — % e cor
 	if kpi.TotalAnt > 0 {
 		kpi.TotalPct = kpi.TotalAtual / kpi.TotalAnt * 100
 	} else if kpi.TotalAtual > 0 {
@@ -609,11 +908,27 @@ func computeKPI(cards []cardItem) kpiSummary {
 	if kpi.TotalPct >= 100 {
 		kpi.TotalCor = "verde"
 	}
+	// Positivação — % e cor (atual vs comparativo)
 	if kpi.TotalBaseCli > 0 {
 		kpi.TotalPositPct = float64(kpi.TotalPositivados) / float64(kpi.TotalBaseCli) * 100
 	}
+	if kpi.TotalBaseCliAnt > 0 {
+		kpi.TotalPositPctAnt = float64(kpi.TotalPositivadosAnt) / float64(kpi.TotalBaseCliAnt) * 100
+	}
+	kpi.TotalPositCor = "vermelho"
+	if kpi.TotalPositPct >= kpi.TotalPositPctAnt {
+		kpi.TotalPositCor = "verde"
+	}
+	// Mix médio — atual + comparativo + cor
 	if mixCount > 0 {
 		kpi.AvgMix = mixTotal / float64(mixCount)
+	}
+	if mixAntCount > 0 {
+		kpi.AvgMixAnt = mixAntTotal / float64(mixAntCount)
+	}
+	kpi.MixCor = "vermelho"
+	if kpi.AvgMix >= kpi.AvgMixAnt {
+		kpi.MixCor = "verde"
 	}
 	return kpi
 }
@@ -621,8 +936,6 @@ func computeKPI(cards []cardItem) kpiSummary {
 // ─── fetchPeriodosDisponiveis ─────────────────────────────────────────────────
 
 func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
-	// vendas_import_jobs é minúscula (~10-100 linhas/empresa) e tem índice em
-	// (empresa_id, status). Evita SELECT DISTINCT sobre vendas_importadas (1M+ linhas).
 	rows, err := db.Query(`
 		SELECT ano, mes FROM vendas_import_jobs
 		WHERE empresa_id=$1 AND status='done'
@@ -644,72 +957,92 @@ func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
 }
 
 // ─── buildPeriodoLabels ───────────────────────────────────────────────────────
-// Produz três rótulos derivados do modo + período:
-//   curLabel — descreve o bucket atual (ex.: "Mai/2026" ou "Projeção 2026 (Jan–Mai)")
-//   antLabel — descreve o bucket anterior  (ex.: "Mai/2025" | "Total 2025" | "Abr/2026")
-//   label    — string única "Anterior: X × Atual: Y" pra exibir no cabeçalho
-//
-// O compAno/compMes só importa no mom (quando o usuário escolheu o mês de comparação).
 
-func buildPeriodoLabels(compMode string, refAno, refMes, compAno, compMes int) (curLabel, antLabel, label string) {
-	cur := fmtMesAno(refMes, refAno)
-	switch compMode {
-	case "yoy":
-		curLabel = cur
-		antLabel = fmtMesAno(refMes, refAno-1)
-		label = fmt.Sprintf("Ano Anterior: %s × Ano Atual: %s", antLabel, curLabel)
-	case "ytd":
-		curLabel = fmt.Sprintf("Projeção %d (%s–%s)", refAno, fmtMesAno(1, refAno), cur)
-		antLabel = fmt.Sprintf("Total %d", refAno-1)
-		label = fmt.Sprintf("Período Anterior: %s × %s", antLabel, curLabel)
-	case "mom":
-		pa, pm := resolveCompPeriod(refAno, refMes, compAno, compMes)
-		curLabel = cur
-		antLabel = fmtMesAno(pm, pa)
-		label = fmt.Sprintf("Mês Anterior: %s × Mês Atual: %s", antLabel, curLabel)
-	default:
-		curLabel = cur
-		antLabel = ""
-		label = cur
+func buildPeriodoLabels(pr periodResolution) (curLabel, antLabel, label string) {
+	curLabel = fmtRangeBR(pr.RefInicio, pr.RefFim)
+	if pr.CompInicio.IsZero() || pr.CompFim.IsZero() {
+		label = curLabel
+		return
 	}
+	antLabel = fmtRangeBR(pr.CompInicio, pr.CompFim)
+	label = fmt.Sprintf("Anterior: %s × Atual: %s", antLabel, curLabel)
 	return
 }
 
-// refreshAllFarolViews recria todas as views materializadas: base (mv_farol_cli)
-// primeiro — as de resumo dependem dela — depois as de resumo em paralelo.
-// Usado após importação, após limpeza e pelo botão "Consolidar view".
+// fmtRangeBR formata um intervalo em pt-BR de forma compacta:
+//   01/05/2026 → 31/05/2026  →  "Mai/2026"   (mês inteiro)
+//   05/05/2026 → 15/05/2026  →  "05/05/2026 – 15/05/2026"
+//   01/01/2026 → 31/12/2026  →  "Ano 2026"   (ano inteiro)
+func fmtRangeBR(ini, fim time.Time) string {
+	if ini.IsZero() || fim.IsZero() {
+		return ""
+	}
+	if ini.Year() == fim.Year() && ini.Month() == fim.Month() &&
+		ini.Day() == 1 && fim.AddDate(0, 0, 1).Day() == 1 {
+		return fmtMesAno(int(ini.Month()), ini.Year())
+	}
+	if ini.Year() == fim.Year() && ini.Month() == 1 && ini.Day() == 1 &&
+		fim.Month() == 12 && fim.Day() == 31 {
+		return fmt.Sprintf("Ano %d", ini.Year())
+	}
+	return fmt.Sprintf("%s – %s", ini.Format("02/01/2006"), fim.Format("02/01/2006"))
+}
+
+// ─── refreshAllFarolViews ─────────────────────────────────────────────────────
+
 func refreshAllFarolViews(db *sql.DB) error {
 	t0 := time.Now()
-	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_farol_cli`); err != nil {
-		log.Printf("[farol:view] refresh mv_farol_cli ERRO em %v: %v", time.Since(t0), err)
-		return err
+
+	refreshFlow := func(views []string) []error {
+		errs := make([]error, len(views))
+		// base primeiro (índice 0)
+		base := views[0]
+		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + base); err != nil {
+			log.Printf("[farol:view] refresh CONCURRENTLY %s falhou (%v), tentando sem CONCURRENTLY", base, err)
+			if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + base); err2 != nil {
+				errs[0] = err2
+				log.Printf("[farol:view] refresh %s ERRO: %v", base, err2)
+				return errs
+			}
+		}
+		db.Exec(`ANALYZE ` + base)
+
+		// summary em paralelo
+		var wg sync.WaitGroup
+		for i := 1; i < len(views); i++ {
+			wg.Add(1)
+			go func(idx int, name string) {
+				defer wg.Done()
+				_, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name)
+				if err != nil {
+					_, err = db.Exec(`REFRESH MATERIALIZED VIEW ` + name)
+				}
+				if err != nil {
+					errs[idx] = err
+					log.Printf("[farol:view] refresh %s ERRO: %v", name, err)
+				} else {
+					db.Exec(`ANALYZE ` + name)
+				}
+			}(i, views[i])
+		}
+		wg.Wait()
+		return errs
 	}
 
-	summaryViews := AllSummaryViews[1:] // tudo exceto mv_farol_cli (índice 0)
-	var wg sync.WaitGroup
-	errs := make([]error, len(summaryViews))
-	for i, vw := range summaryViews {
-		wg.Add(1)
-		go func(idx int, name string) {
-			defer wg.Done()
-			_, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name)
-			if err != nil {
-				// MV nunca populada (WITH NO DATA) → tenta sem CONCURRENTLY
-				log.Printf("[farol:view] refresh CONCURRENTLY %s falhou (%v), tentando sem CONCURRENTLY", name, err)
-				_, err = db.Exec(`REFRESH MATERIALIZED VIEW ` + name)
-			}
-			if err != nil {
-				errs[idx] = err
-				log.Printf("[farol:view] refresh %s ERRO: %v", name, err)
-			} else {
-				db.Exec(`ANALYZE ` + name)
-			}
-		}(i, vw)
-	}
-	wg.Wait()
-	db.Exec(`ANALYZE farol.mv_farol_cli`)
+	// Os dois fluxos podem rodar em paralelo (independentes)
+	var fatErrs, transErrs []error
+	var wgFlows sync.WaitGroup
+	wgFlows.Add(2)
+	go func() { defer wgFlows.Done(); fatErrs = refreshFlow(AllFatViews) }()
+	go func() { defer wgFlows.Done(); transErrs = refreshFlow(AllTransViews) }()
+	wgFlows.Wait()
 
-	for _, e := range errs {
+	for _, e := range fatErrs {
+		if e != nil {
+			return e
+		}
+	}
+	for _, e := range transErrs {
 		if e != nil {
 			return e
 		}
@@ -719,8 +1052,6 @@ func refreshAllFarolViews(db *sql.DB) error {
 }
 
 // ─── RefreshViewsHandler — POST /api/v2/farol/refresh-views ─────────────────
-// REFRESH CONCURRENTLY de mv_farol_cli (base) e depois as views de resumo em
-// paralelo. Necessário após deploy inicial ou quando as views desatualizaram.
 
 func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -743,14 +1074,19 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var rowCount int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_farol_cli`).Scan(&rowCount)
-		log.Printf("[farol:view] RefreshViews concluído — %d linhas base, total %v", rowCount, time.Since(t0))
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "rows": rowCount, "duration_ms": time.Since(t0).Milliseconds()})
+		var fatRows, transRows int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_fat_cli`).Scan(&fatRows)
+		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_trans_cli`).Scan(&transRows)
+		log.Printf("[farol:view] RefreshViews concluído — fat=%d trans=%d, total %v",
+			fatRows, transRows, time.Since(t0))
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "fat_rows": fatRows, "trans_rows": transRows,
+			"duration_ms": time.Since(t0).Milliseconds(),
+		})
 	}
 }
 
-// ─── FarolV2PeriodosHandler — GET /api/v2/farol/periodos ─────────────────────
+// ─── FarolV2PeriodosHandler ──────────────────────────────────────────────────
 
 func FarolV2PeriodosHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -765,10 +1101,111 @@ func FarolV2PeriodosHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ─── FarolV2DimsHandler — GET /api/v2/farol/dims ────────────────────────────
+//
+// Retorna as opções disponíveis em cada dimensão, dentro do período + fluxo
+// escolhido. Alimenta os multi-selects da UI de filtros.
+//
+//   GET /api/v2/farol/dims?fluxo=faturado&ref_inicio=2026-05-01&ref_fim=2026-05-31
+//
+// Resposta:
+//   {
+//     "fornec":     [{"key":"F01","label":"NESTLE BRASIL"}, ...],
+//     "gerente":    [...],
+//     "supervisor": [...],
+//     "rca":        [...],
+//     "cli":        [...],
+//     "uf":         ["SP", "RJ", ...],
+//     "empresa":    ["NORDESTE", "SUDESTE", ...]
+//   }
+
+type dimOption struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		q := r.URL.Query()
+		fluxo := resolveFluxo(q.Get("fluxo"))
+		pr := resolvePeriods(db, spCtx.EmpresaID, q)
+		if pr.RefInicio.IsZero() {
+			json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+
+		baseView := fluxo.baseView
+		dateCol := fluxo.dateCol
+		refIni := pr.RefInicio.Format("2006-01-02")
+		refFim := pr.RefFim.Format("2006-01-02")
+
+		fetchDim := func(codCol, nameCol string) []dimOption {
+			rows, err := db.Query(fmt.Sprintf(`
+				SELECT %s AS key, MAX(%s) AS label
+				  FROM %s
+				 WHERE empresa_id=$1
+				   AND %s BETWEEN $2::date AND $3::date
+				   AND %s != ''
+				 GROUP BY %s
+				 ORDER BY label
+			`, codCol, nameCol, baseView, dateCol, codCol, codCol),
+				spCtx.EmpresaID, refIni, refFim)
+			if err != nil {
+				log.Printf("[dims] %s ERRO: %v", codCol, err)
+				return nil
+			}
+			defer rows.Close()
+			out := []dimOption{}
+			for rows.Next() {
+				var d dimOption
+				if rows.Scan(&d.Key, &d.Label) == nil {
+					out = append(out, d)
+				}
+			}
+			return out
+		}
+
+		fetchScalar := func(col string) []string {
+			rows, err := db.Query(fmt.Sprintf(`
+				SELECT DISTINCT %s FROM %s
+				 WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND %s != ''
+				 ORDER BY %s
+			`, col, baseView, dateCol, col, col),
+				spCtx.EmpresaID, refIni, refFim)
+			if err != nil {
+				return nil
+			}
+			defer rows.Close()
+			out := []string{}
+			for rows.Next() {
+				var v string
+				if rows.Scan(&v) == nil {
+					out = append(out, v)
+				}
+			}
+			return out
+		}
+
+		resp := map[string]any{
+			"fornec":     fetchDim("cod_fornec", "nome_fornec"),
+			"gerente":    fetchDim("cod_gerente", "nome_gerente"),
+			"supervisor": fetchDim("cod_supervisor", "nome_supervisor"),
+			"rca":        fetchDim("cod_rca", "nome_rca"),
+			"cli":        fetchDim("cod_cli", "nome_cli"),
+			"uf":         fetchScalar("uf"),
+			"empresa":    fetchScalar("empresa"),
+		}
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
 // ─── Acesso público ION VENDAS ───────────────────────────────────────────────
-// O app ION abre um link parametrizado SEM login (RCAs em campo) que cai no
-// painel novo já escopado ao supervisor ou ao RCA. Mesmas views, mesma
-// nomenclatura do painel principal — apenas com o escopo fixado pela URL.
 
 // resolveEmpresaCNPJ resolve empresa_id a partir do CNPJ (dígitos, com ou sem máscara).
 func resolveEmpresaCNPJ(db *sql.DB, cnpj string) string {
@@ -789,7 +1226,7 @@ func resolveEmpresaCNPJ(db *sql.DB, cnpj string) string {
 	return id
 }
 
-// lookupNome busca o nome de um código na view base (ex.: cod_supervisor → nome_supervisor).
+// lookupNome busca o nome de um código na view base de FATURADO (a mais completa).
 func lookupNome(db *sql.DB, empresaID, codCol, nomeCol, cod string) string {
 	if cod == "" {
 		return ""
@@ -797,9 +1234,16 @@ func lookupNome(db *sql.DB, empresaID, codCol, nomeCol, cod string) string {
 	codCol, nomeCol = safeColName(codCol), safeColName(nomeCol)
 	var nome string
 	q := fmt.Sprintf(
-		`SELECT %s FROM farol.mv_farol_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+		`SELECT %s FROM farol.mv_fat_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
 		nomeCol, codCol, nomeCol)
 	_ = db.QueryRow(q, empresaID, cod).Scan(&nome)
+	if nome == "" {
+		// Fallback: tenta transmitido (caso o código só exista lá)
+		q2 := fmt.Sprintf(
+			`SELECT %s FROM farol.mv_trans_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+			nomeCol, codCol, nomeCol)
+		_ = db.QueryRow(q2, empresaID, cod).Scan(&nome)
+	}
 	if nome == "" {
 		nome = cod
 	}
@@ -811,14 +1255,21 @@ func lookupParent(db *sql.DB, empresaID, codCol, cod, parentCol string) string {
 	codCol, parentCol = safeColName(codCol), safeColName(parentCol)
 	var p string
 	q := fmt.Sprintf(
-		`SELECT %s FROM farol.mv_farol_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+		`SELECT %s FROM farol.mv_fat_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
 		parentCol, codCol, parentCol)
 	_ = db.QueryRow(q, empresaID, cod).Scan(&p)
+	if p == "" {
+		q2 := fmt.Sprintf(
+			`SELECT %s FROM farol.mv_trans_cli WHERE empresa_id=$1 AND %s=$2 AND %s!='' LIMIT 1`,
+			parentCol, codCol, parentCol)
+		_ = db.QueryRow(q2, empresaID, cod).Scan(&p)
+	}
 	return p
 }
 
 // FarolV2PublicCardsHandler — GET /api/v2/farol/public/cards (SEM auth)
 //   cnpj, scope (sup|rca), cod  → escopo fixo; drill adicional opcional.
+//   fluxo, ref_inicio/ref_fim, comp_inicio/comp_fim (ou ano/mes legados).
 func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -837,32 +1288,9 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// ION sempre usa a visão por equipe (força de vendas).
 		view := "V02"
 		hier := hierarquias[view]
-
-		compMode := q.Get("comp_mode")
-		if compMode == "" {
-			compMode = "yoy"
-		}
-
-		refAno, _ := strconv.Atoi(q.Get("ref_ano"))
-		refMes, _ := strconv.Atoi(q.Get("ref_mes"))
-		if refAno == 0 || refMes == 0 {
-			_ = db.QueryRow(`
-				SELECT ano, mes FROM vendas_import_jobs
-				WHERE empresa_id=$1 AND tipo_base='ATUAL' AND status='done'
-				ORDER BY ano DESC, mes DESC LIMIT 1`, empresaID).Scan(&refAno, &refMes)
-		}
-		if refAno == 0 {
-			json.NewEncoder(w).Encode(cardsResponse{Cards: []cardItem{}, View: view})
-			return
-		}
-
-		projecaoFator := 1.0
-		if compMode == "ytd" && refMes > 0 {
-			projecaoFator = 12.0 / float64(refMes)
-		}
+		fluxo := resolveFluxo(q.Get("fluxo"))
 
 		// Drill base fixado pela URL (não pode ser removido pelo usuário).
 		var baseDrill []drillStep
@@ -879,7 +1307,6 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Drill adicional do usuário, apensado após o escopo fixo.
 		var userDrill []drillStep
 		if dj := q.Get("drill"); dj != "" {
 			_ = json.Unmarshal([]byte(dj), &userDrill)
@@ -893,13 +1320,16 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		currentLevel := hier[drillIdx]
 
-		// Override opcional do período de comparação (mom).
-		compAno, _ := strconv.Atoi(q.Get("comp_ano"))
-		compMes, _ := strconv.Atoi(q.Get("comp_mes"))
+		pr := resolvePeriods(db, empresaID, q)
+		if pr.RefInicio.IsZero() {
+			json.NewEncoder(w).Encode(cardsResponse{Cards: []cardItem{}, View: view, DrillPath: drillPath})
+			return
+		}
 
-		cards := fetchCards(db, empresaID, view, compMode, refAno, refMes, compAno, compMes, drillIdx, currentLevel, drillPath, projecaoFator)
-		kpi := computeKPI(cards)
-		curLabel, antLabel, plabel := buildPeriodoLabels(compMode, refAno, refMes, compAno, compMes)
+		filters := parseMultiFilters(q)
+		cards := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
+		kpi := computeKPI(cards, fluxo.name)
+		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
 		sort.Slice(cards, func(i, j int) bool {
 			if cards[i].Cor != cards[j].Cor {
@@ -909,9 +1339,20 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		})
 
 		json.NewEncoder(w).Encode(cardsResponse{
-			Cards:          cards,
-			KPI:            kpi,
-			Periodo:        periodoInfo{RefAno: refAno, RefMes: refMes, Label: plabel, CompMode: compMode, CurLabel: curLabel, AntLabel: antLabel, CompAno: compAno, CompMes: compMes},
+			Cards: cards,
+			KPI:   kpi,
+			Periodo: periodoInfo{
+				Fluxo:      fluxo.name,
+				RefInicio:  pr.RefInicio.Format("2006-01-02"),
+				RefFim:     pr.RefFim.Format("2006-01-02"),
+				CompInicio: fmtDateOrEmpty(pr.CompInicio),
+				CompFim:    fmtDateOrEmpty(pr.CompFim),
+				Label:      plabel,
+				CurLabel:   curLabel,
+				AntLabel:   antLabel,
+				RefAno:     pr.RefAno, RefMes: pr.RefMes,
+				CompMode: pr.CompMode, CompAno: pr.CompAno, CompMes: pr.CompMes,
+			},
 			Periodos:       fetchPeriodosDisponiveis(db, empresaID),
 			View:           view,
 			DrillPath:      drillPath,
