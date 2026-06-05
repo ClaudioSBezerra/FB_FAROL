@@ -1159,8 +1159,10 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 		dateCol := fluxo.dateCol
 		refIni := pr.RefInicio.Format("2006-01-02")
 		refFim := pr.RefFim.Format("2006-01-02")
+		t0 := time.Now()
 
 		fetchDim := func(codCol, nameCol string) []dimOption {
+			td := time.Now()
 			rows, err := db.Query(fmt.Sprintf(`
 				SELECT %s AS key, MAX(%s) AS label
 				  FROM %s
@@ -1172,7 +1174,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			`, codCol, nameCol, baseView, dateCol, codCol, codCol),
 				spCtx.EmpresaID, refIni, refFim)
 			if err != nil {
-				log.Printf("[dims] %s ERRO: %v", codCol, err)
+				log.Printf("[dims] %s ERRO em %v: %v", codCol, time.Since(td), err)
 				return nil
 			}
 			defer rows.Close()
@@ -1183,10 +1185,12 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 					out = append(out, d)
 				}
 			}
+			log.Printf("[dims] %s → %d opções em %v", codCol, len(out), time.Since(td))
 			return out
 		}
 
 		fetchScalar := func(col string) []string {
+			td := time.Now()
 			rows, err := db.Query(fmt.Sprintf(`
 				SELECT DISTINCT %s FROM %s
 				 WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND %s != ''
@@ -1194,6 +1198,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			`, col, baseView, dateCol, col, col),
 				spCtx.EmpresaID, refIni, refFim)
 			if err != nil {
+				log.Printf("[dims] %s ERRO em %v: %v", col, time.Since(td), err)
 				return nil
 			}
 			defer rows.Close()
@@ -1204,17 +1209,39 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 					out = append(out, v)
 				}
 			}
+			log.Printf("[dims] %s → %d valores em %v", col, len(out), time.Since(td))
 			return out
 		}
 
+		// 7 GROUP BYs sobre mv_*_cli (a MV mais granular) — serial seria ~7×
+		// o tempo de 1 query. Roda em paralelo: cada goroutine pega sua própria
+		// *sql.Rows do pool. Limite prático = MaxOpenConns do db.
+		var (
+			fornec, gerente, supervisor, rca, cli []dimOption
+			uf, empresa                           []string
+			wg                                    sync.WaitGroup
+		)
+		wg.Add(7)
+		go func() { defer wg.Done(); fornec = fetchDim("cod_fornec", "nome_fornec") }()
+		go func() { defer wg.Done(); gerente = fetchDim("cod_gerente", "nome_gerente") }()
+		go func() { defer wg.Done(); supervisor = fetchDim("cod_supervisor", "nome_supervisor") }()
+		go func() { defer wg.Done(); rca = fetchDim("cod_rca", "nome_rca") }()
+		go func() { defer wg.Done(); cli = fetchDim("cod_cli", "nome_cli") }()
+		go func() { defer wg.Done(); uf = fetchScalar("uf") }()
+		go func() { defer wg.Done(); empresa = fetchScalar("empresa") }()
+		wg.Wait()
+
+		log.Printf("[dims] fluxo=%s ref=[%s..%s] paralelo=7 total=%v",
+			fluxo.name, refIni, refFim, time.Since(t0))
+
 		resp := map[string]any{
-			"fornec":     fetchDim("cod_fornec", "nome_fornec"),
-			"gerente":    fetchDim("cod_gerente", "nome_gerente"),
-			"supervisor": fetchDim("cod_supervisor", "nome_supervisor"),
-			"rca":        fetchDim("cod_rca", "nome_rca"),
-			"cli":        fetchDim("cod_cli", "nome_cli"),
-			"uf":         fetchScalar("uf"),
-			"empresa":    fetchScalar("empresa"),
+			"fornec":     fornec,
+			"gerente":    gerente,
+			"supervisor": supervisor,
+			"rca":        rca,
+			"cli":        cli,
+			"uf":         uf,
+			"empresa":    empresa,
 		}
 		json.NewEncoder(w).Encode(resp)
 	}
