@@ -90,11 +90,12 @@ const HEADER_BG = 'bg-slate-600'
 const HEADER_TXT_FAINT = 'text-slate-300'
 const BTN_PRIMARY_BG = 'bg-slate-700'
 
-// Cores vibrantes para o cabeçalho da LISTA (e do TOTAL)
-const COL_VENDA_BG       = 'bg-blue-700'
-const COL_POSITIVACAO_BG = 'bg-emerald-600'
-const COL_MIX_BG         = 'bg-amber-600'
-const COL_NOME_BG        = 'bg-slate-700'
+// Cabeçalho da LISTA / TOTAL — tarja única preta, cores só nos textos
+const TARJA_BG = 'bg-slate-900'
+const COL_NOME_TXT        = 'text-white'
+const COL_VENDA_TXT       = 'text-amber-400'    // dourado — valor
+const COL_POSITIVACAO_TXT = 'text-emerald-400'  // verde-vivo — sucesso/clientes
+const COL_MIX_TXT         = 'text-cyan-400'     // ciano-vivo — variedade/mix
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
@@ -153,40 +154,90 @@ function fmtDateBR(s: string): string {
   return `${d}/${m}/${y}`
 }
 
-type Preset = 'yoy' | 'mom' | 'ytd' | 'last30' | 'custom'
+// Presets:
+//  mes_corrente — dia 1 até hoje, mês corrente × dia 1 até mesmo dia, mês anterior
+//  yoy          — último mês 100% importado × mesmo mês ano anterior
+//  ant_corrente — mês ANTERIOR completo × dia 1 até hoje do mês CORRENTE
+//  ytd          — ano anterior completo (jan-dez) × jan até hoje, ano corrente
+//  last7        — últimos 7 dias × 7 dias anteriores
+//  last30       — últimos 30 dias × 30 dias anteriores
+type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
 
 function presetRange(p: Preset, last?: { ano: number; mes: number }) {
   const now = new Date()
-  const refY = last?.ano ?? now.getUTCFullYear()
-  const refM = last?.mes ?? (now.getUTCMonth() + 1)
-  const refIni = ymd(refY, refM, 1)
-  const refFim = ymd(refY, refM, lastDayOfMonth(refY, refM))
+  const todayY = now.getUTCFullYear()
+  const todayM = now.getUTCMonth() + 1  // 1..12
+  const todayD = now.getUTCDate()
+  const today = ymd(todayY, todayM, todayD)
+
+  // Último mês 100% importado (fallback: mês corrente)
+  const lastY = last?.ano ?? todayY
+  const lastM = last?.mes ?? todayM
 
   switch (p) {
-    case 'mom': {
-      let pm = refM - 1, py = refY
+    case 'mes_corrente': {
+      // dia 1 até hoje, em ambos os meses (mes anterior tem mesmo dia se válido,
+      // ou o último dia do mês se hoje for 31 e o anterior tiver 30).
+      let pm = todayM - 1, py = todayY
+      if (pm === 0) { pm = 12; py-- }
+      const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
+      return {
+        ref_inicio:  ymd(todayY, todayM, 1),
+        ref_fim:     today,
+        comp_inicio: ymd(py, pm, 1),
+        comp_fim:    ymd(py, pm, dayCap),
+      }
+    }
+    case 'yoy': {
+      // mês 100% importado × mesmo mês ano anterior — ambos completos
+      return {
+        ref_inicio:  ymd(lastY, lastM, 1),
+        ref_fim:     ymd(lastY, lastM, lastDayOfMonth(lastY, lastM)),
+        comp_inicio: ymd(lastY - 1, lastM, 1),
+        comp_fim:    ymd(lastY - 1, lastM, lastDayOfMonth(lastY - 1, lastM)),
+      }
+    }
+    case 'ant_corrente': {
+      // Mês ANTERIOR completo × dia 1 até HOJE do mês corrente
+      let pm = todayM - 1, py = todayY
       if (pm === 0) { pm = 12; py-- }
       return {
-        ref_inicio: refIni, ref_fim: refFim,
+        ref_inicio:  ymd(todayY, todayM, 1),
+        ref_fim:     today,
         comp_inicio: ymd(py, pm, 1),
-        comp_fim: ymd(py, pm, lastDayOfMonth(py, pm)),
+        comp_fim:    ymd(py, pm, lastDayOfMonth(py, pm)),
       }
     }
-    case 'ytd':
+    case 'ytd': {
+      // Ano anterior INTEIRO × Janeiro a hoje do ano corrente
       return {
-        ref_inicio: ymd(refY, 1, 1), ref_fim: refFim,
-        comp_inicio: ymd(refY - 1, 1, 1),
-        comp_fim: ymd(refY - 1, refM, lastDayOfMonth(refY - 1, refM)),
+        ref_inicio:  ymd(todayY, 1, 1),
+        ref_fim:     today,
+        comp_inicio: ymd(todayY - 1, 1, 1),
+        comp_fim:    ymd(todayY - 1, 12, 31),
       }
-    case 'last30': {
-      const fim = todayYMD()
-      const ini = addDays(fim, -29)
-      return { ref_inicio: ini, ref_fim: fim, comp_inicio: addYears(ini, -1), comp_fim: addYears(fim, -1) }
     }
-    case 'custom':
-    case 'yoy':
-    default:
-      return { ref_inicio: refIni, ref_fim: refFim, comp_inicio: addYears(refIni, -1), comp_fim: addYears(refFim, -1) }
+    case 'last7': {
+      const fim = today
+      const ini = addDays(fim, -6)
+      return {
+        ref_inicio:  ini,
+        ref_fim:     fim,
+        comp_inicio: addDays(ini, -7),
+        comp_fim:    addDays(fim, -7),
+      }
+    }
+    case 'last30':
+    default: {
+      const fim = today
+      const ini = addDays(fim, -29)
+      return {
+        ref_inicio:  ini,
+        ref_fim:     fim,
+        comp_inicio: addDays(ini, -30),
+        comp_fim:    addDays(fim, -30),
+      }
+    }
   }
 }
 
@@ -197,18 +248,18 @@ const GRID_COLS = 'grid-cols-[minmax(180px,2fr)_3fr_3fr_1.2fr]'
 function ColumnsHeader() {
   return (
     <>
-      {/* Linha colorida: nomes dos grupos */}
-      <div className={cn('grid', GRID_COLS)}>
-        <div className={cn(COL_NOME_BG, 'text-white px-3 py-2 text-xs uppercase tracking-wider font-bold')}>
+      {/* Tarja preta única; cores apenas nos textos */}
+      <div className={cn('grid', GRID_COLS, TARJA_BG)}>
+        <div className={cn('px-3 py-2 text-xs uppercase tracking-wider font-bold', COL_NOME_TXT)}>
           Nome
         </div>
-        <div className={cn(COL_VENDA_BG, 'text-white px-3 py-2 text-xs uppercase tracking-wider font-bold text-center')}>
+        <div className={cn('px-3 py-2 text-xs uppercase tracking-wider font-bold text-center', COL_VENDA_TXT)}>
           Venda
         </div>
-        <div className={cn(COL_POSITIVACAO_BG, 'text-white px-3 py-2 text-xs uppercase tracking-wider font-bold text-center')}>
+        <div className={cn('px-3 py-2 text-xs uppercase tracking-wider font-bold text-center', COL_POSITIVACAO_TXT)}>
           Positivação
         </div>
-        <div className={cn(COL_MIX_BG, 'text-white px-3 py-2 text-xs uppercase tracking-wider font-bold text-center')}>
+        <div className={cn('px-3 py-2 text-xs uppercase tracking-wider font-bold text-center', COL_MIX_TXT)}>
           Mix Médio
         </div>
       </div>
@@ -246,10 +297,10 @@ interface RowProps {
 function DataRow({ card, isTotal = false, onClick }: RowProps) {
   const clickable = !!onClick
   const valueNum = isTotal
-    ? 'text-base font-bold tabular-nums text-slate-800'
+    ? 'text-base font-bold tabular-nums text-slate-900'
     : 'text-sm font-bold tabular-nums text-slate-800'
   const valueLabelCls = isTotal
-    ? 'text-base font-bold'
+    ? 'text-base font-extrabold'
     : 'text-sm font-semibold'
 
   return (
@@ -258,14 +309,16 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
       onClick={onClick}
       className={cn(
         'grid', GRID_COLS,
-        'border-b border-slate-100 last:border-b-0 bg-white',
+        'border-b border-slate-100 last:border-b-0',
+        isTotal
+          ? 'bg-gradient-to-r from-slate-400 via-slate-300 to-slate-500 border-b-2 border-slate-500'
+          : 'bg-white',
         clickable && 'cursor-pointer hover:bg-slate-50 transition-colors',
-        isTotal && 'border-b-2 border-slate-200',
       )}
     >
       {/* Nome */}
-      <div className={cn('px-3 py-2.5 flex items-center', isTotal && 'bg-slate-50')}>
-        <span className={cn('text-slate-800 truncate', valueLabelCls)} title={card.label}>
+      <div className="px-3 py-2.5 flex items-center">
+        <span className={cn('truncate', valueLabelCls, isTotal ? 'text-slate-900 uppercase tracking-wider' : 'text-slate-800')} title={card.label}>
           {card.label}
         </span>
         {!isTotal && (
@@ -479,7 +532,7 @@ export default function FarolExecutivo() {
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
-  const [activePreset, setActivePreset] = useState<Preset>('yoy')
+  const [activePreset, setActivePreset] = useState<Preset | null>('mes_corrente')
 
   const [refInicio, setRefInicio] = useState('')
   const [refFim, setRefFim] = useState('')
@@ -499,11 +552,20 @@ export default function FarolExecutivo() {
 
   const periodosQ = useUltimoPeriodo()
   useEffect(() => {
-    if (refInicio || !periodosQ.data?.ref_ano) return
-    const r = presetRange('yoy', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
+    if (refInicio || !periodosQ.data) return
+    // Default ao entrar: "Mês corrente vs Mês anterior" (paralelo, dia 1 até hoje)
+    const r = presetRange('mes_corrente', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }, [periodosQ.data, refInicio])
+
+  const applyPreset = (p: Preset) => {
+    setActivePreset(p)
+    const last = periodosQ.data ? { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! } : undefined
+    const r = presetRange(p, last)
+    setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
+    setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
+  }
 
   const { data, isLoading, error } = useCards({
     view, fluxo, ref_inicio: refInicio, ref_fim: refFim,
@@ -511,15 +573,6 @@ export default function FarolExecutivo() {
     drillPath, filters,
   })
   const dimsQ = useDims(fluxo, refInicio, refFim)
-
-  const applyPreset = (p: Preset) => {
-    setActivePreset(p)
-    if (p === 'custom') return
-    const last = periodosQ.data ? { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! } : undefined
-    const r = presetRange(p, last)
-    setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
-    setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
-  }
 
   const handleDrill = (card: CardItem) => {
     if (card.level === 'cod_prod') return
@@ -588,9 +641,8 @@ export default function FarolExecutivo() {
   return (
     <div className="min-h-full p-4 md:p-6 bg-slate-50">
       {/* ── Seletor de FLUXO (acima de tudo) ────────────────────────────────── */}
-      <div className="flex items-center gap-3 mb-3">
-        <span className="text-xs uppercase tracking-wider font-bold text-slate-500">Fluxo:</span>
-        <div className="flex rounded-md border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
+      <div className="mb-3">
+        <div className="inline-flex rounded-md border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
           {([
             { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-blue-700' },
             { id: 'transmitido' as const, label: 'Transmitido', color: 'bg-emerald-700' },
@@ -616,20 +668,25 @@ export default function FarolExecutivo() {
             <Calendar className="h-4 w-4 text-red-400" />
             <span className="text-xs uppercase tracking-wider font-bold text-red-400">Período</span>
           </div>
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-center">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400 mr-1">Atalhos:</span>
             {([
-              { id: 'yoy'    as const, label: 'Ano a Ano',       active: 'bg-blue-800 text-white',     inactive: 'bg-slate-700 text-blue-200 hover:bg-blue-900' },
-              { id: 'mom'    as const, label: 'Mês a Mês',       active: 'bg-sky-500 text-white',      inactive: 'bg-slate-700 text-sky-200 hover:bg-sky-700' },
-              { id: 'ytd'    as const, label: 'Projeção Anual',  active: 'bg-emerald-600 text-white',  inactive: 'bg-slate-700 text-emerald-200 hover:bg-emerald-700' },
-              { id: 'last30' as const, label: 'Últimos 30 dias', active: 'bg-amber-500 text-white',    inactive: 'bg-slate-700 text-amber-200 hover:bg-amber-600' },
-              { id: 'custom' as const, label: 'Personalizado',   active: 'bg-violet-600 text-white',   inactive: 'bg-slate-700 text-violet-200 hover:bg-violet-700' },
+              { id: 'mes_corrente' as const, label: 'Mês Corrente',     tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
+              { id: 'yoy'          as const, label: 'Mês Fechado YoY',  tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
+              { id: 'ant_corrente' as const, label: 'Anterior vs Atual', tip: 'Mês anterior INTEIRO × Dia 1 até hoje do mês corrente' },
+              { id: 'ytd'          as const, label: 'Ano vs YTD',       tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
+              { id: 'last7'        as const, label: '7 dias',           tip: 'Últimos 7 dias × 7 dias anteriores' },
+              { id: 'last30'       as const, label: '30 dias',          tip: 'Últimos 30 dias × 30 dias anteriores' },
             ]).map(p => (
               <button
                 key={p.id}
                 onClick={() => applyPreset(p.id)}
+                title={p.tip}
                 className={cn(
-                  'px-2 py-1 text-[11px] font-semibold rounded transition',
-                  activePreset === p.id ? p.active : p.inactive,
+                  'px-2.5 py-1 text-[11px] font-semibold rounded transition border',
+                  activePreset === p.id
+                    ? 'bg-white text-slate-800 border-white shadow-sm'
+                    : 'bg-transparent text-slate-300 border-slate-500 hover:bg-slate-500 hover:text-white hover:border-slate-400',
                 )}
               >
                 {p.label}
@@ -646,14 +703,14 @@ export default function FarolExecutivo() {
               <input
                 type="date"
                 value={compInicio}
-                onChange={e => { setCompInicio(e.target.value); setActivePreset('custom') }}
+                onChange={e => { setCompInicio(e.target.value); setActivePreset(null) }}
                 className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-400 rounded bg-white"
               />
               <span className="text-orange-500 text-xs px-1 font-bold">→</span>
               <input
                 type="date"
                 value={compFim}
-                onChange={e => { setCompFim(e.target.value); setActivePreset('custom') }}
+                onChange={e => { setCompFim(e.target.value); setActivePreset(null) }}
                 className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-400 rounded bg-white"
               />
             </div>
@@ -674,14 +731,14 @@ export default function FarolExecutivo() {
               <input
                 type="date"
                 value={refInicio}
-                onChange={e => { setRefInicio(e.target.value); setActivePreset('custom') }}
+                onChange={e => { setRefInicio(e.target.value); setActivePreset(null) }}
                 className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-500 rounded bg-white font-medium"
               />
               <span className="text-orange-500 text-xs px-1 font-bold">→</span>
               <input
                 type="date"
                 value={refFim}
-                onChange={e => { setRefFim(e.target.value); setActivePreset('custom') }}
+                onChange={e => { setRefFim(e.target.value); setActivePreset(null) }}
                 className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-500 rounded bg-white font-medium"
               />
             </div>
