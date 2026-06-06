@@ -180,6 +180,7 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 	baseView := fluxo.baseView
 	dateCol := fluxo.dateCol
 
+	// Agrupa por cnpj (migration 161: chave única do cliente é o CNPJ).
 	row := db.QueryRow(fmt.Sprintf(`
 		SELECT
 		    COUNT(*)                                                      AS total_base_cli,
@@ -188,14 +189,14 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 		    COALESCE(SUM(pvenda), 0)                                     AS total_pvenda,
 		    COALESCE(SUM(plucro), 0)                                     AS total_plucro
 		FROM (
-		    SELECT cod_cli,
+		    SELECT cnpj,
 		           MAX(positivados)   AS max_pos,
 		           AVG(mix)           AS avg_mix,
 		           SUM(pvenda)        AS pvenda,
 		           SUM(plucro)        AS plucro
 		    FROM %s
-		    WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-		    GROUP BY cod_cli
+		    WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cnpj != ''
+		    GROUP BY cnpj
 		) s
 	`, baseView, dateCol), empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
 
@@ -220,9 +221,9 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 		_ = db.QueryRow(fmt.Sprintf(`
 			SELECT COUNT(*), COUNT(*) FILTER (WHERE max_pos=1)
 			FROM (
-			    SELECT cod_cli, MAX(positivados) AS max_pos
-			    FROM %s WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-			    GROUP BY cod_cli
+			    SELECT cnpj, MAX(positivados) AS max_pos
+			    FROM %s WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cnpj != ''
+			    GROUP BY cnpj
 			) s
 		`, baseView, dateCol), empresaID,
 			pr.CompInicio.Format("2006-01-02"), pr.CompFim.Format("2006-01-02"),
@@ -248,12 +249,16 @@ func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 	mv := mvMktProdPen(fluxo)
 	dateCol := fluxo.dateCol
 
+	// MV é granular por dia — GROUP BY cod_prod para consolidar o período.
+	// qt_positivados usa AVG (conta únicos por dia; não é aditivo entre dias).
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT cod_prod, nome_prod, cod_fornec, nome_fornec, ean,
-		       qt_positivados, pvenda, plucro
+		SELECT cod_prod, MAX(nome_prod), MAX(cod_fornec), MAX(nome_fornec), MAX(ean),
+		       ROUND(AVG(qt_positivados))::int AS qt_positivados,
+		       SUM(pvenda) AS pvenda, SUM(plucro) AS plucro
 		FROM %s
 		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_prod != ''
-		ORDER BY qt_positivados DESC
+		GROUP BY cod_prod
+		ORDER BY ROUND(AVG(qt_positivados))::int DESC
 	`, mv, dateCol), empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
 	if err != nil {
 		log.Printf("[marketing] fetchMktProduto ERRO atual: %v", err)
@@ -282,7 +287,7 @@ func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 	qtAntMap := map[string]int{}
 	if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
 		antRows, err := db.Query(fmt.Sprintf(`
-			SELECT cod_prod, MAX(qt_positivados)
+			SELECT cod_prod, ROUND(AVG(qt_positivados))::int
 			FROM %s
 			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
 			GROUP BY cod_prod
@@ -387,19 +392,22 @@ func fetchMktFornec(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResol
 	mv := mvV01L0(fluxo)
 	dateCol := fluxo.dateCol
 
+	// positivados e base_cli são contagens diárias (não aditivas entre dias):
+	// AVG dá o valor típico do período sem inflar pelo número de dias.
+	// pvenda/plucro são aditivos: SUM acumula o total do período.
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT
 		    cod_fornec,
-		    MAX(nome_fornec)            AS nome,
-		    COALESCE(SUM(positivados),0) AS qt_ativos,
-		    COALESCE(SUM(base_cli),0)    AS base,
-		    COALESCE(AVG(mix),0)         AS avg_mix,
-		    COALESCE(SUM(pvenda),0)      AS pvenda,
-		    COALESCE(SUM(plucro),0)      AS plucro
+		    MAX(nome_fornec)                  AS nome,
+		    COALESCE(ROUND(AVG(positivados))::int, 0) AS qt_ativos,
+		    COALESCE(ROUND(AVG(base_cli))::int, 0)    AS base,
+		    COALESCE(AVG(mix), 0)             AS avg_mix,
+		    COALESCE(SUM(pvenda), 0)          AS pvenda,
+		    COALESCE(SUM(plucro), 0)          AS plucro
 		FROM %s
 		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_fornec != ''
 		GROUP BY cod_fornec
-		ORDER BY qt_ativos DESC
+		ORDER BY ROUND(AVG(positivados))::int DESC
 	`, mv, dateCol), empresaID,
 		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
 	if err != nil {

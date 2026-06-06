@@ -33,7 +33,11 @@ interface KPI {
 interface BiResponse {
   cards: CardItem[]
   kpi: KPI
-  periodo: { ref_ano: number; ref_mes: number; label: string }
+  periodo: {
+    ref_ano: number; ref_mes: number
+    label: string; cur_label: string; ant_label: string
+    fluxo: string
+  }
 }
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
@@ -273,7 +277,7 @@ function useBiData(view: string) {
   return useQuery<BiResponse>({
     queryKey: ['bi-cards', view],
     queryFn: async () => {
-      const r = await fetch(`/api/v2/farol/cards?view=${view}`)
+      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=yoy`)
       if (!r.ok) throw new Error(`Falha ao carregar BI (${view})`)
       return r.json()
     },
@@ -330,7 +334,9 @@ export default function FarolBI() {
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Painel BI — War Room</p>
             <p className="text-sm font-semibold text-slate-200">
               {periodo
-                ? `${MES[periodo.ref_mes]}/${periodo.ref_ano} · ${periodo.label}`
+                ? periodo.ant_label
+                  ? `${periodo.cur_label} · vs ${periodo.ant_label}`
+                  : periodo.cur_label
                 : 'Carregando período…'}
             </p>
           </div>
@@ -373,7 +379,7 @@ export default function FarolBI() {
                 centerText={fmtPct(kpi.total_pct)}
                 label="Objetivo Geral"
                 sublabel={fmtBRL(kpi.total_faturado) + ' faturado'}
-                subvalue={'objetivo: ' + fmtBRL(kpi.total_atual)}
+                subvalue={kpi.total_ant > 0 ? 'ref. ' + fmtBRL(kpi.total_ant) : undefined}
                 color={gaugeColor(kpi.total_pct)}
               />
             </div>
