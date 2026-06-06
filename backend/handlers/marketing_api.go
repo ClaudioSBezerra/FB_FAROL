@@ -179,29 +179,33 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 	t0 := time.Now()
 	baseView := fluxo.baseView
 	dateCol := fluxo.dateCol
-
-	// Agrupa por cnpj (migration 161: chave única do cliente é o CNPJ).
-	row := db.QueryRow(fmt.Sprintf(`
-		SELECT
-		    COUNT(*)                                                      AS total_base_cli,
-		    COUNT(*) FILTER (WHERE max_pos = 1)                          AS total_ativos,
-		    COALESCE(AVG(CASE WHEN max_pos=1 THEN avg_mix END), 0)       AS avg_mix,
-		    COALESCE(SUM(pvenda), 0)                                     AS total_pvenda,
-		    COALESCE(SUM(plucro), 0)                                     AS total_plucro
-		FROM (
-		    SELECT cnpj,
-		           MAX(positivados)   AS max_pos,
-		           AVG(mix)           AS avg_mix,
-		           SUM(pvenda)        AS pvenda,
-		           SUM(plucro)        AS plucro
-		    FROM %s
-		    WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cnpj != ''
-		    GROUP BY cnpj
-		) s
-	`, baseView, dateCol), empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	refIni := pr.RefInicio.Format("2006-01-02")
+	refFim := pr.RefFim.Format("2006-01-02")
 
 	var k mktKPI
-	_ = row.Scan(&k.TotalBaseCli, &k.TotalAtivos, &k.AvgMix, &k.TotalPvenda, &k.TotalPlucro)
+
+	// Base = carteira total dos RCAs (tabela pequena; independente do período).
+	// mv_fat_cli contém apenas compradores, não serve como denominador real.
+	carteiraMV := "farol.mv_fat_carteira_rca"
+	if fluxo.name == "transmitido" {
+		carteiraMV = "farol.mv_trans_carteira_rca"
+	}
+	_ = db.QueryRow(fmt.Sprintf(
+		`SELECT COALESCE(SUM(qtcli_rca), 0) FROM %s WHERE empresa_id=$1`, carteiraMV,
+	), empresaID).Scan(&k.TotalBaseCli)
+
+	// Ativos, mix e totais monetários no período — uma única varredura da MV.
+	_ = db.QueryRow(fmt.Sprintf(`
+		SELECT
+		    COUNT(DISTINCT cnpj) FILTER (WHERE positivados=1 AND cnpj != '') AS total_ativos,
+		    COALESCE(AVG(mix) FILTER (WHERE positivados=1 AND cnpj != ''), 0) AS avg_mix,
+		    COALESCE(SUM(pvenda), 0)                                           AS total_pvenda,
+		    COALESCE(SUM(plucro), 0)                                           AS total_plucro
+		FROM %s
+		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
+	`, baseView, dateCol), empresaID, refIni, refFim,
+	).Scan(&k.TotalAtivos, &k.AvgMix, &k.TotalPvenda, &k.TotalPlucro)
+
 	k.TotalInativos = k.TotalBaseCli - k.TotalAtivos
 	if fluxo.name == "transmitido" {
 		k.TotalTransmitido = k.TotalPvenda
@@ -215,21 +219,17 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 		}
 	}
 
-	// Período anterior (delta de positivação no hero band)
+	// Período anterior — reutiliza a mesma base da carteira; conta ativos no período comp.
 	if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
-		var baseAnt, ativosAnt int
+		var ativosAnt int
 		_ = db.QueryRow(fmt.Sprintf(`
-			SELECT COUNT(*), COUNT(*) FILTER (WHERE max_pos=1)
-			FROM (
-			    SELECT cnpj, MAX(positivados) AS max_pos
-			    FROM %s WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cnpj != ''
-			    GROUP BY cnpj
-			) s
+			SELECT COUNT(DISTINCT cnpj) FILTER (WHERE positivados=1 AND cnpj != '')
+			FROM %s WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
 		`, baseView, dateCol), empresaID,
 			pr.CompInicio.Format("2006-01-02"), pr.CompFim.Format("2006-01-02"),
-		).Scan(&baseAnt, &ativosAnt)
-		if baseAnt > 0 {
-			k.TaxaPositivacaoAnt = float64(ativosAnt) / float64(baseAnt) * 100
+		).Scan(&ativosAnt)
+		if k.TotalBaseCli > 0 {
+			k.TaxaPositivacaoAnt = float64(ativosAnt) / float64(k.TotalBaseCli) * 100
 			if k.TaxaPositivacaoAnt > 100 {
 				k.TaxaPositivacaoAnt = 100
 			}
@@ -449,6 +449,8 @@ func fetchMktFornec(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResol
 
 func fetchClientesInativos(db *sql.DB, empresaID string, pr periodResolution) []mktClienteInativo {
 	t0 := time.Now()
+	// Anti-join via NOT IN com subquery materializada — evita N subqueries correlacionadas
+	// (HAVING NOT EXISTS varria mv_fat_cli uma vez por cod_cli → muito lento).
 	rows, err := db.Query(`
 		SELECT
 		    t.cod_cli,
@@ -457,14 +459,14 @@ func fetchClientesInativos(db *sql.DB, empresaID string, pr periodResolution) []
 		FROM farol.mv_trans_cli t
 		WHERE t.empresa_id=$1
 		  AND t.data_transmissao BETWEEN $2::date AND $3::date
-		  AND t.cod_cli != ''
+		  AND t.cod_cli != '' AND t.cnpj != ''
+		  AND t.cnpj NOT IN (
+		      SELECT DISTINCT cnpj FROM farol.mv_fat_cli
+		       WHERE empresa_id=$1
+		         AND data_faturamento BETWEEN $2::date AND $3::date
+		         AND cnpj != ''
+		  )
 		GROUP BY t.cod_cli
-		HAVING NOT EXISTS (
-		    SELECT 1 FROM farol.mv_fat_cli f
-		     WHERE f.empresa_id=$1 AND f.cod_cli=t.cod_cli
-		       AND f.data_faturamento BETWEEN $2::date AND $3::date
-		       AND f.positivados=1
-		)
 		ORDER BY transmitido DESC
 		LIMIT 100
 	`, empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
