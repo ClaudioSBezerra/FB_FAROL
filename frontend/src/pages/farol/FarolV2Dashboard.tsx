@@ -1,9 +1,14 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { ChevronDown } from 'lucide-react'
 import { Semaforo } from '@/components/farol/Semaforo'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
+import { FilialSelector } from '@/components/FilialSelector'
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover'
 import FarolExecutivo from './FarolExecutivo'
 
 const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral'])
@@ -81,6 +86,102 @@ export function fmtMesAno(ano: number, mes: number) {
   return `${MES_NOMES[mes] ?? mes}/${ano}`
 }
 
+function fmtRange(ano: number, mes: number): string {
+  if (!ano || !mes) return '--/--/---- a --/--/----'
+  const lastDay = new Date(ano, mes, 0).getDate()
+  const m = String(mes).padStart(2, '0')
+  return `01/${m}/${ano} a ${String(lastDay).padStart(2, '0')}/${m}/${ano}`
+}
+
+function autoCompPeriodo(refAno: number, refMes: number, compMode: string): { ano: number; mes: number } {
+  if (compMode === 'yoy' || compMode === 'ytd') return { ano: refAno - 1, mes: refMes }
+  if (refMes > 1) return { ano: refAno, mes: refMes - 1 }
+  return { ano: refAno - 1, mes: 12 }
+}
+
+// ─── PeriodRangeFilter ────────────────────────────────────────────────────────
+
+function PeriodRangeFilter({
+  periodos, refAno, refMes, setRefAno, setRefMes,
+  compMode, compAno, compMes, setCompAno, setCompMes,
+  onClearDrill,
+}: {
+  periodos: string[]
+  refAno: number; refMes: number
+  setRefAno: (v: number) => void; setRefMes: (v: number) => void
+  compMode: string
+  compAno: number; compMes: number
+  setCompAno: (v: number) => void; setCompMes: (v: number) => void
+  onClearDrill: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const auto = autoCompPeriodo(refAno, refMes, compMode)
+  const effComp = compMode === 'mom' && compAno > 0
+    ? { ano: compAno, mes: compMes }
+    : auto
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm text-xs text-slate-700 hover:bg-slate-50 transition-colors shrink-0 whitespace-nowrap">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Atual</span>
+          <span className="tabular-nums">{fmtRange(refAno, refMes)}</span>
+          <span className="text-slate-300 px-0.5 font-light">×</span>
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Ant.</span>
+          <span className="tabular-nums text-slate-500">{fmtRange(effComp.ano, effComp.mes)}</span>
+          <ChevronDown className="h-3 w-3 ml-0.5 text-slate-400 shrink-0" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-3" align="start">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Base Atual</span>
+            <select
+              value={refAno > 0 ? `${refAno}-${String(refMes).padStart(2, '0')}` : ''}
+              onChange={e => {
+                const p = parsePeriodo(e.target.value)
+                setRefAno(p.ano); setRefMes(p.mes); onClearDrill()
+                setOpen(false)
+              }}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
+            >
+              {periodos.map(p => {
+                const { ano, mes } = parsePeriodo(p)
+                return <option key={p} value={p}>{fmtRange(ano, mes)}</option>
+              })}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Base Anterior</span>
+            {compMode === 'mom' ? (
+              <select
+                value={compAno > 0 ? `${compAno}-${String(compMes).padStart(2, '0')}` : ''}
+                onChange={e => {
+                  if (!e.target.value) { setCompAno(0); setCompMes(0) }
+                  else { const p = parsePeriodo(e.target.value); setCompAno(p.ano); setCompMes(p.mes) }
+                }}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
+              >
+                <option value="">Auto — {fmtRange(auto.ano, auto.mes)}</option>
+                {periodos.map(p => {
+                  const { ano, mes } = parsePeriodo(p)
+                  return <option key={p} value={p}>{fmtRange(ano, mes)}</option>
+                })}
+              </select>
+            ) : (
+              <div className="h-8 flex items-center px-2 rounded-lg border border-slate-100 bg-slate-50 text-xs text-slate-500 tabular-nums">
+                {fmtRange(auto.ano, auto.mes)}
+                <span className="ml-1.5 text-[10px] text-slate-400">(automático)</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 const COR_BORDER: Record<Cor, string> = {
   verde: 'border-l-emerald-500',
   amarelo: 'border-l-amber-400',
@@ -130,12 +231,49 @@ function useCards(
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
 
-export function KPIBar({ kpi, periodo }: { kpi: KPI; periodo: CardsResponse['periodo'] }) {
+export function KPIBar({
+  kpi, periodo, periodos, refAno, refMes, onPreset,
+}: {
+  kpi: KPI
+  periodo: CardsResponse['periodo']
+  periodos: string[]
+  refAno: number
+  refMes: number
+  onPreset: (ano: number, mes: number) => void
+}) {
   const antLabel = periodo.ant_label || 'Anterior'
   const curLabel = periodo.cur_label || 'Atual'
+
+  const mesCorrente = periodos.length > 0 ? parsePeriodo(periodos[periodos.length - 1]) : null
+  const mesFechado  = periodos.length > 1 ? parsePeriodo(periodos[periodos.length - 2]) : null
+  const isCorrente  = !!mesCorrente && refAno === mesCorrente.ano && refMes === mesCorrente.mes
+  const isFechado   = !!mesFechado  && refAno === mesFechado.ano  && refMes === mesFechado.mes
+
   return (
     <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-4 mb-4">
-      <p className="text-xs text-slate-400 mb-3 font-medium">{periodo.label}</p>
+      {/* Presets de período — substituem o texto "periodo.label" */}
+      {periodos.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-3">
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
+            {mesCorrente && (
+              <button
+                onClick={() => onPreset(mesCorrente.ano, mesCorrente.mes)}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${isCorrente ? 'bg-primary text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Mês corrente
+              </button>
+            )}
+            {mesFechado && (
+              <button
+                onClick={() => onPreset(mesFechado.ano, mesFechado.mes)}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors border-l border-slate-200 ${isFechado ? 'bg-slate-700 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Mês fechado
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <div>
           <p className="text-xs text-slate-500">Total Anterior</p>
@@ -334,7 +472,23 @@ export default function FarolV2Dashboard() {
     <div className="min-h-full">
       {/* ── Barra de controles ─────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        {/* Abas de visão */}
+
+        {/* ── Filtros de dados: Filial + Mês ── */}
+        <FilialSelector />
+
+        {periodos.length > 0 && (
+          <PeriodRangeFilter
+            periodos={periodos}
+            refAno={refAno} refMes={refMes}
+            setRefAno={setRefAno} setRefMes={setRefMes}
+            compMode={compMode}
+            compAno={compAno} compMes={compMes}
+            setCompAno={setCompAno} setCompMes={setCompMes}
+            onClearDrill={() => setDrillPath([])}
+          />
+        )}
+
+        {/* ── Configuração de visão ── */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
             { id: 'V01' as const, label: 'Por Indústria' },
@@ -355,7 +509,6 @@ export default function FarolV2Dashboard() {
           ))}
         </div>
 
-        {/* Modo de comparação */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
             { id: 'yoy', label: 'Ano a Ano' },
@@ -376,48 +529,6 @@ export default function FarolV2Dashboard() {
           ))}
         </div>
 
-        {/* Seletor de período */}
-        {periodos.length > 0 && (
-          <select
-            value={refAno > 0 ? `${refAno}-${String(refMes).padStart(2, '0')}` : ''}
-            onChange={e => {
-              const p = parsePeriodo(e.target.value)
-              setRefAno(p.ano)
-              setRefMes(p.mes)
-              setDrillPath([])
-            }}
-            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            {periodos.map(p => {
-              const { ano, mes } = parsePeriodo(p)
-              return <option key={p} value={p}>{fmtMesAno(ano, mes)}</option>
-            })}
-          </select>
-        )}
-
-        {/* Seletor "Comparar com" — só no mês a mês */}
-        {compMode === 'mom' && periodos.length > 0 && (
-          <>
-            <span className="text-xs text-slate-400">comparar com</span>
-            <select
-              value={compAno > 0 ? `${compAno}-${String(compMes).padStart(2, '0')}` : ''}
-              onChange={e => {
-                if (e.target.value === '') { setCompAno(0); setCompMes(0); return }
-                const p = parsePeriodo(e.target.value)
-                setCompAno(p.ano)
-                setCompMes(p.mes)
-              }}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">Mês anterior (auto)</option>
-              {periodos.map(p => {
-                const { ano, mes } = parsePeriodo(p)
-                return <option key={p} value={p}>{fmtMesAno(ano, mes)}</option>
-              })}
-            </select>
-          </>
-        )}
-
         {/* Botão importar — somente admin/TI */}
         {canImport && (
           <button
@@ -431,7 +542,14 @@ export default function FarolV2Dashboard() {
 
       {/* ── KPI Bar ─────────────────────────────────────────────────────── */}
       {data?.kpi && data.kpi.total_atual > 0 && (
-        <KPIBar kpi={data.kpi} periodo={data.periodo} />
+        <KPIBar
+          kpi={data.kpi}
+          periodo={data.periodo}
+          periodos={periodos}
+          refAno={refAno}
+          refMes={refMes}
+          onPreset={(ano, mes) => { setRefAno(ano); setRefMes(mes); setDrillPath([]) }}
+        />
       )}
 
       {/* ── Breadcrumb ───────────────────────────────────────────────────── */}

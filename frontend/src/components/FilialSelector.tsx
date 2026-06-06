@@ -44,18 +44,17 @@ export function FilialSelector() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
-          size="sm"
+          variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-start h-7 px-1 gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+          className="h-8 rounded-lg border-slate-200 bg-white px-2 gap-1.5 text-xs text-slate-700 shadow-sm hover:bg-slate-50 font-normal"
         >
-          <GitBranch className="h-3 w-3 shrink-0" />
-          <span className="truncate flex-1 text-left">{triggerLabel}</span>
+          <GitBranch className="h-3 w-3 shrink-0 text-slate-400" />
+          <span className="truncate max-w-[140px]">{triggerLabel}</span>
           {selectedFiliais.length > 0 && (
             <Badge
               variant="secondary"
-              className="ml-auto text-[9px] px-1 py-0 h-4 shrink-0"
+              className="ml-1 text-[9px] px-1 py-0 h-4 shrink-0"
             >
               {selectedFiliais.length}
             </Badge>
