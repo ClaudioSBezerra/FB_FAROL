@@ -477,7 +477,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 
 		filters := parseMultiFilters(q)
 		cards := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
-		kpi := computeKPI(cards, fluxo.name)
+		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
@@ -1007,13 +1007,22 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 
 // ─── computeKPI ──────────────────────────────────────────────────────────────
 
-// computeKPI agrega os totais dos cards. fluxoName não é mais usado (os valores
-// Faturado/Transmitido já vêm preenchidos nos cards por fluxo) mas mantido na
-// assinatura por simetria/legibilidade do call site.
-func computeKPI(cards []cardItem, _ string) kpiSummary {
+// computeKPI agrega os totais dos cards.
+//
+// overlappingBase deve ser true quando os cards agrupam por cod_fornec: nesse
+// nível a base de clientes (base_cli) é a mesma para todos os cards (clientes
+// da empresa/supervisor/RCA, independente de fornecedor). Somar base_cli
+// multiplicaria a base pelo número de fornecedores — dupla contagem.
+// Com overlappingBase=true usamos MAX(base_cli) e recalculamos positPct como
+// média das taxas por card, recompondo positivados = positPct × base.
+func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 	var kpi kpiSummary
 	var mixTotal, mixAntTotal float64
 	mixCount, mixAntCount := 0, 0
+
+	var positPctSum, positPctAntSum float64
+	positCount, positAntCount := 0, 0
+
 	for _, c := range cards {
 		kpi.TotalAtual += c.ValorAtual
 		kpi.TotalAnt += c.ValorAnt
@@ -1021,10 +1030,27 @@ func computeKPI(cards []cardItem, _ string) kpiSummary {
 		kpi.TotalTransmitido += c.Transmitido
 		kpi.TotalPlucro += c.Plucro
 		kpi.TotalPlucroAnt += c.PlucroAnt
-		kpi.TotalPositivados += c.Positivados
-		kpi.TotalBaseCli += c.BaseCli
-		kpi.TotalPositivadosAnt += c.PositivadosAnt
-		kpi.TotalBaseCliAnt += c.BaseCliAnt
+		if overlappingBase {
+			if c.BaseCli > kpi.TotalBaseCli {
+				kpi.TotalBaseCli = c.BaseCli
+			}
+			if c.BaseCliAnt > kpi.TotalBaseCliAnt {
+				kpi.TotalBaseCliAnt = c.BaseCliAnt
+			}
+			if c.BaseCli > 0 {
+				positPctSum += c.PositPct
+				positCount++
+			}
+			if c.BaseCliAnt > 0 {
+				positPctAntSum += c.PositPctAnt
+				positAntCount++
+			}
+		} else {
+			kpi.TotalPositivados += c.Positivados
+			kpi.TotalBaseCli += c.BaseCli
+			kpi.TotalPositivadosAnt += c.PositivadosAnt
+			kpi.TotalBaseCliAnt += c.BaseCliAnt
+		}
 		if c.Mix > 0 {
 			mixTotal += c.Mix
 			mixCount++
@@ -1050,11 +1076,23 @@ func computeKPI(cards []cardItem, _ string) kpiSummary {
 		kpi.TotalCor = "verde"
 	}
 	// Positivação — % e cor (atual vs comparativo)
-	if kpi.TotalBaseCli > 0 {
-		kpi.TotalPositPct = float64(kpi.TotalPositivados) / float64(kpi.TotalBaseCli) * 100
-	}
-	if kpi.TotalBaseCliAnt > 0 {
-		kpi.TotalPositPctAnt = float64(kpi.TotalPositivadosAnt) / float64(kpi.TotalBaseCliAnt) * 100
+	if overlappingBase {
+		if positCount > 0 {
+			kpi.TotalPositPct = positPctSum / float64(positCount)
+		}
+		if positAntCount > 0 {
+			kpi.TotalPositPctAnt = positPctAntSum / float64(positAntCount)
+		}
+		// Reconstrói contagem absoluta a partir da média de % × base correta
+		kpi.TotalPositivados = int(kpi.TotalPositPct/100*float64(kpi.TotalBaseCli) + 0.5)
+		kpi.TotalPositivadosAnt = int(kpi.TotalPositPctAnt/100*float64(kpi.TotalBaseCliAnt) + 0.5)
+	} else {
+		if kpi.TotalBaseCli > 0 {
+			kpi.TotalPositPct = float64(kpi.TotalPositivados) / float64(kpi.TotalBaseCli) * 100
+		}
+		if kpi.TotalBaseCliAnt > 0 {
+			kpi.TotalPositPctAnt = float64(kpi.TotalPositivadosAnt) / float64(kpi.TotalBaseCliAnt) * 100
+		}
 	}
 	kpi.TotalPositCor = "vermelho"
 	if kpi.TotalPositPct >= kpi.TotalPositPctAnt {
@@ -1550,7 +1588,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 
 		filters := parseMultiFilters(q)
 		cards := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
-		kpi := computeKPI(cards, fluxo.name)
+		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
 		sort.Slice(cards, func(i, j int) bool {
