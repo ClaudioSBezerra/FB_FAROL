@@ -356,6 +356,75 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
   )
 }
 
+// ─── DateRangeFilter ─────────────────────────────────────────────────────────
+
+interface DateRangeFilterProps {
+  label: string
+  inicio: string
+  fim: string
+  onChangeInicio: (v: string) => void
+  onChangeFim: (v: string) => void
+  borderColor?: string
+}
+
+function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, borderColor = 'border-slate-300' }: DateRangeFilterProps) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
+
+  const hasValue = inicio && fim
+  const summary = hasValue ? `${fmtDateBR(inicio)} → ${fmtDateBR(fim)}` : '—'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={cn(
+          'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-md bg-white shadow-sm',
+          hasValue ? 'border-slate-600 text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-50',
+        )}
+      >
+        <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}:</span>
+        <span>{summary}</span>
+        <ChevronDown className="h-3 w-3 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 bg-white border border-slate-200 rounded-md shadow-lg p-3 min-w-[290px]">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">{label}</div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="date"
+              value={inicio}
+              onChange={e => onChangeInicio(e.target.value)}
+              className={cn('flex-1 px-2 py-1.5 text-xs border-2 rounded bg-white', borderColor)}
+            />
+            <span className="text-slate-400 text-xs font-bold">→</span>
+            <input
+              type="date"
+              value={fim}
+              onChange={e => onChangeFim(e.target.value)}
+              className={cn('flex-1 px-2 py-1.5 text-xs border-2 rounded bg-white', borderColor)}
+            />
+          </div>
+          {inicio && fim && (
+            <div className="text-[10px] text-slate-500 mt-1.5">
+              {rangeDaysInclusive(inicio, fim)} dia(s) — {fmtDateBR(inicio)} a {fmtDateBR(fim)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── MultiSelect ─────────────────────────────────────────────────────────────
 
 interface MultiSelectProps {
@@ -661,94 +730,33 @@ export default function FarolExecutivo() {
         </div>
       </div>
 
-      {/* ── Faixa de PERÍODO ─────────────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm mb-4">
-        <div className={cn('px-4 py-2 text-white flex items-center justify-between flex-wrap gap-2', HEADER_BG)}>
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-red-400" />
-            <span className="text-xs uppercase tracking-wider font-bold text-red-400">Período</span>
-          </div>
-          <div className="flex gap-1 flex-wrap items-center">
-            <span className="text-[10px] uppercase tracking-wider text-slate-400 mr-1">Atalhos:</span>
-            {([
-              { id: 'mes_corrente' as const, label: 'Mês Corrente',     tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
-              { id: 'yoy'          as const, label: 'Mês Fechado YoY',  tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
-              { id: 'ant_corrente' as const, label: 'Anterior vs Atual', tip: 'Mês anterior INTEIRO × Dia 1 até hoje do mês corrente' },
-              { id: 'ytd'          as const, label: 'Ano vs YTD',       tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
-              { id: 'last7'        as const, label: '7 dias',           tip: 'Últimos 7 dias × 7 dias anteriores' },
-              { id: 'last30'       as const, label: '30 dias',          tip: 'Últimos 30 dias × 30 dias anteriores' },
-            ]).map(p => (
-              <button
-                key={p.id}
-                onClick={() => applyPreset(p.id)}
-                title={p.tip}
-                className={cn(
-                  'px-2.5 py-1 text-[11px] font-semibold rounded transition border',
-                  activePreset === p.id
-                    ? 'bg-white text-slate-800 border-white shadow-sm'
-                    : 'bg-transparent text-slate-300 border-slate-500 hover:bg-slate-500 hover:text-white hover:border-slate-400',
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="px-4 py-3 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-3 items-end">
-          <div>
-            <label className="text-[11px] uppercase tracking-wider text-orange-600 font-bold block mb-1">
-              Base Anterior
-            </label>
-            <div className="flex gap-1 items-center">
-              <input
-                type="date"
-                value={compInicio}
-                onChange={e => { setCompInicio(e.target.value); setActivePreset(null) }}
-                className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-400 rounded bg-white"
-              />
-              <span className="text-orange-500 text-xs px-1 font-bold">→</span>
-              <input
-                type="date"
-                value={compFim}
-                onChange={e => { setCompFim(e.target.value); setActivePreset(null) }}
-                className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-400 rounded bg-white"
-              />
-            </div>
-            {compInicio && compFim && (
-              <div className="text-[10px] text-slate-500 mt-1">
-                {rangeDaysInclusive(compInicio, compFim)} dia(s) — {fmtDateBR(compInicio)} a {fmtDateBR(compFim)}
-              </div>
+      {/* ── Atalhos de período ──────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1 mr-0.5">
+          <Calendar className="h-3 w-3" /> Atalhos:
+        </span>
+        {([
+          { id: 'mes_corrente' as const, label: 'Mês Corrente',      tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
+          { id: 'yoy'          as const, label: 'Mês Fechado YoY',   tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
+          { id: 'ant_corrente' as const, label: 'Anterior vs Atual', tip: 'Mês anterior INTEIRO × Dia 1 até hoje do mês corrente' },
+          { id: 'ytd'          as const, label: 'Ano vs YTD',        tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
+          { id: 'last7'        as const, label: '7 dias',            tip: 'Últimos 7 dias × 7 dias anteriores' },
+          { id: 'last30'       as const, label: '30 dias',           tip: 'Últimos 30 dias × 30 dias anteriores' },
+        ]).map(p => (
+          <button
+            key={p.id}
+            onClick={() => applyPreset(p.id)}
+            title={p.tip}
+            className={cn(
+              'px-2.5 py-1 text-[11px] font-semibold rounded transition border',
+              activePreset === p.id
+                ? 'bg-slate-700 text-white border-slate-700 shadow-sm'
+                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50 hover:border-slate-400',
             )}
-          </div>
-
-          <div className="text-slate-400 text-xs font-bold uppercase tracking-wider pb-2 text-center hidden md:block">vs</div>
-
-          <div>
-            <label className="text-[11px] uppercase tracking-wider text-orange-600 font-bold block mb-1">
-              Base Atual
-            </label>
-            <div className="flex gap-1 items-center">
-              <input
-                type="date"
-                value={refInicio}
-                onChange={e => { setRefInicio(e.target.value); setActivePreset(null) }}
-                className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-500 rounded bg-white font-medium"
-              />
-              <span className="text-orange-500 text-xs px-1 font-bold">→</span>
-              <input
-                type="date"
-                value={refFim}
-                onChange={e => { setRefFim(e.target.value); setActivePreset(null) }}
-                className="flex-1 px-2 py-1.5 text-xs border-2 border-orange-500 rounded bg-white font-medium"
-              />
-            </div>
-            {refInicio && refFim && (
-              <div className="text-[10px] text-slate-500 mt-1">
-                {rangeDaysInclusive(refInicio, refFim)} dia(s) — {fmtDateBR(refInicio)} a {fmtDateBR(refFim)}
-              </div>
-            )}
-          </div>
-        </div>
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
 
       {/* ── Controles secundários ───────────────────────────────────────────── */}
@@ -781,6 +789,23 @@ export default function FarolExecutivo() {
             onChange={(vs) => setFilter(d.col, vs)}
           />
         ))}
+
+        <DateRangeFilter
+          label="Período Anterior"
+          inicio={compInicio}
+          fim={compFim}
+          onChangeInicio={v => { setCompInicio(v); setActivePreset(null) }}
+          onChangeFim={v => { setCompFim(v); setActivePreset(null) }}
+          borderColor="border-orange-400"
+        />
+        <DateRangeFilter
+          label="Período Atual"
+          inicio={refInicio}
+          fim={refFim}
+          onChangeInicio={v => { setRefInicio(v); setActivePreset(null) }}
+          onChangeFim={v => { setRefFim(v); setActivePreset(null) }}
+          borderColor="border-orange-500"
+        />
 
         {totalFiltersActive > 0 && (
           <button
