@@ -355,6 +355,7 @@ func main() {
 	http.HandleFunc("/api/admin/users/promote", withAuth(handlers.PromoteUserHandler, "admin"))
 	http.HandleFunc("/api/admin/users/delete",  withAuth(handlers.DeleteUserHandler, "admin"))
 	http.HandleFunc("/api/admin/users/reassign", withAuth(handlers.ReassignUserHandler, "admin"))
+	http.HandleFunc("/api/admin/diagnose-bi", withAuth(handlers.DiagnoseBIHandler, "admin"))
 
 	// ── Config — Ambientes / Grupos / Empresas ────────────────────────────────
 	http.HandleFunc("/api/config/environments", withAuth(func(db *sql.DB) http.HandlerFunc {

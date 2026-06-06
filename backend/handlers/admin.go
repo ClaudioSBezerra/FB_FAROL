@@ -292,3 +292,114 @@ func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"})
 	}
 }
+
+// DiagnoseBIHandler retorna contagens de vendas vs agg_*_mes por empresa
+// e força um repopulate via farol.upsert_aggs_mes. Útil quando o BI mostra
+// 0 cards mas as views legacy (mv_fat_*) têm dados — indica que as agg_*_mes
+// não foram populadas.
+//
+// GET  /api/admin/diagnose-bi          → só diagnostica
+// POST /api/admin/diagnose-bi?action=repopulate → diagnostica + repopula
+func DiagnoseBIHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		out := map[string]any{}
+
+		// 1. Migrations 16x aplicadas
+		migs := []string{}
+		rows, _ := db.Query(`SELECT filename FROM schema_migrations WHERE filename LIKE '16%' ORDER BY filename`)
+		if rows != nil {
+			for rows.Next() {
+				var f string
+				if rows.Scan(&f) == nil {
+					migs = append(migs, f)
+				}
+			}
+			rows.Close()
+		}
+		out["migrations_16x"] = migs
+
+		// 2. Contagens por empresa
+		type empCount struct {
+			Empresa string `json:"empresa_id"`
+			Rows    int    `json:"rows"`
+		}
+		countBy := func(q string) []empCount {
+			res := []empCount{}
+			rs, err := db.Query(q)
+			if err != nil {
+				log.Printf("[diagnose-bi] erro %q: %v", q, err)
+				return res
+			}
+			defer rs.Close()
+			for rs.Next() {
+				var e empCount
+				if rs.Scan(&e.Empresa, &e.Rows) == nil {
+					res = append(res, e)
+				}
+			}
+			return res
+		}
+		out["vendas_faturadas"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM vendas_faturadas GROUP BY empresa_id`)
+		out["vendas_transmitidas"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM vendas_transmitidas GROUP BY empresa_id`)
+		out["mv_fat_v01_l0"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM farol.mv_fat_v01_l0 GROUP BY empresa_id`)
+		out["agg_fat_v01_l0_mes"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM farol.agg_fat_v01_l0_mes GROUP BY empresa_id`)
+		out["mv_fat_carteira_rca"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM farol.mv_fat_carteira_rca GROUP BY empresa_id`)
+
+		// 3. Função upsert_aggs_mes existe?
+		var fnExists bool
+		_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='farol' AND p.proname='upsert_aggs_mes')`).Scan(&fnExists)
+		out["fn_upsert_aggs_mes_exists"] = fnExists
+
+		// 4. Ação repopulate (opcional)
+		if r.URL.Query().Get("action") == "repopulate" {
+			t0 := time.Now()
+			upserts := []map[string]any{}
+			rs, err := db.Query(`
+				SELECT empresa_id, EXTRACT(YEAR FROM data_faturamento)::int, EXTRACT(MONTH FROM data_faturamento)::int FROM vendas_faturadas
+				UNION
+				SELECT empresa_id, EXTRACT(YEAR FROM data_transmissao)::int, EXTRACT(MONTH FROM data_transmissao)::int FROM vendas_transmitidas`)
+			if err != nil {
+				out["repopulate_error"] = err.Error()
+			} else {
+				defer rs.Close()
+				anosSeen := map[int]bool{}
+				type ym struct {
+					Empresa string
+					Ano     int
+					Mes     int
+				}
+				var jobs []ym
+				for rs.Next() {
+					var j ym
+					if rs.Scan(&j.Empresa, &j.Ano, &j.Mes) == nil {
+						jobs = append(jobs, j)
+					}
+				}
+				for _, j := range jobs {
+					if !anosSeen[j.Ano] {
+						if _, e := db.Exec(`SELECT farol.create_agg_year_partitions($1)`, j.Ano); e != nil {
+							log.Printf("[diagnose-bi] create_year(%d) erro: %v", j.Ano, e)
+						}
+						anosSeen[j.Ano] = true
+					}
+					t1 := time.Now()
+					_, e := db.Exec(`SELECT farol.upsert_aggs_mes($1::uuid, $2, $3)`, j.Empresa, j.Ano, j.Mes)
+					rec := map[string]any{
+						"empresa": j.Empresa, "ano": j.Ano, "mes": j.Mes,
+						"duration_ms": time.Since(t1).Milliseconds(),
+					}
+					if e != nil {
+						rec["error"] = e.Error()
+					}
+					upserts = append(upserts, rec)
+				}
+				out["repopulate_jobs"] = upserts
+				out["repopulate_duration_ms"] = time.Since(t0).Milliseconds()
+				out["agg_fat_v01_l0_mes_AFTER"] = countBy(`SELECT empresa_id::text, COUNT(*) FROM farol.agg_fat_v01_l0_mes GROUP BY empresa_id`)
+			}
+		}
+
+		json.NewEncoder(w).Encode(out)
+	}
+}
