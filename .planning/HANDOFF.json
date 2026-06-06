@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-06-06T13:46:10Z",
+  "phase": null,
+  "phase_name": "ad-hoc UX + bugfixes",
+  "phase_dir": null,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "FilialSelector resestilizado (h-8 border, igual outros filtros)", "status": "done", "commit": "4c719f7"},
+    {"id": 2, "name": "PeriodRangeFilter: chip Atual/Ant com date ranges dd/mm/aaaa, popover com Base Atual e Base Anterior", "status": "done", "commit": "4c719f7"},
+    {"id": 3, "name": "KPIBar: removido periodo.label, adicionado [Mês corrente | Mês fechado] no topo esquerdo", "status": "done", "commit": "4c719f7"},
+    {"id": 4, "name": "Barra de controles: Filial + PeriodRange primeiro, view tabs depois", "status": "done", "commit": "4c719f7"},
+    {"id": 5, "name": "fix import 401: Authorization header em todos os fetches de FarolV2Import", "status": "done", "commit": "42b34de"},
+    {"id": 6, "name": "build(dist): rebuild frontend e commit dist/ para Coolify", "status": "done", "commit": "6070c30"}
+  ],
+  "remaining_tasks": [
+    {"id": 7, "name": "Validar layout em produção após deploy Coolify do commit 6070c30", "status": "not_started"},
+    {"id": 8, "name": "Importar 12 meses de 2025 (test-data/*.csv não commitados) via tela de importação", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {"action": "Verificar se produção (farol.fbtax.cloud) está servindo o novo dist após commit 6070c30", "context": "Coolify serve dist/ estático do repo — já foi pushado, aguardar rebuild do container", "blocking": false},
+    {"action": "Importar arquivos test-data/*.csv pelo painel após confirmar que 401 está resolvido", "context": "12 arquivos CSV de 2025 gerados localmente, não commitados", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "dist/ é buildado localmente e commitado — Coolify não faz build do React", "rationale": "Dockerfile só builda Go; frontend servido como estático do repo", "phase": "ad-hoc"},
+    {"decision": "PeriodRangeFilter como Popover com selects de Base Atual e Base Anterior", "rationale": "Usuário pediu chips de data no estilo filtro, clicáveis para editar", "phase": "ad-hoc"},
+    {"decision": "Atalhos Mês corrente/Mês fechado no KPIBar topo-esquerdo (no lugar de periodo.label)", "rationale": "Usuário pediu para substituir o texto PERIODO pelos atalhos", "phase": "ad-hoc"}
+  ],
+  "uncommitted_files": [
+    "test-data/jan-2025.csv até dez-2025.csv (12 arquivos, gerados por gen-2025.sh, não commitados por design)"
+  ],
+  "next_action": "Confirmar layout em produção: [Filial][Atual dd/mm a dd/mm × Ant dd/mm a dd/mm][Por Indústria...] na barra, e [Mês corrente|Mês fechado] no KPIBar esquerdo",
+  "context_notes": "Sessão focada em UX do Painel de Vendas. O dist/ não estava sendo buildado — Coolify serve estático. A cada mudança de frontend é necessário: npm run build, git add -f frontend/dist/, commit, push."
+}
