@@ -71,6 +71,14 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
+	// V04: visão por força de vendas — RCA → Fornecedor → Cliente → Produto
+	// Usa exclusivamente tabelas agg_*_mes (migration 162); sem MVs diárias.
+	"V04": {
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
 }
 
 // Mapas de MVs por fluxo + view + drillIdx → nome da MV de leitura.
@@ -86,6 +94,23 @@ var viewPorNivelTrans = map[string][]string{
 	"V01": {"mv_trans_v01_l0", "mv_trans_v01_l1", "mv_trans_v01_l2", "mv_trans_v01_l3", "mv_trans_cli"},
 	"V02": {"mv_trans_v02_l0", "mv_trans_v02_l1", "mv_trans_v02_l2", "mv_trans_cli"},
 	"V03": {"mv_trans_v03_l0", "mv_trans_v03_l1", "mv_trans_v03_l2", "mv_trans_v03_l3"},
+}
+
+// Tabelas agg_*_mes (granularidade mensal, migration 162).
+// Usadas quando o range de datas cobre apenas meses completos.
+// V04 só existe aqui (sem equivalente em MV diária).
+var aggTablesFat = map[string][]string{
+	"V01": {"agg_fat_v01_l0_mes", "agg_fat_v01_l1_mes", "agg_fat_v01_l2_mes", "agg_fat_v01_l3_mes", "agg_fat_v01_l4_mes"},
+	"V02": {"agg_fat_v02_l0_mes", "agg_fat_v02_l1_mes", "agg_fat_v02_l2_mes", "agg_fat_v02_l3_mes"},
+	"V03": {"agg_fat_v03_l0_mes", "agg_fat_v03_l1_mes", "agg_fat_v03_l2_mes", "agg_fat_v03_l3_mes"},
+	"V04": {"agg_fat_v04_l0_mes", "agg_fat_v04_l1_mes", "agg_fat_v04_l2_mes"},
+}
+
+var aggTablesTrans = map[string][]string{
+	"V01": {"agg_trans_v01_l0_mes", "agg_trans_v01_l1_mes", "agg_trans_v01_l2_mes", "agg_trans_v01_l3_mes", "agg_trans_v01_l4_mes"},
+	"V02": {"agg_trans_v02_l0_mes", "agg_trans_v02_l1_mes", "agg_trans_v02_l2_mes", "agg_trans_v02_l3_mes"},
+	"V03": {"agg_trans_v03_l0_mes", "agg_trans_v03_l1_mes", "agg_trans_v03_l2_mes", "agg_trans_v03_l3_mes"},
+	"V04": {"agg_trans_v04_l0_mes", "agg_trans_v04_l1_mes", "agg_trans_v04_l2_mes"},
 }
 
 // AllFatViews / AllTransViews — 14 views por fluxo, em ordem de REFRESH
@@ -147,6 +172,40 @@ func getViewName(fluxo fluxoCtx, view string, drillIdx int) string {
 		return "farol." + levels[drillIdx]
 	}
 	return fluxo.baseView
+}
+
+// getAggTableName retorna a tabela agg_*_mes para (fluxo, view, drillIdx), ou ("", false).
+func getAggTableName(fluxo fluxoCtx, view string, drillIdx int) (string, bool) {
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+	if levels, ok := tables[view]; ok && drillIdx >= 0 && drillIdx < len(levels) {
+		return "farol." + levels[drillIdx], true
+	}
+	return "", false
+}
+
+// isCompleteMonthRange reporta se [start, end] cobre apenas meses calendários completos.
+func isCompleteMonthRange(start, end time.Time) bool {
+	if start.IsZero() || end.IsZero() {
+		return false
+	}
+	if start.Day() != 1 {
+		return false
+	}
+	lastDay := time.Date(end.Year(), end.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	return end.Day() == lastDay.Day()
+}
+
+// ym converte uma data no inteiro ano*100+mes usado nas cláusulas WHERE das agg_*_mes.
+func ym(t time.Time) int { return t.Year()*100 + int(t.Month()) }
+
+// buildMesCond monta `(v.ano * 100 + v.mes) BETWEEN $N AND $M` para tabelas agg_*_mes.
+func buildMesCond(ymStart, ymEnd int, args *[]any) string {
+	*args = append(*args, ymStart, ymEnd)
+	n := len(*args)
+	return fmt.Sprintf("(v.ano * 100 + v.mes) BETWEEN $%d AND $%d", n-1, n)
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -386,7 +445,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		hier, ok := hierarquias[view]
 		if !ok {
-			http.Error(w, `{"error":"view inválida — use V01, V02 ou V03"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"view inválida — use V01, V02, V03 ou V04"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -646,6 +705,48 @@ GROUP BY v.%s`, groupCol, nameCol, viewName, groupCol, rangeCond, drillCond, gro
 	return result
 }
 
+// queryAggregatedMes — lê tabelas agg_*_mes (granularidade mensal, migration 162).
+// Usado quando o range de datas é meses completos; substitui queryAggregated/queryAnteriorTotals.
+// pvenda/plucro são somados; base_cli/positivados/mix são AVG (valor típico por mês).
+func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillCond string, args []any) map[string]aggResult {
+	t0 := time.Now()
+	q := fmt.Sprintf(`
+SELECT
+  v.%s                           AS key,
+  MAX(v.%s)                      AS label,
+  SUM(v.pvenda)                  AS valor,
+  COALESCE(SUM(v.plucro), 0)     AS plucro,
+  ROUND(AVG(v.base_cli))::int    AS base_cli,
+  ROUND(AVG(v.positivados))::int AS positivados,
+  AVG(v.mix)                     AS mix
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s != ''
+AND %s %s
+GROUP BY v.%s`,
+		groupCol, nameCol,
+		viewName,
+		groupCol, mesCond, drillCond,
+		groupCol,
+	)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:agg] queryAggregatedMes view=%s nível=%s ERRO em %v: %v", viewName, groupCol, time.Since(t0), err)
+		return nil
+	}
+	defer rows.Close()
+	result := make(map[string]aggResult)
+	for rows.Next() {
+		var key string
+		var r aggResult
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.baseCli, &r.positivados, &r.mix); err == nil {
+			result[key] = r
+		}
+	}
+	log.Printf("[farol:agg] queryAggregatedMes view=%s nível=%s → %d grupos em %v",
+		viewName, groupCol, len(result), time.Since(t0))
+	return result
+}
+
 // queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
 // Lê direto da tabela base do fluxo, escopado por drill (volume pequeno).
 
@@ -729,11 +830,23 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	nameCol := safeColName(level.NameField)
 	viewName := getViewName(fluxo, view, drillIdx)
 
-	log.Printf("[farol:view] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
-		empresaID, fluxo.name, viewName, groupCol,
-		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"),
-		fmtDateOrEmpty(pr.CompInicio), fmtDateOrEmpty(pr.CompFim),
-		len(drillPath), len(filters))
+	// Detecta se o range cobre meses completos e se existe tabela agg_*_mes para este nível.
+	aggName, hasAgg := getAggTableName(fluxo, view, drillIdx)
+	useMesRef := groupCol != "cod_prod" && hasAgg && isCompleteMonthRange(pr.RefInicio, pr.RefFim)
+	useMesComp := groupCol != "cod_prod" && hasAgg && isCompleteMonthRange(pr.CompInicio, pr.CompFim)
+	if useMesRef {
+		log.Printf("[farol:agg] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d → agg_mes",
+			empresaID, fluxo.name, aggName, groupCol,
+			pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"),
+			fmtDateOrEmpty(pr.CompInicio), fmtDateOrEmpty(pr.CompFim),
+			len(drillPath))
+	} else {
+		log.Printf("[farol:view] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
+			empresaID, fluxo.name, viewName, groupCol,
+			pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"),
+			fmtDateOrEmpty(pr.CompInicio), fmtDateOrEmpty(pr.CompFim),
+			len(drillPath), len(filters))
+	}
 
 	// Bucket "atual" (período principal)
 	atualArgs := []any{empresaID}
@@ -744,6 +857,18 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		drillCond = drillCond + " " + filterCond
 	}
 
+	// Args separados para path agg_mes (posições $2/$3 diferentes: ymStart/ymEnd em vez de datas).
+	var atualArgsMes []any
+	var mesCond, drillCondMes string
+	if useMesRef {
+		atualArgsMes = []any{empresaID}
+		mesCond = buildMesCond(ym(pr.RefInicio), ym(pr.RefFim), &atualArgsMes)
+		drillCondMes = buildDrillCond(drillPath, &atualArgsMes)
+		if fc := buildMultiFilterCond(filters, &atualArgsMes); fc != "" {
+			drillCondMes = drillCondMes + " " + fc
+		}
+	}
+
 	var atualMap, antMap map[string]aggResult
 	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
 
@@ -751,6 +876,11 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	wg.Add(1)
 	if groupCol == "cod_prod" {
 		go func() { defer wg.Done(); atualMap = queryProdutos(db, fluxo, atualCond, drillCond, atualArgs) }()
+	} else if useMesRef {
+		go func() {
+			defer wg.Done()
+			atualMap = queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCondMes, atualArgsMes)
+		}()
 	} else {
 		go func() {
 			defer wg.Done()
@@ -769,6 +899,17 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		wg.Add(1)
 		if groupCol == "cod_prod" {
 			go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, fluxo, antCond, antDrill, antArgs) }()
+		} else if useMesComp {
+			antArgsMes := []any{empresaID}
+			antMesCond := buildMesCond(ym(pr.CompInicio), ym(pr.CompFim), &antArgsMes)
+			antDrillMes := buildDrillCond(drillPath, &antArgsMes)
+			if fc := buildMultiFilterCond(filters, &antArgsMes); fc != "" {
+				antDrillMes = antDrillMes + " " + fc
+			}
+			go func() {
+				defer wg.Done()
+				antMap = queryAggregatedMes(db, aggName, groupCol, nameCol, antMesCond, antDrillMes, antArgsMes)
+			}()
 		} else {
 			go func() {
 				defer wg.Done()
