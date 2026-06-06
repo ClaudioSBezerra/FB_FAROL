@@ -609,7 +609,7 @@ export default function FarolExecutivo() {
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
-  const [activePreset, setActivePreset] = useState<Preset | null>('mes_corrente')
+  const [activePreset, setActivePreset] = useState<Preset | null>('ytd')
 
   const [refInicio, setRefInicio] = useState('')
   const [refFim, setRefFim] = useState('')
@@ -630,8 +630,8 @@ export default function FarolExecutivo() {
   const periodosQ = useUltimoPeriodo()
   useEffect(() => {
     if (refInicio || !periodosQ.data) return
-    // Default ao entrar: "Mês corrente vs Mês anterior" (paralelo, dia 1 até hoje)
-    const r = presetRange('mes_corrente', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
+    // Default ao entrar: "Ano × Ano" (ano anterior completo vs ano atual até hoje)
+    const r = presetRange('ytd', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }, [periodosQ.data, refInicio])
@@ -741,7 +741,7 @@ export default function FarolExecutivo() {
       {/* ── Atalhos de período ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
         <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1 mr-0.5">
-          <Calendar className="h-3 w-3" /> Atalhos:
+          <Calendar className="h-3 w-3" />
         </span>
         {([
           { id: 'ytd'          as const, tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
