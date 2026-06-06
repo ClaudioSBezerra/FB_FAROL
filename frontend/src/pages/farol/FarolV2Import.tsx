@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { XCircle, UploadCloud, FileText, CheckCircle, AlertCircle, Loader2, Clock } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -50,18 +51,21 @@ interface QueueItem {
 
 // ─── Hook de períodos existentes ──────────────────────────────────────────────
 
-function usePeriodosV2() {
+function usePeriodosV2(token: string | null) {
   return useQuery<PeriodoItem[]>({
     queryKey: ['v2-periodos'],
-    queryFn: () => fetch('/api/v2/vendas/periodos').then(r => r.json()),
+    queryFn: () => fetch('/api/v2/vendas/periodos', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(r => r.json()),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
+    enabled: !!token,
   })
 }
 
 // ─── ImportForm ───────────────────────────────────────────────────────────────
 
-function ImportForm({ onDone }: { onDone: () => void }) {
+function ImportForm({ onDone, token }: { onDone: () => void; token: string | null }) {
   const [items, setItems]           = useState<QueueItem[]>([])
   const [running, setRunning]       = useState(false)
   const [currentIdx, setCurrentIdx] = useState(-1)
@@ -90,7 +94,9 @@ function ImportForm({ onDone }: { onDone: () => void }) {
       if (pollRef.current) clearInterval(pollRef.current)
       pollRef.current = setInterval(async () => {
         try {
-          const r = await fetch(`/api/v2/vendas/job/${jobId}`)
+          const r = await fetch(`/api/v2/vendas/job/${jobId}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
           if (!r.ok) return
           const j: ImportJob = await r.json()
           updateItem(idx, { job: j, status: j.status as ItemStatus })
@@ -125,7 +131,11 @@ function ImportForm({ onDone }: { onDone: () => void }) {
         const fd = new FormData()
         fd.append('file', snapshot[i].file)
         const { ano, mes } = parseAnoMesFromFilename(snapshot[i].file.name)
-        const resp = await fetch(`/api/v2/vendas/import?ano=${ano}&mes=${mes}&skip_refresh=true`, { method: 'POST', body: fd })
+        const resp = await fetch(`/api/v2/vendas/import?ano=${ano}&mes=${mes}&skip_refresh=true`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        })
 
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ error: 'Erro no upload' }))
@@ -150,7 +160,10 @@ function ImportForm({ onDone }: { onDone: () => void }) {
     // Consolidação final: REFRESH das 28 MVs + upsert_aggs_mes para todos os meses
     setConsolidating('running')
     try {
-      const r = await fetch('/api/v2/farol/refresh-views', { method: 'POST' })
+      const r = await fetch('/api/v2/farol/refresh-views', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
       setConsolidating(r.ok ? 'done' : 'error')
       if (r.ok) onDone()
     } catch {
@@ -162,7 +175,10 @@ function ImportForm({ onDone }: { onDone: () => void }) {
     abortRef.current = true
     const jobId = currentJobId.current
     if (jobId) {
-      try { await fetch(`/api/v2/vendas/job/${jobId}/cancel`, { method: 'POST' }) } catch {}
+      try { await fetch(`/api/v2/vendas/job/${jobId}/cancel`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }) } catch {}
     }
   }
 
@@ -426,7 +442,8 @@ function PeriodosTable({ periodos }: { periodos: PeriodoItem[] }) {
 
 export default function FarolV2Import() {
   const qc = useQueryClient()
-  const { data: periodos = [], refetch } = usePeriodosV2()
+  const { token } = useAuth()
+  const { data: periodos = [], refetch } = usePeriodosV2(token)
 
   const handleDone = () => {
     refetch()
@@ -444,7 +461,7 @@ export default function FarolV2Import() {
             Selecione um ou vários arquivos CSV. O período é detectado automaticamente a partir das datas
             do arquivo — não é necessário informar mês ou ano. Múltiplos arquivos são processados em sequência.
           </p>
-          <ImportForm onDone={handleDone} />
+          <ImportForm onDone={handleDone} token={token} />
         </div>
 
         {/* Card de períodos existentes */}
