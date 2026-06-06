@@ -78,6 +78,15 @@ type mktResponse struct {
 	View             string              `json:"view"`
 }
 
+// mvMktCliDia retorna a MV de cliente diária para o fluxo (1 linha por dia × cliente).
+// Muito menor que mv_fat_cli (sem fanout de fornec/supervisor/rca).
+func mvMktCliDia(fluxo fluxoCtx) string {
+	if fluxo.name == "transmitido" {
+		return "farol.mv_trans_mkt_cli_dia"
+	}
+	return "farol.mv_fat_mkt_cli_dia"
+}
+
 // MV de marketing por fluxo (penetração de produto, agregação por produto+fornec)
 func mvMktProdPen(fluxo fluxoCtx) string {
 	if fluxo.name == "transmitido" {
@@ -177,7 +186,7 @@ func MarketingCardsHandler(db *sql.DB) http.HandlerFunc {
 
 func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) mktKPI {
 	t0 := time.Now()
-	baseView := fluxo.baseView
+	baseView := mvMktCliDia(fluxo)
 	dateCol := fluxo.dateCol
 	refIni := pr.RefInicio.Format("2006-01-02")
 	refFim := pr.RefFim.Format("2006-01-02")
@@ -339,7 +348,7 @@ func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 
 func fetchMktCliente(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) []mktCard {
 	t0 := time.Now()
-	baseView := fluxo.baseView
+	baseView := mvMktCliDia(fluxo)
 	dateCol := fluxo.dateCol
 
 	rows, err := db.Query(fmt.Sprintf(`
@@ -449,22 +458,23 @@ func fetchMktFornec(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResol
 
 func fetchClientesInativos(db *sql.DB, empresaID string, pr periodResolution) []mktClienteInativo {
 	t0 := time.Now()
-	// Anti-join via NOT IN com subquery materializada — evita N subqueries correlacionadas
-	// (HAVING NOT EXISTS varria mv_fat_cli uma vez por cod_cli → muito lento).
+	// Usa as MVs cliente-dia (1 linha por dia×cliente) em vez de mv_trans_cli / mv_fat_cli
+	// (que têm fanout de fornec/supervisor/rca). NOT EXISTS é mais eficiente que NOT IN
+	// quando a subquery pode ser grande.
 	rows, err := db.Query(`
 		SELECT
 		    t.cod_cli,
-		    MAX(t.nome_cli)              AS nome,
-		    COALESCE(SUM(t.pvenda), 0)   AS transmitido
-		FROM farol.mv_trans_cli t
+		    MAX(t.nome_cli)             AS nome,
+		    COALESCE(SUM(t.pvenda), 0)  AS transmitido
+		FROM farol.mv_trans_mkt_cli_dia t
 		WHERE t.empresa_id=$1
 		  AND t.data_transmissao BETWEEN $2::date AND $3::date
 		  AND t.cod_cli != '' AND t.cnpj != ''
-		  AND t.cnpj NOT IN (
-		      SELECT DISTINCT cnpj FROM farol.mv_fat_cli
-		       WHERE empresa_id=$1
-		         AND data_faturamento BETWEEN $2::date AND $3::date
-		         AND cnpj != ''
+		  AND NOT EXISTS (
+		      SELECT 1 FROM farol.mv_fat_mkt_cli_dia f
+		       WHERE f.empresa_id = $1
+		         AND f.data_faturamento BETWEEN $2::date AND $3::date
+		         AND f.cnpj = t.cnpj AND f.positivados = 1
 		  )
 		GROUP BY t.cod_cli
 		ORDER BY transmitido DESC
