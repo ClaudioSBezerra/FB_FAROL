@@ -234,24 +234,26 @@ func onDBConnected() {
 				continue
 			}
 
-			fmt.Printf("Executing migration: %s\n", file)
+			log.Printf("Executing migration: %s", file)
 			migration, err := os.ReadFile(file)
 			if err != nil {
-				log.Printf("Could not read migration file %s: %v", file, err)
-				continue
+				log.Fatalf("ABORTING: Could not read migration file %s: %v", file, err)
 			}
 			_, err = database.Exec(string(migration))
 			if err != nil {
-				log.Printf("Migration %s FAILED: %v", file, err)
 				if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") {
+					log.Printf("Migration %s skipped (already exists): %v", file, err)
 					_, _ = database.Exec("INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", baseName)
-					fmt.Printf("Migration %s skipped (already exists).\n", file)
+				} else {
+					log.Fatalf("ABORTING: Migration %s FAILED: %v\n"+
+						"Backend will NOT start with pending migrations to avoid running with an inconsistent schema.\n"+
+						"Fix the migration manually (psql -f) and restart.", file, err)
 				}
 			} else {
-				fmt.Printf("Migration %s executed successfully.\n", file)
+				log.Printf("Migration %s executed successfully.", file)
 				_, insertErr := database.Exec("INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", baseName)
 				if insertErr != nil {
-					log.Printf("Warning: Could not record migration %s: %v", baseName, insertErr)
+					log.Fatalf("ABORTING: Migration %s ran but could not be recorded: %v", file, insertErr)
 				}
 			}
 		}
