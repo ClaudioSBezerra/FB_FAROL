@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	BackendVersion = "1.0.1"
+	BackendVersion = "1.1.0"
 	FeatureSet     = "Farol — Recalibração de Picking"
 )
 
