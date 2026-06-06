@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { XCircle, UploadCloud, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { XCircle, UploadCloud, FileText, CheckCircle, AlertCircle, Loader2, Clock } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -14,23 +14,20 @@ interface PeriodoItem {
 
 interface ImportJob {
   id: string
-  tipo_base: string
-  ano: number
-  mes: number
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled'
-  progress: number      // 0-100
+  progress: number
   total_lines: number
   importados: number
   message: string
 }
 
-const MES_NOMES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-function mesOptions() {
-  return Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: MES_NOMES[i + 1] }))
-}
-function anoOptions() {
-  const cur = new Date().getFullYear()
-  return [cur + 1, cur, cur - 1, cur - 2].map(a => ({ value: a, label: String(a) }))
+type ItemStatus = 'waiting' | 'uploading' | 'processing' | 'done' | 'error' | 'cancelled'
+
+interface QueueItem {
+  file: File
+  status: ItemStatus
+  job: ImportJob | null
+  error?: string
 }
 
 // ─── Hook de períodos existentes ──────────────────────────────────────────────
@@ -47,267 +44,284 @@ function usePeriodosV2() {
 // ─── ImportForm ───────────────────────────────────────────────────────────────
 
 function ImportForm({ onDone }: { onDone: () => void }) {
-  const [tipoBase, setTipoBase] = useState<'ATUAL' | 'COMPARATIVA'>('ATUAL')
-  const [ano, setAno]           = useState(new Date().getFullYear())
-  const [mes, setMes]           = useState(new Date().getMonth() + 1)
-  const [file, setFile]         = useState<File | null>(null)
-  const [job, setJob]           = useState<ImportJob | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [items, setItems]       = useState<QueueItem[]>([])
+  const [running, setRunning]   = useState(false)
+  const [currentIdx, setCurrentIdx] = useState(-1)
+  const [dragOver, setDragOver] = useState(false)
+  const fileRef  = useRef<HTMLInputElement>(null)
+  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const abortRef = useRef(false)
 
-  const isActive = uploading || (job && (job.status === 'pending' || job.status === 'processing'))
-
-  // Para o polling quando o componente é desmontado
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
-  const startPolling = (jobId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current)
-    pollRef.current = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/v2/vendas/job/${jobId}`)
-        if (!r.ok) return
-        const j: ImportJob = await r.json()
-        setJob(j)
-        if (j.status === 'done' || j.status === 'error' || j.status === 'cancelled') {
-          clearInterval(pollRef.current!)
-          pollRef.current = null
-          if (j.status === 'done') onDone()
-        }
-      } catch { /* ignora erros de rede transitórios */ }
-    }, 2000)
+  const updateItem = (idx: number, patch: Partial<QueueItem>) =>
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it))
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const arr = Array.from(files)
+      .filter(f => f.name.endsWith('.csv') || f.name.endsWith('.txt'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    setItems(arr.map(file => ({ file, status: 'waiting', job: null })))
   }
 
-  const handleImport = async () => {
-    if (!file) return
-    setUploading(true)
-    setJob(null)
+  const pollJob = (jobId: string, idx: number): Promise<ImportJob> =>
+    new Promise((resolve, reject) => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/v2/vendas/job/${jobId}`)
+          if (!r.ok) return
+          const j: ImportJob = await r.json()
+          updateItem(idx, { job: j, status: j.status as ItemStatus })
+          if (j.status === 'done' || j.status === 'error' || j.status === 'cancelled') {
+            clearInterval(pollRef.current!)
+            pollRef.current = null
+            resolve(j)
+          }
+        } catch (e) { reject(e) }
+      }, 2000)
+    })
 
-    const fd = new FormData()
-    fd.append('file', file)
+  const runQueue = async () => {
+    setRunning(true)
+    abortRef.current = false
 
-    try {
-      const url = `/api/v2/vendas/import?tipo_base=${tipoBase}&ano=${ano}&mes=${mes}`
-      const resp = await fetch(url, { method: 'POST', body: fd })
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: 'Erro desconhecido' }))
-        setJob({ id: '', tipo_base: tipoBase, ano, mes, status: 'error',
-          progress: 0, total_lines: 0, importados: 0, message: err.error ?? 'Erro no upload' })
-        return
+    const snapshot = items // captura snapshot da fila
+
+    for (let i = 0; i < snapshot.length; i++) {
+      if (abortRef.current) {
+        // marca restantes como cancelado
+        setItems(prev => prev.map((it, idx) =>
+          idx >= i && it.status === 'waiting' ? { ...it, status: 'cancelled' } : it
+        ))
+        break
       }
-      const { job_id } = await resp.json()
-      // Faz o primeiro fetch imediatamente para mostrar o estado "pending"
-      const initResp = await fetch(`/api/v2/vendas/job/${job_id}`)
-      if (initResp.ok) setJob(await initResp.json())
-      startPolling(job_id)
-    } catch (e) {
-      setJob({ id: '', tipo_base: tipoBase, ano, mes, status: 'error',
-        progress: 0, total_lines: 0, importados: 0, message: 'Falha de conexão' })
-    } finally {
-      setUploading(false)
+
+      setCurrentIdx(i)
+      updateItem(i, { status: 'uploading' })
+
+      try {
+        const fd = new FormData()
+        fd.append('file', snapshot[i].file)
+        const resp = await fetch('/api/v2/vendas/import?ano=0&mes=0', { method: 'POST', body: fd })
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ error: 'Erro no upload' }))
+          updateItem(i, { status: 'error', error: err.error ?? 'Erro desconhecido' })
+          continue
+        }
+
+        const { job_id } = await resp.json()
+        updateItem(i, { status: 'processing' })
+        const job = await pollJob(job_id, i)
+        if (job.status === 'done') onDone()
+      } catch {
+        updateItem(i, { status: 'error', error: 'Falha de conexão' })
+      }
     }
+
+    setRunning(false)
+    setCurrentIdx(-1)
   }
 
   const handleCancel = async () => {
-    if (!job?.id) return
-    try {
-      await fetch(`/api/v2/vendas/job/${job.id}/cancel`, { method: 'POST' })
-      // O polling detecta o status 'cancelled' e para automaticamente
-    } catch { /* ignora */ }
+    abortRef.current = true
+    const item = items[currentIdx]
+    if (item?.job?.id) {
+      try { await fetch(`/api/v2/vendas/job/${item.job.id}/cancel`, { method: 'POST' }) } catch {}
+    }
   }
 
   const resetForm = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    setJob(null)
-    setFile(null)
-    setUploading(false)
+    setItems([])
+    setRunning(false)
+    setCurrentIdx(-1)
+    abortRef.current = false
   }
 
-  const pct = job
-    ? job.status === 'done' ? 100 : job.progress
-    : 0
+  const doneCnt    = items.filter(it => it.status === 'done').length
+  const errorCnt   = items.filter(it => it.status === 'error').length
+  const allSettled = !running && items.length > 0 &&
+    items.every(it => ['done', 'error', 'cancelled'].includes(it.status))
 
-  return (
-    <div className="space-y-4">
-      {/* Tipo de base */}
-      <div className="flex rounded-lg border border-slate-200 overflow-hidden w-full sm:w-auto">
-        {(['ATUAL', 'COMPARATIVA'] as const).map(t => (
+  // ── Estado A: sem arquivos → drop zone ──────────────────────────────────────
+  if (items.length === 0) {
+    return (
+      <div>
+        <label className="block text-xs text-slate-500 mb-1">Arquivo(s) CSV — separador ;</label>
+        <div
+          onClick={() => fileRef.current?.click()}
+          onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            dragOver
+              ? 'border-primary bg-primary/5'
+              : 'border-slate-200 hover:border-slate-300 bg-slate-50'
+          }`}
+        >
+          <UploadCloud className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm text-slate-500">Clique ou arraste um ou vários arquivos</p>
+          <p className="text-xs text-slate-400 mt-1">Seleção múltipla · CSV com separador ; · até 1 GB por arquivo</p>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,.txt,text/csv,text/plain"
+          multiple
+          className="hidden"
+          onChange={e => handleFiles(e.target.files)}
+        />
+      </div>
+    )
+  }
+
+  // ── Estado B: arquivos selecionados, ainda não iniciou ───────────────────────
+  if (!running && !allSettled) {
+    const totalMB = items.reduce((s, it) => s + it.file.size, 0) / 1024 / 1024
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-slate-100 divide-y divide-slate-50 overflow-hidden">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+              <FileText className="h-4 w-4 text-slate-300 shrink-0" />
+              <span className="flex-1 truncate text-sm text-slate-700">{it.file.name}</span>
+              <span className="text-xs text-slate-400 tabular-nums shrink-0">
+                {(it.file.size / 1024 / 1024).toFixed(1)} MB
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-slate-400">
+          {items.length} arquivo{items.length > 1 ? 's' : ''} · {totalMB.toFixed(0)} MB total · processados em sequência
+        </p>
+        <div className="flex gap-2">
           <button
-            key={t}
-            disabled={!!isActive}
-            onClick={() => setTipoBase(t)}
-            className={`flex-1 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-60 ${
-              tipoBase === t ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'
-            }`}
+            onClick={runQueue}
+            className="flex-1 h-10 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
-            {t === 'ATUAL' ? 'Base Atual' : 'Base Comparativa'}
+            <UploadCloud className="h-4 w-4" />
+            Importar {items.length} arquivo{items.length > 1 ? 's' : ''}
           </button>
-        ))}
-      </div>
-
-      {/* Período */}
-      <div className="flex gap-2 flex-wrap">
-        <div>
-          <label className="block text-xs text-slate-500 mb-1">Mês</label>
-          <select
-            disabled={!!isActive}
-            value={mes}
-            onChange={e => setMes(+e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+          <button
+            onClick={resetForm}
+            className="h-10 px-3 rounded-lg border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-colors"
           >
-            {mesOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-slate-500 mb-1">Ano</label>
-          <select
-            disabled={!!isActive}
-            value={ano}
-            onChange={e => setAno(+e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
-          >
-            {anoOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            Limpar
+          </button>
         </div>
       </div>
+    )
+  }
 
-      {/* Drop zone */}
-      {!isActive && !job && (
-        <div>
-          <label className="block text-xs text-slate-500 mb-1">Arquivo CSV (separador: ;)</label>
+  // ── Estado C/D: em execução ou concluído ─────────────────────────────────────
+  return (
+    <div className="space-y-3">
+      {/* Cabeçalho da fila */}
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-slate-500">
+          {running
+            ? `Processando ${currentIdx + 1} de ${items.length}…`
+            : allSettled
+              ? `${doneCnt} concluído${doneCnt !== 1 ? 's' : ''}${errorCnt > 0 ? ` · ${errorCnt} com erro` : ''}`
+              : ''}
+        </span>
+        {running && (
+          <button
+            onClick={handleCancel}
+            className="flex items-center gap-1 text-red-500 hover:text-red-700 font-medium"
+          >
+            <XCircle className="h-3.5 w-3.5" />
+            Cancelar
+          </button>
+        )}
+      </div>
+
+      {/* Barra geral */}
+      {items.length > 1 && (
+        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
           <div
-            onClick={() => fileRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-              file
-                ? 'border-primary/40 bg-primary/5'
-                : 'border-slate-200 hover:border-slate-300 bg-slate-50'
-            }`}
-          >
-            {file ? (
-              <>
-                <FileText className="h-8 w-8 text-primary mx-auto mb-2" />
-                <p className="text-sm font-medium text-slate-700">{file.name}</p>
-                <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
-              </>
-            ) : (
-              <>
-                <UploadCloud className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">Clique ou arraste o arquivo</p>
-                <p className="text-xs text-slate-400 mt-1">CSV com separador ; · até 1 GB</p>
-              </>
-            )}
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,.txt,text/csv,text/plain"
-            className="hidden"
-            onChange={e => setFile(e.target.files?.[0] ?? null)}
+            className="h-full bg-primary/40 rounded-full transition-all duration-500"
+            style={{ width: `${(doneCnt / items.length) * 100}%` }}
           />
         </div>
       )}
 
-      {/* Painel de progresso ─────────────────────────────────────────────────── */}
-      {(isActive || job) && (
-        <div className={`rounded-xl border p-4 space-y-3 ${
-          job?.status === 'error'     ? 'bg-red-50 border-red-200' :
-          job?.status === 'cancelled' ? 'bg-amber-50 border-amber-200' :
-          job?.status === 'done'      ? 'bg-emerald-50 border-emerald-200' :
-          'bg-slate-50 border-slate-200'
-        }`}>
+      {/* Lista de arquivos */}
+      <div className="space-y-1.5">
+        {items.map((it, i) => {
+          const isCurrent = running && i === currentIdx
+          const pct = it.job?.status === 'done' ? 100 : it.job?.progress ?? 0
 
-          {/* Linha de status */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              {job?.status === 'done' ? (
-                <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
-              ) : job?.status === 'error' ? (
-                <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
-              ) : job?.status === 'cancelled' ? (
-                <XCircle className="h-4 w-4 text-amber-600 shrink-0" />
-              ) : (
-                <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
-              )}
-              <span className={`text-sm font-medium ${
-                job?.status === 'done'      ? 'text-emerald-700' :
-                job?.status === 'error'     ? 'text-red-700' :
-                job?.status === 'cancelled' ? 'text-amber-700' :
-                'text-slate-700'
-              }`}>
-                {uploading
-                  ? 'Enviando arquivo...'
-                  : job?.status === 'pending'     ? 'Aguardando processamento...'
-                  : job?.status === 'processing' && (job.progress ?? 0) >= 91
-                                                  ? 'Consolidando dados...'
-                  : job?.status === 'processing'  ? 'Processando linhas...'
-                  : job?.status === 'done'        ? 'Importação concluída'
-                  : job?.status === 'error'       ? 'Erro na importação'
-                  : job?.status === 'cancelled'   ? 'Cancelado'
-                  : ''}
-              </span>
-            </div>
-
-            {/* Botão cancelar — só durante processamento */}
-            {(job?.status === 'pending' || job?.status === 'processing') && (
-              <button
-                onClick={handleCancel}
-                className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 font-medium transition-colors shrink-0"
-              >
-                <XCircle className="h-3.5 w-3.5" />
-                Cancelar
-              </button>
-            )}
-          </div>
-
-          {/* Barra de progresso */}
-          {(isActive || job?.status === 'processing' || job?.status === 'done') && (
-            <div>
-              <div className="flex justify-between text-xs text-slate-500 mb-1">
-                <span>
-                  {job?.importados
-                    ? `${job.importados.toLocaleString('pt-BR')} linhas`
-                    : uploading ? 'Enviando...' : 'Iniciando...'}
-                  {job?.total_lines ? ` de ~${job.total_lines.toLocaleString('pt-BR')}` : ''}
-                </span>
-                <span className="font-semibold tabular-nums">{pct}%</span>
-              </div>
-              <div className="h-2 bg-white/60 rounded-full overflow-hidden border border-slate-200/60">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    job?.status === 'done' ? 'bg-emerald-500' : 'bg-primary'
-                  }`}
-                  style={{ width: uploading ? '5%' : `${pct}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Mensagem de erro */}
-          {job?.message && (job.status === 'error' || job.status === 'cancelled') && (
-            <p className="text-xs text-slate-600">{job.message}</p>
-          )}
-
-          {/* Ação pós-conclusão */}
-          {(job?.status === 'done' || job?.status === 'error' || job?.status === 'cancelled') && (
-            <button
-              onClick={resetForm}
-              className="text-xs text-primary hover:underline font-medium"
+          return (
+            <div
+              key={i}
+              className={`rounded-lg border px-3 py-2.5 text-xs transition-colors ${
+                it.status === 'done'      ? 'border-emerald-200 bg-emerald-50' :
+                it.status === 'error'     ? 'border-red-200 bg-red-50' :
+                it.status === 'cancelled' ? 'border-slate-200 bg-slate-50 opacity-50' :
+                isCurrent                 ? 'border-primary/30 bg-primary/5' :
+                'border-slate-100 bg-white'
+              }`}
             >
-              {job.status === 'done' ? 'Importar outro arquivo' : 'Tentar novamente'}
-            </button>
-          )}
-        </div>
-      )}
+              <div className="flex items-center gap-2">
+                {it.status === 'done'      ? <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" /> :
+                 it.status === 'error'     ? <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" /> :
+                 it.status === 'cancelled' ? <XCircle className="h-3.5 w-3.5 text-slate-400 shrink-0" /> :
+                 isCurrent                 ? <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" /> :
+                 <Clock className="h-3.5 w-3.5 text-slate-300 shrink-0" />}
 
-      {/* Botão importar */}
-      {!isActive && !job && (
+                <span className="flex-1 truncate font-medium text-slate-700">{it.file.name}</span>
+
+                {it.status === 'done' && it.job && (
+                  <span className="text-emerald-600 tabular-nums shrink-0">
+                    {it.job.importados.toLocaleString('pt-BR')} linhas
+                  </span>
+                )}
+                {it.status === 'uploading' && (
+                  <span className="text-slate-400 shrink-0">Enviando…</span>
+                )}
+                {it.status === 'waiting' && (
+                  <span className="text-slate-300 shrink-0">{(it.file.size / 1024 / 1024).toFixed(1)} MB</span>
+                )}
+              </div>
+
+              {/* Barra de progresso do arquivo atual */}
+              {isCurrent && (it.status === 'processing' || it.status === 'uploading') && it.job && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-slate-400 mb-1">
+                    <span>
+                      {it.job.importados > 0
+                        ? `${it.job.importados.toLocaleString('pt-BR')} de ~${it.job.total_lines.toLocaleString('pt-BR')}`
+                        : it.job.progress >= 91 ? 'Consolidando dados…' : 'Iniciando…'}
+                    </span>
+                    <span className="font-semibold tabular-nums">{pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/60 rounded-full overflow-hidden border border-slate-200/60">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {it.status === 'error' && it.error && (
+                <p className="mt-1 text-red-600 truncate">{it.error}</p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {allSettled && (
         <button
-          disabled={!file || uploading}
-          onClick={handleImport}
-          className="w-full h-10 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+          onClick={resetForm}
+          className="text-xs text-primary hover:underline font-medium"
         >
-          <UploadCloud className="h-4 w-4" />
-          Importar arquivo
+          Importar mais arquivos
         </button>
       )}
     </div>
@@ -315,9 +329,6 @@ function ImportForm({ onDone }: { onDone: () => void }) {
 }
 
 // ─── PeriodosTable ────────────────────────────────────────────────────────────
-// Tabela só de visualização — as ações de limpeza vivem em
-// Configurações Gerais → Limpar Dados, para evitar exclusões acidentais no
-// fluxo de importação.
 
 function PeriodosTable({ periodos }: { periodos: PeriodoItem[] }) {
   if (periodos.length === 0) {
@@ -372,10 +383,10 @@ export default function FarolV2Import() {
       <div className="grid gap-6">
         {/* Card de importação */}
         <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-6">
-          <h2 className="text-base font-semibold text-slate-800 mb-1">Importar arquivo de Vendas</h2>
+          <h2 className="text-base font-semibold text-slate-800 mb-1">Importar arquivos de Vendas</h2>
           <p className="text-xs text-slate-400 mb-4">
-            Carregue a Base Atual (ano corrente) ou Base Comparativa (ano anterior).
-            Dados do mesmo período serão substituídos. Arquivos grandes são processados em segundo plano — você pode cancelar a qualquer momento.
+            Selecione um ou vários arquivos CSV. O período é detectado automaticamente a partir das datas
+            do arquivo — não é necessário informar mês ou ano. Múltiplos arquivos são processados em sequência.
           </p>
           <ImportForm onDone={handleDone} />
         </div>
