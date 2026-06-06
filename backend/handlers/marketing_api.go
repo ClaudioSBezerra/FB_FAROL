@@ -1,23 +1,18 @@
 package handlers
 
-// marketing_api.go — Painel Marketing (granularidade diária).
+// marketing_api.go — Painel Marketing (granularidade MENSAL via agg_*_mes).
+//
+// REFACTOR mig 165: removidas mv_fat_cli/mv_*_v0X_lY/mv_*_mkt_*/mv_*_dim*.
+// Agora todas as queries leem de tabelas particionadas mensais agg_*_mes
+// (populadas por farol.upsert_aggs_mes em segundos por mês). Range é sempre
+// mês fechado — o mês corrente é "1 a hoje" porque vendas só existe até ontem.
 //
 // GET /api/v2/marketing/cards
-//   Parâmetros (nova API):
-//     view         produto | cliente | fornec  (default: produto)
-//     fluxo        faturado | transmitido      (default: faturado)
-//     ref_inicio   YYYY-MM-DD
-//     ref_fim      YYYY-MM-DD
-//     comp_inicio  YYYY-MM-DD                  (opcional)
-//     comp_fim     YYYY-MM-DD
+//   view: produto | cliente | fornec  (default: produto)
+//   fluxo: faturado | transmitido     (default: faturado)
+//   ref_inicio, ref_fim, comp_inicio, comp_fim (YYYY-MM-DD)
 //
-//   Retrocompat:
-//     ref_ano + ref_mes                        → vira ref_inicio/ref_fim
-//     comp_mode = yoy|mom|ytd                  → deriva comp_inicio/comp_fim
-//     comp_ano + comp_mes                      → idem (mom override)
-//
-// "Clientes inativos" — clientes que transmitiram pedidos mas NÃO faturaram
-// no mesmo período. Cross-query entre vendas_transmitidas e vendas_faturadas.
+// "Clientes inativos" — transmitiu mas não faturou. Cross-query agg_trans×agg_fat.
 
 import (
 	"database/sql"
@@ -36,12 +31,12 @@ type mktCard struct {
 	Fornec      string  `json:"fornec,omitempty"`
 	NomeFornec  string  `json:"nome_fornec,omitempty"`
 	Ean         string  `json:"ean,omitempty"`
-	QtClientes  int     `json:"qt_clientes"` // clientes positivados no período
+	QtClientes  int     `json:"qt_clientes"`
 	QtCliAnt    int     `json:"qt_cli_ant"`
 	DeltaPct    float64 `json:"delta_pct"`
 	Pvenda      float64 `json:"pvenda"`
-	Faturado    float64 `json:"faturado"`    // = pvenda se fluxo=faturado, 0 se trans
-	Transmitido float64 `json:"transmitido"` // = pvenda se fluxo=transmitido, 0 se fat
+	Faturado    float64 `json:"faturado"`
+	Transmitido float64 `json:"transmitido"`
 	Plucro      float64 `json:"plucro"`
 	PenetrPct   float64 `json:"penetr_pct"`
 	Mix         float64 `json:"mix"`
@@ -78,35 +73,43 @@ type mktResponse struct {
 	View             string              `json:"view"`
 }
 
-// mvMktCliDia retorna a MV de cliente diária para o fluxo (1 linha por dia × cliente).
-// Muito menor que mv_fat_cli (sem fanout de fornec/supervisor/rca).
-func mvMktCliDia(fluxo fluxoCtx) string {
-	if fluxo.name == "transmitido" {
-		return "farol.mv_trans_mkt_cli_dia"
+// ─── Helpers de agg_mes ──────────────────────────────────────────────────────
+
+// ymKey converte time.Time em YYYYMM (ex: 2026-06-01 → 202606).
+// Range BETWEEN é feito sobre (ano*100+mes) na coluna.
+func ymKey(t time.Time) int {
+	if t.IsZero() {
+		return 0
 	}
-	return "farol.mv_fat_mkt_cli_dia"
+	return t.Year()*100 + int(t.Month())
 }
 
-// MV de marketing por fluxo (penetração de produto, agregação por produto+fornec)
-func mvMktProdPen(fluxo fluxoCtx) string {
+func aggMktCli(fluxo fluxoCtx) string {
 	if fluxo.name == "transmitido" {
-		return "farol.mv_trans_mkt_prod_pen"
+		return "farol.agg_trans_mkt_cli_mes"
 	}
-	return "farol.mv_fat_mkt_prod_pen"
+	return "farol.agg_fat_mkt_cli_mes"
 }
 
-func mvMktProduto(fluxo fluxoCtx) string {
+func aggMktProduto(fluxo fluxoCtx) string {
 	if fluxo.name == "transmitido" {
-		return "farol.mv_trans_mkt_produto"
+		return "farol.agg_trans_mkt_produto_mes"
 	}
-	return "farol.mv_fat_mkt_produto"
+	return "farol.agg_fat_mkt_produto_mes"
 }
 
-func mvV01L0(fluxo fluxoCtx) string {
+func aggV01L0(fluxo fluxoCtx) string {
 	if fluxo.name == "transmitido" {
-		return "farol.mv_trans_v01_l0"
+		return "farol.agg_trans_v01_l0_mes"
 	}
-	return "farol.mv_fat_v01_l0"
+	return "farol.agg_fat_v01_l0_mes"
+}
+
+func carteiraRCA(fluxo fluxoCtx) string {
+	if fluxo.name == "transmitido" {
+		return "farol.mv_trans_carteira_rca"
+	}
+	return "farol.mv_fat_carteira_rca"
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
@@ -186,24 +189,19 @@ func MarketingCardsHandler(db *sql.DB) http.HandlerFunc {
 
 func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) mktKPI {
 	t0 := time.Now()
-	baseView := mvMktCliDia(fluxo)
-	dateCol := fluxo.dateCol
-	refIni := pr.RefInicio.Format("2006-01-02")
-	refFim := pr.RefFim.Format("2006-01-02")
+	aggCli := aggMktCli(fluxo)
+	refStart := ymKey(pr.RefInicio)
+	refEnd := ymKey(pr.RefFim)
 
 	var k mktKPI
 
 	// Base = carteira total dos RCAs (tabela pequena; independente do período).
-	// mv_fat_cli contém apenas compradores, não serve como denominador real.
-	carteiraMV := "farol.mv_fat_carteira_rca"
-	if fluxo.name == "transmitido" {
-		carteiraMV = "farol.mv_trans_carteira_rca"
-	}
 	_ = db.QueryRow(fmt.Sprintf(
-		`SELECT COALESCE(SUM(qtcli_rca), 0) FROM %s WHERE empresa_id=$1`, carteiraMV,
+		`SELECT COALESCE(SUM(qtcli_rca), 0) FROM %s WHERE empresa_id=$1`, carteiraRCA(fluxo),
 	), empresaID).Scan(&k.TotalBaseCli)
 
-	// Ativos, mix e totais monetários no período — uma única varredura da MV.
+	// Ativos = clientes únicos com positivados=1 EM ALGUM mês do range.
+	// COUNT(DISTINCT cnpj) FILTER cobre dedupe entre meses.
 	_ = db.QueryRow(fmt.Sprintf(`
 		SELECT
 		    COUNT(DISTINCT cnpj) FILTER (WHERE positivados=1 AND cnpj != '') AS total_ativos,
@@ -211,8 +209,8 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 		    COALESCE(SUM(pvenda), 0)                                           AS total_pvenda,
 		    COALESCE(SUM(plucro), 0)                                           AS total_plucro
 		FROM %s
-		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-	`, baseView, dateCol), empresaID, refIni, refFim,
+		WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3
+	`, aggCli), empresaID, refStart, refEnd,
 	).Scan(&k.TotalAtivos, &k.AvgMix, &k.TotalPvenda, &k.TotalPlucro)
 
 	k.TotalInativos = k.TotalBaseCli - k.TotalAtivos
@@ -228,14 +226,12 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 		}
 	}
 
-	// Período anterior — reutiliza a mesma base da carteira; conta ativos no período comp.
 	if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
 		var ativosAnt int
 		_ = db.QueryRow(fmt.Sprintf(`
 			SELECT COUNT(DISTINCT cnpj) FILTER (WHERE positivados=1 AND cnpj != '')
-			FROM %s WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-		`, baseView, dateCol), empresaID,
-			pr.CompInicio.Format("2006-01-02"), pr.CompFim.Format("2006-01-02"),
+			FROM %s WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3
+		`, aggCli), empresaID, ymKey(pr.CompInicio), ymKey(pr.CompFim),
 		).Scan(&ativosAnt)
 		if k.TotalBaseCli > 0 {
 			k.TaxaPositivacaoAnt = float64(ativosAnt) / float64(k.TotalBaseCli) * 100
@@ -255,20 +251,21 @@ func fetchMktKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResoluti
 
 func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution, totalBase int) []mktCard {
 	t0 := time.Now()
-	mv := mvMktProdPen(fluxo)
-	dateCol := fluxo.dateCol
+	mv := aggMktProduto(fluxo)
+	refStart := ymKey(pr.RefInicio)
+	refEnd := ymKey(pr.RefFim)
 
-	// MV é granular por dia — GROUP BY cod_prod para consolidar o período.
-	// qt_positivados usa AVG (conta únicos por dia; não é aditivo entre dias).
+	// qt_positivados é AVG mensal (não aditivo entre meses — mesmo cliente
+	// pode aparecer em vários meses; AVG dá o valor típico).
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT cod_prod, MAX(nome_prod), MAX(cod_fornec), MAX(nome_fornec), MAX(ean),
 		       ROUND(AVG(qt_positivados))::int AS qt_positivados,
 		       SUM(pvenda) AS pvenda, SUM(plucro) AS plucro
 		FROM %s
-		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_prod != ''
+		WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3 AND cod_prod != ''
 		GROUP BY cod_prod
 		ORDER BY ROUND(AVG(qt_positivados))::int DESC
-	`, mv, dateCol), empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	`, mv), empresaID, refStart, refEnd)
 	if err != nil {
 		log.Printf("[marketing] fetchMktProduto ERRO atual: %v", err)
 		return nil
@@ -292,16 +289,14 @@ func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 		order = append(order, p.key)
 	}
 
-	// Período anterior (delta) — só se houver comp definido
 	qtAntMap := map[string]int{}
 	if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
 		antRows, err := db.Query(fmt.Sprintf(`
 			SELECT cod_prod, ROUND(AVG(qt_positivados))::int
 			FROM %s
-			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
+			WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3
 			GROUP BY cod_prod
-		`, mv, dateCol), empresaID,
-			pr.CompInicio.Format("2006-01-02"), pr.CompFim.Format("2006-01-02"))
+		`, mv), empresaID, ymKey(pr.CompInicio), ymKey(pr.CompFim))
 		if err == nil {
 			defer antRows.Close()
 			for antRows.Next() {
@@ -348,9 +343,12 @@ func fetchMktProduto(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 
 func fetchMktCliente(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) []mktCard {
 	t0 := time.Now()
-	baseView := mvMktCliDia(fluxo)
-	dateCol := fluxo.dateCol
+	aggCli := aggMktCli(fluxo)
+	refStart := ymKey(pr.RefInicio)
+	refEnd := ymKey(pr.RefFim)
 
+	// GROUP BY cod_cli (mantém UI compatível). MAX(positivados) = 1 se foi
+	// positivado em ALGUM mês do range. AVG(mix) é mix médio mensal.
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT
 		    cod_cli,
@@ -360,11 +358,10 @@ func fetchMktCliente(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 		    COALESCE(SUM(pvenda), 0)    AS pvenda,
 		    COALESCE(SUM(plucro), 0)    AS plucro
 		FROM %s
-		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_cli != ''
+		WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3 AND cod_cli != ''
 		GROUP BY cod_cli
 		ORDER BY avg_mix DESC, pvenda DESC
-	`, baseView, dateCol), empresaID,
-		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	`, aggCli), empresaID, refStart, refEnd)
 	if err != nil {
 		log.Printf("[marketing] fetchMktCliente ERRO: %v", err)
 		return nil
@@ -398,27 +395,26 @@ func fetchMktCliente(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 
 func fetchMktFornec(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution, totalBase int) []mktCard {
 	t0 := time.Now()
-	mv := mvV01L0(fluxo)
-	dateCol := fluxo.dateCol
+	mv := aggV01L0(fluxo)
+	refStart := ymKey(pr.RefInicio)
+	refEnd := ymKey(pr.RefFim)
 
-	// positivados e base_cli são contagens diárias (não aditivas entre dias):
-	// AVG dá o valor típico do período sem inflar pelo número de dias.
-	// pvenda/plucro são aditivos: SUM acumula o total do período.
+	// positivados/base_cli são contagens mensais (não aditivas) — AVG dá valor
+	// típico. pvenda/plucro são aditivos: SUM acumula total do range.
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT
 		    cod_fornec,
-		    MAX(nome_fornec)                  AS nome,
+		    MAX(nome_fornec)                          AS nome,
 		    COALESCE(ROUND(AVG(positivados))::int, 0) AS qt_ativos,
 		    COALESCE(ROUND(AVG(base_cli))::int, 0)    AS base,
-		    COALESCE(AVG(mix), 0)             AS avg_mix,
-		    COALESCE(SUM(pvenda), 0)          AS pvenda,
-		    COALESCE(SUM(plucro), 0)          AS plucro
+		    COALESCE(AVG(mix), 0)                     AS avg_mix,
+		    COALESCE(SUM(pvenda), 0)                  AS pvenda,
+		    COALESCE(SUM(plucro), 0)                  AS plucro
 		FROM %s
-		WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_fornec != ''
+		WHERE empresa_id=$1 AND (ano*100+mes) BETWEEN $2 AND $3 AND cod_fornec != ''
 		GROUP BY cod_fornec
 		ORDER BY ROUND(AVG(positivados))::int DESC
-	`, mv, dateCol), empresaID,
-		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	`, mv), empresaID, refStart, refEnd)
 	if err != nil {
 		log.Printf("[marketing] fetchMktFornec ERRO: %v", err)
 		return nil
@@ -453,33 +449,32 @@ func fetchMktFornec(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResol
 }
 
 // ─── Clientes Inativos ───────────────────────────────────────────────────────
-// Clientes que transmitiram pedidos no período mas NÃO faturaram.
-// Cross-query entre as duas bases.
+// Clientes que transmitiram pedidos no período mas NÃO faturaram (cross-query).
 
 func fetchClientesInativos(db *sql.DB, empresaID string, pr periodResolution) []mktClienteInativo {
 	t0 := time.Now()
-	// Usa as MVs cliente-dia (1 linha por dia×cliente) em vez de mv_trans_cli / mv_fat_cli
-	// (que têm fanout de fornec/supervisor/rca). NOT EXISTS é mais eficiente que NOT IN
-	// quando a subquery pode ser grande.
+	refStart := ymKey(pr.RefInicio)
+	refEnd := ymKey(pr.RefFim)
+
 	rows, err := db.Query(`
 		SELECT
 		    t.cod_cli,
 		    MAX(t.nome_cli)             AS nome,
 		    COALESCE(SUM(t.pvenda), 0)  AS transmitido
-		FROM farol.mv_trans_mkt_cli_dia t
+		FROM farol.agg_trans_mkt_cli_mes t
 		WHERE t.empresa_id=$1
-		  AND t.data_transmissao BETWEEN $2::date AND $3::date
+		  AND (t.ano*100+t.mes) BETWEEN $2 AND $3
 		  AND t.cod_cli != '' AND t.cnpj != ''
 		  AND NOT EXISTS (
-		      SELECT 1 FROM farol.mv_fat_mkt_cli_dia f
+		      SELECT 1 FROM farol.agg_fat_mkt_cli_mes f
 		       WHERE f.empresa_id = $1
-		         AND f.data_faturamento BETWEEN $2::date AND $3::date
+		         AND (f.ano*100+f.mes) BETWEEN $2 AND $3
 		         AND f.cnpj = t.cnpj AND f.positivados = 1
 		  )
 		GROUP BY t.cod_cli
 		ORDER BY transmitido DESC
 		LIMIT 100
-	`, empresaID, pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	`, empresaID, refStart, refEnd)
 	if err != nil {
 		log.Printf("[marketing] fetchClientesInativos ERRO: %v", err)
 		return nil
@@ -543,6 +538,9 @@ type prodDetalheResponse struct {
 	Periodo       periodoInfo        `json:"periodo"`
 }
 
+// Detalhe de produto — consulta direto em vendas_faturadas/transmitidas
+// (granularidade dia, com filtro forte por cod_prod, usa idx_v*_emp_data_produto).
+// Não dá pra usar agg_mes aqui porque precisa de cod_cli×cod_prod.
 func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -569,7 +567,7 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 		refIni := pr.RefInicio.Format("2006-01-02")
 		refFim := pr.RefFim.Format("2006-01-02")
 
-		// Nome do produto, indústria e EAN — pega da tabela base do fluxo
+		// Nome do produto, indústria, EAN — direto da tabela base (filtra por cod_prod, índice)
 		var nomeProd, nomeFornec, ean string
 		_ = db.QueryRow(fmt.Sprintf(`
 			SELECT MAX(nome_prod), MAX(nome_fornec), MAX(ean)
@@ -578,13 +576,11 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 		`, fluxo.tableName, fluxo.dateCol),
 			spCtx.EmpresaID, codProd, refIni, refFim).Scan(&nomeProd, &nomeFornec, &ean)
 
-		// Base total de clientes no período (fluxo)
+		// Base total de clientes = carteira RCA (denominador)
 		var totalBase int
-		_ = db.QueryRow(fmt.Sprintf(`
-			SELECT COUNT(DISTINCT cod_cli) FROM %s
-			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-		`, fluxo.baseView, fluxo.dateCol),
-			spCtx.EmpresaID, refIni, refFim).Scan(&totalBase)
+		_ = db.QueryRow(fmt.Sprintf(
+			`SELECT COALESCE(SUM(qtcli_rca), 0) FROM %s WHERE empresa_id=$1`, carteiraRCA(fluxo),
+		), spCtx.EmpresaID).Scan(&totalBase)
 
 		// Compradores
 		rows, err := db.Query(fmt.Sprintf(`
@@ -623,7 +619,7 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 			log.Printf("[marketing:detalhe] compradores ERRO: %v", err)
 		}
 
-		// Comparativo — qt clientes que compraram no período anterior
+		// Comparativo — qt clientes que compraram este produto no período anterior
 		var qtCliAnt int
 		if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
 			_ = db.QueryRow(fmt.Sprintf(`
@@ -636,30 +632,32 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 				codProd).Scan(&qtCliAnt)
 		}
 
-		// Oportunidades — clientes positivados no período que NÃO compraram este produto
+		// Oportunidades — usa agg_*_mkt_cli_mes (positivados=1) + vendas direto para excluir quem já compra o produto
+		refStart := ymKey(pr.RefInicio)
+		refEnd := ymKey(pr.RefFim)
 		oRows, err2 := db.Query(fmt.Sprintf(`
 			SELECT
 			    f.cod_cli,
-			    MAX(f.nome_cli)                  AS nome,
-			    SUM(f.pvenda)                    AS pvenda_total,
-			    MAX(f.nome_supervisor)           AS nome_sup,
-			    MAX(f.nome_rca)                  AS nome_rca,
-			    COUNT(DISTINCT f.cod_fornec)     AS n_outros
+			    MAX(f.nome_cli)               AS nome,
+			    COALESCE(SUM(f.pvenda),0)     AS pvenda_total,
+			    ''::text                      AS nome_sup,
+			    ''::text                      AS nome_rca,
+			    0::int                        AS n_outros
 			FROM %s f
 			WHERE f.empresa_id=$1
-			    AND f.%s BETWEEN $2::date AND $3::date
+			    AND (f.ano*100+f.mes) BETWEEN $2 AND $3
 			    AND f.positivados=1 AND f.cod_cli != ''
 			    AND NOT EXISTS (
 			        SELECT 1 FROM %s v
 			        WHERE v.empresa_id=f.empresa_id
-			            AND v.%s BETWEEN $2::date AND $3::date
-			            AND v.cod_cli=f.cod_cli AND v.cod_prod=$4 AND v.qt > 0
+			            AND v.%s BETWEEN $4::date AND $5::date
+			            AND v.cod_cli=f.cod_cli AND v.cod_prod=$6 AND v.qt > 0
 			    )
 			GROUP BY f.cod_cli
 			ORDER BY SUM(f.pvenda) DESC
 			LIMIT 200
-		`, fluxo.baseView, fluxo.dateCol, fluxo.tableName, fluxo.dateCol),
-			spCtx.EmpresaID, refIni, refFim, codProd)
+		`, aggMktCli(fluxo), fluxo.tableName, fluxo.dateCol),
+			spCtx.EmpresaID, refStart, refEnd, refIni, refFim, codProd)
 
 		oportunidades := []prodOportunidade{}
 		var potencialEstimado float64
@@ -796,7 +794,7 @@ func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
 		refIni := pr.RefInicio.Format("2006-01-02")
 		refFim := pr.RefFim.Format("2006-01-02")
 
-		// Produtos comprados pelo cliente (no fluxo escolhido)
+		// Produtos comprados pelo cliente — direto na tabela base (idx_v*_emp_cli_data)
 		rows, err := db.Query(fmt.Sprintf(`
 			SELECT
 			    cod_prod,
@@ -833,24 +831,24 @@ func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Nome do cliente, RCA, supervisor — da MV base do fluxo
+		// Nome do cliente, RCA, supervisor — vendas_*: filtra por cod_cli (idx_v*_emp_cli_data)
 		var nomeCli, nomeRca, nomeSup string
 		_ = db.QueryRow(fmt.Sprintf(`
 			SELECT MAX(nome_cli), MAX(COALESCE(nome_rca,'')), MAX(COALESCE(nome_supervisor,''))
 			FROM %s
 			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_cli=$4
-		`, fluxo.baseView, fluxo.dateCol),
+		`, fluxo.tableName, fluxo.dateCol),
 			spCtx.EmpresaID, refIni, refFim, codCli).Scan(&nomeCli, &nomeRca, &nomeSup)
 
-		// Base total de clientes
+		// Base total = carteira RCA
 		var totalBase int
-		_ = db.QueryRow(fmt.Sprintf(`
-			SELECT COUNT(DISTINCT cod_cli) FROM %s
-			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date
-		`, fluxo.baseView, fluxo.dateCol),
-			spCtx.EmpresaID, refIni, refFim).Scan(&totalBase)
+		_ = db.QueryRow(fmt.Sprintf(
+			`SELECT COALESCE(SUM(qtcli_rca), 0) FROM %s WHERE empresa_id=$1`, carteiraRCA(fluxo),
+		), spCtx.EmpresaID).Scan(&totalBase)
 
-		// Oportunidades — produtos populares que este cliente não compra
+		// Oportunidades — produtos populares (agg_*_mkt_produto_mes) que este cliente NÃO compra
+		refStart := ymKey(pr.RefInicio)
+		refEnd := ymKey(pr.RefFim)
 		oRows, err2 := db.Query(fmt.Sprintf(`
 			SELECT
 			    p.cod_prod,
@@ -861,18 +859,18 @@ func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
 			         THEN SUM(p.pvenda) / SUM(p.qt_positivados)
 			         ELSE 0 END         AS ticket_medio
 			FROM %s p
-			WHERE p.empresa_id=$1 AND p.%s BETWEEN $2::date AND $3::date
+			WHERE p.empresa_id=$1 AND (p.ano*100+p.mes) BETWEEN $2 AND $3
 			    AND p.cod_prod != ''
 			    AND NOT EXISTS (
 			        SELECT 1 FROM %s v
-			        WHERE v.empresa_id=p.empresa_id AND v.%s BETWEEN $2::date AND $3::date
-			            AND v.cod_cli=$4 AND v.cod_prod=p.cod_prod AND v.qt > 0
+			        WHERE v.empresa_id=p.empresa_id AND v.%s BETWEEN $4::date AND $5::date
+			            AND v.cod_cli=$6 AND v.cod_prod=p.cod_prod AND v.qt > 0
 			    )
 			GROUP BY p.cod_prod
 			ORDER BY SUM(p.qt_positivados) DESC
 			LIMIT 100
-		`, mvMktProduto(fluxo), fluxo.dateCol, fluxo.tableName, fluxo.dateCol),
-			spCtx.EmpresaID, refIni, refFim, codCli)
+		`, aggMktProduto(fluxo), fluxo.tableName, fluxo.dateCol),
+			spCtx.EmpresaID, refStart, refEnd, refIni, refFim, codCli)
 
 		oportunidades := []cliOportunidade{}
 		var potencialEstimado float64
