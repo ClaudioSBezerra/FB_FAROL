@@ -63,14 +63,65 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // começar null o primeiro fetch de qualquer página filha vai sem X-Company-ID.
   const companyIdRef = useRef<string | null>(localStorage.getItem('companyId'));
 
+  // Controle de fila de auto-refresh (evita múltiplas chamadas simultâneas ao /api/auth/refresh)
+  const isRefreshingRef = useRef(false);
+  const refreshQueueRef = useRef<Array<(newToken: string | null) => void>>([]);
+
   // Mantém refs atualizados com o estado mais recente
   useEffect(() => { tokenRef.current = token; }, [token]);
   useEffect(() => { companyIdRef.current = companyId; }, [companyId]);
 
-  // Interceptor global de fetch: injeta Authorization e X-Company-ID em todas as chamadas
+  // Interceptor global de fetch: injeta Authorization e X-Company-ID; auto-renova token expirado
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
-    window.fetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+
+    const flushQueue = (newToken: string | null) => {
+      refreshQueueRef.current.forEach(cb => cb(newToken));
+      refreshQueueRef.current = [];
+    };
+
+    const retryWithToken = (input: RequestInfo | URL, init: RequestInit, newToken: string) => {
+      const h = new Headers(init.headers || {});
+      h.set('Authorization', `Bearer ${newToken}`);
+      if (companyIdRef.current) h.set('X-Company-ID', companyIdRef.current);
+      return originalFetch(input, { ...init, headers: h });
+    };
+
+    const refreshAndRetry = (input: RequestInfo | URL, init: RequestInit): Promise<Response> => {
+      // Já está renovando — enfileira e aguarda resultado
+      if (isRefreshingRef.current) {
+        return new Promise<Response>(resolve => {
+          refreshQueueRef.current.push(newToken => {
+            resolve(newToken ? retryWithToken(input, init, newToken) : new Response('Unauthorized', { status: 401 }));
+          });
+        });
+      }
+
+      isRefreshingRef.current = true;
+      return originalFetch('/api/auth/refresh', { method: 'POST' })
+        .then(async rr => {
+          if (rr.ok) {
+            const { token: newToken } = await rr.json();
+            tokenRef.current = newToken;
+            setToken(newToken);
+            localStorage.setItem('token', newToken);
+            flushQueue(newToken);
+            return retryWithToken(input, init, newToken);
+          }
+          // Refresh expirado — desloga
+          flushQueue(null);
+          localStorage.clear();
+          if (!window.location.pathname.startsWith('/m/')) window.location.href = '/login';
+          return new Response('Unauthorized', { status: 401 });
+        })
+        .catch(() => {
+          flushQueue(null);
+          return new Response('Unauthorized', { status: 401 });
+        })
+        .finally(() => { isRefreshingRef.current = false; });
+    };
+
+    window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const headers = new Headers(init.headers || {});
       if (!headers.has('Authorization') && tokenRef.current) {
         headers.set('Authorization', `Bearer ${tokenRef.current}`);
@@ -78,8 +129,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (companyIdRef.current && !headers.has('X-Company-ID')) {
         headers.set('X-Company-ID', companyIdRef.current);
       }
-      return originalFetch(input, { ...init, headers });
+
+      const response = await originalFetch(input, { ...init, headers });
+
+      // 401 fora de endpoints de auth → tenta renovar token automaticamente
+      if (response.status === 401) {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+        if (!url.includes('/api/auth/') && !url.includes('/api/sp/me')) {
+          return refreshAndRetry(input, init);
+        }
+      }
+
+      return response;
     };
+
     return () => { window.fetch = originalFetch; };
   }, []);
 
