@@ -154,14 +154,23 @@ function fmtDateBR(s: string): string {
   return `${d}/${m}/${y}`
 }
 
-// Presets:
-//  mes_corrente — dia 1 até hoje, mês corrente × dia 1 até mesmo dia, mês anterior
-//  yoy          — último mês 100% importado × mesmo mês ano anterior
-//  ant_corrente — mês ANTERIOR completo × dia 1 até hoje do mês CORRENTE
+// Presets (ordem da barra, da esquerda para a direita):
 //  ytd          — ano anterior completo (jan-dez) × jan até hoje, ano corrente
+//  yoy          — último mês 100% importado × mesmo mês ano anterior
+//  ant_corrente — dois últimos meses completos carregados (M-1 vs M-2)
+//  mes_corrente — dia 1 até hoje, mês corrente × dia 1 até mesmo dia, mês anterior
 //  last7        — últimos 7 dias × 7 dias anteriores
 //  last30       — últimos 30 dias × 30 dias anteriores
 type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
+
+const PRESET_LABEL: Record<Preset, string> = {
+  ytd:          'Ano × Ano',
+  yoy:          'Último mês YoY',
+  ant_corrente: 'M-1 vs M-2',
+  mes_corrente: 'Mês Corrente',
+  last7:        '7 dias',
+  last30:       '30 dias',
+}
 
 function presetRange(p: Preset, last?: { ano: number; mes: number }) {
   const now = new Date()
@@ -170,26 +179,22 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
   const todayD = now.getUTCDate()
   const today = ymd(todayY, todayM, todayD)
 
-  // Último mês 100% importado (fallback: mês corrente)
+  // Último mês 100% importado — fallback para o mês anterior ao corrente
   const lastY = last?.ano ?? todayY
-  const lastM = last?.mes ?? todayM
+  const lastM = last?.mes ?? (todayM > 1 ? todayM - 1 : 12)
 
   switch (p) {
-    case 'mes_corrente': {
-      // dia 1 até hoje, em ambos os meses (mes anterior tem mesmo dia se válido,
-      // ou o último dia do mês se hoje for 31 e o anterior tiver 30).
-      let pm = todayM - 1, py = todayY
-      if (pm === 0) { pm = 12; py-- }
-      const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
+    case 'ytd': {
+      // Ano anterior INTEIRO × Janeiro até hoje do ano corrente
       return {
-        ref_inicio:  ymd(todayY, todayM, 1),
+        ref_inicio:  ymd(todayY, 1, 1),
         ref_fim:     today,
-        comp_inicio: ymd(py, pm, 1),
-        comp_fim:    ymd(py, pm, dayCap),
+        comp_inicio: ymd(todayY - 1, 1, 1),
+        comp_fim:    ymd(todayY - 1, 12, 31),
       }
     }
     case 'yoy': {
-      // mês 100% importado × mesmo mês ano anterior — ambos completos
+      // Último mês 100% importado × mesmo mês do ano anterior — ambos completos
       return {
         ref_inicio:  ymd(lastY, lastM, 1),
         ref_fim:     ymd(lastY, lastM, lastDayOfMonth(lastY, lastM)),
@@ -198,23 +203,26 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'ant_corrente': {
-      // Mês ANTERIOR completo × dia 1 até HOJE do mês corrente
+      // M-1 vs M-2: dois últimos meses completos carregados
+      let prevM = lastM - 1, prevY = lastY
+      if (prevM === 0) { prevM = 12; prevY-- }
+      return {
+        ref_inicio:  ymd(lastY, lastM, 1),
+        ref_fim:     ymd(lastY, lastM, lastDayOfMonth(lastY, lastM)),
+        comp_inicio: ymd(prevY, prevM, 1),
+        comp_fim:    ymd(prevY, prevM, lastDayOfMonth(prevY, prevM)),
+      }
+    }
+    case 'mes_corrente': {
+      // Dia 1 até hoje do mês corrente × mesmo intervalo do mês anterior
       let pm = todayM - 1, py = todayY
       if (pm === 0) { pm = 12; py-- }
+      const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
       return {
         ref_inicio:  ymd(todayY, todayM, 1),
         ref_fim:     today,
         comp_inicio: ymd(py, pm, 1),
-        comp_fim:    ymd(py, pm, lastDayOfMonth(py, pm)),
-      }
-    }
-    case 'ytd': {
-      // Ano anterior INTEIRO × Janeiro a hoje do ano corrente
-      return {
-        ref_inicio:  ymd(todayY, 1, 1),
-        ref_fim:     today,
-        comp_inicio: ymd(todayY - 1, 1, 1),
-        comp_fim:    ymd(todayY - 1, 12, 31),
+        comp_fim:    ymd(py, pm, dayCap),
       }
     }
     case 'last7': {
@@ -731,17 +739,17 @@ export default function FarolExecutivo() {
       </div>
 
       {/* ── Atalhos de período ──────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
         <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1 mr-0.5">
           <Calendar className="h-3 w-3" /> Atalhos:
         </span>
         {([
-          { id: 'mes_corrente' as const, label: 'Mês Corrente',      tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
-          { id: 'yoy'          as const, label: 'Mês Fechado YoY',   tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
-          { id: 'ant_corrente' as const, label: 'Anterior vs Atual', tip: 'Mês anterior INTEIRO × Dia 1 até hoje do mês corrente' },
-          { id: 'ytd'          as const, label: 'Ano vs YTD',        tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
-          { id: 'last7'        as const, label: '7 dias',            tip: 'Últimos 7 dias × 7 dias anteriores' },
-          { id: 'last30'       as const, label: '30 dias',           tip: 'Últimos 30 dias × 30 dias anteriores' },
+          { id: 'ytd'          as const, tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
+          { id: 'yoy'          as const, tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
+          { id: 'ant_corrente' as const, tip: 'Dois últimos meses completos carregados (M-1 vs M-2)' },
+          { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
+          { id: 'last7'        as const, tip: 'Últimos 7 dias × 7 dias anteriores' },
+          { id: 'last30'       as const, tip: 'Últimos 30 dias × 30 dias anteriores' },
         ]).map(p => (
           <button
             key={p.id}
@@ -754,10 +762,30 @@ export default function FarolExecutivo() {
                 : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50 hover:border-slate-400',
             )}
           >
-            {p.label}
+            {PRESET_LABEL[p.id]}
           </button>
         ))}
       </div>
+
+      {/* ── Strip de período ativo ───────────────────────────────────────────── */}
+      {compInicio && compFim && refInicio && refFim && (
+        <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs shadow-sm flex-wrap">
+          {activePreset && (
+            <span className="font-bold text-slate-700 mr-1">{PRESET_LABEL[activePreset]}:</span>
+          )}
+          <span className="text-slate-400 font-medium">Anterior</span>
+          <span className="font-semibold text-orange-600">
+            {fmtDateBR(compInicio)} → {fmtDateBR(compFim)}
+          </span>
+          <span className="text-slate-300">({rangeDaysInclusive(compInicio, compFim)} dias)</span>
+          <span className="text-slate-400 font-bold mx-1">vs</span>
+          <span className="text-slate-400 font-medium">Atual</span>
+          <span className="font-semibold text-orange-700">
+            {fmtDateBR(refInicio)} → {fmtDateBR(refFim)}
+          </span>
+          <span className="text-slate-300">({rangeDaysInclusive(refInicio, refFim)} dias)</span>
+        </div>
+      )}
 
       {/* ── Controles secundários ───────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
