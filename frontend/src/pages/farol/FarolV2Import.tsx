@@ -62,10 +62,11 @@ function usePeriodosV2() {
 // ─── ImportForm ───────────────────────────────────────────────────────────────
 
 function ImportForm({ onDone }: { onDone: () => void }) {
-  const [items, setItems]       = useState<QueueItem[]>([])
-  const [running, setRunning]   = useState(false)
+  const [items, setItems]           = useState<QueueItem[]>([])
+  const [running, setRunning]       = useState(false)
   const [currentIdx, setCurrentIdx] = useState(-1)
-  const [dragOver, setDragOver] = useState(false)
+  const [dragOver, setDragOver]     = useState(false)
+  const [consolidating, setConsolidating] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const fileRef      = useRef<HTMLInputElement>(null)
   const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const abortRef     = useRef(false)
@@ -124,7 +125,7 @@ function ImportForm({ onDone }: { onDone: () => void }) {
         const fd = new FormData()
         fd.append('file', snapshot[i].file)
         const { ano, mes } = parseAnoMesFromFilename(snapshot[i].file.name)
-        const resp = await fetch(`/api/v2/vendas/import?ano=${ano}&mes=${mes}`, { method: 'POST', body: fd })
+        const resp = await fetch(`/api/v2/vendas/import?ano=${ano}&mes=${mes}&skip_refresh=true`, { method: 'POST', body: fd })
 
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ error: 'Erro no upload' }))
@@ -145,6 +146,16 @@ function ImportForm({ onDone }: { onDone: () => void }) {
 
     setRunning(false)
     setCurrentIdx(-1)
+
+    // Consolidação final: REFRESH das 28 MVs + upsert_aggs_mes para todos os meses
+    setConsolidating('running')
+    try {
+      const r = await fetch('/api/v2/farol/refresh-views', { method: 'POST' })
+      setConsolidating(r.ok ? 'done' : 'error')
+      if (r.ok) onDone()
+    } catch {
+      setConsolidating('error')
+    }
   }
 
   const handleCancel = async () => {
@@ -160,6 +171,7 @@ function ImportForm({ onDone }: { onDone: () => void }) {
     setItems([])
     setRunning(false)
     setCurrentIdx(-1)
+    setConsolidating('idle')
     abortRef.current = false
     currentJobId.current = null
   }
@@ -167,7 +179,8 @@ function ImportForm({ onDone }: { onDone: () => void }) {
   const doneCnt    = items.filter(it => it.status === 'done').length
   const errorCnt   = items.filter(it => it.status === 'error').length
   const allSettled = !running && items.length > 0 &&
-    items.every(it => ['done', 'error', 'cancelled'].includes(it.status))
+    items.every(it => ['done', 'error', 'cancelled'].includes(it.status)) &&
+    consolidating !== 'idle'
 
   // ── Estado A: sem arquivos → drop zone ──────────────────────────────────────
   if (items.length === 0) {
@@ -339,7 +352,27 @@ function ImportForm({ onDone }: { onDone: () => void }) {
         })}
       </div>
 
-      {allSettled && (
+      {/* Card de consolidação final */}
+      {consolidating !== 'idle' && (
+        <div className={`rounded-lg border px-3 py-2.5 text-xs ${
+          consolidating === 'done'    ? 'border-emerald-200 bg-emerald-50' :
+          consolidating === 'error'   ? 'border-red-200 bg-red-50' :
+          'border-primary/30 bg-primary/5'
+        }`}>
+          <div className="flex items-center gap-2">
+            {consolidating === 'done'  ? <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" /> :
+             consolidating === 'error' ? <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" /> :
+             <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />}
+            <span className="font-medium text-slate-700">
+              {consolidating === 'running' ? 'Consolidando views e agregações…' :
+               consolidating === 'done'    ? 'Consolidação concluída' :
+               'Erro na consolidação'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {allSettled && consolidating !== 'running' && (
         <button
           onClick={resetForm}
           className="text-xs text-primary hover:underline font-medium"

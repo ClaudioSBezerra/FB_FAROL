@@ -1230,6 +1230,45 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Popula agg_*_mes para todos os meses presentes nos dados da empresa.
+		rows, err := db.Query(`
+			SELECT DISTINCT ano, mes FROM (
+				SELECT EXTRACT(YEAR  FROM data_faturamento)::int AS ano,
+				       EXTRACT(MONTH FROM data_faturamento)::int AS mes
+				  FROM vendas_faturadas WHERE empresa_id=$1
+				UNION
+				SELECT EXTRACT(YEAR  FROM data_transmissao)::int,
+				       EXTRACT(MONTH FROM data_transmissao)::int
+				  FROM vendas_transmitidas WHERE empresa_id=$1
+			) t ORDER BY ano, mes`, spCtx.EmpresaID)
+		if err == nil {
+			type ym struct{ ano, mes int }
+			var meses []ym
+			for rows.Next() {
+				var r ym
+				if rows.Scan(&r.ano, &r.mes) == nil {
+					meses = append(meses, r)
+				}
+			}
+			rows.Close()
+			anosVistos := map[int]bool{}
+			for _, m := range meses {
+				if !anosVistos[m.ano] {
+					db.Exec(`SELECT farol.create_agg_year_partitions($1)`, m.ano)
+					anosVistos[m.ano] = true
+				}
+			}
+			for _, m := range meses {
+				t1 := time.Now()
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes($1,$2,$3)`, spCtx.EmpresaID, m.ano, m.mes); e != nil {
+					log.Printf("[farol:agg] RefreshViews UPSERT %04d-%02d ERRO: %v", m.ano, m.mes, e)
+				} else {
+					log.Printf("[farol:agg] RefreshViews UPSERT %04d-%02d OK em %v", m.ano, m.mes, time.Since(t1))
+				}
+			}
+			log.Printf("[farol:agg] RefreshViews agg_mes: %d meses consolidados", len(meses))
+		}
+
 		var fatRows, transRows int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_fat_cli`).Scan(&fatRows)
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.mv_trans_cli`).Scan(&transRows)

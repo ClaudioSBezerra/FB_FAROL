@@ -59,6 +59,8 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		// (range de datas escolhido), não do dado.
 		fallbackAno, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
 		fallbackMes, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
+		skipRefreshStr := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("skip_refresh")))
+		skipRefresh    := skipRefreshStr == "true" || skipRefreshStr == "1"
 
 		// ── Ler arquivo — suporta até 1 GB (350 MB típico) ───────────────────
 		_ = r.ParseMultipartForm(512 << 20)
@@ -128,7 +130,7 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		importJobs.Store(jobID, cancel)
 
 		// rawBytes é passado por referência ao goroutine (GC mantém vivo até ele terminar)
-		go processImportJob(ctx, db, jobID, rawBytes, spCtx, fallbackAno, fallbackMes)
+		go processImportJob(ctx, db, jobID, rawBytes, spCtx, fallbackAno, fallbackMes, skipRefresh)
 
 		// Retorna job_id imediatamente
 		w.Header().Set("Content-Type", "application/json")
@@ -160,7 +162,7 @@ func parseDateBR(s string) time.Time {
 }
 
 func processImportJob(ctx context.Context, db *sql.DB, jobID string,
-	rawBytes []byte, spCtx *FarolContext, fallbackAno, fallbackMes int) {
+	rawBytes []byte, spCtx *FarolContext, fallbackAno, fallbackMes int, skipRefresh bool) {
 
 	defer func() {
 		importJobs.Delete(jobID)
@@ -554,102 +556,97 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	importados := int(processed.Load())
 	log.Printf("[ImportJob:%s] concluído: %d linhas via COPY", jobID, importados)
 
-	// Sinaliza "Consolidando..." e faz REFRESH da view materializada.
-	// CONCURRENTLY não bloqueia leituras concorrentes (requer unique index, criado na migration 141).
-	db.Exec(`UPDATE vendas_import_jobs
-		SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
-		WHERE id=$1`, jobID)
+	if !skipRefresh {
+		// Sinaliza "Consolidando..." e faz REFRESH da view materializada.
+		// CONCURRENTLY não bloqueia leituras concorrentes (requer unique index, criado na migration 141).
+		db.Exec(`UPDATE vendas_import_jobs
+			SET progress=91, message='Consolidando dados...', atualizado_em=NOW()
+			WHERE id=$1`, jobID)
 
-	log.Printf("[farol:view] ImportJob=%s iniciando REFRESH das MVs (carteira + 28 fat/trans)", jobID)
-	tRefresh := time.Now()
+		log.Printf("[farol:view] ImportJob=%s iniciando REFRESH das MVs (carteira + 28 fat/trans)", jobID)
+		tRefresh := time.Now()
 
-	// Primeiro: MVs auxiliares de carteira (1 linha por RCA — base hierárquica).
-	// As derivadas v01_l0..l2, v02_l0, v03_l0..l1 usam essas via sub-SELECT.
-	for _, mv := range []string{"farol.mv_fat_carteira_rca", "farol.mv_trans_carteira_rca"} {
-		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + mv); err != nil {
-			if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + mv); err2 != nil {
-				log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, mv, err2)
+		for _, mv := range []string{"farol.mv_fat_carteira_rca", "farol.mv_trans_carteira_rca"} {
+			if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + mv); err != nil {
+				if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + mv); err2 != nil {
+					log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, mv, err2)
+				}
+			}
+			db.Exec(`ANALYZE ` + mv)
+		}
+
+		refreshFlow := func(baseView string, summaryViews []string) {
+			t0 := time.Now()
+			if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + baseView); err != nil {
+				log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO em %v: %v", jobID, baseView, time.Since(t0), err)
+				return
+			}
+			var rowCount int
+			_ = db.QueryRow(`SELECT COUNT(*) FROM ` + baseView).Scan(&rowCount)
+			log.Printf("[farol:view] ImportJob=%s %s OK — %d linhas em %v", jobID, baseView, rowCount, time.Since(t0))
+			var wg sync.WaitGroup
+			for _, vw := range summaryViews {
+				wg.Add(1)
+				go func(name string) {
+					defer wg.Done()
+					if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err2 != nil {
+						log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, name, err2)
+					} else {
+						db.Exec(`ANALYZE ` + name)
+					}
+				}(vw)
+			}
+			wg.Wait()
+			db.Exec(`ANALYZE ` + baseView)
+			log.Printf("[farol:view] ImportJob=%s fluxo %s concluído em %v", jobID, baseView, time.Since(t0))
+		}
+
+		var wgFlows sync.WaitGroup
+		wgFlows.Add(2)
+		go func() { defer wgFlows.Done(); refreshFlow(AllFatViews[0], AllFatViews[1:]) }()
+		go func() { defer wgFlows.Done(); refreshFlow(AllTransViews[0], AllTransViews[1:]) }()
+		wgFlows.Wait()
+		log.Printf("[farol:view] ImportJob=%s REFRESH total (28 MVs) concluído em %v", jobID, time.Since(tRefresh))
+
+		// Popula tabelas agg_*_mes para os meses presentes neste arquivo.
+		tAgg := time.Now()
+		mesesTocados := make(map[[2]int]struct{})
+		for k := range uniqueFatDates {
+			if t, e := time.Parse("2006-01-02", k); e == nil {
+				mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
 			}
 		}
-		db.Exec(`ANALYZE ` + mv)
-	}
-
-	// REFRESH cada fluxo em sequência interna (base → summaries) mas
-	// os dois fluxos podem rodar em paralelo (são independentes).
-	refreshFlow := func(baseView string, summaryViews []string) {
-		t0 := time.Now()
-		if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + baseView); err != nil {
-			log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO em %v: %v", jobID, baseView, time.Since(t0), err)
-			return
+		for k := range uniqueTransDates {
+			if t, e := time.Parse("2006-01-02", k); e == nil {
+				mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
+			}
 		}
-		var rowCount int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM ` + baseView).Scan(&rowCount)
-		log.Printf("[farol:view] ImportJob=%s %s OK — %d linhas em %v", jobID, baseView, rowCount, time.Since(t0))
-
-		var wg sync.WaitGroup
-		for _, vw := range summaryViews {
-			wg.Add(1)
-			go func(name string) {
-				defer wg.Done()
-				if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + name); err2 != nil {
-					log.Printf("[farol:view] ImportJob=%s REFRESH %s ERRO: %v", jobID, name, err2)
-				} else {
-					db.Exec(`ANALYZE ` + name)
-				}
-			}(vw)
+		anosTocados := make(map[int]struct{})
+		for ym := range mesesTocados {
+			anosTocados[ym[0]] = struct{}{}
 		}
-		wg.Wait()
-		db.Exec(`ANALYZE ` + baseView)
-		log.Printf("[farol:view] ImportJob=%s fluxo %s concluído em %v", jobID, baseView, time.Since(t0))
-	}
-
-	var wgFlows sync.WaitGroup
-	wgFlows.Add(2)
-	go func() { defer wgFlows.Done(); refreshFlow(AllFatViews[0], AllFatViews[1:]) }()
-	go func() { defer wgFlows.Done(); refreshFlow(AllTransViews[0], AllTransViews[1:]) }()
-	wgFlows.Wait()
-	log.Printf("[farol:view] ImportJob=%s REFRESH total (28 MVs) concluído em %v", jobID, time.Since(tRefresh))
-
-	// Migration 162 — popula tabelas agregadas particionadas (agg_*_mes).
-	// Coexiste com as MVs antigas; a API só usa as agg_* quando o handler for
-	// migrado (próxima sessão). Aqui só popula pra validar tempo/conteúdo
-	// com dados reais. Não bloqueia o success do import — UPSERT que falhar
-	// apenas loga ERRO.
-	tAgg := time.Now()
-	mesesTocados := make(map[[2]int]struct{})
-	for k := range uniqueFatDates {
-		if t, e := time.Parse("2006-01-02", k); e == nil {
-			mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
+		for ano := range anosTocados {
+			if _, err := db.Exec(`SELECT farol.create_agg_year_partitions($1)`, ano); err != nil {
+				log.Printf("[farol:agg] ImportJob=%s create_agg_year_partitions(%d) ERRO: %v", jobID, ano, err)
+			}
 		}
-	}
-	for k := range uniqueTransDates {
-		if t, e := time.Parse("2006-01-02", k); e == nil {
-			mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
+		for ym := range mesesTocados {
+			ano, mes := ym[0], ym[1]
+			t0 := time.Now()
+			if _, err := db.Exec(`SELECT farol.upsert_aggs_mes($1, $2, $3)`,
+				spCtx.EmpresaID, ano, mes); err != nil {
+				log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d ERRO em %v: %v",
+					jobID, ano, mes, time.Since(t0), err)
+			} else {
+				log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d OK em %v",
+					jobID, ano, mes, time.Since(t0))
+			}
 		}
+		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
+			jobID, len(mesesTocados), time.Since(tAgg))
+	} else {
+		log.Printf("[farol:view] ImportJob=%s skip_refresh=true — MVs e agg_mes adiados para consolidação final", jobID)
 	}
-	anosTocados := make(map[int]struct{})
-	for ym := range mesesTocados {
-		anosTocados[ym[0]] = struct{}{}
-	}
-	for ano := range anosTocados {
-		if _, err := db.Exec(`SELECT farol.create_agg_year_partitions($1)`, ano); err != nil {
-			log.Printf("[farol:agg] ImportJob=%s create_agg_year_partitions(%d) ERRO: %v", jobID, ano, err)
-		}
-	}
-	for ym := range mesesTocados {
-		ano, mes := ym[0], ym[1]
-		t0 := time.Now()
-		if _, err := db.Exec(`SELECT farol.upsert_aggs_mes($1, $2, $3)`,
-			spCtx.EmpresaID, ano, mes); err != nil {
-			log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d ERRO em %v: %v",
-				jobID, ano, mes, time.Since(t0), err)
-		} else {
-			log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d OK em %v",
-				jobID, ano, mes, time.Since(t0))
-		}
-	}
-	log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
-		jobID, len(mesesTocados), time.Since(tAgg))
 
 	db.Exec(`UPDATE vendas_import_jobs
 		SET status='done', progress=100, importados=$1, message='', atualizado_em=NOW()
