@@ -66,9 +66,10 @@ function ImportForm({ onDone }: { onDone: () => void }) {
   const [running, setRunning]   = useState(false)
   const [currentIdx, setCurrentIdx] = useState(-1)
   const [dragOver, setDragOver] = useState(false)
-  const fileRef  = useRef<HTMLInputElement>(null)
-  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const abortRef = useRef(false)
+  const fileRef      = useRef<HTMLInputElement>(null)
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const abortRef     = useRef(false)
+  const currentJobId = useRef<string | null>(null)  // ref sempre atual — evita stale closure no cancel
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
@@ -132,8 +133,10 @@ function ImportForm({ onDone }: { onDone: () => void }) {
         }
 
         const { job_id } = await resp.json()
+        currentJobId.current = job_id
         updateItem(i, { status: 'processing' })
         const job = await pollJob(job_id, i)
+        currentJobId.current = null
         if (job.status === 'done') onDone()
       } catch {
         updateItem(i, { status: 'error', error: 'Falha de conexão' })
@@ -146,9 +149,9 @@ function ImportForm({ onDone }: { onDone: () => void }) {
 
   const handleCancel = async () => {
     abortRef.current = true
-    const item = items[currentIdx]
-    if (item?.job?.id) {
-      try { await fetch(`/api/v2/vendas/job/${item.job.id}/cancel`, { method: 'POST' }) } catch {}
+    const jobId = currentJobId.current
+    if (jobId) {
+      try { await fetch(`/api/v2/vendas/job/${jobId}/cancel`, { method: 'POST' }) } catch {}
     }
   }
 
@@ -158,6 +161,7 @@ function ImportForm({ onDone }: { onDone: () => void }) {
     setRunning(false)
     setCurrentIdx(-1)
     abortRef.current = false
+    currentJobId.current = null
   }
 
   const doneCnt    = items.filter(it => it.status === 'done').length
