@@ -610,6 +610,47 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	wgFlows.Wait()
 	log.Printf("[farol:view] ImportJob=%s REFRESH total (28 MVs) concluído em %v", jobID, time.Since(tRefresh))
 
+	// Migration 162 — popula tabelas agregadas particionadas (agg_*_mes).
+	// Coexiste com as MVs antigas; a API só usa as agg_* quando o handler for
+	// migrado (próxima sessão). Aqui só popula pra validar tempo/conteúdo
+	// com dados reais. Não bloqueia o success do import — UPSERT que falhar
+	// apenas loga ERRO.
+	tAgg := time.Now()
+	mesesTocados := make(map[[2]int]struct{})
+	for k := range uniqueFatDates {
+		if t, e := time.Parse("2006-01-02", k); e == nil {
+			mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
+		}
+	}
+	for k := range uniqueTransDates {
+		if t, e := time.Parse("2006-01-02", k); e == nil {
+			mesesTocados[[2]int{t.Year(), int(t.Month())}] = struct{}{}
+		}
+	}
+	anosTocados := make(map[int]struct{})
+	for ym := range mesesTocados {
+		anosTocados[ym[0]] = struct{}{}
+	}
+	for ano := range anosTocados {
+		if _, err := db.Exec(`SELECT farol.create_agg_year_partitions($1)`, ano); err != nil {
+			log.Printf("[farol:agg] ImportJob=%s create_agg_year_partitions(%d) ERRO: %v", jobID, ano, err)
+		}
+	}
+	for ym := range mesesTocados {
+		ano, mes := ym[0], ym[1]
+		t0 := time.Now()
+		if _, err := db.Exec(`SELECT farol.upsert_aggs_mes($1, $2, $3)`,
+			spCtx.EmpresaID, ano, mes); err != nil {
+			log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d ERRO em %v: %v",
+				jobID, ano, mes, time.Since(t0), err)
+		} else {
+			log.Printf("[farol:agg] ImportJob=%s UPSERT %04d-%02d OK em %v",
+				jobID, ano, mes, time.Since(t0))
+		}
+	}
+	log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
+		jobID, len(mesesTocados), time.Since(tAgg))
+
 	db.Exec(`UPDATE vendas_import_jobs
 		SET status='done', progress=100, importados=$1, message='', atualizado_em=NOW()
 		WHERE id=$2`, importados, jobID)
