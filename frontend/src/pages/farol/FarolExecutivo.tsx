@@ -642,6 +642,7 @@ export default function FarolExecutivo() {
     // ainda sem dados no momento do fetch — usar periodos[0] como fonte primária.
     const ps = periodosQ.data?.periodos ?? []
     const latestStr = ps[0]
+    const parsePeriodo = (s: string) => { const [y, m] = s.split('-'); return { ano: +y, mes: +m } }
     const last = latestStr
       ? parsePeriodo(latestStr)
       : (periodosQ.data?.ref_ano && periodosQ.data?.ref_mes)
