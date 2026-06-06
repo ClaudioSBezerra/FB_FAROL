@@ -638,7 +638,15 @@ export default function FarolExecutivo() {
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p)
-    const last = periodosQ.data ? { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! } : undefined
+    // periodos vem DESC (mais recente primeiro); ref_ano/ref_mes pode ser 0 se
+    // ainda sem dados no momento do fetch — usar periodos[0] como fonte primária.
+    const ps = periodosQ.data?.periodos ?? []
+    const latestStr = ps[0]
+    const last = latestStr
+      ? parsePeriodo(latestStr)
+      : (periodosQ.data?.ref_ano && periodosQ.data?.ref_mes)
+        ? { ano: periodosQ.data.ref_ano, mes: periodosQ.data.ref_mes }
+        : undefined
     const r = presetRange(p, last)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
