@@ -2,6 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { XCircle, UploadCloud, FileText, CheckCircle, AlertCircle, Loader2, Clock } from 'lucide-react'
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const MES_MAP: Record<string, number> = {
+  jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6,
+  jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
+}
+
+function parseAnoMesFromFilename(name: string): { ano: number; mes: number } {
+  const m = name.toLowerCase().match(/([a-z]{3})[_-](\d{4})/)
+  if (m) {
+    const mes = MES_MAP[m[1]]
+    const ano = parseInt(m[2])
+    if (mes && ano >= 2000 && ano <= 2100) return { mes, ano }
+  }
+  const now = new Date()
+  return { mes: now.getMonth() + 1, ano: now.getFullYear() }
+}
+
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface PeriodoItem {
@@ -104,7 +122,8 @@ function ImportForm({ onDone }: { onDone: () => void }) {
       try {
         const fd = new FormData()
         fd.append('file', snapshot[i].file)
-        const resp = await fetch('/api/v2/vendas/import?ano=0&mes=0', { method: 'POST', body: fd })
+        const { ano, mes } = parseAnoMesFromFilename(snapshot[i].file.name)
+        const resp = await fetch(`/api/v2/vendas/import?ano=${ano}&mes=${mes}`, { method: 'POST', body: fd })
 
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ error: 'Erro no upload' }))
