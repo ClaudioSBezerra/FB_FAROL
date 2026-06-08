@@ -124,7 +124,14 @@ export default function FarolPublicPanel() {
         </div>
 
         {data?.kpi && data.kpi.total_atual > 0 && (
-          <KPIBar kpi={data.kpi} periodo={data.periodo} />
+          <KPIBar
+            kpi={data.kpi}
+            periodo={data.periodo}
+            periodos={periodos}
+            refAno={refAno}
+            refMes={refMes}
+            onPreset={(ano, mes) => { setRefAno(ano); setRefMes(mes); setUserDrill([]) }}
+          />
         )}
 
         <Breadcrumb drillPath={userDrill} onNavigate={handleBreadcrumb} />
