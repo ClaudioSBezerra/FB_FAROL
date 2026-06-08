@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown } from 'lucide-react'
-import { Semaforo } from '@/components/farol/Semaforo'
+import { ChevronDown, Users, Package, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 import { FilialSelector } from '@/components/FilialSelector'
@@ -182,6 +181,32 @@ function PeriodRangeFilter({
   )
 }
 
+// Paleta tonal — fundo claro com texto profundo. Mais elegante que cor saturada.
+const COR_BG: Record<Cor, string> = {
+  verde:    'bg-gradient-to-br from-emerald-50/60 via-white to-white',
+  amarelo:  'bg-gradient-to-br from-amber-50/60 via-white to-white',
+  vermelho: 'bg-gradient-to-br from-red-50/70 via-white to-white',
+}
+const COR_RING: Record<Cor, string> = {
+  verde:    'ring-1 ring-emerald-100 hover:ring-emerald-200',
+  amarelo:  'ring-1 ring-amber-100 hover:ring-amber-200',
+  vermelho: 'ring-1 ring-red-200 hover:ring-red-300',
+}
+const COR_DOT: Record<Cor, string> = {
+  verde:    'bg-emerald-500',
+  amarelo:  'bg-amber-500',
+  vermelho: 'bg-red-500',
+}
+const COR_DOT_PING: Record<Cor, string> = {
+  verde:    '',
+  amarelo:  '',
+  vermelho: 'animate-ping bg-red-400',
+}
+const COR_CHIP: Record<Cor, string> = {
+  verde:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  amarelo:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+  vermelho: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+}
 const COR_BORDER: Record<Cor, string> = {
   verde: 'border-l-emerald-500',
   amarelo: 'border-l-amber-400',
@@ -193,9 +218,9 @@ const COR_BAR: Record<Cor, string> = {
   vermelho: 'bg-red-500',
 }
 const COR_TEXT: Record<Cor, string> = {
-  verde: 'text-emerald-600',
-  amarelo: 'text-amber-600',
-  vermelho: 'text-red-600',
+  verde: 'text-emerald-700',
+  amarelo: 'text-amber-700',
+  vermelho: 'text-red-700',
 }
 
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
@@ -288,9 +313,18 @@ export function KPIBar({
         <div>
           <p className="text-xs text-slate-500">Atingimento</p>
           <p className={`text-lg font-bold ${COR_TEXT[kpi.total_cor]}`}>{fmtPct(kpi.total_pct)}</p>
-          <div className="flex gap-1 mt-1">
-            <span className="text-xs text-emerald-600 font-medium">{kpi.verdes}🟢</span>
-            <span className="text-xs text-red-500 font-medium">{kpi.vermelhos}🔴</span>
+          <div className="flex gap-1.5 mt-1">
+            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.verde}`}>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {kpi.verdes}
+            </span>
+            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.vermelho}`}>
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-60 animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
+              </span>
+              {kpi.vermelhos}
+            </span>
           </div>
         </div>
         <div>
@@ -317,55 +351,93 @@ export function KPIBar({
 
 export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => void }) {
   const barW = Math.min(100, card.pct)
+  // Delta absoluto vs anterior (em pp) — interpretação como melhora/piora do atingimento
+  const delta = card.valor_ant > 0
+    ? ((card.valor_atual - card.valor_ant) / card.valor_ant) * 100
+    : 0
+  const deltaUp = delta > 0.5
+  const deltaDown = delta < -0.5
   return (
     <button
       onClick={onClick}
-      className={`bg-white border border-slate-100 border-l-4 ${COR_BORDER[card.cor]} rounded-xl shadow-sm hover:shadow-md transition-all text-left w-full overflow-hidden`}
+      className={`group relative ${COR_BG[card.cor]} border border-slate-200/60 ${COR_RING[card.cor]} rounded-xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-left w-full overflow-hidden`}
     >
-      {/* Barra de progresso */}
-      <div className="h-1 bg-slate-100">
-        <div className={`h-1 ${COR_BAR[card.cor]} transition-all`} style={{ width: `${barW}%` }} />
+      {/* Barra de progresso refinada */}
+      <div className="h-1 bg-slate-100/80">
+        <div className={`h-full ${COR_BAR[card.cor]} transition-all duration-500`} style={{ width: `${barW}%` }} />
       </div>
+
       <div className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <Semaforo cor={card.cor} size="sm" />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            {/* Dot pulse — vermelho pulsa, verde/amarelo estático */}
+            <span className="relative flex h-2.5 w-2.5 mt-1.5 shrink-0">
+              {card.cor === 'vermelho' && (
+                <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${COR_DOT_PING[card.cor]}`} />
+              )}
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${COR_DOT[card.cor]}`} />
+            </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{card.label}</p>
-              <p className="text-xs text-slate-400">{card.level_label} • {card.key}</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">{card.level_label} • {card.key}</p>
             </div>
           </div>
+          {/* Percentual + delta */}
           <div className="text-right shrink-0">
-            <p className={`text-lg font-bold tabular-nums ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
+            <p className={`text-xl font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
+            {(deltaUp || deltaDown) && (
+              <p className={`mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums ${
+                deltaUp ? 'text-emerald-600' : 'text-red-600'
+              }`}>
+                {deltaUp
+                  ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} />
+                  : <TrendingDown className="h-3 w-3" strokeWidth={2.5} />}
+                {Math.abs(delta).toFixed(1)}%
+              </p>
+            )}
+            {!deltaUp && !deltaDown && card.valor_ant > 0 && (
+              <p className="mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-slate-400 tabular-nums">
+                <Minus className="h-3 w-3" strokeWidth={2.5} />
+                estável
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
-          <div>
-            <span className="text-slate-400">Atual: </span>
-            <span className="font-medium">{fmtBRL(card.valor_atual)}</span>
+        {/* Métricas primárias — Atual + Anterior alinhados */}
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <div className="space-y-0.5">
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Atual</p>
+            <p className="text-sm font-semibold text-slate-800 tabular-nums">{fmtBRL(card.valor_atual)}</p>
           </div>
-          <div>
-            <span className="text-slate-400">Anterior: </span>
-            <span className="font-medium">{fmtBRL(card.valor_ant)}</span>
-          </div>
-          <div>
-            <span className="text-slate-400">Fat: </span>
-            <span className="font-medium">{fmtBRL(card.faturado)}</span>
-          </div>
-          <div>
-            <span className="text-slate-400">Trans: </span>
-            <span className="font-medium">{fmtBRL(card.transmitido)}</span>
+          <div className="space-y-0.5">
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Anterior</p>
+            <p className="text-sm font-semibold text-slate-500 tabular-nums">{fmtBRL(card.valor_ant)}</p>
           </div>
         </div>
 
+        {/* Métricas secundárias — Fat + Trans em fonte menor */}
+        <div className="mt-2 flex gap-4 text-[11px] text-slate-500 tabular-nums">
+          <span><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600">{fmtBRL(card.faturado)}</span></span>
+          <span><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600">{fmtBRL(card.transmitido)}</span></span>
+        </div>
+
+        {/* Rodapé — Positivação + Mix com ícones Lucide */}
         {(card.base_cli > 0 || card.mix > 0) && (
-          <div className="mt-2 flex gap-3 text-xs text-slate-500 border-t border-slate-50 pt-2">
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 border-t border-slate-100/80 pt-2">
             {card.base_cli > 0 && (
-              <span>👥 {fmtPct(card.positpct)} posit. ({card.positivados}/{card.base_cli})</span>
+              <span className="inline-flex items-center gap-1">
+                <Users className="h-3 w-3 text-slate-400" strokeWidth={2} />
+                <span className="font-medium tabular-nums">{fmtPct(card.positpct)}</span>
+                <span className="text-slate-400 tabular-nums">({card.positivados}/{card.base_cli})</span>
+              </span>
             )}
             {card.mix > 0 && (
-              <span>📦 {fmtNum(card.mix)} itens/cli</span>
+              <span className="inline-flex items-center gap-1">
+                <Package className="h-3 w-3 text-slate-400" strokeWidth={2} />
+                <span className="font-medium tabular-nums">{fmtNum(card.mix)}</span>
+                <span className="text-slate-400">itens/cli</span>
+              </span>
             )}
           </div>
         )}
