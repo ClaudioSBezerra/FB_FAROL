@@ -39,8 +39,4 @@ backend.log
 
 # Backups locais e dados de teste pesados
 .backups/
-test-data/jan-2026.csv
-test-data/fev-2026.csv
-test-data/mar-2026.csv
-test-data/abr-2026.csv
-test-data/mai-2026.csv
+test-data/*.csv

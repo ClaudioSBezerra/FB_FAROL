@@ -1482,18 +1482,31 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		q := r.URL.Query()
 
-		empresaID := resolveEmpresaCNPJ(db, q.Get("cnpj"))
+		rawCNPJ := q.Get("cnpj")
+		empresaID := resolveEmpresaCNPJ(db, rawCNPJ)
 		if empresaID == "" {
-			http.Error(w, `{"error":"empresa não encontrada para este CNPJ"}`, http.StatusNotFound)
+			log.Printf("[farol:public] empresa não encontrada — cnpj=%q scope=%q cod=%q", rawCNPJ, q.Get("scope"), q.Get("cod"))
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "empresa não encontrada para este CNPJ",
+				"cnpj":  rawCNPJ,
+				"hint":  "verifique se companies.cnpj está preenchido para esta empresa",
+			})
 			return
 		}
 
 		scope := strings.ToLower(strings.TrimSpace(q.Get("scope")))
 		cod := strings.TrimSpace(q.Get("cod"))
 		if cod == "" || (scope != "sup" && scope != "rca") {
-			http.Error(w, `{"error":"scope (sup|rca) e cod obrigatórios"}`, http.StatusBadRequest)
+			log.Printf("[farol:public] params inválidos — cnpj=%q scope=%q cod=%q", rawCNPJ, scope, cod)
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "scope (sup|rca) e cod obrigatórios",
+				"scope": scope, "cod": cod,
+			})
 			return
 		}
+		log.Printf("[farol:public] cnpj=%q → empresa=%s scope=%s cod=%s", rawCNPJ, empresaID, scope, cod)
 
 		view := "V02"
 		hier := hierarquias[view]

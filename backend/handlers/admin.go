@@ -319,6 +319,29 @@ func DiagnoseBIHandler(db *sql.DB) http.HandlerFunc {
 		}
 		out["migrations_16x"] = migs
 
+		// 1b. Companies + CNPJ — pra debugar rota pública /m/CNPJ/sup/cod
+		type empInfo struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			CNPJ  string `json:"cnpj"`
+			CNPJOK bool  `json:"cnpj_normalized_match,omitempty"`
+		}
+		emps := []empInfo{}
+		erows, _ := db.Query(`
+			SELECT id::text, name, COALESCE(cnpj,''),
+			       (regexp_replace(COALESCE(cnpj,''), '[^0-9]', '', 'g') != '') AS cnpj_ok
+			FROM companies ORDER BY name`)
+		if erows != nil {
+			for erows.Next() {
+				var e empInfo
+				if erows.Scan(&e.ID, &e.Name, &e.CNPJ, &e.CNPJOK) == nil {
+					emps = append(emps, e)
+				}
+			}
+			erows.Close()
+		}
+		out["companies"] = emps
+
 		// 2. Contagens por empresa
 		type empCount struct {
 			Empresa string `json:"empresa_id"`
