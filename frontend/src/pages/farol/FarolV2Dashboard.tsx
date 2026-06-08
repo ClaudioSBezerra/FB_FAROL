@@ -66,14 +66,15 @@ export interface CardsResponse {
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
-function fmtBRL(v: number) {
+export function fmtBRL(v: number) {
   if (v >= 1_000_000_000) return 'R$ ' + (v / 1_000_000_000).toFixed(2).replace('.', ',') + 'B'
   if (v >= 1_000_000)     return 'R$ ' + (v / 1_000_000).toFixed(1).replace('.', ',') + 'M'
   if (v >= 1_000)         return 'R$ ' + (v / 1_000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'K'
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })
 }
-function fmtPct(v: number) { return v.toFixed(1) + '%' }
-function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
+export function fmtPct(v: number) { return v.toFixed(1) + '%' }
+export function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
+export function fmtInt(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) }
 
 export function parsePeriodo(s: string): { ano: number; mes: number } {
   const [y, m] = s.split('-')
