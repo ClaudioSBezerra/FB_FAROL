@@ -82,7 +82,7 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
 // SectionRow: cabeçalho de seção (VENDA, POSITIVAÇÃO, MIX MÉDIO)
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mb-1">{children}</p>
+    <p className="text-xs uppercase tracking-wider font-bold text-slate-700 mb-1.5">{children}</p>
   )
 }
 
@@ -172,8 +172,8 @@ function HeaderResumo({
         <div className="border-t border-slate-100 pt-2.5">
           <SectionLabel>Positivação</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
-            <Cell label="Cl Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
-            <Cell label="Cl Positivado" value={fmtInt(kpi.total_positivados)} />
+            <Cell label="Clientes Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
+            <Cell label="Clientes Positivados" value={fmtInt(kpi.total_positivados)} />
             <Cell label="% Posit" value={fmtPct(kpi.total_positpct)} />
           </div>
         </div>
@@ -235,8 +235,8 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           <div className="border-t border-slate-100 pt-2.5">
             <SectionLabel>Positivação</SectionLabel>
             <div className="grid grid-cols-3 gap-2">
-              <Cell label="Cl Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
-              <Cell label="Cl Positivado" value={fmtInt(card.positivados)} />
+              <Cell label="Clientes Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
+              <Cell label="Clientes Positivados" value={fmtInt(card.positivados)} />
               <Cell label="% Posit" value={fmtPct(card.positpct)} />
             </div>
           </div>
