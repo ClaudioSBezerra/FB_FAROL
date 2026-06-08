@@ -79,6 +79,17 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
+	// V05: visão Supervisor → Fornecedor → RCA → Cliente → Produto
+	// (mig 167) — usada pelo painel mobile como toggle "Por Fornecedor"
+	// alternando com V02 ("Por RCA"). Permite o gestor pivotar a análise
+	// sem trocar o escopo de supervisor.
+	"V05": {
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
 }
 
 // Tabelas agg_*_mes (granularidade mensal, migration 162+165).
@@ -88,6 +99,7 @@ var aggTablesFat = map[string][]string{
 	"V02": {"agg_fat_v02_l0_mes", "agg_fat_v02_l1_mes", "agg_fat_v02_l2_mes", "agg_fat_v02_l3_mes"},
 	"V03": {"agg_fat_v03_l0_mes", "agg_fat_v03_l1_mes", "agg_fat_v03_l2_mes", "agg_fat_v03_l3_mes"},
 	"V04": {"agg_fat_v04_l0_mes", "agg_fat_v04_l1_mes", "agg_fat_v04_l2_mes"},
+	"V05": {"agg_fat_v05_l0_mes", "agg_fat_v05_l1_mes", "agg_fat_v05_l2_mes", "agg_fat_v05_l3_mes"},
 }
 
 var aggTablesTrans = map[string][]string{
@@ -95,6 +107,7 @@ var aggTablesTrans = map[string][]string{
 	"V02": {"agg_trans_v02_l0_mes", "agg_trans_v02_l1_mes", "agg_trans_v02_l2_mes", "agg_trans_v02_l3_mes"},
 	"V03": {"agg_trans_v03_l0_mes", "agg_trans_v03_l1_mes", "agg_trans_v03_l2_mes", "agg_trans_v03_l3_mes"},
 	"V04": {"agg_trans_v04_l0_mes", "agg_trans_v04_l1_mes", "agg_trans_v04_l2_mes"},
+	"V05": {"agg_trans_v05_l0_mes", "agg_trans_v05_l1_mes", "agg_trans_v05_l2_mes", "agg_trans_v05_l3_mes"},
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -1506,9 +1519,13 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
-		log.Printf("[farol:public] cnpj=%q → empresa=%s scope=%s cod=%s", rawCNPJ, empresaID, scope, cod)
-
-		view := "V02"
+		// Aceita view=V02 (Por RCA, default) ou V05 (Por Fornecedor).
+		// Ambas começam em cod_supervisor — o escopo público é sempre o supervisor.
+		view := strings.ToUpper(strings.TrimSpace(q.Get("view")))
+		if view != "V02" && view != "V05" {
+			view = "V02"
+		}
+		log.Printf("[farol:public] cnpj=%q → empresa=%s scope=%s cod=%s view=%s", rawCNPJ, empresaID, scope, cod, view)
 		hier := hierarquias[view]
 		fluxo := resolveFluxo(q.Get("fluxo"))
 

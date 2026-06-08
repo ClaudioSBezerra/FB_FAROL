@@ -272,13 +272,16 @@ export default function FarolPublicPanel() {
   const [userDrill, setUserDrill] = useState<DrillStep[]>([])
   const [refAno, setRefAno]       = useState(0)
   const [refMes, setRefMes]       = useState(0)
+  // Toggle de visão: V02 = "Por RCA" (default), V05 = "Por Fornecedor".
+  // Só faz sentido no scope=sup (rca já está fixo num nível mais profundo).
+  const [viewMode, setViewMode]   = useState<'V02' | 'V05'>('V02')
 
   const drillParam = JSON.stringify(userDrill)
   const { data, isLoading, error } = useQuery<CardsResponse>({
-    queryKey: ['farol-public', cnpj, scope, scopeCod, compMode, refAno, refMes, drillParam],
+    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, compMode, refAno, refMes, drillParam],
     queryFn: async () => {
       const p = new URLSearchParams({
-        cnpj, scope, cod: scopeCod, comp_mode: compMode,
+        cnpj, scope, cod: scopeCod, comp_mode: compMode, view: viewMode,
         ...(refAno > 0 && { ref_ano: String(refAno) }),
         ...(refMes > 0 && { ref_mes: String(refMes) }),
         ...(userDrill.length > 0 && { drill: drillParam }),
@@ -330,6 +333,28 @@ export default function FarolPublicPanel() {
       <div className="bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-10">
         <p className="text-xs text-slate-400 font-medium">{scopeLabel}</p>
         <h1 className="text-lg font-bold text-slate-800 leading-tight truncate">{scopeNome}</h1>
+
+        {/* Toggle Por RCA / Por Fornecedor — só faz sentido no escopo Supervisor */}
+        {scope === 'sup' && (
+          <div className="mt-2 inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
+            <button
+              onClick={() => { setViewMode('V02'); setUserDrill([]) }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === 'V02' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Por RCA
+            </button>
+            <button
+              onClick={() => { setViewMode('V05'); setUserDrill([]) }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-slate-200 ${
+                viewMode === 'V05' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Por Fornecedor
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="p-4">
