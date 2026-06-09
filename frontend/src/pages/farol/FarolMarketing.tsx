@@ -706,14 +706,19 @@ function MktRanking({ cards, view, onSelectProd, onSelectCli }: {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-50">
-        <div>
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-            Ranking de Desempenho de{' '}
-            <span className="text-red-600">{headerLabel}</span>
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            ordenado por {metricLabel.toLowerCase()}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Badge destacando QUE informação está sendo exibida */}
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm shrink-0">
+            {headerLabel}
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+              Ranking de Desempenho
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              ordenado por {metricLabel.toLowerCase()}
+            </p>
+          </div>
         </div>
         <div className="flex gap-3 text-[11px]">
           <span className="flex items-center gap-1 text-emerald-600 font-medium">

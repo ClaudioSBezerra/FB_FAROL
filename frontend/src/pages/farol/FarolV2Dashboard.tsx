@@ -380,7 +380,7 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{card.label}</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">{card.level_label} • {card.key}</p>
+              <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{card.key}</p>
             </div>
           </div>
           {/* Percentual + delta */}
@@ -628,13 +628,19 @@ export default function FarolV2Dashboard() {
       {/* ── Breadcrumb ───────────────────────────────────────────────────── */}
       <Breadcrumb drillPath={drillPath} onNavigate={handleBreadcrumb} />
 
-      {/* ── Nível atual ─────────────────────────────────────────────────── */}
+      {/* ── Banner do nível atual — destaca QUE tipo de dado está na tela ── */}
       {data && (
-        <p className="text-xs text-slate-400 mb-3">
-          Exibindo por{' '}
-          <span className="font-medium text-slate-600">{data.next_level_label}</span>
-          {' '}· {data.cards.length} itens
-        </p>
+        <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm">
+              {data.next_level_label}
+            </span>
+            <span className="text-sm text-slate-600">listados abaixo</span>
+          </div>
+          <span className="text-xs text-slate-500 tabular-nums shrink-0">
+            {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
+          </span>
+        </div>
       )}
 
       {/* ── Estados de carregamento / erro / vazio ───────────────────────── */}
