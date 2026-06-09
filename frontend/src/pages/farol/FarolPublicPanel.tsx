@@ -63,14 +63,14 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
   if (anterior <= 0) return null
   if (!up && !down) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-slate-400 tabular-nums">
+      <span className="inline-flex items-center gap-0.5 text-sm font-medium text-slate-400 tabular-nums">
         <Minus className="h-3 w-3" strokeWidth={2.5} />
         estável
       </span>
     )
   }
   return (
-    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums ${
+    <span className={`inline-flex items-center gap-0.5 text-sm font-semibold tabular-nums ${
       up ? 'text-emerald-600' : 'text-red-600'
     }`}>
       {up ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} /> : <TrendingDown className="h-3 w-3" strokeWidth={2.5} />}
@@ -79,10 +79,23 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
   )
 }
 
-// SectionRow: cabeçalho de seção (VENDA, POSITIVAÇÃO, MIX MÉDIO)
-function SectionLabel({ children }: { children: React.ReactNode }) {
+// SectionLabel: cabeçalho de seção (VENDA, POSITIVAÇÃO, MIX MÉDIO)
+// Tarja azul puro #0000FF — mesma linguagem do FarolExecutivo (cores
+// das colunas adaptadas pra alto contraste sobre azul):
+//   VENDA       → yellow-300
+//   POSITIVAÇÃO → lime-300
+//   MIX         → fuchsia-400
+const SECTION_COLOR: Record<'venda' | 'positivacao' | 'mix', string> = {
+  venda:       'text-yellow-300',
+  positivacao: 'text-lime-300',
+  mix:         'text-fuchsia-400',
+}
+function SectionLabel({ children, tone = 'venda' }: {
+  children: React.ReactNode
+  tone?: 'venda' | 'positivacao' | 'mix'
+}) {
   return (
-    <p className="text-xs uppercase tracking-wider font-bold text-slate-700 mb-1.5">{children}</p>
+    <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#0000FF] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
   )
 }
 
@@ -92,7 +105,7 @@ function Cell({ label, value, valueClass = 'text-slate-800' }: {
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium leading-tight">{label}</p>
+      <p className="text-sm uppercase tracking-wide text-slate-400 font-medium leading-tight">{label}</p>
       <p className={`text-sm font-semibold tabular-nums truncate leading-tight mt-0.5 ${valueClass}`}>{value}</p>
     </div>
   )
@@ -132,7 +145,7 @@ function HeaderResumo({
             {mesCorrente && (
               <button
                 onClick={() => onPreset(mesCorrente.ano, mesCorrente.mes)}
-                className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`px-2.5 py-1 text-sm font-medium transition-colors ${
                   isCorrente ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >Mês corrente</button>
@@ -140,7 +153,7 @@ function HeaderResumo({
             {mesFechado && (
               <button
                 onClick={() => onPreset(mesFechado.ano, mesFechado.mes)}
-                className={`px-2.5 py-1 text-[11px] font-medium transition-colors border-l border-slate-200 ${
+                className={`px-2.5 py-1 text-sm font-medium transition-colors border-l border-slate-200 ${
                   isFechado ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >Mês fechado</button>
@@ -153,9 +166,9 @@ function HeaderResumo({
         {/* SEÇÃO 1: VENDA */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <SectionLabel>Venda</SectionLabel>
+            <SectionLabel tone="venda">Venda</SectionLabel>
             <div className="flex items-center gap-2">
-              <span className={`text-lg font-bold tabular-nums leading-none ${COR_TEXT[kpi.total_cor]}`}>
+              <span className={`text-sm font-bold tabular-nums leading-none ${COR_TEXT[kpi.total_cor]}`}>
                 {fmtPct(kpi.total_pct)}
               </span>
               <DeltaPct atual={kpi.total_atual} anterior={kpi.total_ant} />
@@ -170,7 +183,7 @@ function HeaderResumo({
 
         {/* SEÇÃO 2: POSITIVAÇÃO */}
         <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel>Positivação</SectionLabel>
+          <SectionLabel tone="positivacao">Positivação</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             <Cell label="Clientes Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
             <Cell label="Clientes Positivados" value={fmtInt(kpi.total_positivados)} />
@@ -180,7 +193,7 @@ function HeaderResumo({
 
         {/* SEÇÃO 3: MIX MÉDIO */}
         <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel>Mix médio</SectionLabel>
+          <SectionLabel tone="mix">Mix médio</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             <Cell label="Realizado" value={fmtNum(kpi.avg_mix) + ' itens/cli'} />
           </div>
@@ -211,18 +224,18 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
             <span className="mt-1.5"><StatusDot cor={card.cor} /></span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{card.label}</p>
-              <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{card.key}</p>
+              <p className="text-sm text-slate-400 mt-0.5 font-mono">{card.key}</p>
             </div>
           </div>
           <div className="text-right shrink-0">
-            <p className={`text-xl font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
+            <p className={`text-sm font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
             <div className="mt-1 flex justify-end"><DeltaPct atual={card.valor_atual} anterior={card.valor_ant} /></div>
           </div>
         </div>
 
         {/* SEÇÃO 1: VENDA — Período Anterior | Período Atual | % */}
         <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel>Venda</SectionLabel>
+          <SectionLabel tone="venda">Venda</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             <Cell label="Período Anterior" value={fmtBRL(card.valor_ant)} valueClass="text-slate-500" />
             <Cell label="Período Atual" value={fmtBRL(card.valor_atual)} />
@@ -233,7 +246,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
         {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Cl Positivado | % Posit */}
         {card.base_cli > 0 && (
           <div className="border-t border-slate-100 pt-2.5">
-            <SectionLabel>Positivação</SectionLabel>
+            <SectionLabel tone="positivacao">Positivação</SectionLabel>
             <div className="grid grid-cols-3 gap-2">
               <Cell label="Clientes Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
               <Cell label="Clientes Positivados" value={fmtInt(card.positivados)} />
@@ -245,7 +258,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
         {/* SEÇÃO 3: MIX MÉDIO — Realizado */}
         {card.mix > 0 && (
           <div className="border-t border-slate-100 pt-2.5">
-            <SectionLabel>Mix médio</SectionLabel>
+            <SectionLabel tone="mix">Mix médio</SectionLabel>
             <div className="grid grid-cols-3 gap-2">
               <Cell label="Realizado" value={fmtNum(card.mix) + ' itens/cli'} />
             </div>
@@ -328,18 +341,18 @@ export default function FarolPublicPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 uppercase text-sm [&_*]:uppercase">
       {/* Cabeçalho do escopo */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-10">
-        <p className="text-xs text-slate-400 font-medium">{scopeLabel}</p>
-        <h1 className="text-lg font-bold text-slate-800 leading-tight truncate">{scopeNome}</h1>
+        <p className="text-sm text-slate-400 font-medium">{scopeLabel}</p>
+        <h1 className="text-sm font-bold text-slate-800 leading-tight truncate">{scopeNome}</h1>
 
         {/* Toggle Por RCA / Por Fornecedor — só faz sentido no escopo Supervisor */}
         {scope === 'sup' && (
           <div className="mt-2 inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
             <button
               onClick={() => { setViewMode('V02'); setUserDrill([]) }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                 viewMode === 'V02' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -347,7 +360,7 @@ export default function FarolPublicPanel() {
             </button>
             <button
               onClick={() => { setViewMode('V05'); setUserDrill([]) }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-slate-200 ${
+              className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
                 viewMode === 'V05' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -369,7 +382,7 @@ export default function FarolPublicPanel() {
               <button
                 key={m.id}
                 onClick={() => { setCompMode(m.id); setUserDrill([]) }}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                   compMode === m.id ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
@@ -385,7 +398,7 @@ export default function FarolPublicPanel() {
                 const pp = parsePeriodo(e.target.value)
                 setRefAno(pp.ano); setRefMes(pp.mes); setUserDrill([])
               }}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               {periodos.map(p => {
                 const { ano, mes } = parsePeriodo(p)
@@ -413,11 +426,11 @@ export default function FarolPublicPanel() {
         {data && (
           <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm">
+              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
                 {data.next_level_label}
               </span>
             </div>
-            <span className="text-xs text-slate-500 tabular-nums shrink-0">
+            <span className="text-sm text-slate-500 tabular-nums shrink-0">
               {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
             </span>
           </div>
@@ -440,7 +453,7 @@ export default function FarolPublicPanel() {
 
         {!isLoading && !error && data?.cards.length === 0 && (
           <div className="bg-white border border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
-            <p className="text-4xl mb-3">📊</p>
+            <p className="text-sm font-bold mb-3">📊</p>
             <p className="text-sm font-medium text-slate-500">Nenhum dado no período</p>
           </div>
         )}
