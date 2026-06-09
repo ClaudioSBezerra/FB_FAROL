@@ -123,11 +123,11 @@ function PeriodRangeFilter({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm text-xs text-slate-700 hover:bg-slate-50 transition-colors shrink-0 whitespace-nowrap">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Atual</span>
+        <button className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm text-sm text-slate-700 hover:bg-slate-50 transition-colors shrink-0 whitespace-nowrap">
+          <span className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Atual</span>
           <span className="tabular-nums">{fmtRange(refAno, refMes)}</span>
           <span className="text-slate-300 px-0.5 font-light">×</span>
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Ant.</span>
+          <span className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Ant.</span>
           <span className="tabular-nums text-slate-500">{fmtRange(effComp.ano, effComp.mes)}</span>
           <ChevronDown className="h-3 w-3 ml-0.5 text-slate-400 shrink-0" />
         </button>
@@ -135,7 +135,7 @@ function PeriodRangeFilter({
       <PopoverContent className="w-72 p-3" align="start">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Base Atual</span>
+            <span className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Base Atual</span>
             <select
               value={refAno > 0 ? `${refAno}-${String(refMes).padStart(2, '0')}` : ''}
               onChange={e => {
@@ -143,7 +143,7 @@ function PeriodRangeFilter({
                 setRefAno(p.ano); setRefMes(p.mes); onClearDrill()
                 setOpen(false)
               }}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
             >
               {periodos.map(p => {
                 const { ano, mes } = parsePeriodo(p)
@@ -153,7 +153,7 @@ function PeriodRangeFilter({
           </div>
 
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Base Anterior</span>
+            <span className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Base Anterior</span>
             {compMode === 'mom' ? (
               <select
                 value={compAno > 0 ? `${compAno}-${String(compMes).padStart(2, '0')}` : ''}
@@ -161,7 +161,7 @@ function PeriodRangeFilter({
                   if (!e.target.value) { setCompAno(0); setCompMes(0) }
                   else { const p = parsePeriodo(e.target.value); setCompAno(p.ano); setCompMes(p.mes) }
                 }}
-                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 w-full"
               >
                 <option value="">Auto — {fmtRange(auto.ano, auto.mes)}</option>
                 {periodos.map(p => {
@@ -170,9 +170,9 @@ function PeriodRangeFilter({
                 })}
               </select>
             ) : (
-              <div className="h-8 flex items-center px-2 rounded-lg border border-slate-100 bg-slate-50 text-xs text-slate-500 tabular-nums">
+              <div className="h-8 flex items-center px-2 rounded-lg border border-slate-100 bg-slate-50 text-sm text-slate-500 tabular-nums">
                 {fmtRange(auto.ano, auto.mes)}
-                <span className="ml-1.5 text-[10px] text-slate-400">(automático)</span>
+                <span className="ml-1.5 text-sm text-slate-400">(automático)</span>
               </div>
             )}
           </div>
@@ -284,7 +284,7 @@ export function KPIBar({
             {mesCorrente && (
               <button
                 onClick={() => onPreset(mesCorrente.ano, mesCorrente.mes)}
-                className={`px-2.5 py-1 text-xs font-medium transition-colors ${isCorrente ? 'bg-primary text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={`px-2.5 py-1 text-sm font-medium transition-colors ${isCorrente ? 'bg-primary text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
               >
                 Mês corrente
               </button>
@@ -292,7 +292,7 @@ export function KPIBar({
             {mesFechado && (
               <button
                 onClick={() => onPreset(mesFechado.ano, mesFechado.mes)}
-                className={`px-2.5 py-1 text-xs font-medium transition-colors border-l border-slate-200 ${isFechado ? 'bg-slate-700 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={`px-2.5 py-1 text-sm font-medium transition-colors border-l border-slate-200 ${isFechado ? 'bg-slate-700 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
               >
                 Mês fechado
               </button>
@@ -302,24 +302,24 @@ export function KPIBar({
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <div>
-          <p className="text-xs text-slate-500">Total Anterior</p>
-          <p className="text-lg font-bold text-slate-500">{fmtBRL(kpi.total_ant)}</p>
-          <p className="text-xs text-slate-400 truncate" title={antLabel}>{antLabel}</p>
+          <p className="text-sm text-slate-500">Total Anterior</p>
+          <p className="text-sm font-bold font-bold text-slate-500">{fmtBRL(kpi.total_ant)}</p>
+          <p className="text-sm text-slate-400 truncate" title={antLabel}>{antLabel}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Total Atual</p>
-          <p className="text-lg font-bold text-slate-800">{fmtBRL(kpi.total_atual)}</p>
-          <p className="text-xs text-slate-400 truncate" title={curLabel}>{curLabel}</p>
+          <p className="text-sm text-slate-500">Total Atual</p>
+          <p className="text-sm font-bold font-bold text-slate-800">{fmtBRL(kpi.total_atual)}</p>
+          <p className="text-sm text-slate-400 truncate" title={curLabel}>{curLabel}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Atingimento</p>
-          <p className={`text-lg font-bold ${COR_TEXT[kpi.total_cor]}`}>{fmtPct(kpi.total_pct)}</p>
+          <p className="text-sm text-slate-500">Atingimento</p>
+          <p className={`text-sm font-bold font-bold ${COR_TEXT[kpi.total_cor]}`}>{fmtPct(kpi.total_pct)}</p>
           <div className="flex gap-1.5 mt-1">
-            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.verde}`}>
+            <span className={`inline-flex items-center gap-1 text-sm font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.verde}`}>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               {kpi.verdes}
             </span>
-            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.vermelho}`}>
+            <span className={`inline-flex items-center gap-1 text-sm font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.vermelho}`}>
               <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-60 animate-ping" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
@@ -329,21 +329,21 @@ export function KPIBar({
           </div>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Faturado</p>
-          <p className="text-base font-semibold text-slate-700">{fmtBRL(kpi.total_faturado)}</p>
+          <p className="text-sm text-slate-500">Faturado</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtBRL(kpi.total_faturado)}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Transmitido</p>
-          <p className="text-base font-semibold text-slate-700">{fmtBRL(kpi.total_transmitido)}</p>
+          <p className="text-sm text-slate-500">Transmitido</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtBRL(kpi.total_transmitido)}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Positivação</p>
-          <p className="text-base font-semibold text-slate-700">{fmtPct(kpi.total_positpct)}</p>
-          <p className="text-xs text-slate-400">{kpi.total_positivados}/{kpi.total_base_cli} clientes</p>
+          <p className="text-sm text-slate-500">Positivação</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtPct(kpi.total_positpct)}</p>
+          <p className="text-sm text-slate-400">{kpi.total_positivados}/{kpi.total_base_cli} clientes</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Mix médio</p>
-          <p className="text-base font-semibold text-slate-700">{fmtNum(kpi.avg_mix)} itens/cli</p>
+          <p className="text-sm text-slate-500">Mix médio</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtNum(kpi.avg_mix)} itens/cli</p>
         </div>
       </div>
     </div>
@@ -380,14 +380,14 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{card.label}</p>
-              <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{card.key}</p>
+              <p className="text-sm text-slate-400 mt-0.5 font-mono">{card.key}</p>
             </div>
           </div>
           {/* Percentual + delta */}
           <div className="text-right shrink-0">
-            <p className={`text-xl font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
+            <p className={`text-sm font-bold font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
             {(deltaUp || deltaDown) && (
-              <p className={`mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums ${
+              <p className={`mt-1 inline-flex items-center gap-0.5 text-sm font-medium tabular-nums ${
                 deltaUp ? 'text-emerald-600' : 'text-red-600'
               }`}>
                 {deltaUp
@@ -397,7 +397,7 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
               </p>
             )}
             {!deltaUp && !deltaDown && card.valor_ant > 0 && (
-              <p className="mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-slate-400 tabular-nums">
+              <p className="mt-1 inline-flex items-center gap-0.5 text-sm font-medium text-slate-400 tabular-nums">
                 <Minus className="h-3 w-3" strokeWidth={2.5} />
                 estável
               </p>
@@ -406,26 +406,26 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
         </div>
 
         {/* Métricas primárias — Atual + Anterior alinhados */}
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
           <div className="space-y-0.5">
-            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Atual</p>
+            <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Atual</p>
             <p className="text-sm font-semibold text-slate-800 tabular-nums">{fmtBRL(card.valor_atual)}</p>
           </div>
           <div className="space-y-0.5">
-            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-medium">Anterior</p>
+            <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Anterior</p>
             <p className="text-sm font-semibold text-slate-500 tabular-nums">{fmtBRL(card.valor_ant)}</p>
           </div>
         </div>
 
         {/* Métricas secundárias — Fat + Trans em fonte menor */}
-        <div className="mt-2 flex gap-4 text-[11px] text-slate-500 tabular-nums">
+        <div className="mt-2 flex gap-4 text-sm text-slate-500 tabular-nums">
           <span><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600">{fmtBRL(card.faturado)}</span></span>
           <span><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600">{fmtBRL(card.transmitido)}</span></span>
         </div>
 
         {/* Rodapé — Positivação + Mix com ícones Lucide */}
         {(card.base_cli > 0 || card.mix > 0) && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 border-t border-slate-100/80 pt-2">
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500 border-t border-slate-100/80 pt-2">
             {card.base_cli > 0 && (
               <span className="inline-flex items-center gap-1">
                 <Users className="h-3 w-3 text-slate-400" strokeWidth={2} />
@@ -542,7 +542,7 @@ export default function FarolV2Dashboard() {
   if (isExecutivo) return <FarolExecutivo />
 
   return (
-    <div className="min-h-full">
+    <div className="min-h-full uppercase text-sm [&_*]:uppercase">
       {/* ── Barra de controles ─────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
 
@@ -571,7 +571,7 @@ export default function FarolV2Dashboard() {
             <button
               key={v.id}
               onClick={() => handleViewChange(v.id)}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                 view === v.id
                   ? 'bg-primary text-white'
                   : 'text-slate-600 hover:bg-slate-50'
@@ -591,7 +591,7 @@ export default function FarolV2Dashboard() {
             <button
               key={m.id}
               onClick={() => { setCompMode(m.id); setDrillPath([]) }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                 compMode === m.id
                   ? 'bg-slate-700 text-white'
                   : 'text-slate-600 hover:bg-slate-50'
@@ -606,7 +606,7 @@ export default function FarolV2Dashboard() {
         {canImport && (
           <button
             onClick={() => navigate('/farol/importar')}
-            className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
+            className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 text-sm text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
           >
             + Importar dados
           </button>
@@ -632,11 +632,11 @@ export default function FarolV2Dashboard() {
       {data && (
         <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
               {data.next_level_label}
             </span>
           </div>
-          <span className="text-xs text-slate-500 tabular-nums shrink-0">
+          <span className="text-sm text-slate-500 tabular-nums shrink-0">
             {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
           </span>
         </div>
@@ -660,9 +660,9 @@ export default function FarolV2Dashboard() {
 
       {!isLoading && !error && data?.cards.length === 0 && (
         <div className="bg-white border border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
-          <p className="text-4xl mb-3">📊</p>
+          <p className="text-sm font-bold mb-3">📊</p>
           <p className="text-sm font-medium text-slate-500">Nenhum dado encontrado</p>
-          <p className="text-xs mt-1">
+          <p className="text-sm mt-1">
             {canImport ? (
               <>
                 Importe um CSV de vendas para começar.{' '}
