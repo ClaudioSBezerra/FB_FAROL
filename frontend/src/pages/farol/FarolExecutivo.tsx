@@ -95,8 +95,8 @@ const BTN_PRIMARY_BG = 'bg-slate-700'
 //   VENDA:       yellow-300      (amarelo vivo — valor monetário)
 //   POSITIVAÇÃO: lime-300        (verde brilhante — sucesso/clientes)
 //   MIX:         fuchsia-400     (rosa vivo — variedade; NÃO usa ciano, evita conflito)
-// Azul oficial do Farol (mesmo da página de Login — logo Target #0f172a)
-const TARJA_BG = 'bg-[#0f172a]'
+// Azul oficial do Farol (mesmo da página de Login — logo Target #1e293b)
+const TARJA_BG = 'bg-[#1e293b]'
 const COL_NOME_TXT        = 'text-white'
 const COL_VENDA_TXT       = 'text-yellow-300'
 const COL_POSITIVACAO_TXT = 'text-lime-300'
@@ -723,7 +723,7 @@ export default function FarolExecutivo() {
       <div className="mb-3">
         <div className="inline-flex rounded-md border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
           {([
-            { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-[#0f172a]' },
+            { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-[#1e293b]' },
             { id: 'transmitido' as const, label: 'Transmitido', color: 'bg-emerald-700' },
           ]).map(f => (
             <button

@@ -83,7 +83,7 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
 //   • banner=false (padrão) → estilo discreto (texto slate-700 só com
 //     uppercase). Usado nos cards individuais dos RCAs/fornecedores —
 //     gestor pediu sem tarja pra não poluir.
-//   • banner=true → tarja azul Farol #0f172a (mesmo do Login) + cor da coluna.
+//   • banner=true → tarja azul Farol #1e293b (mesmo do Login) + cor da coluna.
 //     Usado SOMENTE no HeaderResumo (totalizador geral do supervisor)
 //     pra reforçar visualmente "este é o consolidado".
 const SECTION_COLOR: Record<'venda' | 'positivacao' | 'mix', string> = {
@@ -98,7 +98,7 @@ function SectionLabel({ children, tone = 'venda', banner = false }: {
 }) {
   if (banner) {
     return (
-      <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#0f172a] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
+      <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#1e293b] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
     )
   }
   return (
