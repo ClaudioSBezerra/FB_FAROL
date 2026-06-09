@@ -416,7 +416,6 @@ export default function FarolPublicPanel() {
               <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm">
                 {data.next_level_label}
               </span>
-              <span className="text-sm text-slate-600">listados abaixo</span>
             </div>
             <span className="text-xs text-slate-500 tabular-nums shrink-0">
               {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
