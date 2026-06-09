@@ -329,11 +329,7 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         <span className={cn('truncate', valueLabelCls, isTotal ? 'text-slate-900 uppercase tracking-wider' : 'text-slate-800')} title={card.label}>
           {card.label}
         </span>
-        {!isTotal && (
-          <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-400 shrink-0">
-            {card.level_label}
-          </span>
-        )}
+        {/* level_label removido — agora aparece no banner sky acima da lista */}
       </div>
 
       {/* VENDA */}
@@ -945,6 +941,21 @@ export default function FarolExecutivo() {
         <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4 shadow-sm">
           <ColumnsHeader />
           <DataRow card={totalCard} isTotal />
+        </div>
+      )}
+
+      {/* ── Banner do nível atual — destaca QUE tipo de dado está listado ── */}
+      {data && data.next_level_label && (
+        <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider shadow-sm">
+              {data.next_level_label}
+            </span>
+            <span className="text-sm text-slate-600">listados abaixo</span>
+          </div>
+          <span className="text-xs text-slate-500 tabular-nums shrink-0">
+            {visibleCards.length} {visibleCards.length === 1 ? 'item' : 'itens'}
+          </span>
         </div>
       )}
 
