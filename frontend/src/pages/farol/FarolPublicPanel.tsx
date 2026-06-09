@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronLeft } from 'lucide-react'
 import {
   Breadcrumb,
   parsePeriodo, fmtMesAno, fmtBRL, fmtPct, fmtNum, fmtInt,
@@ -80,22 +80,29 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
 }
 
 // SectionLabel: cabeçalho de seção (VENDA, POSITIVAÇÃO, MIX MÉDIO)
-// Tarja azul puro #0000FF — mesma linguagem do FarolExecutivo (cores
-// das colunas adaptadas pra alto contraste sobre azul):
-//   VENDA       → yellow-300
-//   POSITIVAÇÃO → lime-300
-//   MIX         → fuchsia-400
+//   • banner=false (padrão) → estilo discreto (texto slate-700 só com
+//     uppercase). Usado nos cards individuais dos RCAs/fornecedores —
+//     gestor pediu sem tarja pra não poluir.
+//   • banner=true → tarja azul puro #0000FF + cor da coluna no topo.
+//     Usado SOMENTE no HeaderResumo (totalizador geral do supervisor)
+//     pra reforçar visualmente "este é o consolidado".
 const SECTION_COLOR: Record<'venda' | 'positivacao' | 'mix', string> = {
   venda:       'text-yellow-300',
   positivacao: 'text-lime-300',
   mix:         'text-fuchsia-400',
 }
-function SectionLabel({ children, tone = 'venda' }: {
+function SectionLabel({ children, tone = 'venda', banner = false }: {
   children: React.ReactNode
   tone?: 'venda' | 'positivacao' | 'mix'
+  banner?: boolean
 }) {
+  if (banner) {
+    return (
+      <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#0000FF] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
+    )
+  }
   return (
-    <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#0000FF] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
+    <p className="text-sm uppercase tracking-wider font-bold text-slate-700 mb-1.5">{children}</p>
   )
 }
 
@@ -166,7 +173,7 @@ function HeaderResumo({
         {/* SEÇÃO 1: VENDA */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <SectionLabel tone="venda">Venda</SectionLabel>
+            <SectionLabel banner tone="venda">Venda</SectionLabel>
             <div className="flex items-center gap-2">
               <span className={`text-sm font-bold tabular-nums leading-none ${COR_TEXT[kpi.total_cor]}`}>
                 {fmtPct(kpi.total_pct)}
@@ -183,7 +190,7 @@ function HeaderResumo({
 
         {/* SEÇÃO 2: POSITIVAÇÃO */}
         <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel tone="positivacao">Positivação</SectionLabel>
+          <SectionLabel banner tone="positivacao">Positivação</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             <Cell label="Clientes Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
             <Cell label="Clientes Positivados" value={fmtInt(kpi.total_positivados)} />
@@ -193,7 +200,7 @@ function HeaderResumo({
 
         {/* SEÇÃO 3: MIX MÉDIO */}
         <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel tone="mix">Mix médio</SectionLabel>
+          <SectionLabel banner tone="mix">Mix médio</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             <Cell label="Realizado" value={fmtNum(kpi.avg_mix) + ' itens/cli'} />
           </div>
@@ -418,6 +425,18 @@ export default function FarolPublicPanel() {
             refMes={refMes}
             onPreset={(ano, mes) => { setRefAno(ano); setRefMes(mes); setUserDrill([]) }}
           />
+        )}
+
+        {/* Botão VOLTAR — só aparece quando há drill ativo. Mobile precisa
+            de uma ação grande e clicável (Breadcrumb pequeno demais no toque). */}
+        {userDrill.length > 0 && (
+          <button
+            onClick={() => setUserDrill(prev => prev.slice(0, -1))}
+            className="w-full flex items-center justify-center gap-2 text-sm font-bold text-slate-700 bg-white border border-slate-300 rounded-lg px-4 py-3 mb-3 shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Voltar
+          </button>
         )}
 
         <Breadcrumb drillPath={userDrill} onNavigate={handleBreadcrumb} />
