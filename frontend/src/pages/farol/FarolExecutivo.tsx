@@ -95,7 +95,8 @@ const BTN_PRIMARY_BG = 'bg-slate-700'
 //   VENDA:       yellow-300      (amarelo vivo — valor monetário)
 //   POSITIVAÇÃO: lime-300        (verde brilhante — sucesso/clientes)
 //   MIX:         fuchsia-400     (rosa vivo — variedade; NÃO usa ciano, evita conflito)
-const TARJA_BG = 'bg-[#0000FF]'
+// Azul oficial do Farol (mesmo da página de Login — logo Target #2563eb)
+const TARJA_BG = 'bg-[#2563eb]'
 const COL_NOME_TXT        = 'text-white'
 const COL_VENDA_TXT       = 'text-yellow-300'
 const COL_POSITIVACAO_TXT = 'text-lime-300'
@@ -722,7 +723,7 @@ export default function FarolExecutivo() {
       <div className="mb-3">
         <div className="inline-flex rounded-md border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
           {([
-            { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-blue-700' },
+            { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-[#2563eb]' },
             { id: 'transmitido' as const, label: 'Transmitido', color: 'bg-emerald-700' },
           ]).map(f => (
             <button
@@ -845,15 +846,15 @@ export default function FarolExecutivo() {
           </button>
         )}
 
-        <div className="flex-1" />
-
+        {/* Busca encostada com os demais filtros (antes ficava perdida
+            no canto direito por causa de um spacer flex-1 — removido) */}
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={`Buscar ${visibleCards[0]?.level_label?.toLowerCase() ?? ''}...`}
-            className="pl-7 pr-7 py-1.5 text-sm border border-slate-300 rounded-md bg-white shadow-sm w-48"
+            className="pl-7 pr-7 py-1.5 text-sm border border-slate-300 rounded-md bg-white shadow-sm w-56"
           />
           {search && (
             <button
