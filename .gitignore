@@ -40,3 +40,5 @@ backend.log
 # Backups locais e dados de teste pesados
 .backups/
 test-data/*.csv
+# …mas o modelo de importação SOBE pro repo — programador da empresa precisa
+!test-data/MODELO_IMPORT.csv

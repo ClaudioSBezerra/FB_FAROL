@@ -258,6 +258,13 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iCodProd         := col(-1, "codprod", "cod_prod")
 	iNomeProd        := col(-1, "produto", "nome_prod")
 	iEan             := col(-1, "ean", "codean", "cod_ean")
+	// Campos puramente visuais — mig 168 (sem agregação, exibidos nos detalhes)
+	iCodRamo         := col(-1, "codramo", "cod_ramo")
+	iRamo            := col(-1, "ramo", "nome_ramo")
+	iEmbalagem       := col(-1, "embalagem")
+	iQtUnit          := col(-1, "qtunit", "qt_unit")
+	iQtUnitCx        := col(-1, "qtunitcx", "qt_unit_cx", "qtunitcaixa")
+	iCodBar          := col(-1, "codbar", "cod_bar", "codigobar")
 	iQt              := col(-1, "qt", "quantidade")
 	iPvenda          := col(-1, "pvenda", "valor", "vl_venda")
 	iPlucro          := col(-1, "plucro", "lucro", "vl_lucro")
@@ -345,8 +352,10 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	//  16: cod_prod          17: nome_prod       18: ean
 	//  19: qt                20: pvenda          21: plucro
 	//  22: cnpj
+	//  23: cod_ramo          24: ramo            ← visual cliente (mig 168)
+	//  25: embalagem         26: qt_unit         27: qt_unit_cx    28: cod_bar ← visual produto (mig 168)
 	type vendaRaw struct {
-		vals [23]any
+		vals [29]any
 	}
 	var allFat   []vendaRaw // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
@@ -424,6 +433,13 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[20] = pvendaVal
 		r.vals[21] = pvendaVal * plucroPct / 100.0
 		r.vals[22] = getField(csvRow, iCNPJ)
+		// Campos visuais (mig 168) — só gravamos, não usamos em agregados
+		r.vals[23] = getField(csvRow, iCodRamo)
+		r.vals[24] = getField(csvRow, iRamo)
+		r.vals[25] = getField(csvRow, iEmbalagem)
+		r.vals[26] = parseNum(getField(csvRow, iQtUnit))
+		r.vals[27] = parseNum(getField(csvRow, iQtUnitCx))
+		r.vals[28] = getField(csvRow, iCodBar)
 
 		dKey := dataProc.Format("2006-01-02")
 		if estado == "TRANSMITIDO" {
@@ -470,6 +486,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		"cod_prod", "nome_prod", "ean",
 		"qt", "pvenda", "plucro",
 		"cnpj",
+		"cod_ramo", "ramo",                     // visual cliente (mig 168)
+		"embalagem", "qt_unit", "qt_unit_cx", "cod_bar", // visual produto (mig 168)
 	}
 
 	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw) error {

@@ -110,6 +110,12 @@ interface ProdOportunidade {
 }
 interface ProdDetalheResponse {
   cod_prod: string; nome_prod: string; nome_fornec: string
+  // Metadados visuais (mig 168) — vindos do CSV, sem agregação
+  ean?: string
+  embalagem?: string
+  qt_unit?: number
+  qt_unit_cx?: number
+  cod_bar?: string
   kpi: ProdDetalheKPI
   compradores: ProdClienteItem[]
   oportunidades: ProdOportunidade[]
@@ -136,6 +142,9 @@ interface CliOportunidade {
 }
 interface CliDetalheResponse {
   cod_cli: string; nome_cli: string
+  // Metadados visuais (mig 168) — vindos do CSV, sem agregação
+  cod_ramo?: string
+  ramo?: string
   kpi: CliDetalheKPI
   comprados: CliProdutoItem[]
   oportunidades: CliOportunidade[]
@@ -234,6 +243,27 @@ function ProdutoDetalhe({
 
       {data && (
         <>
+          {/* Ficha técnica do produto (mig 168) — visual, sem agregação */}
+          {(data.embalagem || data.cod_bar || data.ean || (data.qt_unit ?? 0) > 0 || (data.qt_unit_cx ?? 0) > 0) && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+              {data.embalagem && (
+                <span><span className="text-slate-400">Embalagem:</span> <span className="font-semibold text-slate-700">{data.embalagem}</span></span>
+              )}
+              {(data.qt_unit ?? 0) > 0 && (
+                <span><span className="text-slate-400">Qt/Un:</span> <span className="font-semibold text-slate-700 tabular-nums">{fmtNum(data.qt_unit ?? 0)}</span></span>
+              )}
+              {(data.qt_unit_cx ?? 0) > 0 && (
+                <span><span className="text-slate-400">Qt/Cx:</span> <span className="font-semibold text-slate-700 tabular-nums">{fmtNum(data.qt_unit_cx ?? 0)}</span></span>
+              )}
+              {data.ean && (
+                <span><span className="text-slate-400">EAN:</span> <span className="font-mono font-semibold text-slate-700">{data.ean}</span></span>
+              )}
+              {data.cod_bar && data.cod_bar !== data.ean && (
+                <span><span className="text-slate-400">Cód. Barras:</span> <span className="font-mono font-semibold text-slate-700">{data.cod_bar}</span></span>
+              )}
+            </div>
+          )}
+
           {/* KPI strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
@@ -409,6 +439,18 @@ function ClienteDetalhe({
 
       {data && (
         <>
+          {/* Ficha do cliente (mig 168) — ramo de atividade */}
+          {(data.ramo || data.cod_ramo) && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+              <span><span className="text-slate-400">Ramo:</span>{' '}
+                <span className="font-semibold text-slate-700">{data.ramo || data.cod_ramo}</span>
+                {data.cod_ramo && data.ramo && (
+                  <span className="text-slate-400 ml-1 font-mono">({data.cod_ramo})</span>
+                )}
+              </span>
+            </div>
+          )}
+
           {/* KPI strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">

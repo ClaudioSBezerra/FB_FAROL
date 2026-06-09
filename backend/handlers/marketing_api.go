@@ -532,6 +532,12 @@ type prodDetalheResponse struct {
 	NomeProd      string             `json:"nome_prod"`
 	NomeFornec    string             `json:"nome_fornec"`
 	Ean           string             `json:"ean,omitempty"`
+	// Campos visuais (mig 168) — metadados do produto vindos do CSV.
+	// MAX(...) é arbitrário; produto sempre tem o mesmo valor desses campos.
+	Embalagem string  `json:"embalagem,omitempty"`
+	QtUnit    float64 `json:"qt_unit,omitempty"`
+	QtUnitCx  float64 `json:"qt_unit_cx,omitempty"`
+	CodBar    string  `json:"cod_bar,omitempty"`
 	KPI           prodDetalheKPI     `json:"kpi"`
 	Compradores   []prodClienteItem  `json:"compradores"`
 	Oportunidades []prodOportunidade `json:"oportunidades"`
@@ -567,14 +573,18 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 		refIni := pr.RefInicio.Format("2006-01-02")
 		refFim := pr.RefFim.Format("2006-01-02")
 
-		// Nome do produto, indústria, EAN — direto da tabela base (filtra por cod_prod, índice)
-		var nomeProd, nomeFornec, ean string
+		// Nome do produto, indústria, EAN + metadados visuais (mig 168)
+		// — direto da tabela base (filtra por cod_prod, índice idx_v*_emp_data_produto).
+		var nomeProd, nomeFornec, ean, embalagem, codBar string
+		var qtUnit, qtUnitCx float64
 		_ = db.QueryRow(fmt.Sprintf(`
-			SELECT MAX(nome_prod), MAX(nome_fornec), MAX(ean)
+			SELECT MAX(nome_prod), MAX(nome_fornec), MAX(ean),
+			       MAX(embalagem), MAX(qt_unit), MAX(qt_unit_cx), MAX(cod_bar)
 			FROM %s
 			WHERE empresa_id=$1 AND cod_prod=$2 AND %s BETWEEN $3::date AND $4::date
 		`, fluxo.tableName, fluxo.dateCol),
-			spCtx.EmpresaID, codProd, refIni, refFim).Scan(&nomeProd, &nomeFornec, &ean)
+			spCtx.EmpresaID, codProd, refIni, refFim).Scan(
+			&nomeProd, &nomeFornec, &ean, &embalagem, &qtUnit, &qtUnitCx, &codBar)
 
 		// Base total de clientes = carteira RCA (denominador)
 		var totalBase int
@@ -704,6 +714,10 @@ func MarketingProdutoDetalheHandler(db *sql.DB) http.HandlerFunc {
 			NomeProd:   nomeProd,
 			NomeFornec: nomeFornec,
 			Ean:        ean,
+			Embalagem:  embalagem,
+			QtUnit:     qtUnit,
+			QtUnitCx:   qtUnitCx,
+			CodBar:     codBar,
 			KPI: prodDetalheKPI{
 				TotalBase:          totalBase,
 				TotalCompradores:   nComp,
@@ -763,6 +777,9 @@ type cliOportunidade struct {
 type cliDetalheResponse struct {
 	CodCli        string            `json:"cod_cli"`
 	NomeCli       string            `json:"nome_cli"`
+	// Campos visuais (mig 168) — ramo de atividade do cliente, vindo do CSV
+	CodRamo string `json:"cod_ramo,omitempty"`
+	Ramo    string `json:"ramo,omitempty"`
 	KPI           cliDetalheKPI     `json:"kpi"`
 	Comprados     []cliProdutoItem  `json:"comprados"`
 	Oportunidades []cliOportunidade `json:"oportunidades"`
@@ -831,14 +848,17 @@ func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Nome do cliente, RCA, supervisor — vendas_*: filtra por cod_cli (idx_v*_emp_cli_data)
-		var nomeCli, nomeRca, nomeSup string
+		// Nome do cliente, RCA, supervisor + metadados visuais (cod_ramo/ramo, mig 168)
+		// — vendas_*: filtra por cod_cli (idx_v*_emp_cli_data)
+		var nomeCli, nomeRca, nomeSup, codRamo, ramo string
 		_ = db.QueryRow(fmt.Sprintf(`
-			SELECT MAX(nome_cli), MAX(COALESCE(nome_rca,'')), MAX(COALESCE(nome_supervisor,''))
+			SELECT MAX(nome_cli), MAX(COALESCE(nome_rca,'')), MAX(COALESCE(nome_supervisor,'')),
+			       MAX(COALESCE(cod_ramo,'')), MAX(COALESCE(ramo,''))
 			FROM %s
 			WHERE empresa_id=$1 AND %s BETWEEN $2::date AND $3::date AND cod_cli=$4
 		`, fluxo.tableName, fluxo.dateCol),
-			spCtx.EmpresaID, refIni, refFim, codCli).Scan(&nomeCli, &nomeRca, &nomeSup)
+			spCtx.EmpresaID, refIni, refFim, codCli).Scan(
+			&nomeCli, &nomeRca, &nomeSup, &codRamo, &ramo)
 
 		// Base total = carteira RCA
 		var totalBase int
@@ -896,6 +916,8 @@ func MarketingClienteDetalheHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(cliDetalheResponse{
 			CodCli:  codCli,
 			NomeCli: nomeCli,
+			CodRamo: codRamo,
+			Ramo:    ramo,
 			KPI: cliDetalheKPI{
 				TotalProdutos:      len(comprados),
 				TotalOportunidades: len(oportunidades),
