@@ -389,24 +389,24 @@ function KpiBox({ icon, label, valueMain, valuePrev, pct, cor, hideDelta }: KpiB
           'inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 14px -6px rgba(15,23,42,0.18), 0 2px 4px -2px rgba(15,23,42,0.08)',
       }}
     >
-      <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold tracking-wider uppercase mb-1">
+      <div className="flex items-center gap-1.5 text-slate-500 text-sm font-bold tracking-wider uppercase mb-1">
         <span className="text-slate-400">{icon}</span>
         {label}
       </div>
       <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-slate-900 drop-shadow-sm">
         {valueMain}
       </div>
-      <div className="flex items-center gap-2 mt-1.5">
+      <div className="flex items-center gap-2 mt-2">
         {!hideDelta && (
           <span className={cn(
-            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-bold tabular-nums ring-1',
+            'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-bold tabular-nums ring-1',
             COR_BG[cor], COR_TXT[cor],
           )}>
             {deltaIcon(cor)}
             {fmtPct(Math.abs(pct))}
           </span>
         )}
-        <span className="text-xs text-slate-500 truncate">{valuePrev}</span>
+        <span className="text-base font-semibold tabular-nums text-slate-600 truncate">{valuePrev}</span>
       </div>
     </div>
   )
@@ -418,6 +418,30 @@ interface CardRowProps {
   card: CardItem
   onClick?: () => void
   index: number
+}
+
+// Grid compartilhado entre o cabeçalho da lista e cada CardRow
+const LISTA_GRID = 'grid grid-cols-12 gap-3 items-center'
+
+function ListaHeader() {
+  return (
+    <div className="px-4 py-2 mb-2 rounded-lg bg-slate-100/70 ring-1 ring-slate-200">
+      <div className={LISTA_GRID}>
+        <div className="col-span-12 md:col-span-3 text-sm font-bold tracking-wider uppercase text-slate-500">
+          Nome
+        </div>
+        <div className="hidden md:block md:col-span-3 text-sm font-bold tracking-wider uppercase text-slate-500">
+          Venda
+        </div>
+        <div className="hidden md:block md:col-span-4 text-sm font-bold tracking-wider uppercase text-slate-500">
+          Positivação
+        </div>
+        <div className="hidden md:block md:col-span-2 text-sm font-bold tracking-wider uppercase text-slate-500 text-right">
+          Mix Médio
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function CardRow({ card, onClick, index }: CardRowProps) {
@@ -436,7 +460,7 @@ function CardRow({ card, onClick, index }: CardRowProps) {
         !clickable && 'cursor-default',
       )}
     >
-      <div className="grid grid-cols-12 gap-3 items-center">
+      <div className={LISTA_GRID}>
         {/* Identificação (3 cols) */}
         <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
           <div className="flex-shrink-0 h-10 w-10 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 ring-1 ring-slate-200 flex items-center justify-center text-slate-600 font-bold text-sm tabular-nums">
@@ -444,8 +468,8 @@ function CardRow({ card, onClick, index }: CardRowProps) {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className={cn('h-2 w-2 rounded-full', COR_DOT[card.cor])} />
-              <h3 className="text-sm font-semibold text-slate-900 truncate" title={card.label}>
+              <span className={cn('h-2.5 w-2.5 rounded-full', COR_DOT[card.cor])} />
+              <h3 className="text-base font-semibold text-slate-900 truncate" title={card.label}>
                 {card.label}
               </h3>
             </div>
@@ -454,15 +478,14 @@ function CardRow({ card, onClick, index }: CardRowProps) {
 
         {/* Venda (3 cols) */}
         <div className="col-span-6 md:col-span-3">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Venda</div>
-          <div className="text-lg font-bold tabular-nums text-slate-900 leading-tight">
+          <div className="text-xl font-bold tabular-nums text-slate-900 leading-tight">
             {fmtBRL(card.valor_atual)}
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <span className={cn('inline-flex items-center gap-0.5 text-xs font-bold tabular-nums', COR_TXT[card.cor])}>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className={cn('inline-flex items-center gap-0.5 text-sm font-bold tabular-nums', COR_TXT[card.cor])}>
               {deltaIcon(card.cor)}{fmtPct(card.pct)}
             </span>
-            <span className="text-xs text-slate-400 tabular-nums">
+            <span className="text-sm font-medium text-slate-500 tabular-nums">
               vs {fmtBRL(card.valor_ant)}
             </span>
           </div>
@@ -470,18 +493,15 @@ function CardRow({ card, onClick, index }: CardRowProps) {
 
         {/* Positivação com barra (4 cols) */}
         <div className="col-span-6 md:col-span-4">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
-            Positivação
-          </div>
           <div className="flex items-baseline gap-2">
-            <span className={cn('text-lg font-bold tabular-nums leading-tight', COR_TXT[card.posit_cor])}>
+            <span className={cn('text-xl font-bold tabular-nums leading-tight', COR_TXT[card.posit_cor])}>
               {fmtPct(card.positpct)}
             </span>
-            <span className="text-xs text-slate-500 tabular-nums">
+            <span className="text-sm font-medium text-slate-600 tabular-nums">
               {fmtInt(card.positivados)} / {fmtInt(card.base_cli)}
             </span>
           </div>
-          <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+          <div className="mt-1.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
             <div
               className={cn(
                 'h-full rounded-full transition-all',
@@ -495,13 +515,10 @@ function CardRow({ card, onClick, index }: CardRowProps) {
         </div>
 
         {/* Mix (2 cols) */}
-        <div className="col-span-12 md:col-span-2 flex md:flex-col md:items-end items-center justify-between md:justify-center gap-1">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
-            Mix Médio
-          </div>
-          <div className={cn('text-lg font-bold tabular-nums', COR_TXT[card.mix_cor])}>
+        <div className="col-span-12 md:col-span-2 flex items-center justify-end md:justify-end gap-1">
+          <span className={cn('text-xl font-bold tabular-nums', COR_TXT[card.mix_cor])}>
             {fmtMix(card.mix)}
-          </div>
+          </span>
         </div>
       </div>
     </button>
@@ -1048,6 +1065,9 @@ export default function FarolExecutivoV2() {
           </div>
         </div>
       )}
+
+      {/* ── Cabeçalho do grid da lista ───────────────────────────────────────── */}
+      {visibleCards.length > 0 && <ListaHeader />}
 
       {/* ── Lista de cards ───────────────────────────────────────────────────── */}
       <div className="space-y-2">
