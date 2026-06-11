@@ -35,6 +35,8 @@ interface CardItem {
   mix: number
   mix_ant: number
   mix_cor: Cor
+  mix_total: number
+  mix_total_ant: number
 }
 
 interface KPI {
@@ -54,6 +56,8 @@ interface KPI {
   avg_mix: number
   avg_mix_ant: number
   mix_cor: Cor
+  total_mix_total: number
+  total_mix_total_ant: number
 }
 
 interface CardsResponse {
@@ -356,11 +360,16 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         </div>
       </div>
 
-      {/* MIX MÉDIO */}
-      <div className="px-2 py-2.5 flex items-center justify-center">
+      {/* MIX MÉDIO — "X de Y" (X = média SKUs por cliente, Y = universo de SKUs distintos) */}
+      <div className="px-2 py-2.5 flex items-center justify-center gap-1 flex-wrap">
         <span className={cn('font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.mix_cor])}>
           {fmtMix(card.mix)}
         </span>
+        {card.mix_total > 0 && (
+          <span className="text-sm tabular-nums text-slate-500 font-medium">
+            de {fmtInt(card.mix_total)}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -688,6 +697,7 @@ export default function FarolExecutivo() {
     positpct_ant: kpi.total_positpct_ant,
     posit_cor: kpi.total_posit_cor,
     mix: kpi.avg_mix, mix_ant: kpi.avg_mix_ant, mix_cor: kpi.mix_cor,
+    mix_total: kpi.total_mix_total, mix_total_ant: kpi.total_mix_total_ant,
   } : null
 
   const visibleCards = useMemo(() => {

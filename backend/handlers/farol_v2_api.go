@@ -200,6 +200,9 @@ type cardItem struct {
 	Mix    float64 `json:"mix"`
 	MixAnt float64 `json:"mix_ant"`
 	MixCor string  `json:"mix_cor"`
+	// Mix Total — SKUs distintos do fornecedor no período (universo)
+	MixTotal    int `json:"mix_total"`
+	MixTotalAnt int `json:"mix_total_ant"`
 }
 
 type kpiSummary struct {
@@ -224,6 +227,9 @@ type kpiSummary struct {
 	AvgMix    float64 `json:"avg_mix"`
 	AvgMixAnt float64 `json:"avg_mix_ant"`
 	MixCor    string  `json:"mix_cor"`
+	// Mix Total agregado (universo de SKUs distintos do nível atual)
+	TotalMixTotal    int `json:"total_mix_total"`
+	TotalMixTotalAnt int `json:"total_mix_total_ant"`
 	Verdes    int     `json:"verdes"`
 	Vermelhos int     `json:"vermelhos"`
 }
@@ -709,6 +715,43 @@ GROUP BY v.%s`,
 	return result
 }
 
+// queryMixTotal — universo de SKUs distintos por grupo (cod_fornec, cod_gerente, ...).
+//
+// Lê direto de vendas_faturadas/transmitidas porque as agg_*_mes não preservam
+// cod_prod sem agrupar por cliente. Custo: 1 query agregada com filtro de período
+// + drill + filtros (índices em empresa_id + data + cod_fornec ajudam).
+//
+// rangeCond opera sobre v.data_faturamento/data_transmissao (mesmo padrão de
+// queryAggregated). drillCond aplica filtros hierárquicos da view atual.
+func queryMixTotal(db *sql.DB, fluxo fluxoCtx, groupCol, rangeCond, drillCond string, args []any) map[string]int {
+	t0 := time.Now()
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, COUNT(DISTINCT v.cod_prod) AS mix_total
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.cod_prod <> '' AND v.qt > 0
+AND %s %s
+GROUP BY v.%s`,
+		groupCol, fluxo.tableName, groupCol, rangeCond, drillCond, groupCol,
+	)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:mix] queryMixTotal nível=%s ERRO em %v: %v", groupCol, time.Since(t0), err)
+		return nil
+	}
+	defer rows.Close()
+	result := make(map[string]int)
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err == nil {
+			result[key] = n
+		}
+	}
+	log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos em %v",
+		fluxo.name, groupCol, len(result), time.Since(t0))
+	return result
+}
+
 // queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
 // Lê direto da tabela base do fluxo, escopado por drill (volume pequeno).
 
@@ -824,6 +867,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 
 	var atualMap, antMap map[string]aggResult
+	var mixTotalMap, mixTotalAntMap map[string]int
 	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
 
 	var wg sync.WaitGroup
@@ -834,6 +878,18 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		go func() {
 			defer wg.Done()
 			atualMap = queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCondMes, atualArgsMes)
+		}()
+		// Mix Total atual — só faz sentido em níveis hierárquicos (não em produto).
+		mixTotalArgs := []any{empresaID}
+		mixRangeCond := buildRangeCond(fluxo.dateCol, pr.RefInicio, pr.RefFim, &mixTotalArgs)
+		mixDrillCond := buildDrillCond(drillPath, &mixTotalArgs)
+		if fc := buildMultiFilterCond(filters, &mixTotalArgs); fc != "" {
+			mixDrillCond = mixDrillCond + " " + fc
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mixTotalMap = queryMixTotal(db, fluxo, groupCol, mixRangeCond, mixDrillCond, mixTotalArgs)
 		}()
 	}
 
@@ -857,6 +913,18 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			go func() {
 				defer wg.Done()
 				antMap = queryAggregatedMes(db, aggName, groupCol, nameCol, antMesCond, antDrillMes, antArgsMes)
+			}()
+			// Mix Total anterior em paralelo.
+			mixTotalAntArgs := []any{empresaID}
+			mixAntRangeCond := buildRangeCond(fluxo.dateCol, pr.CompInicio, pr.CompFim, &mixTotalAntArgs)
+			mixAntDrillCond := buildDrillCond(drillPath, &mixTotalAntArgs)
+			if fc := buildMultiFilterCond(filters, &mixTotalAntArgs); fc != "" {
+				mixAntDrillCond = mixAntDrillCond + " " + fc
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				mixTotalAntMap = queryMixTotal(db, fluxo, groupCol, mixAntRangeCond, mixAntDrillCond, mixTotalAntArgs)
 			}()
 		}
 	}
@@ -914,6 +982,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: positCor,
 			Mix:      r.mix, MixAnt: ant.mix, MixCor: mixCor,
+			MixTotal: mixTotalMap[key], MixTotalAnt: mixTotalAntMap[key],
 		}
 		if fluxo.name == "transmitido" {
 			card.Transmitido = r.valor
@@ -940,6 +1009,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PlucroAnt:      ant.plucro,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: "vermelho", MixAnt: ant.mix, MixCor: "vermelho",
+			MixTotalAnt: mixTotalAntMap[key],
 		})
 	}
 
@@ -1002,6 +1072,11 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 			mixAntTotal += c.MixAnt
 			mixAntCount++
 		}
+		// Mix Total (universo de SKUs distintos): SUM dos cards.
+		// Em V01 (cod_fornec) cada SKU pertence a apenas 1 fornec, então SUM = universo exato.
+		// Em outros níveis pode haver SKU compartilhado entre cards (aproximação razoável).
+		kpi.TotalMixTotal += c.MixTotal
+		kpi.TotalMixTotalAnt += c.MixTotalAnt
 		if c.Cor == "verde" {
 			kpi.Verdes++
 		} else {

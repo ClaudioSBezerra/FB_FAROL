@@ -41,6 +41,8 @@ interface CardItem {
   mix: number
   mix_ant: number
   mix_cor: Cor
+  mix_total: number
+  mix_total_ant: number
 }
 
 interface KPI {
@@ -60,6 +62,8 @@ interface KPI {
   avg_mix: number
   avg_mix_ant: number
   mix_cor: Cor
+  total_mix_total: number
+  total_mix_total_ant: number
 }
 
 interface CardsResponse {
@@ -348,8 +352,10 @@ function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
           <KpiBox
             icon={<Boxes className="h-4 w-4" />}
             label="Mix Médio"
-            valueMain={fmtMix(kpi.avg_mix)}
-            valuePrev={`Antes: ${fmtMix(kpi.avg_mix_ant)}`}
+            valueMain={kpi.total_mix_total > 0
+              ? `${fmtMix(kpi.avg_mix)} / ${fmtInt(kpi.total_mix_total)}`
+              : fmtMix(kpi.avg_mix)}
+            valuePrev={`Antes: ${fmtMix(kpi.avg_mix_ant)}${kpi.total_mix_total_ant > 0 ? ` / ${fmtInt(kpi.total_mix_total_ant)}` : ''}`}
             pct={(kpi.avg_mix - kpi.avg_mix_ant) / Math.max(0.001, kpi.avg_mix_ant) * 100}
             cor={kpi.mix_cor}
           />
@@ -514,11 +520,23 @@ function CardRow({ card, onClick, index }: CardRowProps) {
           </div>
         </div>
 
-        {/* Mix (2 cols) */}
-        <div className="col-span-12 md:col-span-2 flex items-center justify-end md:justify-end gap-1">
-          <span className={cn('text-xl font-bold tabular-nums', COR_TXT[card.mix_cor])}>
-            {fmtMix(card.mix)}
-          </span>
+        {/* Mix (2 cols) — "X de Y" (X = média por cliente, Y = SKUs distintos do fornec) */}
+        <div className="col-span-12 md:col-span-2 flex flex-col items-end justify-center gap-0">
+          <div className="flex items-baseline gap-1.5">
+            <span className={cn('text-xl font-bold tabular-nums leading-tight', COR_TXT[card.mix_cor])}>
+              {fmtMix(card.mix)}
+            </span>
+            {card.mix_total > 0 && (
+              <span className="text-sm font-medium text-slate-500 tabular-nums">
+                / {fmtInt(card.mix_total)}
+              </span>
+            )}
+          </div>
+          {card.mix_total_ant > 0 && (
+            <span className="text-xs font-medium text-slate-400 tabular-nums">
+              vs {fmtMix(card.mix_ant)} / {fmtInt(card.mix_total_ant)}
+            </span>
+          )}
         </div>
       </div>
     </button>
