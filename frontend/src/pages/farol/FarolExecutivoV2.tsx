@@ -2,10 +2,16 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
-  ChevronLeft, Search, X, Calendar, Filter, ChevronDown, Sparkles,
+  ChevronLeft, Search, X, Filter, ChevronDown, TrendingUp, TrendingDown,
+  ArrowRight, Sparkles, Target, Users, Boxes,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+
+// FarolExecutivo V2 — variante visual "Premium Clean Modern"
+// • Mesma lógica/endpoints do FarolExecutivo (V1) — só muda a camada visual
+// • Tipografia maior, hierarquia forte, glassmorphism leve, paleta slate+blue
+// • Lista de drill em formato de cards horizontais com mini-bars de progresso
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -84,25 +90,6 @@ interface DimsResponse {
   empresa?: string[]
 }
 
-// ─── Tons ────────────────────────────────────────────────────────────────────
-
-const HEADER_BG = 'bg-slate-600'
-const HEADER_TXT_FAINT = 'text-slate-300'
-const BTN_PRIMARY_BG = 'bg-slate-700'
-
-// Cabeçalho da LISTA / TOTAL — tarja TURQUESA forte (cyan-800)
-// Cores vivas (300/400) sobre cyan-800 — contraste alto, fácil ler à distância:
-//   NOME:        branco          (peso/identidade)
-//   VENDA:       yellow-300      (amarelo vivo — valor monetário)
-//   POSITIVAÇÃO: lime-300        (verde brilhante — sucesso/clientes)
-//   MIX:         fuchsia-400     (rosa vivo — variedade; NÃO usa ciano, evita conflito)
-// Azul oficial do Farol (mesmo da página de Login — logo Target #1e293b)
-const TARJA_BG = 'bg-[#1e293b]'
-const COL_NOME_TXT        = 'text-white'
-const COL_VENDA_TXT       = 'text-yellow-300'
-const COL_POSITIVACAO_TXT = 'text-lime-300'
-const COL_MIX_TXT         = 'text-fuchsia-400'
-
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
 function fmtBRL(v: number) {
@@ -126,10 +113,21 @@ function fmtMix(v: number) {
   return v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 }
 
+// Paleta semântica V2 — mais saturada que V1
 const COR_TXT: Record<Cor, string> = {
   verde:    'text-emerald-600',
   amarelo:  'text-amber-500',
-  vermelho: 'text-red-600',
+  vermelho: 'text-rose-600',
+}
+const COR_BG: Record<Cor, string> = {
+  verde:    'bg-emerald-50 ring-emerald-200',
+  amarelo:  'bg-amber-50 ring-amber-200',
+  vermelho: 'bg-rose-50 ring-rose-200',
+}
+const COR_DOT: Record<Cor, string> = {
+  verde:    'bg-emerald-500',
+  amarelo:  'bg-amber-500',
+  vermelho: 'bg-rose-500',
 }
 
 // ─── Preset de período ───────────────────────────────────────────────────────
@@ -144,11 +142,8 @@ function addDays(s: string, days: number): string {
   dt.setUTCDate(dt.getUTCDate() + days)
   return dt.toISOString().slice(0, 10)
 }
-function addYears(s: string, n: number): string {
-  const [y, m, d] = s.split('-').map(Number)
-  return ymd(y + n, m, d)
-}
 function todayYMD(): string { return new Date().toISOString().slice(0, 10) }
+void todayYMD
 function rangeDaysInclusive(ini: string, fim: string): number {
   const [yi, mi, di] = ini.split('-').map(Number)
   const [yf, mf, df] = fim.split('-').map(Number)
@@ -160,13 +155,6 @@ function fmtDateBR(s: string): string {
   return `${d}/${m}/${y}`
 }
 
-// Presets (ordem da barra, da esquerda para a direita):
-//  ytd          — ano anterior completo (jan-dez) × jan até hoje, ano corrente
-//  yoy          — último mês 100% importado × mesmo mês ano anterior
-//  ant_corrente — dois últimos meses completos carregados (M-1 vs M-2)
-//  mes_corrente — dia 1 até hoje, mês corrente × dia 1 até mesmo dia, mês anterior
-//  last7        — últimos 7 dias × 7 dias anteriores
-//  last30       — últimos 30 dias × 30 dias anteriores
 type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
 
 const PRESET_LABEL: Record<Preset, string> = {
@@ -181,17 +169,15 @@ const PRESET_LABEL: Record<Preset, string> = {
 function presetRange(p: Preset, last?: { ano: number; mes: number }) {
   const now = new Date()
   const todayY = now.getUTCFullYear()
-  const todayM = now.getUTCMonth() + 1  // 1..12
+  const todayM = now.getUTCMonth() + 1
   const todayD = now.getUTCDate()
   const today = ymd(todayY, todayM, todayD)
 
-  // Último mês 100% importado — fallback para o mês anterior ao corrente
   const lastY = last?.ano ?? todayY
   const lastM = last?.mes ?? (todayM > 1 ? todayM - 1 : 12)
 
   switch (p) {
     case 'ytd': {
-      // Ano anterior INTEIRO × Janeiro até hoje do ano corrente
       return {
         ref_inicio:  ymd(todayY, 1, 1),
         ref_fim:     today,
@@ -200,7 +186,6 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'yoy': {
-      // Último mês 100% importado × mesmo mês do ano anterior — ambos completos
       return {
         ref_inicio:  ymd(lastY, lastM, 1),
         ref_fim:     ymd(lastY, lastM, lastDayOfMonth(lastY, lastM)),
@@ -209,7 +194,6 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'ant_corrente': {
-      // M-1 vs M-2: dois últimos meses completos carregados
       let prevM = lastM - 1, prevY = lastY
       if (prevM === 0) { prevM = 12; prevY-- }
       return {
@@ -220,7 +204,6 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'mes_corrente': {
-      // Dia 1 até hoje do mês corrente × mesmo intervalo do mês anterior
       let pm = todayM - 1, py = todayY
       if (pm === 0) { pm = 12; py-- }
       const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
@@ -255,118 +238,238 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
   }
 }
 
-// ─── Cabeçalho colorido + subtítulos (reutilizado em Total e Lista) ─────────
+// ─── KPI Hero Card (top do painel) ───────────────────────────────────────────
 
-const GRID_COLS = 'grid-cols-[minmax(180px,2fr)_3fr_3fr_1.2fr]'
-
-function ColumnsHeader() {
-  return (
-    <>
-      {/* Tarja preta única; cores apenas nos textos */}
-      <div className={cn('grid', GRID_COLS, TARJA_BG)}>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold', COL_NOME_TXT)}>
-          Nome
-        </div>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_VENDA_TXT)}>
-          Venda
-        </div>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_POSITIVACAO_TXT)}>
-          Positivação
-        </div>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_MIX_TXT)}>
-          Mix Médio
-        </div>
-      </div>
-      {/* Linha clara: subtítulos */}
-      <div className={cn('grid', GRID_COLS, 'bg-slate-50 border-y border-slate-200')}>
-        <div className="px-3 py-1.5 text-sm uppercase tracking-wide text-slate-400 font-medium">
-          {/* vazio */}
-        </div>
-        <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
-          <div>Período Anterior</div>
-          <div>Período Atual</div>
-          <div>%</div>
-        </div>
-        <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
-          <div>Clientes Ativos</div>
-          <div>Clientes Positivados</div>
-          <div>% Posit.</div>
-        </div>
-        <div className="px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
-          Realizado
-        </div>
-      </div>
-    </>
-  )
+interface KpiHeroProps {
+  kpi: KPI | undefined
+  refLabel?: string
+  compLabel?: string
+  isLoading?: boolean
 }
 
-// ─── Linha de dados (Total OU fornecedor) ────────────────────────────────────
-
-interface RowProps {
-  card: CardItem
-  isTotal?: boolean
-  onClick?: () => void
+function deltaIcon(cor: Cor) {
+  if (cor === 'verde') return <TrendingUp className="h-4 w-4" />
+  if (cor === 'vermelho') return <TrendingDown className="h-4 w-4" />
+  return <ArrowRight className="h-4 w-4" />
 }
 
-function DataRow({ card, isTotal = false, onClick }: RowProps) {
-  const clickable = !!onClick
-  const valueNum = isTotal
-    ? 'text-sm font-bold tabular-nums text-slate-900'
-    : 'text-sm font-bold tabular-nums text-slate-800'
-  const valueLabelCls = isTotal
-    ? 'text-sm font-extrabold'
-    : 'text-sm font-semibold'
+function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
+  if (isLoading) {
+    return (
+      <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6 mb-6 animate-pulse">
+        <div className="h-6 w-32 bg-slate-100 rounded mb-4" />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i}>
+              <div className="h-4 w-24 bg-slate-100 rounded mb-2" />
+              <div className="h-10 w-40 bg-slate-100 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+  if (!kpi) return null
 
   return (
-    <div
-      role={clickable ? 'button' : undefined}
-      onClick={onClick}
-      className={cn(
-        'grid', GRID_COLS,
-        'border-b border-slate-100 last:border-b-0',
-        isTotal
-          ? 'bg-gradient-to-r from-slate-400 via-slate-300 to-slate-500 border-b-2 border-slate-500'
-          : 'bg-white',
-        clickable && 'cursor-pointer hover:bg-slate-50 transition-colors',
-      )}
-    >
-      {/* Nome */}
-      <div className="px-3 py-2.5 flex items-center">
-        <span className={cn('truncate', valueLabelCls, isTotal ? 'text-slate-900 uppercase tracking-wider' : 'text-slate-800')} title={card.label}>
-          {card.label}
-        </span>
-        {/* level_label removido — agora aparece no banner sky acima da lista */}
-      </div>
+    <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-white via-white to-blue-50/60 shadow-md ring-1 ring-slate-200 p-6 mb-6">
+      <div className="absolute -top-12 -right-12 h-48 w-48 rounded-full bg-blue-100/40 blur-3xl" />
+      <div className="absolute -bottom-12 -left-12 h-40 w-40 rounded-full bg-emerald-100/40 blur-3xl" />
 
-      {/* VENDA */}
-      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
-        <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_ant)}</div>
-        <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_atual)}</div>
-        <div className={cn('text-center font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.cor])}>
-          {fmtPct(card.pct)}
+      <div className="relative">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 text-white text-[11px] font-semibold tracking-wide">
+            <Sparkles className="h-3 w-3" />
+            Total Geral
+          </div>
+          {compLabel && refLabel && (
+            <span className="text-xs text-slate-500">
+              <span className="text-orange-600 font-medium">{compLabel}</span>
+              <span className="mx-1.5 text-slate-300">vs</span>
+              <span className="text-orange-700 font-medium">{refLabel}</span>
+            </span>
+          )}
         </div>
-      </div>
 
-      {/* POSITIVAÇÃO */}
-      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
-        <div className={cn('text-center font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.posit_cor])}>
-          {fmtPct(card.positpct)}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          {/* VENDA */}
+          <KpiBox
+            icon={<Target className="h-4 w-4" />}
+            label="Venda"
+            valueMain={fmtBRL(kpi.total_atual)}
+            valuePrev={fmtBRL(kpi.total_ant)}
+            pct={kpi.total_pct}
+            cor={kpi.total_cor}
+          />
+          {/* POSITIVAÇÃO */}
+          <KpiBox
+            icon={<Users className="h-4 w-4" />}
+            label="Positivação"
+            valueMain={fmtPct(kpi.total_positpct)}
+            valuePrev={`${fmtInt(kpi.total_positivados)} / ${fmtInt(kpi.total_base_cli)}`}
+            pct={kpi.total_positpct - kpi.total_positpct_ant}
+            cor={kpi.total_posit_cor}
+            isPctValue
+          />
+          {/* MIX */}
+          <KpiBox
+            icon={<Boxes className="h-4 w-4" />}
+            label="Mix Médio"
+            valueMain={fmtMix(kpi.avg_mix)}
+            valuePrev={`Antes: ${fmtMix(kpi.avg_mix_ant)}`}
+            pct={(kpi.avg_mix - kpi.avg_mix_ant) / Math.max(0.001, kpi.avg_mix_ant) * 100}
+            cor={kpi.mix_cor}
+          />
+          {/* CLIENTES ATIVOS */}
+          <KpiBox
+            icon={<Users className="h-4 w-4" />}
+            label="Clientes Ativos"
+            valueMain={fmtInt(kpi.total_base_cli)}
+            valuePrev={`${fmtInt(kpi.total_positivados)} positivados`}
+            pct={0}
+            cor="verde"
+            hideDelta
+          />
         </div>
-      </div>
-
-      {/* MIX MÉDIO */}
-      <div className="px-2 py-2.5 flex items-center justify-center">
-        <span className={cn('font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.mix_cor])}>
-          {fmtMix(card.mix)}
-        </span>
       </div>
     </div>
   )
 }
 
-// ─── DateRangeFilter ─────────────────────────────────────────────────────────
+interface KpiBoxProps {
+  icon: React.ReactNode
+  label: string
+  valueMain: string
+  valuePrev: string
+  pct: number
+  cor: Cor
+  isPctValue?: boolean
+  hideDelta?: boolean
+}
+
+function KpiBox({ icon, label, valueMain, valuePrev, pct, cor, hideDelta }: KpiBoxProps) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-slate-500 text-xs font-semibold tracking-wide uppercase mb-1">
+        <span className="text-slate-400">{icon}</span>
+        {label}
+      </div>
+      <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+        {valueMain}
+      </div>
+      <div className="flex items-center gap-2 mt-1.5">
+        {!hideDelta && (
+          <span className={cn(
+            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-bold tabular-nums ring-1',
+            COR_BG[cor], COR_TXT[cor],
+          )}>
+            {deltaIcon(cor)}
+            {fmtPct(Math.abs(pct))}
+          </span>
+        )}
+        <span className="text-xs text-slate-500 truncate">{valuePrev}</span>
+      </div>
+    </div>
+  )
+}
+
+// ─── Linha de fornecedor — formato card horizontal moderno ───────────────────
+
+interface CardRowProps {
+  card: CardItem
+  onClick?: () => void
+  index: number
+}
+
+function CardRow({ card, onClick, index }: CardRowProps) {
+  const clickable = !!onClick
+  // Barra de progresso = positpct (0-100)
+  const positPct = Math.max(0, Math.min(100, card.positpct))
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!clickable}
+      className={cn(
+        'w-full text-left rounded-xl bg-white ring-1 ring-slate-200 p-4 transition-all',
+        clickable && 'hover:ring-blue-300 hover:shadow-md hover:-translate-y-0.5 cursor-pointer',
+        !clickable && 'cursor-default',
+      )}
+    >
+      <div className="grid grid-cols-12 gap-3 items-center">
+        {/* Identificação (3 cols) */}
+        <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
+          <div className="flex-shrink-0 h-10 w-10 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 ring-1 ring-slate-200 flex items-center justify-center text-slate-600 font-bold text-sm tabular-nums">
+            {String(index + 1).padStart(2, '0')}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className={cn('h-2 w-2 rounded-full', COR_DOT[card.cor])} />
+              <h3 className="text-sm font-semibold text-slate-900 truncate" title={card.label}>
+                {card.label}
+              </h3>
+            </div>
+          </div>
+        </div>
+
+        {/* Venda (3 cols) */}
+        <div className="col-span-6 md:col-span-3">
+          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Venda</div>
+          <div className="text-lg font-bold tabular-nums text-slate-900 leading-tight">
+            {fmtBRL(card.valor_atual)}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className={cn('inline-flex items-center gap-0.5 text-xs font-bold tabular-nums', COR_TXT[card.cor])}>
+              {deltaIcon(card.cor)}{fmtPct(card.pct)}
+            </span>
+            <span className="text-xs text-slate-400 tabular-nums">
+              vs {fmtBRL(card.valor_ant)}
+            </span>
+          </div>
+        </div>
+
+        {/* Positivação com barra (4 cols) */}
+        <div className="col-span-6 md:col-span-4">
+          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
+            Positivação
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className={cn('text-lg font-bold tabular-nums leading-tight', COR_TXT[card.posit_cor])}>
+              {fmtPct(card.positpct)}
+            </span>
+            <span className="text-xs text-slate-500 tabular-nums">
+              {fmtInt(card.positivados)} / {fmtInt(card.base_cli)}
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all',
+                card.posit_cor === 'verde'    && 'bg-emerald-500',
+                card.posit_cor === 'amarelo'  && 'bg-amber-500',
+                card.posit_cor === 'vermelho' && 'bg-rose-500',
+              )}
+              style={{ width: `${positPct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Mix (2 cols) */}
+        <div className="col-span-12 md:col-span-2 flex md:flex-col md:items-end items-center justify-between md:justify-center gap-1">
+          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
+            Mix Médio
+          </div>
+          <div className={cn('text-lg font-bold tabular-nums', COR_TXT[card.mix_cor])}>
+            {fmtMix(card.mix)}
+          </div>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+// ─── DateRangeFilter (visual modernizado) ─────────────────────────────────────
 
 interface DateRangeFilterProps {
   label: string
@@ -374,10 +477,10 @@ interface DateRangeFilterProps {
   fim: string
   onChangeInicio: (v: string) => void
   onChangeFim: (v: string) => void
-  borderColor?: string
+  accent?: string
 }
 
-function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, borderColor = 'border-slate-300' }: DateRangeFilterProps) {
+function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, accent = 'bg-blue-500' }: DateRangeFilterProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -390,7 +493,7 @@ function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, bord
   }, [])
 
   const hasValue = inicio && fim
-  const summary = hasValue ? `${fmtDateBR(inicio)} → ${fmtDateBR(fim)}` : '—'
+  const summary = hasValue ? `${fmtDateBR(inicio)} → ${fmtDateBR(fim)}` : 'Selecionar'
 
   return (
     <div ref={ref} className="relative">
@@ -398,35 +501,36 @@ function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, bord
         type="button"
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-md bg-white shadow-sm',
-          hasValue ? 'border-slate-600 text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-50',
+          'inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-lg bg-white shadow-sm transition-colors',
+          hasValue ? 'border-slate-300 text-slate-900 hover:border-slate-400' : 'border-slate-200 text-slate-500 hover:bg-slate-50',
         )}
       >
-        <span className="text-sm text-slate-400 font-semibold uppercase tracking-wide">{label}:</span>
+        <span className={cn('inline-block h-2 w-2 rounded-full', accent)} />
+        <span className="text-xs text-slate-500 font-semibold">{label}</span>
         <span>{summary}</span>
-        <ChevronDown className="h-3 w-3 opacity-60" />
+        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 bg-white border border-slate-200 rounded-md shadow-lg p-3 min-w-[290px]">
-          <div className="text-sm uppercase tracking-wider text-slate-500 font-semibold mb-2">{label}</div>
+        <div className="absolute left-0 top-full mt-1.5 z-50 bg-white border border-slate-200 rounded-xl shadow-xl p-4 min-w-[300px]">
+          <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">{label}</div>
           <div className="flex gap-2 items-center">
             <input
               type="date"
               value={inicio}
               onChange={e => onChangeInicio(e.target.value)}
-              className={cn('flex-1 px-2 py-1.5 text-sm border-2 rounded bg-white', borderColor)}
+              className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded-md bg-white"
             />
-            <span className="text-slate-400 text-sm font-bold">→</span>
+            <span className="text-slate-300 text-sm">→</span>
             <input
               type="date"
               value={fim}
               onChange={e => onChangeFim(e.target.value)}
-              className={cn('flex-1 px-2 py-1.5 text-sm border-2 rounded bg-white', borderColor)}
+              className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded-md bg-white"
             />
           </div>
           {inicio && fim && (
-            <div className="text-sm text-slate-500 mt-1.5">
-              {rangeDaysInclusive(inicio, fim)} dia(s) — {fmtDateBR(inicio)} a {fmtDateBR(fim)}
+            <div className="text-xs text-slate-500 mt-2">
+              {rangeDaysInclusive(inicio, fim)} dia(s)
             </div>
           )}
         </div>
@@ -435,7 +539,7 @@ function DateRangeFilter({ label, inicio, fim, onChangeInicio, onChangeFim, bord
   )
 }
 
-// ─── MultiSelect ─────────────────────────────────────────────────────────────
+// ─── MultiSelect (visual modernizado) ─────────────────────────────────────────
 
 interface MultiSelectProps {
   label: string
@@ -473,30 +577,30 @@ function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
         type="button"
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-md bg-white shadow-sm',
-          selected.length > 0 ? 'border-slate-600 text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-50',
+          'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg bg-white shadow-sm transition-colors',
+          selected.length > 0 ? 'border-blue-500 text-slate-900' : 'border-slate-200 text-slate-600 hover:bg-slate-50',
         )}
       >
         {label}
         {selected.length > 0 && (
-          <span className={cn('inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-sm font-bold', BTN_PRIMARY_BG)}>
+          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-bold">
             {selected.length}
           </span>
         )}
-        <ChevronDown className="h-3 w-3 opacity-60" />
+        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-72 bg-white border border-slate-200 rounded-md shadow-lg overflow-hidden">
+        <div className="absolute left-0 top-full mt-1.5 z-50 w-72 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
           <div className="p-2 border-b border-slate-100">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
                 autoFocus
                 value={q}
                 onChange={e => setQ(e.target.value)}
                 placeholder={`Buscar ${label.toLowerCase()}...`}
-                className="w-full pl-7 pr-2 py-1.5 text-sm border border-slate-200 rounded"
+                className="w-full pl-8 pr-2 py-1.5 text-sm border border-slate-200 rounded-lg"
               />
             </div>
           </div>
@@ -507,12 +611,12 @@ function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
             {filtered.map(opt => {
               const checked = selected.includes(opt.key)
               return (
-                <label key={opt.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
+                <label key={opt.key} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggle(opt.key)}
-                    className="w-3.5 h-3.5 accent-slate-700"
+                    className="w-4 h-4 accent-blue-600"
                   />
                   <span className={cn('truncate', checked && 'font-medium text-slate-900')}>{opt.label}</span>
                 </label>
@@ -521,8 +625,8 @@ function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
           </div>
           {selected.length > 0 && (
             <div className="border-t border-slate-100 p-2 flex items-center justify-between">
-              <span className="text-sm text-slate-500">{selected.length} selecionado(s)</span>
-              <button onClick={() => onChange([])} className="text-sm text-slate-500 hover:text-red-600 font-medium">
+              <span className="text-xs text-slate-500">{selected.length} selecionado(s)</span>
+              <button onClick={() => onChange([])} className="text-xs text-slate-600 hover:text-rose-600 font-medium">
                 Limpar
               </button>
             </div>
@@ -598,15 +702,12 @@ function useUltimoPeriodo() {
   })
 }
 
-// ─── FarolExecutivo ──────────────────────────────────────────────────────────
+// ─── FarolExecutivoV2 ────────────────────────────────────────────────────────
 
-export default function FarolExecutivo() {
-  // navigate / canImport / refreshing removidos junto com os botões
-  // "Importar" e "Consolidar" — gestor pediu pra retirar do painel (usuários
-  // clicavam sem querer). Ações administrativas seguem disponíveis no menu.
+export default function FarolExecutivoV2() {
   const navigate = useNavigate()
   const { spRole, tipoPersona } = useAuth()
-  void spRole; void tipoPersona // mantidos pra futuras gates de UI
+  void spRole; void tipoPersona
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
@@ -633,7 +734,6 @@ export default function FarolExecutivo() {
   const periodosQ = useUltimoPeriodo()
   useEffect(() => {
     if (refInicio || !periodosQ.data) return
-    // Default ao entrar: "Ano × Ano" (ano anterior completo vs ano atual até hoje)
     const r = presetRange('ytd', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
@@ -641,8 +741,6 @@ export default function FarolExecutivo() {
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p)
-    // periodos vem DESC (mais recente primeiro); ref_ano/ref_mes pode ser 0 se
-    // ainda sem dados no momento do fetch — usar periodos[0] como fonte primária.
     const ps = periodosQ.data?.periodos ?? []
     const latestStr = ps[0]
     const parsePeriodo = (s: string) => { const [y, m] = s.split('-'); return { ano: +y, mes: +m } }
@@ -673,30 +771,11 @@ export default function FarolExecutivo() {
   const cards = data?.cards ?? []
   const kpi = data?.kpi
 
-  // Constrói o "card total" virtual a partir do KPI pra reaproveitar o componente DataRow
-  const totalCard: CardItem | null = kpi ? {
-    key: '__total__', label: 'TOTAL',
-    level: '', level_label: '',
-    valor_atual: kpi.total_atual,
-    valor_ant: kpi.total_ant,
-    pct: kpi.total_pct,
-    cor: kpi.total_cor,
-    plucro: kpi.total_plucro, plucro_ant: kpi.total_plucro_ant,
-    positivados: kpi.total_positivados, base_cli: kpi.total_base_cli,
-    positpct: kpi.total_positpct,
-    positivados_ant: kpi.total_positivados_ant, base_cli_ant: kpi.total_base_cli_ant,
-    positpct_ant: kpi.total_positpct_ant,
-    posit_cor: kpi.total_posit_cor,
-    mix: kpi.avg_mix, mix_ant: kpi.avg_mix_ant, mix_cor: kpi.mix_cor,
-  } : null
-
   const visibleCards = useMemo(() => {
     const s = search.trim().toLowerCase()
     if (!s) return cards
     return cards.filter(c => c.label.toLowerCase().includes(s))
   }, [cards, search])
-
-  // handleRefreshViews removido junto com o botão Consolidar.
 
   const FILTER_DIMS: { col: string; label: string; from: keyof DimsResponse }[] = [
     { col: 'cod_fornec',     label: 'Indústria',  from: 'fornec' },
@@ -718,94 +797,59 @@ export default function FarolExecutivo() {
   }
 
   const totalFiltersActive = Object.values(filters).reduce((n, vs) => n + vs.length, 0)
+  const refLabel  = refInicio && refFim ? `${fmtDateBR(refInicio)} → ${fmtDateBR(refFim)}` : undefined
+  const compLabel = compInicio && compFim ? `${fmtDateBR(compInicio)} → ${fmtDateBR(compFim)}` : undefined
 
   return (
-    <div className="min-h-full p-4 md:p-6 bg-slate-50 uppercase text-sm [&_*]:uppercase">
-      {/* ── Toggle V1 → V2 (CEO comparação) ─────────────────────────────────── */}
-      <div className="flex justify-end mb-2">
+    <div className="min-h-full bg-slate-50/60 p-4 md:p-6">
+      {/* ── Top bar: títuo + toggle V1 ─────────────────────────────────────── */}
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900">
+              Painel Executivo
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold tracking-wide">
+              <Sparkles className="h-3 w-3" />
+              V2 BETA
+            </span>
+          </div>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Visão de objetivos por Indústria, Gerência e Equipe — com drill-down até cliente/produto.
+          </p>
+        </div>
         <button
-          onClick={() => navigate('/farol/executivo-v2')}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold tracking-wide rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 transition-colors"
-          title="Visualizar a proposta V2 (visual modernizado)"
+          onClick={() => navigate('/farol/v2')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
         >
-          <Sparkles className="h-3.5 w-3.5" />
-          Ver Painel V2
+          <ChevronLeft className="h-4 w-4" />
+          Voltar para V1
         </button>
       </div>
 
-      {/* ── Seletor de FLUXO (acima de tudo) ────────────────────────────────── */}
-      <div className="mb-3">
-        <div className="inline-flex rounded-md border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
+      {/* ── Linha 1: Fluxo + View ──────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        {/* FLUXO */}
+        <div className="inline-flex rounded-lg ring-1 ring-slate-200 overflow-hidden bg-white shadow-sm">
           {([
-            { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-[#1e293b]' },
-            { id: 'transmitido' as const, label: 'Transmitido', color: 'bg-emerald-700' },
+            { id: 'faturado'    as const, label: 'Faturado',    accent: 'bg-slate-900' },
+            { id: 'transmitido' as const, label: 'Transmitido', accent: 'bg-emerald-600' },
           ]).map(f => (
             <button
               key={f.id}
               onClick={() => { setFluxo(f.id); setDrillPath([]) }}
               className={cn(
-                'px-5 py-2 text-sm font-bold uppercase tracking-wide transition-colors',
-                fluxo === f.id ? cn(f.color, 'text-white') : 'text-slate-600 hover:bg-slate-50',
+                'px-4 py-2 text-sm font-semibold tracking-wide transition-colors',
+                fluxo === f.id ? cn(f.accent, 'text-white') : 'text-slate-600 hover:bg-slate-50',
               )}
             >
               {f.label}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* ── Atalhos de período ──────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-        <span className="text-sm uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1 mr-0.5">
-          <Calendar className="h-3 w-3" />
-        </span>
-        {([
-          { id: 'ytd'          as const, tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
-          { id: 'yoy'          as const, tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
-          { id: 'ant_corrente' as const, tip: 'Dois últimos meses completos carregados (M-1 vs M-2)' },
-          { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
-          { id: 'last7'        as const, tip: 'Últimos 7 dias × 7 dias anteriores' },
-          { id: 'last30'       as const, tip: 'Últimos 30 dias × 30 dias anteriores' },
-        ]).map(p => (
-          <button
-            key={p.id}
-            onClick={() => applyPreset(p.id)}
-            title={p.tip}
-            className={cn(
-              'px-2.5 py-1 text-sm font-semibold rounded transition border',
-              activePreset === p.id
-                ? 'bg-slate-700 text-white border-slate-700 shadow-sm'
-                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50 hover:border-slate-400',
-            )}
-          >
-            {PRESET_LABEL[p.id]}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Strip de período ativo ───────────────────────────────────────────── */}
-      {compInicio && compFim && refInicio && refFim && (
-        <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-sm shadow-sm flex-wrap">
-          {activePreset && (
-            <span className="font-bold text-slate-700 mr-1">{PRESET_LABEL[activePreset]}:</span>
-          )}
-          <span className="text-slate-400 font-medium">Anterior</span>
-          <span className="font-semibold text-orange-600">
-            {fmtDateBR(compInicio)} → {fmtDateBR(compFim)}
-          </span>
-          <span className="text-slate-300">({rangeDaysInclusive(compInicio, compFim)} dias)</span>
-          <span className="text-slate-400 font-bold mx-1">vs</span>
-          <span className="text-slate-400 font-medium">Atual</span>
-          <span className="font-semibold text-orange-700">
-            {fmtDateBR(refInicio)} → {fmtDateBR(refFim)}
-          </span>
-          <span className="text-slate-300">({rangeDaysInclusive(refInicio, refFim)} dias)</span>
-        </div>
-      )}
-
-      {/* ── Controles secundários ───────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="flex rounded-md border border-slate-300 overflow-hidden bg-white shadow-sm">
+        {/* VIEW */}
+        <div className="inline-flex rounded-lg ring-1 ring-slate-200 overflow-hidden bg-white shadow-sm">
           {([
             { id: 'V01' as const, label: 'Por Indústria' },
             { id: 'V03' as const, label: 'Por Gerência' },
@@ -815,8 +859,8 @@ export default function FarolExecutivo() {
               key={v.id}
               onClick={() => handleViewChange(v.id)}
               className={cn(
-                'px-3 py-1.5 text-sm font-medium transition-colors',
-                view === v.id ? cn(BTN_PRIMARY_BG, 'text-white') : 'text-slate-600 hover:bg-slate-50',
+                'px-3.5 py-2 text-sm font-medium transition-colors',
+                view === v.id ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
               )}
             >
               {v.label}
@@ -824,6 +868,27 @@ export default function FarolExecutivo() {
           ))}
         </div>
 
+        {/* Presets de período */}
+        <div className="inline-flex flex-wrap gap-1.5">
+          {(Object.keys(PRESET_LABEL) as Preset[]).map(p => (
+            <button
+              key={p}
+              onClick={() => applyPreset(p)}
+              className={cn(
+                'px-2.5 py-1.5 text-xs font-semibold rounded-md transition border',
+                activePreset === p
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50',
+              )}
+            >
+              {PRESET_LABEL[p]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Linha 2: filtros + datas + busca ────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
         {FILTER_DIMS.map(d => (
           <MultiSelect
             key={d.col}
@@ -835,61 +900,55 @@ export default function FarolExecutivo() {
         ))}
 
         <DateRangeFilter
-          label="Período Anterior"
+          label="Anterior"
           inicio={compInicio}
           fim={compFim}
           onChangeInicio={v => { setCompInicio(v); setActivePreset(null) }}
           onChangeFim={v => { setCompFim(v); setActivePreset(null) }}
-          borderColor="border-orange-400"
+          accent="bg-orange-400"
         />
         <DateRangeFilter
-          label="Período Atual"
+          label="Atual"
           inicio={refInicio}
           fim={refFim}
           onChangeInicio={v => { setRefInicio(v); setActivePreset(null) }}
           onChangeFim={v => { setRefFim(v); setActivePreset(null) }}
-          borderColor="border-orange-500"
+          accent="bg-orange-600"
         />
 
         {totalFiltersActive > 0 && (
           <button
             onClick={clearFilters}
-            className="inline-flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-md"
+            className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
           >
-            <X className="h-3 w-3" /> Limpar filtros ({totalFiltersActive})
+            <X className="h-3.5 w-3.5" /> Limpar ({totalFiltersActive})
           </button>
         )}
 
-        {/* Busca encostada com os demais filtros (antes ficava perdida
-            no canto direito por causa de um spacer flex-1 — removido) */}
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+        <div className="relative ml-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder={`Buscar ${visibleCards[0]?.level_label?.toLowerCase() ?? ''}...`}
-            className="pl-7 pr-7 py-1.5 text-sm border border-slate-300 rounded-md bg-white shadow-sm w-56"
+            placeholder={`Buscar ${visibleCards[0]?.level_label?.toLowerCase() ?? ''}…`}
+            className="pl-9 pr-8 py-2 text-sm border border-slate-200 rounded-lg bg-white shadow-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
           />
           {search && (
             <button
               onClick={() => setSearch('')}
-              className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
-
-        {/* Botões Importar e Consolidar removidos a pedido do gestor —
-            usuários estavam clicando sem querer. Ações de import/consolidação
-            ficam restritas ao menu de administração (não neste painel). */}
       </div>
 
-      {/* ── Chips dos filtros ativos ────────────────────────────────────────── */}
+      {/* ── Chips de filtros ativos ─────────────────────────────────────────── */}
       {totalFiltersActive > 0 && (
-        <div className="flex flex-wrap items-center gap-1 mb-3">
-          <span className="text-sm uppercase tracking-wider text-slate-500 font-semibold mr-1">
-            <Filter className="h-3 w-3 inline -mt-0.5" /> Filtros ativos:
+        <div className="flex flex-wrap items-center gap-1.5 mb-4">
+          <span className="text-xs text-slate-500 font-medium flex items-center gap-1 mr-1">
+            <Filter className="h-3 w-3" /> Filtros ativos:
           </span>
           {FILTER_DIMS.flatMap(d => {
             const vals = filters[d.col] ?? []
@@ -897,10 +956,13 @@ export default function FarolExecutivo() {
             return vals.map(v => {
               const label = opts.find(o => o.key === v)?.label ?? v
               return (
-                <span key={`${d.col}:${v}`} className="inline-flex items-center gap-1 px-2 py-0.5 text-sm bg-slate-100 border border-slate-200 rounded-full">
-                  <span className="text-slate-500">{d.label}:</span>
-                  <span className="font-medium text-slate-800">{label}</span>
-                  <button onClick={() => setFilter(d.col, vals.filter(x => x !== v))} className="ml-0.5 text-slate-400 hover:text-red-600">
+                <span key={`${d.col}:${v}`} className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 text-xs bg-blue-50 ring-1 ring-blue-200 rounded-full">
+                  <span className="text-blue-600 font-medium">{d.label}:</span>
+                  <span className="font-semibold text-slate-800">{label}</span>
+                  <button
+                    onClick={() => setFilter(d.col, vals.filter(x => x !== v))}
+                    className="ml-0.5 p-0.5 rounded-full hover:bg-blue-100 text-blue-400 hover:text-blue-700 transition-colors"
+                  >
                     <X className="h-2.5 w-2.5" />
                   </button>
                 </span>
@@ -912,70 +974,64 @@ export default function FarolExecutivo() {
 
       {/* ── Breadcrumb de drill ─────────────────────────────────────────────── */}
       {drillPath.length > 0 && (
-        <div className="flex items-center gap-1 mb-3 text-sm text-slate-600">
-          <button onClick={() => setDrillPath([])} className="hover:text-slate-900 hover:underline">
+        <div className="flex items-center gap-1.5 mb-4 text-sm text-slate-600">
+          <button onClick={() => setDrillPath([])} className="font-medium hover:text-slate-900 hover:underline">
             Início
           </button>
           {drillPath.map((d, i) => (
-            <span key={i} className="flex items-center gap-1">
-              <span className="text-slate-400">›</span>
-              <button onClick={() => setDrillPath(drillPath.slice(0, i + 1))} className="hover:text-slate-900 hover:underline truncate max-w-[200px]" title={d.label}>
+            <span key={i} className="flex items-center gap-1.5">
+              <span className="text-slate-300">/</span>
+              <button onClick={() => setDrillPath(drillPath.slice(0, i + 1))} className="hover:text-slate-900 hover:underline truncate max-w-[220px]" title={d.label}>
                 {d.label}
               </button>
             </span>
           ))}
-          <button onClick={handleBack} className="ml-2 inline-flex items-center gap-1 text-slate-500 hover:text-slate-900">
+          <button onClick={handleBack} className="ml-2 inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-md transition-colors">
             <ChevronLeft className="h-3 w-3" />
             Voltar
           </button>
         </div>
       )}
 
-      {/* ── TOTAL (card único com cabeçalho próprio) ────────────────────────── */}
-      {totalCard && (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4 shadow-sm">
-          <ColumnsHeader />
-          <DataRow card={totalCard} isTotal />
-        </div>
-      )}
+      {/* ── KPI Hero ────────────────────────────────────────────────────────── */}
+      <KpiHero kpi={kpi} refLabel={refLabel} compLabel={compLabel} isLoading={isLoading && !kpi} />
 
-      {/* ── Banner do nível atual — destaca QUE tipo de dado está listado ── */}
+      {/* ── Banner do próximo nível ──────────────────────────────────────────── */}
       {data && data.next_level_label && (
-        <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               {data.next_level_label}
             </span>
+            <span className="text-xs text-slate-400">
+              {visibleCards.length} {visibleCards.length === 1 ? 'item' : 'itens'}
+            </span>
           </div>
-          <span className="text-sm text-slate-500 tabular-nums shrink-0">
-            {visibleCards.length} {visibleCards.length === 1 ? 'item' : 'itens'}
-          </span>
         </div>
       )}
 
-      {/* ── LISTA de fornecedores/GGV/equipe ─────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-        {/* Cabeçalho colorido da lista (mesmo padrão do total) */}
-        <ColumnsHeader />
-
-        {/* Linhas */}
-        {isLoading && (
-          <div className="text-center text-sm text-slate-500 py-8">Carregando…</div>
+      {/* ── Lista de cards ───────────────────────────────────────────────────── */}
+      <div className="space-y-2">
+        {isLoading && cards.length === 0 && (
+          <div className="text-center text-sm text-slate-500 py-12 bg-white rounded-xl ring-1 ring-slate-200">
+            Carregando…
+          </div>
         )}
         {error != null && (
-          <div className="text-center text-sm text-red-600 py-8">
+          <div className="text-center text-sm text-rose-600 py-12 bg-rose-50 rounded-xl ring-1 ring-rose-200">
             Erro ao carregar. {(error as Error).message}
           </div>
         )}
         {!isLoading && error == null && visibleCards.length === 0 && (
-          <div className="text-center text-sm text-slate-500 py-8">
+          <div className="text-center text-sm text-slate-500 py-12 bg-white rounded-xl ring-1 ring-slate-200">
             {search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
           </div>
         )}
-        {visibleCards.map(c => (
-          <DataRow
+        {visibleCards.map((c, i) => (
+          <CardRow
             key={c.key}
             card={c}
+            index={i}
             onClick={c.level === 'cod_prod' ? undefined : () => handleDrill(c)}
           />
         ))}

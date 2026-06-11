@@ -27,6 +27,7 @@ import FarolPublicPanel from './pages/farol/FarolPublicPanel'
 import LimparDados from './pages/LimparDados'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
+import FarolExecutivoV2 from './pages/farol/FarolExecutivoV2'
 import FarolV2Import from './pages/farol/FarolV2Import'
 import FarolUsuarios from './pages/farol/FarolUsuarios'
 import FarolMarketing from './pages/farol/FarolMarketing'
@@ -236,6 +237,7 @@ function AppLayout() {
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
               <Route path="/farol/v2"         element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
+              <Route path="/farol/executivo-v2" element={<ProtectedRoute><FarolExecutivoV2 /></ProtectedRoute>} />
               <Route path="/farol/marketing"   element={<ProtectedRoute><FarolMarketing /></ProtectedRoute>} />
               <Route path="/farol/bi"         element={<ProtectedRoute><FarolBI /></ProtectedRoute>} />
               <Route path="/farol/assistente" element={<ProtectedRoute><FarolAssistente /></ProtectedRoute>} />
