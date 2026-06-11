@@ -437,6 +437,9 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		filters := parseMultiFilters(q)
 		cards := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
+		if currentLevel.Level == "cod_fornec" {
+			fixOverlappingBaseKPI(db, &kpi, fluxo, view, spCtx.EmpresaID, pr, drillPath)
+		}
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
@@ -1052,6 +1055,61 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 	return kpi
 }
 
+// queryDistinctCliPositivados retorna COUNT(DISTINCT cnpj) WHERE positivados > 0
+// na tabela folha (grain cnpj) para o intervalo mensal dado.
+// Corrige o KPI totalizador quando overlappingBase=true: a média de percentuais
+// por fornecedor subestima o total real quando há muitos fornecedores de baixo volume.
+func queryDistinctCliPositivados(db *sql.DB, fluxo fluxoCtx, view string, empresaID string, ymStart, ymEnd int, drillPath []drillStep) int {
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+	tbl, ok := tables[view]
+	if !ok || len(tbl) == 0 {
+		return 0
+	}
+	leafTable := "farol." + tbl[len(tbl)-1]
+
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymStart, ymEnd, &args)
+	drillCond := buildDrillCond(drillPath, &args)
+
+	q := fmt.Sprintf(`
+SELECT COUNT(DISTINCT cnpj)
+FROM %s v
+WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
+		leafTable, mesCond, drillCond)
+
+	var count int
+	if err := db.QueryRow(q, args...).Scan(&count); err != nil {
+		log.Printf("[farol:posit] queryDistinctCliPositivados view=%s ERRO: %v", view, err)
+		return 0
+	}
+	return count
+}
+
+// fixOverlappingBaseKPI substitui os campos de positivação do KPI totalizador
+// quando o agrupamento é por cod_fornec. Usa COUNT(DISTINCT cnpj) real em vez
+// da média de percentuais, que subestima quando muitos fornecedores têm pouco volume.
+func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view string, empresaID string, pr periodResolution, drillPath []drillStep) {
+	ref := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath)
+	kpi.TotalPositivados = ref
+	if kpi.TotalBaseCli > 0 {
+		kpi.TotalPositPct = float64(ref) / float64(kpi.TotalBaseCli) * 100
+	}
+	if !pr.CompInicio.IsZero() {
+		ant := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath)
+		kpi.TotalPositivadosAnt = ant
+		if kpi.TotalBaseCliAnt > 0 {
+			kpi.TotalPositPctAnt = float64(ant) / float64(kpi.TotalBaseCliAnt) * 100
+		}
+	}
+	kpi.TotalPositCor = "vermelho"
+	if kpi.TotalPositPct >= kpi.TotalPositPctAnt {
+		kpi.TotalPositCor = "verde"
+	}
+}
+
 // ─── fetchPeriodosDisponiveis ─────────────────────────────────────────────────
 
 func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
@@ -1566,6 +1624,9 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		filters := parseMultiFilters(q)
 		cards := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
+		if currentLevel.Level == "cod_fornec" {
+			fixOverlappingBaseKPI(db, &kpi, fluxo, view, empresaID, pr, drillPath)
+		}
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
 		sort.Slice(cards, func(i, j int) bool {
