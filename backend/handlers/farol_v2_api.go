@@ -1088,10 +1088,33 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 	return count
 }
 
+// queryCompanyBaseCli retorna o total de clientes ativos da empresa via mv_*_carteira_rca.
+// Usado como denominador do KPI totalizador em fixOverlappingBaseKPI (V01 L0).
+func queryCompanyBaseCli(db *sql.DB, fluxo fluxoCtx, empresaID string) int {
+	table := "farol.mv_fat_carteira_rca"
+	if fluxo.name == "transmitido" {
+		table = "farol.mv_trans_carteira_rca"
+	}
+	var count int
+	if err := db.QueryRow(fmt.Sprintf(
+		`SELECT COALESCE(SUM(qtcli_rca),0)::INT FROM %s WHERE empresa_id=$1`, table,
+	), empresaID).Scan(&count); err != nil {
+		log.Printf("[farol:posit] queryCompanyBaseCli ERRO: %v", err)
+	}
+	return count
+}
+
 // fixOverlappingBaseKPI substitui os campos de positivação do KPI totalizador
 // quando o agrupamento é por cod_fornec. Usa COUNT(DISTINCT cnpj) real em vez
 // da média de percentuais, que subestima quando muitos fornecedores têm pouco volume.
+// Quando drillPath está vazio (V01 L0), base_cli agora é rolling-12M por fornecedor,
+// então o MAX das linhas daria a base do maior fornecedor — corrigimos com o total real.
 func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view string, empresaID string, pr periodResolution, drillPath []drillStep) {
+	if len(drillPath) == 0 {
+		base := queryCompanyBaseCli(db, fluxo, empresaID)
+		kpi.TotalBaseCli = base
+		kpi.TotalBaseCliAnt = base
+	}
 	ref := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath)
 	kpi.TotalPositivados = ref
 	if kpi.TotalBaseCli > 0 {
