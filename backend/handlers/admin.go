@@ -293,6 +293,150 @@ func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// DiagnoseV01BaseCliHandler diagnostica o problema de base_cli uniforme no V01.
+//
+// GET  /api/admin/diagnose-v01-base-cli           → diagnóstico (amostra de base_cli + rolling 12M)
+// POST /api/admin/diagnose-v01-base-cli?action=fix → diagnóstico + re-popula todos os meses via upsert_aggs_mes
+func DiagnoseV01BaseCliHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		out := map[string]any{}
+
+		// 1. Versão da função upsert_aggs_mes (primeiros 200 chars do corpo)
+		var fnBody string
+		_ = db.QueryRow(`
+			SELECT LEFT(pg_get_functiondef(p.oid), 400)
+			FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+			WHERE n.nspname='farol' AND p.proname='upsert_aggs_mes'`).Scan(&fnBody)
+		out["upsert_fn_snippet"] = fnBody
+
+		// 2. Amostra de base_cli atual no agg_fat_v01_l0_mes (últimos 2 meses)
+		type aggRow struct {
+			Empresa    string `json:"empresa_id"`
+			Ano        int    `json:"ano"`
+			Mes        int    `json:"mes"`
+			CodFornec  string `json:"cod_fornec"`
+			BaseCli    int    `json:"base_cli"`
+			Positivados int   `json:"positivados"`
+		}
+		aggRows := []aggRow{}
+		rs, err := db.Query(`
+			SELECT empresa_id::text, ano, mes, cod_fornec, base_cli, positivados
+			FROM farol.agg_fat_v01_l0_mes
+			WHERE (ano, mes) IN (
+				SELECT ano, mes FROM farol.agg_fat_v01_l0_mes
+				GROUP BY ano, mes ORDER BY ano DESC, mes DESC LIMIT 2
+			)
+			ORDER BY base_cli DESC, cod_fornec
+			LIMIT 40`)
+		if err != nil {
+			out["agg_sample_error"] = err.Error()
+		} else {
+			for rs.Next() {
+				var a aggRow
+				if rs.Scan(&a.Empresa, &a.Ano, &a.Mes, &a.CodFornec, &a.BaseCli, &a.Positivados) == nil {
+					aggRows = append(aggRows, a)
+				}
+			}
+			rs.Close()
+		}
+		out["agg_base_cli_sample"] = aggRows
+
+		// 3. Rolling 12M real por fornecedor (top 20 por compradores)
+		type roll12Row struct {
+			CodFornec  string `json:"cod_fornec"`
+			Compradores int   `json:"compradores_12m"`
+		}
+		roll12 := []roll12Row{}
+		rs2, err2 := db.Query(`
+			SELECT cod_fornec, COUNT(DISTINCT cnpj)::int AS compradores
+			FROM vendas_faturadas
+			WHERE data_faturamento >= (date_trunc('month', CURRENT_DATE) - INTERVAL '12 months')::date
+			  AND data_faturamento <  date_trunc('month', CURRENT_DATE)::date
+			  AND qt > 0 AND cod_fornec <> ''
+			GROUP BY cod_fornec
+			ORDER BY compradores DESC
+			LIMIT 20`)
+		if err2 != nil {
+			out["rolling12m_error"] = err2.Error()
+		} else {
+			for rs2.Next() {
+				var rr roll12Row
+				if rs2.Scan(&rr.CodFornec, &rr.Compradores) == nil {
+					roll12 = append(roll12, rr)
+				}
+			}
+			rs2.Close()
+		}
+		out["rolling_12m_vendas"] = roll12
+
+		// 4. Contagem total de empresa_id/ano/mes em agg_fat_v01_l0_mes
+		var totalMeses int
+		_ = db.QueryRow(`SELECT COUNT(DISTINCT (empresa_id, ano, mes)) FROM farol.agg_fat_v01_l0_mes`).Scan(&totalMeses)
+		out["total_empresa_ano_mes"] = totalMeses
+
+		// 5. Ação fix: re-popula todos os meses com a nova função
+		if r.Method == http.MethodPost && r.URL.Query().Get("action") == "fix" {
+			t0 := time.Now()
+			type job struct {
+				Empresa string
+				Ano     int
+				Mes     int
+			}
+			var jobs []job
+			rs3, err3 := db.Query(`SELECT DISTINCT empresa_id::text, ano, mes FROM farol.agg_fat_v01_l0_mes ORDER BY ano, mes`)
+			if err3 != nil {
+				out["fix_error"] = err3.Error()
+			} else {
+				for rs3.Next() {
+					var j job
+					if rs3.Scan(&j.Empresa, &j.Ano, &j.Mes) == nil {
+						jobs = append(jobs, j)
+					}
+				}
+				rs3.Close()
+				done, errs := 0, []string{}
+				for _, j := range jobs {
+					if _, e := db.Exec(`SELECT farol.upsert_aggs_mes($1::uuid, $2, $3)`, j.Empresa, j.Ano, j.Mes); e != nil {
+						errs = append(errs, e.Error())
+						log.Printf("[diagnose-v01] upsert_aggs_mes(%s,%d,%d) ERRO: %v", j.Empresa, j.Ano, j.Mes, e)
+					} else {
+						done++
+					}
+				}
+				out["fix_jobs_total"] = len(jobs)
+				out["fix_jobs_done"] = done
+				out["fix_duration_ms"] = time.Since(t0).Milliseconds()
+				if len(errs) > 0 {
+					out["fix_errors"] = errs
+				}
+				// Amostra pós-fix
+				postRows := []aggRow{}
+				rs4, _ := db.Query(`
+					SELECT empresa_id::text, ano, mes, cod_fornec, base_cli, positivados
+					FROM farol.agg_fat_v01_l0_mes
+					WHERE (ano, mes) = (
+						SELECT ano, mes FROM farol.agg_fat_v01_l0_mes
+						GROUP BY ano, mes ORDER BY ano DESC, mes DESC LIMIT 1
+					)
+					ORDER BY base_cli DESC, cod_fornec LIMIT 20`)
+				if rs4 != nil {
+					for rs4.Next() {
+						var a aggRow
+						if rs4.Scan(&a.Empresa, &a.Ano, &a.Mes, &a.CodFornec, &a.BaseCli, &a.Positivados) == nil {
+							postRows = append(postRows, a)
+						}
+					}
+					rs4.Close()
+				}
+				out["agg_base_cli_AFTER_fix"] = postRows
+			}
+		}
+
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
 // DiagnoseBIHandler retorna contagens de vendas vs agg_*_mes por empresa
 // e força um repopulate via farol.upsert_aggs_mes. Útil quando o BI mostra
 // 0 cards mas as views legacy (mv_fat_*) têm dados — indica que as agg_*_mes
