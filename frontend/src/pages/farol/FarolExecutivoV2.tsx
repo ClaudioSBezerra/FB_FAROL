@@ -256,13 +256,19 @@ function deltaIcon(cor: Cor) {
 function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
   if (isLoading) {
     return (
-      <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6 mb-6 animate-pulse">
-        <div className="h-6 w-32 bg-slate-100 rounded mb-4" />
+      <div
+        className="rounded-2xl p-6 mb-6 animate-pulse bg-gradient-to-b from-slate-100 to-slate-200 ring-1 ring-slate-300/60"
+        style={{
+          boxShadow:
+            'inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(15,23,42,0.06), 0 12px 28px -10px rgba(15,23,42,0.18), 0 4px 10px -4px rgba(15,23,42,0.10)',
+        }}
+      >
+        <div className="h-6 w-32 bg-slate-300/60 rounded mb-4" />
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i}>
-              <div className="h-4 w-24 bg-slate-100 rounded mb-2" />
-              <div className="h-10 w-40 bg-slate-100 rounded" />
+              <div className="h-4 w-24 bg-slate-300/60 rounded mb-2" />
+              <div className="h-10 w-40 bg-slate-300/60 rounded" />
             </div>
           ))}
         </div>
@@ -272,13 +278,40 @@ function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
   if (!kpi) return null
 
   return (
-    <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-white via-white to-blue-50/60 shadow-md ring-1 ring-slate-200 p-6 mb-6">
-      <div className="absolute -top-12 -right-12 h-48 w-48 rounded-full bg-blue-100/40 blur-3xl" />
-      <div className="absolute -bottom-12 -left-12 h-40 w-40 rounded-full bg-emerald-100/40 blur-3xl" />
+    <div
+      className="relative rounded-2xl overflow-hidden p-6 mb-6 bg-gradient-to-b from-slate-100 via-slate-150 to-slate-300 ring-1 ring-slate-300/70"
+      style={{
+        backgroundImage:
+          'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 55%, #cbd5e1 100%)',
+        boxShadow: [
+          // Highlight superior interno (luz incidente)
+          'inset 0 1px 0 rgba(255,255,255,0.95)',
+          'inset 0 2px 6px rgba(255,255,255,0.55)',
+          // Sombra inferior interna (peso/baixo-relevo)
+          'inset 0 -1px 0 rgba(15,23,42,0.08)',
+          'inset 0 -8px 16px rgba(15,23,42,0.06)',
+          // Sombras externas (elevação 3D)
+          '0 1px 0 rgba(255,255,255,0.6)',
+          '0 14px 28px -10px rgba(15,23,42,0.25)',
+          '0 6px 14px -4px rgba(15,23,42,0.14)',
+        ].join(', '),
+      }}
+    >
+      {/* Glow decorativos suaves no fundo cinza */}
+      <div className="absolute -top-16 -right-16 h-56 w-56 rounded-full bg-white/40 blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-slate-400/20 blur-3xl pointer-events-none" />
 
       <div className="relative">
         <div className="flex items-center gap-2 mb-4">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 text-white text-[11px] font-semibold tracking-wide">
+          <div
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-[11px] font-bold tracking-wider uppercase"
+            style={{
+              backgroundImage:
+                'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',
+              boxShadow:
+                'inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 10px -2px rgba(15,23,42,0.45)',
+            }}
+          >
             <Sparkles className="h-3 w-3" />
             Total Geral
           </div>
@@ -349,12 +382,18 @@ interface KpiBoxProps {
 
 function KpiBox({ icon, label, valueMain, valuePrev, pct, cor, hideDelta }: KpiBoxProps) {
   return (
-    <div>
-      <div className="flex items-center gap-1.5 text-slate-500 text-xs font-semibold tracking-wide uppercase mb-1">
+    <div
+      className="relative rounded-xl bg-white/85 backdrop-blur-sm px-4 py-3 ring-1 ring-white/80"
+      style={{
+        boxShadow:
+          'inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 14px -6px rgba(15,23,42,0.18), 0 2px 4px -2px rgba(15,23,42,0.08)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold tracking-wider uppercase mb-1">
         <span className="text-slate-400">{icon}</span>
         {label}
       </div>
-      <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+      <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-slate-900 drop-shadow-sm">
         {valueMain}
       </div>
       <div className="flex items-center gap-2 mt-1.5">
