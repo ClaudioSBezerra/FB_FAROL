@@ -18,6 +18,21 @@ BEGIN
         RETURN;
     END IF;
 
+    -- DROP views/MVs que dependem de cod_cli ANTES do ALTER COLUMN.
+    -- Algumas dessas views podem ter sido criadas com cod_cli TEXT pela 123/125;
+    -- vão ser recriadas mais abaixo (vw_obj_rca_produto) ou pela migration 128 (MVs).
+    EXECUTE 'DROP VIEW IF EXISTS vw_obj_rca_produto CASCADE';
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_rca_fornecedor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN EXECUTE 'DROP VIEW              vw_obj_rca_fornecedor CASCADE';
+    ELSIF v_kind = 'm' THEN EXECUTE 'DROP MATERIALIZED VIEW vw_obj_rca_fornecedor CASCADE';
+    END IF;
+    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'vw_obj_supervisor' AND n.nspname = current_schema();
+    IF    v_kind = 'v' THEN EXECUTE 'DROP VIEW              vw_obj_supervisor CASCADE';
+    ELSIF v_kind = 'm' THEN EXECUTE 'DROP MATERIALIZED VIEW vw_obj_supervisor CASCADE';
+    END IF;
+
     -- Converte cod_cli TEXT → INTEGER (só se ainda for TEXT)
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -78,17 +93,5 @@ BEGIN
         LEFT JOIN rcas     r ON r.empresa_id = oi.empresa_id AND r.cod_rca        = oi.cod_rca
     $ddl$;
 
-    -- Drop vw_obj_rca_fornecedor e vw_obj_supervisor em qualquer forma
-    -- (view regular ou materializada) — serão recriadas como MV pela mig 128.
-    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relname = 'vw_obj_rca_fornecedor' AND n.nspname = current_schema();
-    IF    v_kind = 'v' THEN EXECUTE 'DROP VIEW              vw_obj_rca_fornecedor';
-    ELSIF v_kind = 'm' THEN EXECUTE 'DROP MATERIALIZED VIEW vw_obj_rca_fornecedor';
-    END IF;
-
-    SELECT c.relkind INTO v_kind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relname = 'vw_obj_supervisor' AND n.nspname = current_schema();
-    IF    v_kind = 'v' THEN EXECUTE 'DROP VIEW              vw_obj_supervisor';
-    ELSIF v_kind = 'm' THEN EXECUTE 'DROP MATERIALIZED VIEW vw_obj_supervisor';
-    END IF;
+    -- (DROPs de vw_obj_rca_fornecedor e vw_obj_supervisor já feitos no topo)
 END $mig127$;
