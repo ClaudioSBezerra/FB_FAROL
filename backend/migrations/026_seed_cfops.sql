@@ -1,33 +1,16 @@
--- Seed basic CFOPs to ensure reports work out-of-the-box
--- Focus on Revenda (R) and Saida Legacy (S) to populate "Commercial Operations" tab
+-- Migration 026 — DESATIVADA no FB_FAROL.
+--
+-- Originalmente populava a tabela `cfop` (Código Fiscal de Operações e
+-- Prestações) com descrições contábeis. Isso é função do FB_APU (Apuração
+-- Fiscal), não do Farol de Vendas. As tabelas cfop, sped, efd_icms etc. são
+-- legado herdado do fork do FB_APU mas não são consumidas pelo FAROL.
+--
+-- A migration foi esvaziada (no-op) para destravar o startup do banco —
+-- vários descritivos de CFOP excediam VARCHAR(100) e quebravam o INSERT.
+-- A tabela cfop continua existindo (criada pela 009) mas fica vazia neste
+-- ambiente. Nenhum código do FAROL lê dela.
+--
+-- Se em algum momento o FAROL precisar dos CFOPs, restaurar este arquivo e
+-- garantir que cfop.descricao_cfop seja VARCHAR(255) ou maior.
 
-INSERT INTO cfop (cfop, descricao_cfop, tipo) VALUES
--- SAIDAS ESTADUAIS (Revenda)
-('5101', 'Venda de produção do estabelecimento', 'R'),
-('5102', 'Venda de mercadoria adquirida ou recebida de terceiros', 'R'),
-('5103', 'Venda de produção do estabelecimento, efetuada fora do estabelecimento', 'R'),
-('5104', 'Venda de mercadoria adquirida ou recebida de terceiros, efetuada fora do estabelecimento', 'R'),
-('5401', 'Venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária', 'R'),
-('5403', 'Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária', 'R'),
-('5405', 'Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária, na condição de contribuinte substituído', 'R'),
-
--- SAIDAS INTERESTADUAIS (Revenda)
-('6101', 'Venda de produção do estabelecimento', 'R'),
-('6102', 'Venda de mercadoria adquirida ou recebida de terceiros', 'R'),
-('6107', 'Venda de produção do estabelecimento, destinada a não contribuinte', 'R'),
-('6108', 'Venda de mercadoria adquirida ou recebida de terceiros, destinada a não contribuinte', 'R'),
-('6401', 'Venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária', 'R'),
-('6403', 'Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária', 'R'),
-('6404', 'Venda de mercadoria sujeita ao regime de substituição tributária, cujo imposto já tenha sido retido anteriormente', 'R'),
-
--- ENTRADAS (Revenda - Compra para comercialização)
-('1101', 'Compra para industrialização', 'R'),
-('1102', 'Compra para comercialização', 'R'),
-('1401', 'Compra para industrialização em operação com mercadoria sujeita ao regime de substituição tributária', 'R'),
-('1403', 'Compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária', 'R'),
-('2101', 'Compra para industrialização', 'R'),
-('2102', 'Compra para comercialização', 'R'),
-('2401', 'Compra para industrialização em operação com mercadoria sujeita ao regime de substituição tributária', 'R'),
-('2403', 'Compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária', 'R')
-
-ON CONFLICT (cfop) DO NOTHING;
+SELECT 1; -- no-op para a migration ser válida
