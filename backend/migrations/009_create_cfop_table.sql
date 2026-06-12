@@ -1,7 +1,7 @@
 -- Criação da tabela CFOP
 CREATE TABLE IF NOT EXISTS cfop (
     cfop VARCHAR(4) PRIMARY KEY,
-    descricao_cfop VARCHAR(100) NOT NULL,
+    descricao_cfop VARCHAR(255) NOT NULL,
     tipo VARCHAR(1) NOT NULL
 );
 
