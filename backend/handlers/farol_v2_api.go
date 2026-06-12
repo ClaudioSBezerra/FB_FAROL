@@ -25,7 +25,9 @@ package handlers
 // pesado, apenas SUM dos totais já pré-calculados.
 
 import (
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -37,7 +39,74 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"golang.org/x/sync/singleflight"
 )
+
+// ─── Cache em memória + singleflight para queryMixTotal ──────────────────────
+//
+// queryMixTotal faz COUNT(DISTINCT cod_prod) em vendas_faturadas/transmitidas.
+// Mesmo com índice, janelas grandes (YTD = 12 meses) ainda custam 2-5s.
+// Combinado, várias requests do dashboard disparam a mesma query em paralelo.
+//
+// Estratégia em 2 camadas:
+//   • singleflight: requests concorrentes para a mesma key colapsam em 1 query.
+//   • cache TTL 10 min: resultado fica em memória; próximas requests retornam <1µs.
+//
+// Invalidação: chame mixTotalCache.Invalidate() quando vendas_faturadas mudar
+// (CSV importado, refresh views, etc.).
+
+type mixTotalCacheEntry struct {
+	value     map[string]int
+	expiresAt time.Time
+}
+
+type mixTotalCacheT struct {
+	mu      sync.RWMutex
+	entries map[string]mixTotalCacheEntry
+	sf      singleflight.Group
+}
+
+var mixTotalCache = &mixTotalCacheT{
+	entries: make(map[string]mixTotalCacheEntry),
+}
+
+const mixTotalCacheTTL = 10 * time.Minute
+
+func (c *mixTotalCacheT) get(key string) (map[string]int, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.entries[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return nil, false
+	}
+	return e.value, true
+}
+
+func (c *mixTotalCacheT) set(key string, value map[string]int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = mixTotalCacheEntry{value: value, expiresAt: time.Now().Add(mixTotalCacheTTL)}
+}
+
+// Invalidate limpa todo o cache. Chamado após import de vendas.
+func (c *mixTotalCacheT) Invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]mixTotalCacheEntry)
+	log.Printf("[farol:mix] cache invalidado")
+}
+
+// InvalidateMixTotalCache é o entry-point externo (chamável de outros pacotes).
+func InvalidateMixTotalCache() { mixTotalCache.Invalidate() }
+
+func mixTotalCacheKey(fluxoName, groupCol, rangeCond, drillCond string, args []any) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "%s|%s|%s|%s|", fluxoName, groupCol, rangeCond, drillCond)
+	for _, a := range args {
+		fmt.Fprintf(h, "%v|", a)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // ─── Definição de hierarquias e mapeamento de views ──────────────────────────
 
@@ -721,35 +790,64 @@ GROUP BY v.%s`,
 // cod_prod sem agrupar por cliente. Custo: 1 query agregada com filtro de período
 // + drill + filtros (índices em empresa_id + data + cod_fornec ajudam).
 //
-// rangeCond opera sobre v.data_faturamento/data_transmissao (mesmo padrão de
-// queryAggregated). drillCond aplica filtros hierárquicos da view atual.
+// Camadas de otimização (na ordem):
+//   1) cache em memória TTL 10 min — hit retorna em microssegundos
+//   2) singleflight — requests concorrentes para a MESMA key colapsam em 1 query
+//   3) índice composto em vendas_* (idx_v[ft]_mixtotal_*)
+//   4) query agregada no banco (último recurso)
+//
+// Invalidação: chame InvalidateMixTotalCache() quando vendas_faturadas mudar.
 func queryMixTotal(db *sql.DB, fluxo fluxoCtx, groupCol, rangeCond, drillCond string, args []any) map[string]int {
-	t0 := time.Now()
-	q := fmt.Sprintf(`
+	cacheKey := mixTotalCacheKey(fluxo.name, groupCol, rangeCond, drillCond, args)
+
+	// 1. Cache hit?
+	if cached, ok := mixTotalCache.get(cacheKey); ok {
+		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos (CACHE HIT)",
+			fluxo.name, groupCol, len(cached))
+		return cached
+	}
+
+	// 2. Singleflight — colapsa requests concorrentes idênticas.
+	v, err, shared := mixTotalCache.sf.Do(cacheKey, func() (any, error) {
+		t0 := time.Now()
+		q := fmt.Sprintf(`
 SELECT v.%s AS key, COUNT(DISTINCT v.cod_prod) AS mix_total
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND v.cod_prod <> '' AND v.qt > 0
 AND %s %s
 GROUP BY v.%s`,
-		groupCol, fluxo.tableName, groupCol, rangeCond, drillCond, groupCol,
-	)
-	rows, err := db.Query(q, args...)
+			groupCol, fluxo.tableName, groupCol, rangeCond, drillCond, groupCol,
+		)
+		rows, qerr := db.Query(q, args...)
+		if qerr != nil {
+			log.Printf("[farol:mix] queryMixTotal nível=%s ERRO em %v: %v", groupCol, time.Since(t0), qerr)
+			return nil, qerr
+		}
+		defer rows.Close()
+		result := make(map[string]int)
+		for rows.Next() {
+			var key string
+			var n int
+			if err := rows.Scan(&key, &n); err == nil {
+				result[key] = n
+			}
+		}
+		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos em %v (DB)",
+			fluxo.name, groupCol, len(result), time.Since(t0))
+		mixTotalCache.set(cacheKey, result)
+		return result, nil
+	})
+
 	if err != nil {
-		log.Printf("[farol:mix] queryMixTotal nível=%s ERRO em %v: %v", groupCol, time.Since(t0), err)
 		return nil
 	}
-	defer rows.Close()
-	result := make(map[string]int)
-	for rows.Next() {
-		var key string
-		var n int
-		if err := rows.Scan(&key, &n); err == nil {
-			result[key] = n
-		}
+	if shared {
+		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s (SHARED via singleflight)", fluxo.name, groupCol)
 	}
-	log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos em %v",
-		fluxo.name, groupCol, len(result), time.Since(t0))
-	return result
+	if result, ok := v.(map[string]int); ok {
+		return result
+	}
+	return nil
 }
 
 // queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
@@ -1387,6 +1485,8 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		var fatRows, transRows int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_fat_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&fatRows)
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_trans_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&transRows)
+		// Dados de vendas foram refeitos → invalida cache do mix total.
+		InvalidateMixTotalCache()
 		log.Printf("[farol:view] RefreshViews concluído — fat_agg=%d trans_agg=%d, total %v",
 			fatRows, transRows, time.Since(t0))
 		json.NewEncoder(w).Encode(map[string]any{
