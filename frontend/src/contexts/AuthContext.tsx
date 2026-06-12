@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { prefetchDashboardExecutivo } from '@/lib/queryClient';
 
 interface User {
   id: string;
@@ -188,6 +189,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setUser(userData);
         localStorage.setItem('user', JSON.stringify(userData));
         fetchSpRole(storedToken);
+        // Sessão restaurada → prefetch dashboard executivo em background.
+        // Não bloqueia render; quando usuário abrir o painel, dados já estarão prontos.
+        prefetchDashboardExecutivo();
       })
       .catch(err => console.error("Session refresh error:", err))
       .finally(() => setLoading(false));
@@ -232,6 +236,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem('companyId', companyIdVal || '');
     localStorage.setItem('cnpj', cnpjVal || '');
     fetchSpRole(data.token);
+
+    // Prefetch do dashboard executivo padrão (em background, não bloqueia o redirect).
+    // Quando o usuário chegar no painel, os cards já estarão no cache do React Query.
+    prefetchDashboardExecutivo();
   };
 
   const logout = () => {
