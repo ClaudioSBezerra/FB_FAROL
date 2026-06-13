@@ -70,7 +70,12 @@ var mixTotalCache = &mixTotalCacheT{
 	entries: make(map[string]mixTotalCacheEntry),
 }
 
-const mixTotalCacheTTL = 10 * time.Minute
+// TTL longo: o universo de SKUs por fornecedor/equipe muda devagar e o cache é
+// invalidado explicitamente a cada import (InvalidateMixTotalCache no RefreshViews).
+// A chave inclui o range de datas, então a janela YTD rotaciona naturalmente a
+// cada dia (ref termina "hoje"). 6h faz o 1º acesso do dia pagar o scan e todos
+// os demais pegarem CACHE HIT. Mitigação até o P1 (materializar mix_total nas aggs).
+const mixTotalCacheTTL = 6 * time.Hour
 
 func (c *mixTotalCacheT) get(key string) (map[string]int, bool) {
 	c.mu.RLock()
