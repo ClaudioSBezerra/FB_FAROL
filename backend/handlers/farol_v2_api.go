@@ -922,6 +922,122 @@ GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
 	return result
 }
 
+// colsInAggTable — colunas de dimensão presentes na tabela agg_*_lY_mes de
+// (view, drillIdx). São os níveis da hierarquia da view de 0 até drillIdx.
+// uf/empresa NUNCA estão em tabela agg (só em dims_mes e vendas_*).
+func colsInAggTable(view string, drillIdx int) map[string]bool {
+	cols := map[string]bool{}
+	hier, ok := hierarquias[view]
+	if !ok {
+		return cols
+	}
+	for i := 0; i <= drillIdx && i < len(hier); i++ {
+		cols[hier[i].Level] = true
+	}
+	return cols
+}
+
+// aggServesFilters — true se TODOS os filtros ativos podem ser aplicados na
+// tabela agg de (view, drillIdx). Se algum filtro referencia coluna ausente
+// (ex: cod_fornec em "Por Gerência", ou uf/empresa em qualquer view), a tabela
+// agg desnormalizada não tem a coluna → query quebraria. Nesse caso fetchCards
+// cai para vendas_* (queryAggregatedVendas).
+func aggServesFilters(view string, drillIdx int, filters multiFilters) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	cols := colsInAggTable(view, drillIdx)
+	for col := range filters {
+		if !cols[col] {
+			return false
+		}
+	}
+	return true
+}
+
+// queryAggregatedVendas — agrega DIRETO de vendas_* (fallback para filtros
+// cruzados que a tabela agg desnormalizada não consegue servir, ex: filtrar
+// por fornecedor em "Por Gerência", ou por UF/Filial em qualquer view).
+//
+// Calcula valor/plucro/positivados/mix do período. base_cli = compradores
+// distintos na janela rolling-12M do recorte (mesma ideia do base_cli V01) —
+// sob filtro cruzado a semântica de "clientes ativos" passa a ser
+// "compradores distintos do recorte nos últimos 12 meses".
+//
+// Mais lento que queryAggregatedMes (varre vendas_*), mas só roda quando há
+// filtro cruzado ativo. Índices idx_v[ft]_mixtotal_* ajudam no GROUP BY.
+func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nameCol string,
+	periodIni, periodFim time.Time, drillPath []drillStep, filters multiFilters) map[string]aggResult {
+
+	t0 := time.Now()
+	result := make(map[string]aggResult)
+
+	// Query 1 — métricas do período (valor, plucro, positivados, mix)
+	args := []any{empresaID}
+	rangeCond := buildRangeCond(fluxo.dateCol, periodIni, periodFim, &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, MAX(v.%s) AS label,
+       SUM(v.pvenda) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
+       COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0) AS positivados,
+       COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
+         / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
+GROUP BY v.%s`,
+		groupCol, nameCol, fluxo.tableName, groupCol, rangeCond, cond, groupCol)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:vendas] queryAggregatedVendas período nível=%s ERRO em %v: %v", groupCol, time.Since(t0), err)
+		return nil
+	}
+	for rows.Next() {
+		var key string
+		var r aggResult
+		if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix) == nil {
+			result[key] = r
+		}
+	}
+	rows.Close()
+
+	// Query 2 — base_cli = compradores distintos rolling-12M do recorte
+	base12mIni := time.Date(periodFim.Year(), periodFim.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+	bargs := []any{empresaID}
+	brange := buildRangeCond(fluxo.dateCol, base12mIni, periodFim, &bargs)
+	bcond := buildDrillCond(drillPath, &bargs)
+	if fc := buildMultiFilterCond(filters, &bargs); fc != "" {
+		bcond += " " + fc
+	}
+	bq := fmt.Sprintf(`
+SELECT v.%s AS key, COUNT(DISTINCT v.cnpj) AS base_cli
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.qt > 0 AND %s %s
+GROUP BY v.%s`,
+		groupCol, fluxo.tableName, groupCol, brange, bcond, groupCol)
+	if brows, berr := db.Query(bq, bargs...); berr == nil {
+		for brows.Next() {
+			var key string
+			var base int
+			if brows.Scan(&key, &base) == nil {
+				if r, ok := result[key]; ok {
+					r.baseCli = base
+					result[key] = r
+				}
+			}
+		}
+		brows.Close()
+	} else {
+		log.Printf("[farol:vendas] queryAggregatedVendas base12m nível=%s ERRO: %v", groupCol, berr)
+	}
+
+	log.Printf("[farol:vendas] queryAggregatedVendas fluxo=%s nível=%s → %d grupos em %v (filtro cruzado)",
+		fluxo.name, groupCol, len(result), time.Since(t0))
+	return result
+}
+
 // ─── fetchCards ───────────────────────────────────────────────────────────────
 
 func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
@@ -934,8 +1050,11 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 
 	// Após mig 165: cod_prod lê direto de vendas_*; resto SEMPRE de agg_*_mes.
 	// Range parcial dentro do mês expande pro mês inteiro (grão mensal).
+	// EXCEÇÃO: filtro cruzado (coluna ausente na tabela agg desnormalizada) força
+	// o caminho vendas_* — senão a query referenciaria coluna inexistente.
 	aggName, hasAgg := getAggTableName(fluxo, view, drillIdx)
-	useAggMes := groupCol != "cod_prod" && hasAgg
+	aggOK := aggServesFilters(view, drillIdx, filters)
+	useAggMes := groupCol != "cod_prod" && hasAgg && aggOK
 
 	log.Printf("[farol:agg] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
 		empresaID, fluxo.name, aggName, groupCol,
@@ -970,14 +1089,23 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	if groupCol == "cod_prod" {
+	switch {
+	case groupCol == "cod_prod":
 		go func() { defer wg.Done(); atualMap = queryProdutos(db, fluxo, atualCond, drillCond, atualArgs) }()
-	} else {
+	case !aggOK:
+		// Filtro cruzado → agrega de vendas_* (tem todas as colunas).
+		go func() {
+			defer wg.Done()
+			atualMap = queryAggregatedVendas(db, empresaID, fluxo, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
+		}()
+	default:
 		go func() {
 			defer wg.Done()
 			atualMap = queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCondMes, atualArgsMes)
 		}()
-		// Mix Total atual — só faz sentido em níveis hierárquicos (não em produto).
+	}
+	// Mix Total atual — para qualquer nível hierárquico (não produto).
+	if groupCol != "cod_prod" {
 		mixTotalArgs := []any{empresaID}
 		mixRangeCond := buildRangeCond(fluxo.dateCol, pr.RefInicio, pr.RefFim, &mixTotalArgs)
 		mixDrillCond := buildDrillCond(drillPath, &mixTotalArgs)
@@ -999,9 +1127,15 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			antDrill = antDrill + " " + antFc
 		}
 		wg.Add(1)
-		if groupCol == "cod_prod" {
+		switch {
+		case groupCol == "cod_prod":
 			go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, fluxo, antCond, antDrill, antArgs) }()
-		} else {
+		case !aggOK:
+			go func() {
+				defer wg.Done()
+				antMap = queryAggregatedVendas(db, empresaID, fluxo, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
+			}()
+		default:
 			antArgsMes := []any{empresaID}
 			antMesCond := buildMesCond(ym(pr.CompInicio), ym(pr.CompFim), &antArgsMes)
 			antDrillMes := buildDrillCond(drillPath, &antArgsMes)
@@ -1012,7 +1146,9 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 				defer wg.Done()
 				antMap = queryAggregatedMes(db, aggName, groupCol, nameCol, antMesCond, antDrillMes, antArgsMes)
 			}()
-			// Mix Total anterior em paralelo.
+		}
+		// Mix Total anterior — para qualquer nível hierárquico (não produto).
+		if groupCol != "cod_prod" {
 			mixTotalAntArgs := []any{empresaID}
 			mixAntRangeCond := buildRangeCond(fluxo.dateCol, pr.CompInicio, pr.CompFim, &mixTotalAntArgs)
 			mixAntDrillCond := buildDrillCond(drillPath, &mixTotalAntArgs)
