@@ -119,14 +119,16 @@ function fmtMix(v: number) {
 
 // Paleta semântica V2 — mais saturada que V1
 const COR_TXT: Record<Cor, string> = {
-  verde:    'text-emerald-600',
-  amarelo:  'text-amber-500',
-  vermelho: 'text-rose-600',
+  verde:    'text-emerald-700',
+  amarelo:  'text-amber-600',
+  vermelho: 'text-rose-700',
 }
-const COR_BG: Record<Cor, string> = {
-  verde:    'bg-emerald-50 ring-emerald-200',
-  amarelo:  'bg-amber-50 ring-amber-200',
-  vermelho: 'bg-rose-50 ring-rose-200',
+// Chips SÓLIDOS (texto branco) — para o KPI Hero, cujo fundo cinza 3D faz os
+// chips claros sumirem. Verde/amarelo/vermelho fortes que contrastam.
+const COR_SOLID: Record<Cor, string> = {
+  verde:    'bg-emerald-600 text-white ring-emerald-700',
+  amarelo:  'bg-amber-500 text-white ring-amber-600',
+  vermelho: 'bg-rose-600 text-white ring-rose-700',
 }
 const COR_DOT: Record<Cor, string> = {
   verde:    'bg-emerald-500',
@@ -405,8 +407,8 @@ function KpiBox({ icon, label, valueMain, valuePrev, pct, cor, hideDelta }: KpiB
       <div className="flex items-center gap-2 mt-2">
         {!hideDelta && (
           <span className={cn(
-            'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-bold tabular-nums ring-1',
-            COR_BG[cor], COR_TXT[cor],
+            'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-bold tabular-nums ring-1 shadow-sm',
+            COR_SOLID[cor],
           )}>
             {deltaIcon(cor)}
             {fmtPct(Math.abs(pct))}
