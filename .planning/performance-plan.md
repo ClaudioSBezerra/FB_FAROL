@@ -1,7 +1,18 @@
-# Plano de Performance — FB_FAROL (2026-06-12)
+# Plano de Performance — FB_FAROL (2026-06-12, atualizado 2026-06-13)
 
 > Elaborado após a sessão de correções do incidente DNS + reimport + migrations 169-172.
-> Status no momento da escrita: migration 172 em deploy (restaura dims/marketing + índices mix gerente/rca).
+
+## Status (2026-06-13)
+
+- ✅ **Migration 172 validada**: filtros listam opções (gerente/rca/sup/fornec/cli/uf), Marketing com dados, mobile V05 OK.
+- ✅ **BUG do filtro cruzado corrigido** (commit 26d2104) — NÃO estava no plano original, mas era regressão funcional urgente. Filtrar por dimensão ausente na tabela agg da view (ex: fornecedor em "Por Gerência", ou UF/Filial em qualquer view) deixava a tela vazia. Agora cai para `vendas_*` via `queryAggregatedVendas`. Tradeoff aceito pelo usuário: base_cli sob filtro cruzado = compradores-12M-do-recorte.
+- ✅ **P3 (tuning Postgres) aplicado** (commit 868a3c3) — shared_buffers 512MB, effective_cache_size 1536MB, maintenance_work_mem 256MB, work_mem 24MB. Dentro do limite 2G do container.
+- ⏳ **P1 e P2 PENDENTES** — exigem usuário presente (mexem em base_cli/mix, números sensíveis; P2 é a 5ª/6ª reescrita de upsert_aggs_mes). Ver abaixo.
+
+### Opcional de baixo custo já identificado (P3+)
+Subir `deploy.resources.limits.memory` de 2G → 3-4G e `shared_buffers` → 1GB
+renderia ganho maior (banco tem ~13GB). **Decidir após `free -h`** no host
+(há 5 Postgres rodando — confirmar folga de RAM antes).
 
 ## Números observados hoje (baseline)
 
