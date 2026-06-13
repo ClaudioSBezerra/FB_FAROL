@@ -136,6 +136,14 @@ const COR_TXT: Record<Cor, string> = {
   vermelho: 'text-red-600',
 }
 
+// Cores FORTES para a linha Total (fundo cinza): verde/vermelho mais saturados
+// e escuros + extrabold p/ máximo contraste sobre o gradiente slate.
+const COR_TXT_TOTAL: Record<Cor, string> = {
+  verde:    'text-emerald-800',
+  amarelo:  'text-amber-700',
+  vermelho: 'text-red-700',
+}
+
 // ─── Preset de período ───────────────────────────────────────────────────────
 
 function ymd(y: number, m: number, d: number): string {
@@ -346,7 +354,7 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
       <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
         <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_ant)}</div>
         <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_atual)}</div>
-        <div className={cn('text-center font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.cor])}>
+        <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.cor] : COR_TXT[card.cor])}>
           {fmtPct(card.pct)}
         </div>
       </div>
@@ -355,7 +363,7 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
       <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
         <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
         <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
-        <div className={cn('text-center font-bold tabular-nums', isTotal ? 'text-sm font-bold' : 'text-sm', COR_TXT[card.posit_cor])}>
+        <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
           {fmtPct(card.positpct)}
         </div>
       </div>
