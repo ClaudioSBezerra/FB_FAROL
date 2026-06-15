@@ -358,14 +358,19 @@ func mesInteiro(ano, mes int) (time.Time, time.Time) {
 	return inicio, fim
 }
 
-// inferLastMonth descobre o último mês com dados importados (ATUAL) para a empresa.
-// Lê de vendas_import_jobs (tabela pequena). Retorna (ano, mes) ou (0, 0) se vazio.
+// inferLastMonth descobre o último mês com dados (ATUAL) para a empresa.
+// Lê das agg_*_v01_l0_mes (ano/mes vêm da DATA real de cada venda, já consolidada),
+// NÃO de vendas_import_jobs — cujo ano/mes é a "competência" derivada do nome do
+// arquivo e pode estar errada (parser cai no mês atual quando não reconhece o nome).
+// Retorna (ano, mes) ou (0, 0) se vazio.
 func inferLastMonth(db *sql.DB, empresaID string) (int, int) {
 	var ano, mes int
 	_ = db.QueryRow(`
-		SELECT ano, mes FROM vendas_import_jobs
-		 WHERE empresa_id=$1 AND status='done'
-		 ORDER BY ano DESC, mes DESC LIMIT 1
+		SELECT ano, mes FROM (
+			SELECT ano, mes FROM farol.agg_fat_v01_l0_mes   WHERE empresa_id=$1
+			UNION
+			SELECT ano, mes FROM farol.agg_trans_v01_l0_mes WHERE empresa_id=$1
+		) x ORDER BY ano DESC, mes DESC LIMIT 1
 	`, empresaID).Scan(&ano, &mes)
 	return ano, mes
 }
@@ -1450,9 +1455,15 @@ func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view str
 // ─── fetchPeriodosDisponiveis ─────────────────────────────────────────────────
 
 func fetchPeriodosDisponiveis(db *sql.DB, empresaID string) []string {
+	// Períodos = meses efetivamente consolidados nas agg (ano/mes pela DATA real
+	// da venda). NÃO usar vendas_import_jobs.ano/mes — é a competência do nome do
+	// arquivo, que pode estar errada e poluir a lista (ex: "2026-06" sem dados).
 	rows, err := db.Query(`
-		SELECT ano, mes FROM vendas_import_jobs
-		WHERE empresa_id=$1 AND status='done'
+		SELECT ano, mes FROM (
+			SELECT ano, mes FROM farol.agg_fat_v01_l0_mes   WHERE empresa_id=$1
+			UNION
+			SELECT ano, mes FROM farol.agg_trans_v01_l0_mes WHERE empresa_id=$1
+		) x
 		GROUP BY ano, mes
 		ORDER BY ano DESC, mes DESC
 	`, empresaID)
