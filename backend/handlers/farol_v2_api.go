@@ -1693,11 +1693,21 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			}
 			defer rows.Close()
 			out := []dimOption{}
+			semNome := 0
 			for rows.Next() {
 				var d dimOption
 				if rows.Scan(&d.Key, &d.Label) == nil {
+					// Código presente mas sem nome na origem (vendas_*): em vez de
+					// aparecer em branco no filtro, mostra o código + rótulo claro.
+					if strings.TrimSpace(d.Label) == "" {
+						d.Label = d.Key + " — SEM IDENTIFICAÇÃO"
+						semNome++
+					}
 					out = append(out, d)
 				}
+			}
+			if semNome > 0 {
+				log.Printf("[dims] %s → %d opções (%d sem nome na origem)", codCol, len(out), semNome)
 			}
 			log.Printf("[dims] %s → %d opções em %v", codCol, len(out), time.Since(td))
 			return out
