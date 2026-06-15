@@ -1,6 +1,68 @@
-# Plano de Performance — FB_FAROL (2026-06-12, atualizado 2026-06-13)
+# Plano de Performance — FB_FAROL (2026-06-12, atualizado 2026-06-15)
 
-> Elaborado após a sessão de correções do incidente DNS + reimport + migrations 169-172.
+> Elaborado após a sessão de correções do incidente DNS + reimport + migrations 169-173.
+
+---
+
+## ⭐ PLANO DE IMPLEMENTAÇÃO P1+P2 (2026-06-15) — fonte de verdade atual
+
+> As seções P1/P2 mais abaixo ficaram **parcialmente desatualizadas**: a migration
+> 173 JÁ removeu as temp tables `_v_fat_12m`. Mesmo assim a consolidação continua
+> ~8 min/mês — provando que o gargalo NUNCA foi as temp tables, e sim as ~38
+> agregações com `COUNT(DISTINCT)`. Esta seção é o diagnóstico correto.
+
+### São DOIS problemas distintos (não confundir)
+
+| Sintoma | Onde | Natureza | Item |
+|---|---|---|---|
+| Painel mix "X de Y" demora 6-13s no 1º acesso (YTD) | LEITURA (`queryMixTotal` em vendas_*) | scan de 9M linhas no request | **P1** |
+| Consolidação após import leva ~40 min (17 meses) | ESCRITA (`upsert_aggs_mes`) | 38 INSERTs × COUNT(DISTINCT) | **P2** |
+
+⚠️ Atenção: **P1 deixa a ESCRITA um pouco MAIS lenta** (adiciona 1 COUNT DISTINCT
+por INSERT) para deixar a LEITURA instantânea. Se a dor principal é a consolidação,
+P2 é o que importa. Os dois são independentes.
+
+### P1 — Materializar `mix_total` (painel: 13s → ~150ms)
+1. **Migration 174**: `ALTER TABLE farol.agg_(fat|trans)_v0X_lY_mes ADD COLUMN mix_total INT DEFAULT 0` (todas as ~30 tabelas que hoje têm a coluna `mix`).
+2. **upsert_aggs_mes**: cada INSERT calcula `COUNT(DISTINCT v.cod_prod) FILTER (WHERE v.qt>0 AND v.cod_prod<>'')` como `mix_total` (a temp `_v_fat`/`_v_trans` já tem cod_prod → custo marginal pequeno).
+3. **queryAggregatedMes**: adiciona `<AGG>(v.mix_total)` ao SELECT e ao scan; popula `card.MixTotal`.
+4. **fetchCards**: remove as chamadas a `queryMixTotal` (atual+ant) → some o scan de 9M linhas. Remove `queryMixTotal`, cache e singleflight (código morto).
+5. **Repopular** uma vez (custo da consolidação, ~40 min; ou backfill por UPDATE).
+- **Decisão necessária:** agregação multi-mês de `mix_total`. Mês único (YoY, M-1) é exato. Para YTD (vários meses):
+  - **MAX** = "maior portfólio mensal" (recomendado: estável, intuitivo, subestima leve)
+  - **AVG** = "portfólio médio mensal"
+  - (SUM seria errado — conta o mesmo SKU N vezes)
+- **Risco:** baixo. É a 5ª mexida no upsert → regra do `grep "INSERT INTO farol\."` antes do push.
+
+### P2 — Consolidação mais rápida (o que você realmente sente: 40 min)
+Causa real (pós-173): 38 INSERTs/mês, cada um GROUP BY + `COUNT(DISTINCT cnpj)` e
+`COUNT(DISTINCT (cnpj,cod_prod))` sobre ~1,2M linhas. 17 meses × 38 = 646 agregações.
+
+**P2.1 — Consolidação INCREMENTAL (maior ganho no dia a dia, baixo risco):**
+A `RefreshViews` hoje re-consolida TODOS os meses. O import já sabe quais meses
+foram tocados (`mesesTocados`). Mudar para consolidar **só os meses do import**:
+- Import diário (1-2 meses) → ~2-4 min em vez de 40 min.
+- Carga total (17 meses) continua ~40 min (inevitável de uma vez), mas é evento raro.
+- Esforço: pequeno (passar mesesTocados ao consolidador). Risco: baixo.
+
+**P2.2 — Reduzir índices das temp tables:** hoje cria 6 índices em `_v_fat` + 6 em
+`_v_trans` por mês. Medir com EXPLAIN quais o GROUP BY usa; remover os inúteis
+(cada build custa). Risco: baixo.
+
+**P2.3 — Tunar paralelismo:** testar 2 workers × work_mem maior vs 4 × 256MB
+(4 scans concorrentes brigam por I/O no container de 2G). Risco: baixo, experimental.
+
+**P2.4 — Pré-agregação base (rolar de baixo p/ cima):** computar 1× a granularidade
+fina (cnpj×cod_prod×grupo) e derivar os níveis por roll-up, em vez de 38 scans
+independentes. Maior ganho potencial, mas **alto risco/esforço** (reescrita grande).
+
+### Ordem recomendada
+1. **P2.1 (incremental)** — resolve a dor diária com baixo risco. Fazer primeiro.
+2. **P1 (mix_total)** — painel instantâneo; aceitar leve aumento na escrita.
+3. P2.2 / P2.3 — afinar. 4. P2.4 só se ainda doer.
+
+---
+
 
 ## Status (2026-06-13)
 
