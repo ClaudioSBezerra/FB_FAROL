@@ -868,7 +868,14 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 	best := ""
 	bestCols := 1 << 30
 	for view, levels := range tables {
+		hier := hierarquias[view]
 		for drillIdx := range levels {
+			// groupCol PRECISA ser o nível mais profundo da tabela: só o nível
+			// folha guarda a coluna de nome (nome_<groupCol>); níveis ancestrais
+			// guardam apenas o código → MAX(nome_<groupCol>) quebraria.
+			if drillIdx >= len(hier) || hier[drillIdx].Level != groupCol {
+				continue
+			}
 			cols := colsInAggTable(view, drillIdx)
 			ok := true
 			for r := range required { // precisa conter tudo que a query referencia
