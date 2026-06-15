@@ -361,12 +361,12 @@ function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
             pct={(kpi.avg_mix - kpi.avg_mix_ant) / Math.max(0.001, kpi.avg_mix_ant) * 100}
             cor={kpi.mix_cor}
           />
-          {/* CLIENTES ATIVOS */}
+          {/* CLIENTES / CARTEIRA — só no totalizador executivo: positivados / carteira (penetração) */}
           <KpiBox
             icon={<Users className="h-4 w-4" />}
-            label="Clientes Ativos"
-            valueMain={fmtInt(kpi.total_base_cli)}
-            valuePrev={`${fmtInt(kpi.total_positivados)} positivados`}
+            label="Clientes / Carteira"
+            valueMain={`${fmtInt(kpi.total_positivados)} / ${fmtInt(kpi.total_base_cli)}`}
+            valuePrev={`${fmtPct(kpi.total_positpct)} de penetração`}
             pct={0}
             cor="verde"
             hideDelta
