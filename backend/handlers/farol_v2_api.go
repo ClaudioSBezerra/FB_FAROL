@@ -1604,26 +1604,49 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Popula agg_*_mes para todos os meses presentes nos dados da empresa.
-		rows, err := db.Query(`
-			SELECT DISTINCT ano, mes FROM (
-				SELECT EXTRACT(YEAR  FROM data_faturamento)::int AS ano,
-				       EXTRACT(MONTH FROM data_faturamento)::int AS mes
-				  FROM vendas_faturadas WHERE empresa_id=$1
-				UNION
-				SELECT EXTRACT(YEAR  FROM data_transmissao)::int,
-				       EXTRACT(MONTH FROM data_transmissao)::int
-				  FROM vendas_transmitidas WHERE empresa_id=$1
-			) t ORDER BY ano, mes`, spCtx.EmpresaID)
-		if err == nil {
-			var meses []aggMesYM
-			for rows.Next() {
+		// P2.1 — Consolidação INCREMENTAL: processa só os meses PENDENTES
+		// (marcados pelos imports). Se não houver pendências, faz consolidação
+		// COMPLETA (fallback p/ refresh manual / rebuild total).
+		var meses []aggMesYM
+		incremental := false
+		prows, perr := db.Query(`SELECT ano, mes FROM farol.consolidacao_pendente WHERE empresa_id=$1 ORDER BY ano, mes`, spCtx.EmpresaID)
+		if perr == nil {
+			for prows.Next() {
 				var r aggMesYM
-				if rows.Scan(&r.Ano, &r.Mes) == nil {
+				if prows.Scan(&r.Ano, &r.Mes) == nil {
 					meses = append(meses, r)
 				}
 			}
-			rows.Close()
+			prows.Close()
+		}
+		if len(meses) > 0 {
+			incremental = true
+			log.Printf("[farol:view] RefreshViews INCREMENTAL — %d mês(es) pendente(s): %v", len(meses), meses)
+		} else {
+			// Fallback: nenhum pendente → consolida todos os meses dos dados.
+			rows, err := db.Query(`
+				SELECT DISTINCT ano, mes FROM (
+					SELECT EXTRACT(YEAR  FROM data_faturamento)::int AS ano,
+					       EXTRACT(MONTH FROM data_faturamento)::int AS mes
+					  FROM vendas_faturadas WHERE empresa_id=$1
+					UNION
+					SELECT EXTRACT(YEAR  FROM data_transmissao)::int,
+					       EXTRACT(MONTH FROM data_transmissao)::int
+					  FROM vendas_transmitidas WHERE empresa_id=$1
+				) t ORDER BY ano, mes`, spCtx.EmpresaID)
+			if err == nil {
+				for rows.Next() {
+					var r aggMesYM
+					if rows.Scan(&r.Ano, &r.Mes) == nil {
+						meses = append(meses, r)
+					}
+				}
+				rows.Close()
+			}
+			log.Printf("[farol:view] RefreshViews COMPLETA (sem pendentes) — %d mês(es)", len(meses))
+		}
+
+		if len(meses) > 0 {
 			anosVistos := map[int]bool{}
 			for _, m := range meses {
 				if !anosVistos[m.Ano] {
@@ -1632,6 +1655,15 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 				}
 			}
 			upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
+
+			// Limpa as pendências consolidadas (só no modo incremental;
+			// na completa não havia pendências a limpar).
+			if incremental {
+				for _, m := range meses {
+					db.Exec(`DELETE FROM farol.consolidacao_pendente WHERE empresa_id=$1 AND ano=$2 AND mes=$3`,
+						spCtx.EmpresaID, m.Ano, m.Mes)
+				}
+			}
 		}
 
 		var fatRows, transRows int

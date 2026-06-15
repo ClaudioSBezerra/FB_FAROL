@@ -474,6 +474,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 					jobID, bestAno, bestMes, bestN)
 			}
 		}
+		// P2.1 — marca TODOS os meses tocados como pendentes de consolidação.
+		// A RefreshViews (chamada ao fim do lote de imports) consolida só estes.
+		for ym := range mesContagem {
+			if _, e := db.Exec(`INSERT INTO farol.consolidacao_pendente (empresa_id, ano, mes)
+				VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, spCtx.EmpresaID, ym[0], ym[1]); e != nil {
+				log.Printf("[ImportJob:%s] marcar pendente %04d-%02d ERRO: %v", jobID, ym[0], ym[1], e)
+			}
+		}
 	}
 	if skippedNoData > 0 {
 		log.Printf("[import:diag] %d linhas puladas — sem data válida (coluna DATA ausente e sem fallback)", skippedNoData)
