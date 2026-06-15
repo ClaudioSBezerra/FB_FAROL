@@ -854,6 +854,21 @@ var orgAncestors = map[string]map[string]bool{
 	"cod_gerente":    {},
 }
 
+// aggHasMixTotal — tabelas agg que receberam a coluna mix_total (migration 175).
+// queryAggregatedMes faz MAX(mix_total); V04 e os níveis-folha mais profundos
+// (V01 l4, V02/V03/V05 l3) NÃO têm a coluna. pickAggForCrossFilter só pode
+// escolher tabelas desta lista, senão a query quebra (column does not exist).
+var aggHasMixTotal = map[string]bool{
+	"agg_fat_v01_l0_mes": true, "agg_fat_v01_l1_mes": true, "agg_fat_v01_l2_mes": true, "agg_fat_v01_l3_mes": true,
+	"agg_fat_v02_l0_mes": true, "agg_fat_v02_l1_mes": true, "agg_fat_v02_l2_mes": true,
+	"agg_fat_v03_l0_mes": true, "agg_fat_v03_l1_mes": true, "agg_fat_v03_l2_mes": true,
+	"agg_fat_v05_l0_mes": true, "agg_fat_v05_l1_mes": true, "agg_fat_v05_l2_mes": true,
+	"agg_trans_v01_l0_mes": true, "agg_trans_v01_l1_mes": true, "agg_trans_v01_l2_mes": true, "agg_trans_v01_l3_mes": true,
+	"agg_trans_v02_l0_mes": true, "agg_trans_v02_l1_mes": true, "agg_trans_v02_l2_mes": true,
+	"agg_trans_v03_l0_mes": true, "agg_trans_v03_l1_mes": true, "agg_trans_v03_l2_mes": true,
+	"agg_trans_v05_l0_mes": true, "agg_trans_v05_l1_mes": true, "agg_trans_v05_l2_mes": true,
+}
+
 // pickAggForCrossFilter — quando a tabela agg da view atual NÃO serve os filtros
 // (filtro cruzado, ex: filtrar por indústria em "Por Equipe"/"Por Gerência"),
 // procura uma tabela agg de QUALQUER view, no MESMO grão de groupCol, que
@@ -871,7 +886,20 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 	for _, d := range drillPath {
 		required[d.Level] = true
 	}
-	anc := orgAncestors[groupCol]
+
+	// allowed — colunas que ficam CONSTANTES em cada linha de saída: groupCol,
+	// os filtros/drills (fixos), e os ancestrais organizacionais de qualquer um
+	// deles (um filtro/grupo fixa o descendente → o ancestral é constante). Uma
+	// tabela agg cuja coluna caia fora desse conjunto reagruparia métricas
+	// DISTINCT erradas → descartada. (Filtros multi-valor de níveis distintos
+	// tornam positivados/mix aproximados — mesmo tradeoff dos demais cruzados.)
+	allowed := map[string]bool{}
+	for r := range required {
+		allowed[r] = true
+		for a := range orgAncestors[r] {
+			allowed[a] = true
+		}
+	}
 
 	tables := aggTablesFat
 	if fluxo.name == "transmitido" {
@@ -889,6 +917,10 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 			if drillIdx >= len(hier) || hier[drillIdx].Level != groupCol {
 				continue
 			}
+			// queryAggregatedMes faz MAX(mix_total) — só tabelas da migration 175.
+			if !aggHasMixTotal[levels[drillIdx]] {
+				continue
+			}
 			cols := colsInAggTable(view, drillIdx)
 			ok := true
 			for r := range required { // precisa conter tudo que a query referencia
@@ -901,11 +933,10 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 				continue
 			}
 			for c := range cols { // nenhuma coluna pode invalidar o reagrupamento
-				if c == groupCol || required[c] || anc[c] {
-					continue
+				if !allowed[c] {
+					ok = false
+					break
 				}
-				ok = false
-				break
 			}
 			if ok && len(cols) < bestCols {
 				bestCols = len(cols)
