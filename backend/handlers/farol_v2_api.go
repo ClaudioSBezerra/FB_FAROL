@@ -829,6 +829,76 @@ func aggServesFilters(view string, drillIdx int, filters multiFilters) bool {
 	return true
 }
 
+// orgAncestors — para cada nível organizacional, os níveis MAIS ALTOS que ele
+// determina univocamente (um RCA pertence a um supervisor; um supervisor a um
+// gerente; etc). Usado por pickAggForCrossFilter para garantir que reagrupar
+// uma tabela agg por groupCol não colapsa linhas de métricas DISTINCT erradas:
+// uma coluna que é ancestral de groupCol é constante dentro de cada groupCol.
+var orgAncestors = map[string]map[string]bool{
+	"cod_cli":        {"cod_rca": true, "cod_supervisor": true, "cod_gerente": true},
+	"cod_rca":        {"cod_supervisor": true, "cod_gerente": true},
+	"cod_supervisor": {"cod_gerente": true},
+	"cod_gerente":    {},
+}
+
+// pickAggForCrossFilter — quando a tabela agg da view atual NÃO serve os filtros
+// (filtro cruzado, ex: filtrar por indústria em "Por Equipe"/"Por Gerência"),
+// procura uma tabela agg de QUALQUER view, no MESMO grão de groupCol, que
+// contenha groupCol + todas as colunas de filtro/drill — e cujas demais colunas
+// sejam apenas filtros, drills ou ancestrais de groupCol (para o reagrupar não
+// distorcer positivados/base_cli/mix). Retorna a tabela com MENOS colunas (mais
+// específica e rápida). Isso troca o scan lento de vendas_* (2+ min) por uma
+// query agg (ms) no caso comum de filtrar por fornecedor. Só falha (e cai para
+// vendas_*) quando nenhuma agg tem a coluna (ex: filtro por UF/Filial).
+func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
+	required := map[string]bool{groupCol: true}
+	for col := range filters {
+		required[col] = true
+	}
+	for _, d := range drillPath {
+		required[d.Level] = true
+	}
+	anc := orgAncestors[groupCol]
+
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+
+	best := ""
+	bestCols := 1 << 30
+	for view, levels := range tables {
+		for drillIdx := range levels {
+			cols := colsInAggTable(view, drillIdx)
+			ok := true
+			for r := range required { // precisa conter tudo que a query referencia
+				if !cols[r] {
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			for c := range cols { // nenhuma coluna pode invalidar o reagrupamento
+				if c == groupCol || required[c] || anc[c] {
+					continue
+				}
+				ok = false
+				break
+			}
+			if ok && len(cols) < bestCols {
+				bestCols = len(cols)
+				best = "farol." + levels[drillIdx]
+			}
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
+}
+
 // queryAggregatedVendas — agrega DIRETO de vendas_* (fallback para filtros
 // cruzados que a tabela agg desnormalizada não consegue servir, ex: filtrar
 // por fornecedor em "Por Gerência", ou por UF/Filial em qualquer view).
@@ -929,6 +999,19 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// o caminho vendas_* — senão a query referenciaria coluna inexistente.
 	aggName, hasAgg := getAggTableName(fluxo, view, drillIdx)
 	aggOK := aggServesFilters(view, drillIdx, filters)
+
+	// Filtro cruzado: a tabela agg da view atual não tem a coluna do filtro
+	// (ex: filtrar por indústria em "Por Equipe"/"Por Gerência"). Antes isso caía
+	// para o scan de vendas_* (2+ min → painel congelava). Agora tenta uma tabela
+	// agg de OUTRA view, no mesmo grão, que contenha groupCol + os filtros → segue
+	// rápido. Só cai para vendas_* se nenhuma agg servir (ex: filtro por UF/Filial).
+	if !aggOK && groupCol != "cod_prod" {
+		if alt, ok := pickAggForCrossFilter(fluxo, groupCol, drillPath, filters); ok {
+			log.Printf("[farol:agg] filtro cruzado → tabela agg alternativa %s (em vez de scan vendas_*)", alt)
+			aggName, hasAgg, aggOK = alt, true, true
+		}
+	}
+
 	useAggMes := groupCol != "cod_prod" && hasAgg && aggOK
 
 	log.Printf("[farol:agg] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
