@@ -34,6 +34,14 @@ import (
 // Keyed por job UUID; removido ao término (done/error/cancelled).
 var importJobs sync.Map // string → context.CancelFunc
 
+// Bucket genérico para hierarquia órfã (RCA/linha sem supervisor ou gerente).
+// Código 99999999 (números repetidos) escolhido por não existir como
+// vendedor/gerente real na base — agrupa os órfãos sob "NÃO IDENTIFICADO".
+const (
+	codNaoIdentificado  = "99999999"
+	nomeNaoIdentificado = "NÃO IDENTIFICADO"
+)
+
 // ─── VendasImportHandler — POST /api/v2/vendas/import ───────────────────────
 
 func VendasImportHandler(db *sql.DB) http.HandlerFunc {
@@ -407,16 +415,36 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			diagSamples++
 		}
 
+		// Normaliza hierarquia órfã: linha com RCA mas SEM supervisor (ou gerente)
+		// some das views por equipe/gerência — a upsert_aggs_mes filtra
+		// cod_supervisor<>'' / cod_gerente<>''. Em vez de perder a venda (e travar
+		// o filtro com RCA órfão), atribui um bucket genérico "NÃO IDENTIFICADO"
+		// (código 99999999, que não colide com vendedor/gerente real da base).
+		codGer  := getField(csvRow, iCodGerente)
+		nomeGer := getField(csvRow, iNomeGerente)
+		codSup  := getField(csvRow, iCodSup)
+		nomeSup := getField(csvRow, iNomeSup)
+		nomeRca := getField(csvRow, iNomeRca)
+		if codSup == "" {
+			codSup, nomeSup = codNaoIdentificado, nomeNaoIdentificado
+		}
+		if codGer == "" {
+			codGer, nomeGer = codNaoIdentificado, nomeNaoIdentificado
+		}
+		if codRca != "" && nomeRca == "" {
+			nomeRca = "RCA " + codRca
+		}
+
 		var r vendaRaw
 		r.vals[0]  = spCtx.EmpresaID
 		r.vals[1]  = dataProc
-		r.vals[2]  = getField(csvRow, iCodGerente)
-		r.vals[3]  = getField(csvRow, iNomeGerente)
-		r.vals[4]  = getField(csvRow, iCodSup)
-		r.vals[5]  = getField(csvRow, iNomeSup)
+		r.vals[2]  = codGer
+		r.vals[3]  = nomeGer
+		r.vals[4]  = codSup
+		r.vals[5]  = nomeSup
 		r.vals[6]  = parseInt3(getField(csvRow, iQtrcaSupervisor))
 		r.vals[7]  = codRca
-		r.vals[8]  = getField(csvRow, iNomeRca)
+		r.vals[8]  = nomeRca
 		r.vals[9]  = parseInt3(getField(csvRow, iQtcliRca))
 		r.vals[10] = codFornec
 		r.vals[11] = getField(csvRow, iNomeFornec)
