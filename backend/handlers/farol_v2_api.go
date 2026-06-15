@@ -710,12 +710,12 @@ SELECT
   AVG(v.mix)                     AS mix,
   COALESCE(MAX(v.mix_total), 0)  AS mix_total
 FROM %s v
-WHERE v.empresa_id=$1 AND v.%s != ''
+WHERE v.empresa_id=$1 AND v.%s != '' AND v.%s != ''
 AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol,
 		viewName,
-		groupCol, mesCond, drillCond,
+		groupCol, nameCol, mesCond, drillCond,
 		groupCol,
 	)
 	rows, err := db.Query(q, args...)
@@ -1761,21 +1761,22 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			}
 			defer rows.Close()
 			out := []dimOption{}
-			semNome := 0
+			excluidos := 0
 			for rows.Next() {
 				var d dimOption
 				if rows.Scan(&d.Key, &d.Label) == nil {
-					// Código presente mas sem nome na origem (vendas_*): em vez de
-					// aparecer em branco no filtro, mostra o código + rótulo claro.
+					// Sem nome na origem (vendas_*) → fora do filtro. São códigos
+					// técnicos do WinThor (sem cadastro de vendedor/cliente) que só
+					// confundem o gestor e não produzem card consistente.
 					if strings.TrimSpace(d.Label) == "" {
-						d.Label = d.Key + " — SEM IDENTIFICAÇÃO"
-						semNome++
+						excluidos++
+						continue
 					}
 					out = append(out, d)
 				}
 			}
-			if semNome > 0 {
-				log.Printf("[dims] %s → %d opções (%d sem nome na origem)", codCol, len(out), semNome)
+			if excluidos > 0 {
+				log.Printf("[dims] %s → %d opções (%d sem nome EXCLUÍDOS do filtro)", codCol, len(out), excluidos)
 			}
 			log.Printf("[dims] %s → %d opções em %v", codCol, len(out), time.Since(td))
 			return out
