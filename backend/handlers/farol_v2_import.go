@@ -363,6 +363,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	skippedNoData := 0
 	uniqueFatDates   := make(map[string]struct{})
 	uniqueTransDates := make(map[string]struct{})
+	// Contagem de linhas por (ano,mes) — usada para detectar a COMPETÊNCIA do
+	// arquivo pelos DADOS (mês dominante), em vez de confiar no nome do arquivo.
+	mesContagem := make(map[[2]int]int)
 
 	for {
 		csvRow, err := csvReader.Read()
@@ -442,12 +445,34 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[28] = getField(csvRow, iCodBar)
 
 		dKey := dataProc.Format("2006-01-02")
+		mesContagem[[2]int{dataProc.Year(), int(dataProc.Month())}]++
 		if estado == "TRANSMITIDO" {
 			uniqueTransDates[dKey] = struct{}{}
 			allTrans = append(allTrans, r)
 		} else {
 			uniqueFatDates[dKey] = struct{}{}
 			allFat = append(allFat, r)
+		}
+	}
+
+	// Competência do job = mês DOMINANTE pelos dados (não pelo nome do arquivo).
+	// O usuário pode nomear o arquivo de qualquer forma; a verdade é a coluna DATA.
+	if len(mesContagem) > 0 {
+		bestAno, bestMes, bestN := 0, 0, -1
+		for ym, n := range mesContagem {
+			// desempate: maior contagem; se empatar, mês mais recente
+			if n > bestN || (n == bestN && (ym[0] > bestAno || (ym[0] == bestAno && ym[1] > bestMes))) {
+				bestAno, bestMes, bestN = ym[0], ym[1], n
+			}
+		}
+		if bestAno > 0 {
+			if _, e := db.Exec(`UPDATE vendas_import_jobs SET ano=$1, mes=$2 WHERE id=$3`,
+				bestAno, bestMes, jobID); e != nil {
+				log.Printf("[ImportJob:%s] update competência ERRO: %v", jobID, e)
+			} else {
+				log.Printf("[ImportJob:%s] competência detectada pelos dados: %04d-%02d (%d linhas)",
+					jobID, bestAno, bestMes, bestN)
+			}
 		}
 	}
 	if skippedNoData > 0 {
