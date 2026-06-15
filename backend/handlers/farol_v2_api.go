@@ -25,9 +25,7 @@ package handlers
 // pesado, apenas SUM dos totais já pré-calculados.
 
 import (
-	"crypto/sha1"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -39,79 +37,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"golang.org/x/sync/singleflight"
 )
-
-// ─── Cache em memória + singleflight para queryMixTotal ──────────────────────
-//
-// queryMixTotal faz COUNT(DISTINCT cod_prod) em vendas_faturadas/transmitidas.
-// Mesmo com índice, janelas grandes (YTD = 12 meses) ainda custam 2-5s.
-// Combinado, várias requests do dashboard disparam a mesma query em paralelo.
-//
-// Estratégia em 2 camadas:
-//   • singleflight: requests concorrentes para a mesma key colapsam em 1 query.
-//   • cache TTL 10 min: resultado fica em memória; próximas requests retornam <1µs.
-//
-// Invalidação: chame mixTotalCache.Invalidate() quando vendas_faturadas mudar
-// (CSV importado, refresh views, etc.).
-
-type mixTotalCacheEntry struct {
-	value     map[string]int
-	expiresAt time.Time
-}
-
-type mixTotalCacheT struct {
-	mu      sync.RWMutex
-	entries map[string]mixTotalCacheEntry
-	sf      singleflight.Group
-}
-
-var mixTotalCache = &mixTotalCacheT{
-	entries: make(map[string]mixTotalCacheEntry),
-}
-
-// TTL longo: o universo de SKUs por fornecedor/equipe muda devagar e o cache é
-// invalidado explicitamente a cada import (InvalidateMixTotalCache no RefreshViews).
-// A chave inclui o range de datas, então a janela YTD rotaciona naturalmente a
-// cada dia (ref termina "hoje"). 6h faz o 1º acesso do dia pagar o scan e todos
-// os demais pegarem CACHE HIT. Mitigação até o P1 (materializar mix_total nas aggs).
-const mixTotalCacheTTL = 6 * time.Hour
-
-func (c *mixTotalCacheT) get(key string) (map[string]int, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	e, ok := c.entries[key]
-	if !ok || time.Now().After(e.expiresAt) {
-		return nil, false
-	}
-	return e.value, true
-}
-
-func (c *mixTotalCacheT) set(key string, value map[string]int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[key] = mixTotalCacheEntry{value: value, expiresAt: time.Now().Add(mixTotalCacheTTL)}
-}
-
-// Invalidate limpa todo o cache. Chamado após import de vendas.
-func (c *mixTotalCacheT) Invalidate() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]mixTotalCacheEntry)
-	log.Printf("[farol:mix] cache invalidado")
-}
-
-// InvalidateMixTotalCache é o entry-point externo (chamável de outros pacotes).
-func InvalidateMixTotalCache() { mixTotalCache.Invalidate() }
-
-func mixTotalCacheKey(fluxoName, groupCol, rangeCond, drillCond string, args []any) string {
-	h := sha1.New()
-	fmt.Fprintf(h, "%s|%s|%s|%s|", fluxoName, groupCol, rangeCond, drillCond)
-	for _, a := range args {
-		fmt.Fprintf(h, "%v|", a)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 // ─── Definição de hierarquias e mapeamento de views ──────────────────────────
 
@@ -304,8 +230,8 @@ type kpiSummary struct {
 	// Mix Total agregado (universo de SKUs distintos do nível atual)
 	TotalMixTotal    int `json:"total_mix_total"`
 	TotalMixTotalAnt int `json:"total_mix_total_ant"`
-	Verdes    int     `json:"verdes"`
-	Vermelhos int     `json:"vermelhos"`
+	Verdes           int `json:"verdes"`
+	Vermelhos        int `json:"vermelhos"`
 }
 
 type periodoInfo struct {
@@ -377,9 +303,10 @@ func inferLastMonth(db *sql.DB, empresaID string) (int, int) {
 
 // deriveCompRange calcula um intervalo comparativo a partir de (refInicio, refFim)
 // e do compMode (yoy | mom | ytd). Retorna (zero, zero) se mode for desconhecido.
-//   yoy → subtrai 1 ano nas duas pontas
-//   mom → range contíguo imediatamente anterior (mesma quantidade de dias)
-//   ytd → 1º jan do ano anterior até a mesma data (refFim com ano-1)
+//
+//	yoy → subtrai 1 ano nas duas pontas
+//	mom → range contíguo imediatamente anterior (mesma quantidade de dias)
+//	ytd → 1º jan do ano anterior até a mesma data (refFim com ano-1)
 func deriveCompRange(refInicio, refFim time.Time, mode string) (time.Time, time.Time) {
 	switch strings.ToLower(mode) {
 	case "yoy":
@@ -614,8 +541,9 @@ type multiFilters map[string][]string
 
 // parseMultiFilters extrai dos URL params os filtros multi-select.
 // Aceita:
-//   ?cod_fornec=F01,F02  ?cod_supervisor=S01  ?cod_rca=R01,R02
-//   ?cod_gerente=...     ?cod_cli=...         ?uf=SP,RJ  ?empresa=NORDESTE
+//
+//	?cod_fornec=F01,F02  ?cod_supervisor=S01  ?cod_rca=R01,R02
+//	?cod_gerente=...     ?cod_cli=...         ?uf=SP,RJ  ?empresa=NORDESTE
 func parseMultiFilters(q map[string][]string) multiFilters {
 	mf := multiFilters{}
 	cols := []string{"cod_fornec", "cod_gerente", "cod_supervisor", "cod_rca", "cod_cli", "uf", "empresa"}
@@ -667,6 +595,7 @@ type aggResult struct {
 	baseCli     int
 	positivados int
 	mix         float64
+	mixTotal    int // universo de SKUs distintos (P1: materializado em agg.mix_total)
 }
 
 // ─── queryAggregated ─────────────────────────────────────────────────────────
@@ -765,7 +694,8 @@ SELECT
   COALESCE(SUM(v.plucro), 0)     AS plucro,
   ROUND(AVG(v.base_cli))::int    AS base_cli,
   ROUND(AVG(v.positivados))::int AS positivados,
-  AVG(v.mix)                     AS mix
+  AVG(v.mix)                     AS mix,
+  COALESCE(MAX(v.mix_total), 0)  AS mix_total
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != ''
 AND %s %s
@@ -785,79 +715,13 @@ GROUP BY v.%s`,
 	for rows.Next() {
 		var key string
 		var r aggResult
-		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.baseCli, &r.positivados, &r.mix); err == nil {
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.baseCli, &r.positivados, &r.mix, &r.mixTotal); err == nil {
 			result[key] = r
 		}
 	}
 	log.Printf("[farol:agg] queryAggregatedMes view=%s nível=%s → %d grupos em %v",
 		viewName, groupCol, len(result), time.Since(t0))
 	return result
-}
-
-// queryMixTotal — universo de SKUs distintos por grupo (cod_fornec, cod_gerente, ...).
-//
-// Lê direto de vendas_faturadas/transmitidas porque as agg_*_mes não preservam
-// cod_prod sem agrupar por cliente. Custo: 1 query agregada com filtro de período
-// + drill + filtros (índices em empresa_id + data + cod_fornec ajudam).
-//
-// Camadas de otimização (na ordem):
-//   1) cache em memória TTL 10 min — hit retorna em microssegundos
-//   2) singleflight — requests concorrentes para a MESMA key colapsam em 1 query
-//   3) índice composto em vendas_* (idx_v[ft]_mixtotal_*)
-//   4) query agregada no banco (último recurso)
-//
-// Invalidação: chame InvalidateMixTotalCache() quando vendas_faturadas mudar.
-func queryMixTotal(db *sql.DB, fluxo fluxoCtx, groupCol, rangeCond, drillCond string, args []any) map[string]int {
-	cacheKey := mixTotalCacheKey(fluxo.name, groupCol, rangeCond, drillCond, args)
-
-	// 1. Cache hit?
-	if cached, ok := mixTotalCache.get(cacheKey); ok {
-		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos (CACHE HIT)",
-			fluxo.name, groupCol, len(cached))
-		return cached
-	}
-
-	// 2. Singleflight — colapsa requests concorrentes idênticas.
-	v, err, shared := mixTotalCache.sf.Do(cacheKey, func() (any, error) {
-		t0 := time.Now()
-		q := fmt.Sprintf(`
-SELECT v.%s AS key, COUNT(DISTINCT v.cod_prod) AS mix_total
-FROM %s v
-WHERE v.empresa_id=$1 AND v.%s <> '' AND v.cod_prod <> '' AND v.qt > 0
-AND %s %s
-GROUP BY v.%s`,
-			groupCol, fluxo.tableName, groupCol, rangeCond, drillCond, groupCol,
-		)
-		rows, qerr := db.Query(q, args...)
-		if qerr != nil {
-			log.Printf("[farol:mix] queryMixTotal nível=%s ERRO em %v: %v", groupCol, time.Since(t0), qerr)
-			return nil, qerr
-		}
-		defer rows.Close()
-		result := make(map[string]int)
-		for rows.Next() {
-			var key string
-			var n int
-			if err := rows.Scan(&key, &n); err == nil {
-				result[key] = n
-			}
-		}
-		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s → %d grupos em %v (DB)",
-			fluxo.name, groupCol, len(result), time.Since(t0))
-		mixTotalCache.set(cacheKey, result)
-		return result, nil
-	})
-
-	if err != nil {
-		return nil
-	}
-	if shared {
-		log.Printf("[farol:mix] queryMixTotal fluxo=%s nível=%s (SHARED via singleflight)", fluxo.name, groupCol)
-	}
-	if result, ok := v.(map[string]int); ok {
-		return result
-	}
-	return nil
 }
 
 // queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
@@ -994,7 +858,8 @@ SELECT v.%s AS key, MAX(v.%s) AS label,
        SUM(v.pvenda) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
        COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0) AS positivados,
        COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
-         / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix
+         / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix,
+       COUNT(DISTINCT v.cod_prod) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '') AS mix_total
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
 GROUP BY v.%s`,
@@ -1007,7 +872,7 @@ GROUP BY v.%s`,
 	for rows.Next() {
 		var key string
 		var r aggResult
-		if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix) == nil {
+		if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix, &r.mixTotal) == nil {
 			result[key] = r
 		}
 	}
@@ -1094,9 +959,11 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 
 	var atualMap, antMap map[string]aggResult
-	var mixTotalMap, mixTotalAntMap map[string]int
 	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
 
+	// P1: mix_total agora vem materializado nas agg (MAX(mix_total) em
+	// queryAggregatedMes) e calculado inline em queryAggregatedVendas (filtro
+	// cruzado). Não há mais scan separado de vendas_* (queryMixTotal removido).
 	var wg sync.WaitGroup
 	wg.Add(1)
 	switch {
@@ -1112,20 +979,6 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		go func() {
 			defer wg.Done()
 			atualMap = queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCondMes, atualArgsMes)
-		}()
-	}
-	// Mix Total atual — para qualquer nível hierárquico (não produto).
-	if groupCol != "cod_prod" {
-		mixTotalArgs := []any{empresaID}
-		mixRangeCond := buildRangeCond(fluxo.dateCol, pr.RefInicio, pr.RefFim, &mixTotalArgs)
-		mixDrillCond := buildDrillCond(drillPath, &mixTotalArgs)
-		if fc := buildMultiFilterCond(filters, &mixTotalArgs); fc != "" {
-			mixDrillCond = mixDrillCond + " " + fc
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			mixTotalMap = queryMixTotal(db, fluxo, groupCol, mixRangeCond, mixDrillCond, mixTotalArgs)
 		}()
 	}
 
@@ -1155,20 +1008,6 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			go func() {
 				defer wg.Done()
 				antMap = queryAggregatedMes(db, aggName, groupCol, nameCol, antMesCond, antDrillMes, antArgsMes)
-			}()
-		}
-		// Mix Total anterior — para qualquer nível hierárquico (não produto).
-		if groupCol != "cod_prod" {
-			mixTotalAntArgs := []any{empresaID}
-			mixAntRangeCond := buildRangeCond(fluxo.dateCol, pr.CompInicio, pr.CompFim, &mixTotalAntArgs)
-			mixAntDrillCond := buildDrillCond(drillPath, &mixTotalAntArgs)
-			if fc := buildMultiFilterCond(filters, &mixTotalAntArgs); fc != "" {
-				mixAntDrillCond = mixAntDrillCond + " " + fc
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				mixTotalAntMap = queryMixTotal(db, fluxo, groupCol, mixAntRangeCond, mixAntDrillCond, mixTotalAntArgs)
 			}()
 		}
 	}
@@ -1226,7 +1065,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: positCor,
 			Mix:      r.mix, MixAnt: ant.mix, MixCor: mixCor,
-			MixTotal: mixTotalMap[key], MixTotalAnt: mixTotalAntMap[key],
+			MixTotal: r.mixTotal, MixTotalAnt: ant.mixTotal,
 		}
 		if fluxo.name == "transmitido" {
 			card.Transmitido = r.valor
@@ -1253,7 +1092,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PlucroAnt:      ant.plucro,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: "vermelho", MixAnt: ant.mix, MixCor: "vermelho",
-			MixTotalAnt: mixTotalAntMap[key],
+			MixTotalAnt: ant.mixTotal,
 		})
 	}
 
@@ -1495,9 +1334,10 @@ func buildPeriodoLabels(pr periodResolution) (curLabel, antLabel, label string) 
 }
 
 // fmtRangeBR formata um intervalo em pt-BR de forma compacta:
-//   01/05/2026 → 31/05/2026  →  "Mai/2026"   (mês inteiro)
-//   05/05/2026 → 15/05/2026  →  "05/05/2026 – 15/05/2026"
-//   01/01/2026 → 31/12/2026  →  "Ano 2026"   (ano inteiro)
+//
+//	01/05/2026 → 31/05/2026  →  "Mai/2026"   (mês inteiro)
+//	05/05/2026 → 15/05/2026  →  "05/05/2026 – 15/05/2026"
+//	01/01/2026 → 31/12/2026  →  "Ano 2026"   (ano inteiro)
 func fmtRangeBR(ini, fim time.Time) string {
 	if ini.IsZero() || fim.IsZero() {
 		return ""
@@ -1656,6 +1496,13 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			}
 			upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
 
+			// P1 — materializa mix_total (universo de SKUs) dos meses consolidados.
+			for _, m := range meses {
+				if _, e := db.Exec(`SELECT farol.upsert_mixtotal_mes($1,$2,$3)`, spCtx.EmpresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:mix] upsert_mixtotal_mes %04d-%02d ERRO: %v", m.Ano, m.Mes, e)
+				}
+			}
+
 			// Limpa as pendências consolidadas (só no modo incremental;
 			// na completa não havia pendências a limpar).
 			if incremental {
@@ -1669,8 +1516,6 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		var fatRows, transRows int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_fat_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&fatRows)
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_trans_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&transRows)
-		// Dados de vendas foram refeitos → invalida cache do mix total.
-		InvalidateMixTotalCache()
 		log.Printf("[farol:view] RefreshViews concluído — fat_agg=%d trans_agg=%d, total %v",
 			fatRows, transRows, time.Since(t0))
 		json.NewEncoder(w).Encode(map[string]any{
@@ -1928,8 +1773,9 @@ func lookupParent(db *sql.DB, empresaID, codCol, cod, parentCol string) string {
 }
 
 // FarolV2PublicCardsHandler — GET /api/v2/farol/public/cards (SEM auth)
-//   cnpj, scope (sup|rca), cod  → escopo fixo; drill adicional opcional.
-//   fluxo, ref_inicio/ref_fim, comp_inicio/comp_fim (ou ano/mes legados).
+//
+//	cnpj, scope (sup|rca), cod  → escopo fixo; drill adicional opcional.
+//	fluxo, ref_inicio/ref_fim, comp_inicio/comp_fim (ou ano/mes legados).
 func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

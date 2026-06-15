@@ -38,10 +38,10 @@ var cleanupTables = []cleanupTableSpec{
 	{Key: "vendas_transmitidas", Table: "vendas_transmitidas", Label: "Vendas transmitidas",
 		Description: "Base de TRANSMISSÃO (pedido digitado pelo RCA). Limpar exige reimportar.", RefreshViews: true},
 	{Key: "agg_faturado", Table: "farol.agg_fat_v01_l0_mes", Label: "Painel agregado — Faturado",
-		Description: "Tabelas que alimentam o painel (faturado). Limpar zera o painel mesmo com as vendas já apagadas — útil para remover dados fantasma sem reimportar.",
+		Description:  "Tabelas que alimentam o painel (faturado). Limpar zera o painel mesmo com as vendas já apagadas — útil para remover dados fantasma sem reimportar.",
 		RefreshViews: true, AggFluxo: "fat"},
 	{Key: "agg_transmitido", Table: "farol.agg_trans_v01_l0_mes", Label: "Painel agregado — Transmitido",
-		Description: "Tabelas que alimentam o painel (transmitido). Limpar zera o painel mesmo com as vendas já apagadas.",
+		Description:  "Tabelas que alimentam o painel (transmitido). Limpar zera o painel mesmo com as vendas já apagadas.",
 		RefreshViews: true, AggFluxo: "trans"},
 	{Key: "objetivos", Table: "objetivos_importados", Label: "Objetivos importados",
 		Description: "Modelo antigo de objetivos. Não usado pelo painel novo."},
@@ -219,8 +219,6 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 			if err := refreshAllFarolViews(db); err != nil {
 				log.Printf("[cleanup] empresa=%s REFRESH falhou: %v", spCtx.EmpresaID, err)
 			}
-			// Cache de mix (keyed por empresa+janela) ficou obsoleto após o purge.
-			InvalidateMixTotalCache()
 		}
 
 		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "dados", "all", "limpar_dados",
