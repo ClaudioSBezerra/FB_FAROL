@@ -50,6 +50,34 @@ func cleanupSpecByKey(key string) *cleanupTableSpec {
 	return nil
 }
 
+// aggTablesForFluxo retorna TODAS as tabelas agregadas derivadas de vendas_<fluxo>
+// (agg_*_v0X_lY_mes + dims + marketing). Limpar vendas_* sem limpar estas deixa
+// o painel mostrando dados fantasma: o painel lê das agg_*_mes, e upsert_aggs_mes
+// só faz INSERT/UPSERT — nunca apaga linhas órfãs quando a origem some.
+// fluxoPrefix: "fat" ou "trans".
+func aggTablesForFluxo(fluxoPrefix string) []string {
+	src := aggTablesFat
+	if fluxoPrefix == "trans" {
+		src = aggTablesTrans
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, lvls := range src {
+		for _, t := range lvls {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, "farol."+t)
+			}
+		}
+	}
+	out = append(out,
+		"farol.agg_"+fluxoPrefix+"_dims_mes",
+		"farol.agg_"+fluxoPrefix+"_mkt_cli_mes",
+		"farol.agg_"+fluxoPrefix+"_mkt_produto_mes",
+	)
+	return out
+}
+
 func tableExists(db *sql.DB, name string) bool {
 	var reg sql.NullString
 	_ = db.QueryRow(`SELECT to_regclass($1)`, name).Scan(&reg)
@@ -128,12 +156,39 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 				needRefresh = true
 			}
 			log.Printf("[cleanup] empresa=%s tabela=%s removidas=%d", spCtx.EmpresaID, spec.Table, n)
+
+			// CRÍTICO: limpar vendas_* sem limpar as agg_*_mes deixa o painel
+			// mostrando dados fantasma (o painel lê das agg, e upsert_aggs_mes só
+			// faz UPSERT — nunca remove órfãs). Purga as agregadas do mesmo fluxo.
+			if spec.Key == "vendas_faturadas" || spec.Key == "vendas_transmitidas" {
+				prefix := "fat"
+				if spec.Key == "vendas_transmitidas" {
+					prefix = "trans"
+				}
+				var purged int64
+				for _, at := range aggTablesForFluxo(prefix) {
+					if !tableExists(db, at) {
+						continue
+					}
+					ares, aerr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, at), spCtx.EmpresaID)
+					if aerr != nil {
+						log.Printf("[cleanup] empresa=%s purge %s ERRO: %v", spCtx.EmpresaID, at, aerr)
+						continue
+					}
+					an, _ := ares.RowsAffected()
+					purged += an
+				}
+				deleted[spec.Key+"_agg"] = purged
+				log.Printf("[cleanup] empresa=%s agg_%s_* purgadas=%d", spCtx.EmpresaID, prefix, purged)
+			}
 		}
 
 		if needRefresh {
 			if err := refreshAllFarolViews(db); err != nil {
 				log.Printf("[cleanup] empresa=%s REFRESH falhou: %v", spCtx.EmpresaID, err)
 			}
+			// Cache de mix (keyed por empresa+janela) ficou obsoleto após o purge.
+			InvalidateMixTotalCache()
 		}
 
 		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "dados", "all", "limpar_dados",
