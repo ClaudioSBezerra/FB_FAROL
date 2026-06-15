@@ -28,10 +28,7 @@ P2 é o que importa. Os dois são independentes.
 3. **queryAggregatedMes**: adiciona `<AGG>(v.mix_total)` ao SELECT e ao scan; popula `card.MixTotal`.
 4. **fetchCards**: remove as chamadas a `queryMixTotal` (atual+ant) → some o scan de 9M linhas. Remove `queryMixTotal`, cache e singleflight (código morto).
 5. **Repopular** uma vez (custo da consolidação, ~40 min; ou backfill por UPDATE).
-- **Decisão necessária:** agregação multi-mês de `mix_total`. Mês único (YoY, M-1) é exato. Para YTD (vários meses):
-  - **MAX** = "maior portfólio mensal" (recomendado: estável, intuitivo, subestima leve)
-  - **AVG** = "portfólio médio mensal"
-  - (SUM seria errado — conta o mesmo SKU N vezes)
+- **Decisão TOMADA (2026-06-15): MAX** — `queryAggregatedMes` usa `MAX(v.mix_total)` na agregação multi-mês ("maior portfólio mensal"). Mês único continua exato.
 - **Risco:** baixo. É a 5ª mexida no upsert → regra do `grep "INSERT INTO farol\."` antes do push.
 
 ### P2 — Consolidação mais rápida (o que você realmente sente: 40 min)
@@ -58,8 +55,20 @@ independentes. Maior ganho potencial, mas **alto risco/esforço** (reescrita gra
 
 ### Ordem recomendada
 1. **P2.1 (incremental)** — resolve a dor diária com baixo risco. Fazer primeiro.
-2. **P1 (mix_total)** — painel instantâneo; aceitar leve aumento na escrita.
+2. **P1 (mix_total, MAX)** — painel instantâneo; aceitar leve aumento na escrita.
 3. P2.2 / P2.3 — afinar. 4. P2.4 só se ainda doer.
+
+### Como implementar o P1 com segurança (notas p/ a execução)
+- É a **5ª reescrita** do `upsert_aggs_mes` (169→170→172→173→174). As 4 anteriores
+  geraram cadeia de bugs. **Não fazer sob pressa.** Ritual obrigatório:
+  `grep -oE "INSERT INTO farol\.[a-z_0-9]+" 174.sql | sort | uniq -c` == 173 antes do push.
+- `mix_total` deve entrar **dentro de cada INSERT** (mesma GROUP BY do `mix`, custo
+  marginal) — NÃO como UPDATE separado (re-scan dobra o custo da escrita já lenta).
+  São ~30 INSERTs: editar lista de colunas + expressão `COUNT(DISTINCT cod_prod)
+  FILTER(...)` + `ON CONFLICT ... mix_total=EXCLUDED.mix_total`.
+- Repopulação = ~40 min (rodar o DO loop). Agendar janela.
+- Backend depois: `queryAggregatedMes` SELECT `MAX(v.mix_total)`; `fetchCards`
+  remove as 2 chamadas a `queryMixTotal`; apagar `queryMixTotal`/cache/singleflight.
 
 ---
 
