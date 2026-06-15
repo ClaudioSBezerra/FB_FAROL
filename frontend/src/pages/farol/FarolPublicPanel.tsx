@@ -7,7 +7,7 @@ import {
   parsePeriodo, fmtBRL, fmtPct, fmtNum, fmtInt,
   type CardsResponse, type CardItem, type DrillStep, type KPI,
 } from './FarolV2Dashboard'
-import { presetRange, PRESET_LABEL, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
+import { presetRange, PRESET_LABEL_MOBILE, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
 import type { Cor } from '@/components/farol/Semaforo'
 
 // Painel público do ION VENDAS — aberto sem login via link parametrizado
@@ -370,13 +370,14 @@ export default function FarolPublicPanel() {
                   : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
               }`}
             >
-              {PRESET_LABEL[p]}
+              {PRESET_LABEL_MOBILE[p]}
             </button>
           ))}
         </div>
 
-        {/* HEADER RESUMO — substitui KPIBar, formato planilha do esboço */}
-        {data?.kpi && data.kpi.total_atual > 0 && (
+        {/* HEADER RESUMO — sempre visível (mesmo zerado) para o supervisor ter o
+            totalizador do período, com a carteira e o comparativo. */}
+        {data?.kpi && (
           <HeaderResumo kpi={data.kpi} periodo={data.periodo} />
         )}
 
@@ -394,49 +395,59 @@ export default function FarolPublicPanel() {
 
         <Breadcrumb drillPath={userDrill} onNavigate={handleBreadcrumb} />
 
-        {/* Banner do nível atual — destaca QUE tipo de dado está na tela */}
-        {data && (
-          <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
-                {data.next_level_label}
-              </span>
-            </div>
-            <span className="text-sm text-slate-500 tabular-nums shrink-0">
-              {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
-            </span>
-          </div>
-        )}
+        {/* Período sem vendas (ex: mês atual ainda sem faturamento): não faz
+            sentido listar todos os RCAs zerados — mostra só o aviso. */}
+        {(() => {
+          const semVendas = !!data?.kpi && data.kpi.total_atual === 0
 
-        {isLoading && (
-          <div className="space-y-3">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-white border border-slate-100 rounded-xl h-48 animate-pulse" />
-            ))}
-          </div>
-        )}
+          if (isLoading) {
+            return (
+              <div className="space-y-3">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="bg-white border border-slate-100 rounded-xl h-48 animate-pulse" />
+                ))}
+              </div>
+            )
+          }
+          if (error) {
+            return (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700 text-sm">
+                <p className="font-semibold mb-1">Erro ao carregar painel</p>
+                <p>{(error as Error).message}</p>
+              </div>
+            )
+          }
+          if (!data) return null
+          if (semVendas || data.cards.length === 0) {
+            return (
+              <div className="bg-white border border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
+                <p className="text-sm font-bold mb-3">📊</p>
+                <p className="text-sm font-medium text-slate-500">Sem vendas registradas neste período</p>
+              </div>
+            )
+          }
+          return (
+            <>
+              {/* Banner do nível atual — destaca QUE tipo de dado está na tela */}
+              <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-white border border-sky-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
+                    {data.next_level_label}
+                  </span>
+                </div>
+                <span className="text-sm text-slate-500 tabular-nums shrink-0">
+                  {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
+                </span>
+              </div>
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700 text-sm">
-            <p className="font-semibold mb-1">Erro ao carregar painel</p>
-            <p>{(error as Error).message}</p>
-          </div>
-        )}
-
-        {!isLoading && !error && data?.cards.length === 0 && (
-          <div className="bg-white border border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
-            <p className="text-sm font-bold mb-3">📊</p>
-            <p className="text-sm font-medium text-slate-500">Nenhum dado no período</p>
-          </div>
-        )}
-
-        {!isLoading && !error && data && data.cards.length > 0 && (
-          <div className="space-y-3">
-            {data.cards.map(card => (
-              <CardVendaPublic key={card.key} card={card} onClick={() => handleDrill(card)} />
-            ))}
-          </div>
-        )}
+              <div className="space-y-3">
+                {data.cards.map(card => (
+                  <CardVendaPublic key={card.key} card={card} onClick={() => handleDrill(card)} />
+                ))}
+              </div>
+            </>
+          )
+        })()}
       </div>
     </div>
   )

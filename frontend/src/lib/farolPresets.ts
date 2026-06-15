@@ -14,6 +14,16 @@ export const PRESET_LABEL: Record<Preset, string> = {
   last30:       '30 dias',
 }
 
+// Rótulos em linguagem simples para o app de campo (SUPV/RCA) — sem jargão.
+export const PRESET_LABEL_MOBILE: Record<Preset, string> = {
+  yoy:          'Mês vs Ano Passado',
+  ytd:          'Acumulado do Ano',
+  ant_corrente: 'Mês vs Mês Passado',
+  mes_corrente: 'Mês Atual',
+  last7:        '7 dias',
+  last30:       '30 dias',
+}
+
 // Ordem de exibição dos botões (esquerda → direita).
 export const PRESET_ORDER: Preset[] = ['yoy', 'ytd', 'ant_corrente', 'mes_corrente', 'last7', 'last30']
 
