@@ -25,6 +25,10 @@ type cleanupTableSpec struct {
 	Label        string `json:"label"`
 	Description  string `json:"description"`
 	RefreshViews bool   `json:"-"`
+	// AggFluxo, quando preenchido ("fat"|"trans"), faz a limpeza purgar TODAS as
+	// tabelas agregadas daquele fluxo (agg_*_mes + dims + mkt) em vez de um DELETE
+	// simples. Table aponta só para a tabela representativa usada na contagem.
+	AggFluxo string `json:"-"`
 }
 
 // Allowlist de tabelas limpáveis. Só estas podem ser apagadas, e só por empresa_id.
@@ -33,6 +37,12 @@ var cleanupTables = []cleanupTableSpec{
 		Description: "Base de FATURAMENTO (NF emitida). Limpar exige reimportar.", RefreshViews: true},
 	{Key: "vendas_transmitidas", Table: "vendas_transmitidas", Label: "Vendas transmitidas",
 		Description: "Base de TRANSMISSÃO (pedido digitado pelo RCA). Limpar exige reimportar.", RefreshViews: true},
+	{Key: "agg_faturado", Table: "farol.agg_fat_v01_l0_mes", Label: "Painel agregado — Faturado",
+		Description: "Tabelas que alimentam o painel (faturado). Limpar zera o painel mesmo com as vendas já apagadas — útil para remover dados fantasma sem reimportar.",
+		RefreshViews: true, AggFluxo: "fat"},
+	{Key: "agg_transmitido", Table: "farol.agg_trans_v01_l0_mes", Label: "Painel agregado — Transmitido",
+		Description: "Tabelas que alimentam o painel (transmitido). Limpar zera o painel mesmo com as vendas já apagadas.",
+		RefreshViews: true, AggFluxo: "trans"},
 	{Key: "objetivos", Table: "objetivos_importados", Label: "Objetivos importados",
 		Description: "Modelo antigo de objetivos. Não usado pelo painel novo."},
 	{Key: "jobs", Table: "vendas_import_jobs", Label: "Histórico de importações",
@@ -76,6 +86,26 @@ func aggTablesForFluxo(fluxoPrefix string) []string {
 		"farol.agg_"+fluxoPrefix+"_mkt_produto_mes",
 	)
 	return out
+}
+
+// purgeAggFluxo apaga (por empresa_id) todas as tabelas agregadas do fluxo dado
+// e retorna o total de linhas removidas. Usado tanto ao limpar vendas_* quanto
+// pela ação dedicada "Limpar VIEWS".
+func purgeAggFluxo(db *sql.DB, empresaID, fluxoPrefix string) int64 {
+	var purged int64
+	for _, at := range aggTablesForFluxo(fluxoPrefix) {
+		if !tableExists(db, at) {
+			continue
+		}
+		ares, aerr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, at), empresaID)
+		if aerr != nil {
+			log.Printf("[cleanup] empresa=%s purge %s ERRO: %v", empresaID, at, aerr)
+			continue
+		}
+		an, _ := ares.RowsAffected()
+		purged += an
+	}
+	return purged
 }
 
 func tableExists(db *sql.DB, name string) bool {
@@ -141,8 +171,22 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 		needRefresh := false
 		for _, key := range body.Tables {
 			spec := cleanupSpecByKey(key)
-			if spec == nil || !tableExists(db, spec.Table) {
+			if spec == nil {
 				continue // ignora chaves desconhecidas — allowlist
+			}
+
+			// Ação "Limpar VIEWS": purga todas as agg do fluxo (sem DELETE simples).
+			// Habilitada mesmo com vendas_* já vazias — remove dados fantasma.
+			if spec.AggFluxo != "" {
+				purged := purgeAggFluxo(db, spCtx.EmpresaID, spec.AggFluxo)
+				deleted[spec.Key] = purged
+				needRefresh = true
+				log.Printf("[cleanup] empresa=%s Limpar VIEWS agg_%s_* purgadas=%d", spCtx.EmpresaID, spec.AggFluxo, purged)
+				continue
+			}
+
+			if !tableExists(db, spec.Table) {
+				continue
 			}
 			res, err := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, spec.Table), spCtx.EmpresaID)
 			if err != nil {
@@ -165,19 +209,7 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 				if spec.Key == "vendas_transmitidas" {
 					prefix = "trans"
 				}
-				var purged int64
-				for _, at := range aggTablesForFluxo(prefix) {
-					if !tableExists(db, at) {
-						continue
-					}
-					ares, aerr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, at), spCtx.EmpresaID)
-					if aerr != nil {
-						log.Printf("[cleanup] empresa=%s purge %s ERRO: %v", spCtx.EmpresaID, at, aerr)
-						continue
-					}
-					an, _ := ares.RowsAffected()
-					purged += an
-				}
+				purged := purgeAggFluxo(db, spCtx.EmpresaID, prefix)
 				deleted[spec.Key+"_agg"] = purged
 				log.Printf("[cleanup] empresa=%s agg_%s_* purgadas=%d", spCtx.EmpresaID, prefix, purged)
 			}
