@@ -539,6 +539,19 @@ func buildDrillCond(drillPath []drillStep, args *[]any) string {
 // Cada chave é um cod_* (allowed col), cada valor é a lista de seleções.
 type multiFilters map[string][]string
 
+// names — colunas filtradas, ordenadas, p/ log/diagnóstico (ex: "cod_fornec,uf").
+func (mf multiFilters) names() string {
+	if len(mf) == 0 {
+		return "-"
+	}
+	cols := make([]string, 0, len(mf))
+	for c := range mf {
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+	return strings.Join(cols, ",")
+}
+
 // parseMultiFilters extrai dos URL params os filtros multi-select.
 // Aceita:
 //
@@ -1014,8 +1027,10 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// rápido. Só cai para vendas_* se nenhuma agg servir (ex: filtro por UF/Filial).
 	if !aggOK && groupCol != "cod_prod" {
 		if alt, ok := pickAggForCrossFilter(fluxo, groupCol, drillPath, filters); ok {
-			log.Printf("[farol:agg] filtro cruzado → tabela agg alternativa %s (em vez de scan vendas_*)", alt)
+			log.Printf("[farol:agg] filtro cruzado (filtros=%s) → tabela agg alternativa %s (em vez de scan vendas_*)", filters.names(), alt)
 			aggName, hasAgg, aggOK = alt, true, true
+		} else {
+			log.Printf("[farol:agg] filtro cruzado (filtros=%s nível=%s) SEM agg alternativa → scan vendas_* (lento)", filters.names(), groupCol)
 		}
 	}
 
