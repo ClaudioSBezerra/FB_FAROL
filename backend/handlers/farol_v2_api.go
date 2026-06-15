@@ -1685,23 +1685,45 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Lookup em agg_*_dims_mes (mig 165): consolidada por dim/key, usa label do mês mais recente.
-		dimsTable := "farol.agg_fat_dims_mes"
+		fluxoPrefix := "fat"
 		if fluxo.name == "transmitido" {
-			dimsTable = "farol.agg_trans_dims_mes"
+			fluxoPrefix = "trans"
 		}
+		dimsTable := "farol.agg_" + fluxoPrefix + "_dims_mes"
 		t0 := time.Now()
+
+		// dimLevelSrc — tabela agg de nível (granularidade da própria dim) usada
+		// para filtrar do dropdown opções SEM movimento real. dims_mes lista todo
+		// código que apareceu em vendas_* (mesmo só com devolução/bonificação ou
+		// valor zero) → poluía o filtro com RCAs/etc que não trazem nada na tela.
+		// Mantém só keys com pvenda<>0 OU qt>0 em algum mês. {tableTmpl, codCol}.
+		dimLevelSrc := map[string][2]string{
+			"fornec":     {"agg_%s_v01_l0_mes", "cod_fornec"},
+			"gerente":    {"agg_%s_v03_l0_mes", "cod_gerente"},
+			"supervisor": {"agg_%s_v02_l0_mes", "cod_supervisor"},
+			"rca":        {"agg_%s_v04_l0_mes", "cod_rca"},
+			"cli":        {"agg_%s_mkt_cli_mes", "cod_cli"},
+		}
 
 		// fetchDim(dimName) — retorna [{key, label}] para a dim solicitada.
 		// codCol é só pro log; dimName mapeia "cod_X" → "X" (ex: cod_fornec → fornec).
 		fetchDim := func(codCol, dimName string) []dimOption {
 			td := time.Now()
+			comSemMov := ""
+			if src, ok := dimLevelSrc[dimName]; ok {
+				lvl := fmt.Sprintf("farol."+src[0], fluxoPrefix)
+				comSemMov = fmt.Sprintf(`
+				   AND d.key IN (SELECT a.%s FROM %s a
+				                  WHERE a.empresa_id=$1 AND (a.pvenda <> 0 OR a.qt > 0))`,
+					src[1], lvl)
+			}
 			rows, err := db.Query(fmt.Sprintf(`
-				SELECT key, MAX(label) AS label
-				  FROM %s
-				 WHERE empresa_id=$1 AND dim=$2 AND key != ''
-				 GROUP BY key
+				SELECT d.key, MAX(d.label) AS label
+				  FROM %s d
+				 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != ''%s
+				 GROUP BY d.key
 				 ORDER BY label
-			`, dimsTable), spCtx.EmpresaID, dimName)
+			`, dimsTable, comSemMov), spCtx.EmpresaID, dimName)
 			if err != nil {
 				log.Printf("[dims] %s ERRO em %v: %v", codCol, time.Since(td), err)
 				return nil
