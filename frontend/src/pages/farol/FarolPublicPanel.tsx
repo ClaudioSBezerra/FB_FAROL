@@ -1,12 +1,13 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Minus, ChevronLeft } from 'lucide-react'
 import {
   Breadcrumb,
-  parsePeriodo, fmtMesAno, fmtBRL, fmtPct, fmtNum, fmtInt,
+  parsePeriodo, fmtBRL, fmtPct, fmtNum, fmtInt,
   type CardsResponse, type CardItem, type DrillStep, type KPI,
 } from './FarolV2Dashboard'
+import { presetRange, PRESET_LABEL, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
 import type { Cor } from '@/components/farol/Semaforo'
 
 // Painel público do ION VENDAS — aberto sem login via link parametrizado
@@ -121,25 +122,14 @@ function Cell({ label, value, valueClass = 'text-slate-800' }: {
 // ─── HeaderResumo — substitui KPIBar no mobile (formato planilha do esboço)
 
 function HeaderResumo({
-  kpi, periodo, periodos, refAno, refMes, onPreset,
+  kpi, periodo,
 }: {
   kpi: KPI
   periodo: CardsResponse['periodo']
-  periodos: string[]
-  refAno: number
-  refMes: number
-  onPreset: (ano: number, mes: number) => void
 }) {
-  // periodos vem do backend em ordem DESC (mais recente primeiro): [0]=último mês
-  // com dados, [1]=mês anterior. Apontar para o início do array (antes pegava o
-  // mais ANTIGO, fazendo o YoY buscar um ano sem dados — ex: 2024).
-  const ultimoMes   = periodos.length > 0 ? parsePeriodo(periodos[0]) : null
-  const mesAnterior = periodos.length > 1 ? parsePeriodo(periodos[1]) : null
-  const isCorrente  = !!ultimoMes   && refAno === ultimoMes.ano   && refMes === ultimoMes.mes
-  const isFechado   = !!mesAnterior && refAno === mesAnterior.ano && refMes === mesAnterior.mes
-  const antLabel    = periodo.ant_label || 'Anterior'
-  const curLabel    = periodo.cur_label || 'Atual'
-  const barW        = Math.min(100, kpi.total_pct)
+  const antLabel = periodo.ant_label || 'Anterior'
+  const curLabel = periodo.cur_label || 'Atual'
+  const barW     = Math.min(100, kpi.total_pct)
 
   return (
     <div className={`relative ${COR_BG[kpi.total_cor]} border border-slate-200/60 ${COR_RING[kpi.total_cor]} rounded-xl shadow-sm overflow-hidden mb-4`}>
@@ -147,30 +137,6 @@ function HeaderResumo({
       <div className="h-1 bg-slate-100/80">
         <div className={`h-full ${COR_BAR[kpi.total_cor]} transition-all duration-500`} style={{ width: `${barW}%` }} />
       </div>
-
-      {/* Linha 1 — presets de período */}
-      {periodos.length > 0 && (
-        <div className="px-4 pt-3 flex items-center gap-1.5">
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden shrink-0 bg-white">
-            {ultimoMes && (
-              <button
-                onClick={() => onPreset(ultimoMes.ano, ultimoMes.mes)}
-                className={`px-2.5 py-1 text-sm font-medium transition-colors ${
-                  isCorrente ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >Último mês</button>
-            )}
-            {mesAnterior && (
-              <button
-                onClick={() => onPreset(mesAnterior.ano, mesAnterior.mes)}
-                className={`px-2.5 py-1 text-sm font-medium transition-colors border-l border-slate-200 ${
-                  isFechado ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >Mês anterior</button>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="p-4 space-y-3">
         {/* SEÇÃO 1: VENDA */}
@@ -291,24 +257,25 @@ export default function FarolPublicPanel() {
   // no /m/:cod/rca/:codRca (ION: CNPJ/RCA/cod) o CNPJ vem em :cod.
   const cnpj = (params.cnpj || (isRca ? params.cod : '') || '').replace(/\D/g, '')
 
-  const [compMode, setCompMode]   = useState('yoy')
   const [userDrill, setUserDrill] = useState<DrillStep[]>([])
-  const [refAno, setRefAno]       = useState(0)
-  const [refMes, setRefMes]       = useState(0)
+  // Mesma lógica de presets do painel executivo (intervalos explícitos coerentes).
+  const [activePreset, setActivePreset] = useState<Preset>('yoy')
+  const [refInicio, setRefInicio]   = useState('')
+  const [refFim, setRefFim]         = useState('')
+  const [compInicio, setCompInicio] = useState('')
+  const [compFim, setCompFim]       = useState('')
   // Toggle de visão: V02 = "Por RCA" (default), V05 = "Por Fornecedor".
   // Só faz sentido no scope=sup (rca já está fixo num nível mais profundo).
   const [viewMode, setViewMode]   = useState<'V02' | 'V05'>('V02')
 
   const drillParam = JSON.stringify(userDrill)
   const { data, isLoading, error } = useQuery<CardsResponse>({
-    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, compMode, refAno, refMes, drillParam],
+    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, refInicio, refFim, compInicio, compFim, drillParam],
     queryFn: async () => {
-      const p = new URLSearchParams({
-        cnpj, scope, cod: scopeCod, comp_mode: compMode, view: viewMode,
-        ...(refAno > 0 && { ref_ano: String(refAno) }),
-        ...(refMes > 0 && { ref_mes: String(refMes) }),
-        ...(userDrill.length > 0 && { drill: drillParam }),
-      })
+      const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, view: viewMode })
+      if (refInicio && refFim) { p.set('ref_inicio', refInicio); p.set('ref_fim', refFim) }
+      if (compInicio && compFim) { p.set('comp_inicio', compInicio); p.set('comp_fim', compFim) }
+      if (userDrill.length > 0) p.set('drill', drillParam)
       const r = await fetch(`/api/v2/farol/public/cards?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar painel')
       return r.json()
@@ -317,19 +284,29 @@ export default function FarolPublicPanel() {
     staleTime: 2 * 60_000, gcTime: 5 * 60_000, refetchOnWindowFocus: false,
   })
 
-  const autoRef = useCallback((d: CardsResponse) => {
-    if (refAno === 0 && d.periodo.ref_ano) {
-      setRefAno(d.periodo.ref_ano)
-      setRefMes(d.periodo.ref_mes)
-    }
-  }, [refAno])
-  if (data && refAno === 0) autoRef(data)
+  // Ao carregar, aplica o preset default (Último mês YoY) usando o último mês
+  // com dados (periodos[0], ordem DESC do backend) como âncora.
+  const periodos = data?.periodos ?? []
+  if (refInicio === '' && periodos.length > 0) {
+    const last = parsePeriodo(periodos[0])
+    const r = presetRange('yoy', last)
+    setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
+    setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
+  }
+
+  const applyPreset = (p: Preset) => {
+    setActivePreset(p)
+    const last = periodos.length > 0 ? parsePeriodo(periodos[0]) : undefined
+    const r = presetRange(p, last)
+    setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
+    setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
+    setUserDrill([])
+  }
 
   const baseLen     = scope === 'rca' ? 2 : 1
   const scopeStep   = data?.drill_path?.[baseLen - 1]
   const scopeLabel  = scope === 'rca' ? 'RCA' : 'Supervisor'
   const scopeNome   = scopeStep?.label || scopeCod
-  const periodos    = data?.periodos ?? []
 
   const handleDrill = (card: CardItem) => {
     if (card.level === 'cod_prod') return
@@ -381,53 +358,26 @@ export default function FarolPublicPanel() {
       </div>
 
       <div className="p-4">
-        {/* Controles */}
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
-            {[
-              { id: 'yoy', label: 'Ano a Ano' },
-              { id: 'ytd', label: 'Projeção Anual' },
-              { id: 'mom', label: 'Mês a Mês' },
-            ].map(m => (
-              <button
-                key={m.id}
-                onClick={() => { setCompMode(m.id); setUserDrill([]) }}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                  compMode === m.id ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          {periodos.length > 0 && (
-            <select
-              value={refAno > 0 ? `${refAno}-${String(refMes).padStart(2, '0')}` : ''}
-              onChange={e => {
-                const pp = parsePeriodo(e.target.value)
-                setRefAno(pp.ano); setRefMes(pp.mes); setUserDrill([])
-              }}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        {/* Controles — mesmos presets do painel executivo (intervalos coerentes) */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-4">
+          {PRESET_ORDER.map(p => (
+            <button
+              key={p}
+              onClick={() => applyPreset(p)}
+              className={`px-2.5 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+                activePreset === p
+                  ? 'bg-slate-700 text-white border-slate-700'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
             >
-              {periodos.map(p => {
-                const { ano, mes } = parsePeriodo(p)
-                return <option key={p} value={p}>{fmtMesAno(ano, mes)}</option>
-              })}
-            </select>
-          )}
+              {PRESET_LABEL[p]}
+            </button>
+          ))}
         </div>
 
         {/* HEADER RESUMO — substitui KPIBar, formato planilha do esboço */}
         {data?.kpi && data.kpi.total_atual > 0 && (
-          <HeaderResumo
-            kpi={data.kpi}
-            periodo={data.periodo}
-            periodos={periodos}
-            refAno={refAno}
-            refMes={refMes}
-            onPreset={(ano, mes) => { setRefAno(ano); setRefMes(mes); setUserDrill([]) }}
-          />
+          <HeaderResumo kpi={data.kpi} periodo={data.periodo} />
         )}
 
         {/* Botão VOLTAR — só aparece quando há drill ativo. Mobile precisa
