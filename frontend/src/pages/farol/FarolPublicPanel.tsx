@@ -130,10 +130,13 @@ function HeaderResumo({
   refMes: number
   onPreset: (ano: number, mes: number) => void
 }) {
-  const mesCorrente = periodos.length > 0 ? parsePeriodo(periodos[periodos.length - 1]) : null
-  const mesFechado  = periodos.length > 1 ? parsePeriodo(periodos[periodos.length - 2]) : null
-  const isCorrente  = !!mesCorrente && refAno === mesCorrente.ano && refMes === mesCorrente.mes
-  const isFechado   = !!mesFechado  && refAno === mesFechado.ano  && refMes === mesFechado.mes
+  // periodos vem do backend em ordem DESC (mais recente primeiro): [0]=último mês
+  // com dados, [1]=mês anterior. Apontar para o início do array (antes pegava o
+  // mais ANTIGO, fazendo o YoY buscar um ano sem dados — ex: 2024).
+  const ultimoMes   = periodos.length > 0 ? parsePeriodo(periodos[0]) : null
+  const mesAnterior = periodos.length > 1 ? parsePeriodo(periodos[1]) : null
+  const isCorrente  = !!ultimoMes   && refAno === ultimoMes.ano   && refMes === ultimoMes.mes
+  const isFechado   = !!mesAnterior && refAno === mesAnterior.ano && refMes === mesAnterior.mes
   const antLabel    = periodo.ant_label || 'Anterior'
   const curLabel    = periodo.cur_label || 'Atual'
   const barW        = Math.min(100, kpi.total_pct)
@@ -149,21 +152,21 @@ function HeaderResumo({
       {periodos.length > 0 && (
         <div className="px-4 pt-3 flex items-center gap-1.5">
           <div className="flex rounded-lg border border-slate-200 overflow-hidden shrink-0 bg-white">
-            {mesCorrente && (
+            {ultimoMes && (
               <button
-                onClick={() => onPreset(mesCorrente.ano, mesCorrente.mes)}
+                onClick={() => onPreset(ultimoMes.ano, ultimoMes.mes)}
                 className={`px-2.5 py-1 text-sm font-medium transition-colors ${
                   isCorrente ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
                 }`}
-              >Mês corrente</button>
+              >Último mês</button>
             )}
-            {mesFechado && (
+            {mesAnterior && (
               <button
-                onClick={() => onPreset(mesFechado.ano, mesFechado.mes)}
+                onClick={() => onPreset(mesAnterior.ano, mesAnterior.mes)}
                 className={`px-2.5 py-1 text-sm font-medium transition-colors border-l border-slate-200 ${
                   isFechado ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
                 }`}
-              >Mês fechado</button>
+              >Mês anterior</button>
             )}
           </div>
         </div>
