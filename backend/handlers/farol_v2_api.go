@@ -483,9 +483,13 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level == "cod_fornec" {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, spCtx.EmpresaID, pr, drillPath)
+		} else if fornec, ok := fornecCodInScope(drillPath, filters); ok {
+			// Dentro de UM fornecedor: Y do Mix = universo do fornecedor (mesmo da
+			// 1ª tela), levado ao totalizador E a todos os cards do grid.
+			applyFornecMixTotal(db, fluxo, spCtx.EmpresaID, &kpi, cards, pr, fornec)
 		} else {
-			// mix_total do totalizador = universo DISTINTO da seleção (somar cards
-			// superestima fora do nível fornecedor). Ex: drill em P&G por gerente.
+			// Vários fornecedores no escopo: totalizador = universo DISTINTO da
+			// seleção (somar cards superestima fora do nível fornecedor).
 			kpi.TotalMixTotal = queryDistinctMixTotal(db, fluxo, spCtx.EmpresaID, pr.RefInicio, pr.RefFim, drillPath, filters)
 			kpi.TotalMixTotalAnt = queryDistinctMixTotal(db, fluxo, spCtx.EmpresaID, pr.CompInicio, pr.CompFim, drillPath, filters)
 		}
@@ -1307,6 +1311,52 @@ func queryDistinctMixTotal(db *sql.DB, fluxo fluxoCtx, empresaID string, ini, fi
 	return n
 }
 
+// fornecCodInScope — retorna o cod_fornec quando há UM ÚNICO fornecedor no
+// escopo (drillado num fornecedor, ou filtro por exatamente 1 indústria). Nesse
+// caso o "Y" do Mix (universo de SKUs) deve ser o do fornecedor, levado ao
+// totalizador E a todos os cards do grid (decisão do gestor).
+func fornecCodInScope(drillPath []drillStep, filters multiFilters) (string, bool) {
+	for _, d := range drillPath {
+		if d.Level == "cod_fornec" && d.Value != "" {
+			return d.Value, true
+		}
+	}
+	if vs, ok := filters["cod_fornec"]; ok && len(vs) == 1 && vs[0] != "" {
+		return vs[0], true
+	}
+	return "", false
+}
+
+// queryFornecUniverse — universo de SKUs do fornecedor (MESMO valor da 1ª tela:
+// MAX(mix_total) por mês em agg_*_v01_l0_mes para aquele cod_fornec no período).
+func queryFornecUniverse(db *sql.DB, fluxo fluxoCtx, empresaID, fornec string, ymStart, ymEnd int) int {
+	tbl := "farol.agg_fat_v01_l0_mes"
+	if fluxo.name == "transmitido" {
+		tbl = "farol.agg_trans_v01_l0_mes"
+	}
+	var n int
+	_ = db.QueryRow(fmt.Sprintf(
+		`SELECT COALESCE(MAX(mix_total),0) FROM %s WHERE empresa_id=$1 AND cod_fornec=$2 AND (ano*100+mes) BETWEEN $3 AND $4`, tbl),
+		empresaID, fornec, ymStart, ymEnd).Scan(&n)
+	return n
+}
+
+// applyFornecMixTotal — quando há 1 fornecedor no escopo, sobrescreve o Y (mix_total)
+// do totalizador e de TODOS os cards com o universo do fornecedor (ref/comp).
+func applyFornecMixTotal(db *sql.DB, fluxo fluxoCtx, empresaID string, kpi *kpiSummary, cards []cardItem, pr periodResolution, fornec string) {
+	yRef := queryFornecUniverse(db, fluxo, empresaID, fornec, ym(pr.RefInicio), ym(pr.RefFim))
+	yAnt := 0
+	if !pr.CompInicio.IsZero() && !pr.CompFim.IsZero() {
+		yAnt = queryFornecUniverse(db, fluxo, empresaID, fornec, ym(pr.CompInicio), ym(pr.CompFim))
+	}
+	kpi.TotalMixTotal = yRef
+	kpi.TotalMixTotalAnt = yAnt
+	for i := range cards {
+		cards[i].MixTotal = yRef
+		cards[i].MixTotalAnt = yAnt
+	}
+}
+
 // ─── computeKPI ──────────────────────────────────────────────────────────────
 
 // computeKPI agrega os totais dos cards.
@@ -2093,6 +2143,8 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level == "cod_fornec" {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, empresaID, pr, drillPath)
+		} else if fornec, ok := fornecCodInScope(drillPath, filters); ok {
+			applyFornecMixTotal(db, fluxo, empresaID, &kpi, cards, pr, fornec)
 		} else {
 			kpi.TotalMixTotal = queryDistinctMixTotal(db, fluxo, empresaID, pr.RefInicio, pr.RefFim, drillPath, filters)
 			kpi.TotalMixTotalAnt = queryDistinctMixTotal(db, fluxo, empresaID, pr.CompInicio, pr.CompFim, drillPath, filters)
