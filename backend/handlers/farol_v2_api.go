@@ -699,6 +699,14 @@ GROUP BY v.%s`, groupCol, nameCol, viewName, groupCol, rangeCond, drillCond, gro
 // pvenda/plucro são somados; base_cli/positivados/mix são AVG (valor típico por mês).
 func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillCond string, args []any) map[string]aggResult {
 	t0 := time.Now()
+	// mix_total só existe nas tabelas da migration 175 (V01 l0-l3, V02/V03/V05
+	// l0-l2). Nos níveis-folha mais profundos (cliente em V01 l4, etc.) e no V04
+	// a coluna NÃO existe — referenciá-la quebra a query (e some o cliente no
+	// drill). Quando ausente, devolve 0.
+	mixTotalExpr := "0"
+	if aggHasMixTotal[strings.TrimPrefix(viewName, "farol.")] {
+		mixTotalExpr = "COALESCE(MAX(v.mix_total), 0)"
+	}
 	q := fmt.Sprintf(`
 SELECT
   v.%s                           AS key,
@@ -708,12 +716,13 @@ SELECT
   ROUND(AVG(v.base_cli))::int    AS base_cli,
   ROUND(AVG(v.positivados))::int AS positivados,
   AVG(v.mix)                     AS mix,
-  COALESCE(MAX(v.mix_total), 0)  AS mix_total
+  %s                             AS mix_total
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != '' AND v.%s != ''
 AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol,
+		mixTotalExpr,
 		viewName,
 		groupCol, nameCol, mesCond, drillCond,
 		groupCol,
