@@ -176,7 +176,7 @@ function fmtDateBR(s: string): string {
 //  ytd          — ano anterior completo (jan-dez) × jan até hoje, ano corrente
 //  yoy          — último mês 100% importado × mesmo mês ano anterior
 //  ant_corrente — dois últimos meses completos carregados (M-1 vs M-2)
-//  mes_corrente — dia 1 até hoje, mês corrente × dia 1 até mesmo dia, mês anterior
+//  mes_corrente — dia 1 até hoje, mês corrente × mesmo período do ano anterior
 //  last7        — últimos 7 dias × 7 dias anteriores
 //  last30       — últimos 30 dias × 30 dias anteriores
 type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
@@ -232,15 +232,14 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'mes_corrente': {
-      // Dia 1 até hoje do mês corrente × mesmo intervalo do mês anterior
-      let pm = todayM - 1, py = todayY
-      if (pm === 0) { pm = 12; py-- }
-      const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
+      // Dia 1 até hoje do mês corrente × MESMO período do ANO ANTERIOR
+      // (decisão do gestor — só WEB; mobile mantém em farolPresets.ts).
+      const dayCap = Math.min(todayD, lastDayOfMonth(todayY - 1, todayM))
       return {
         ref_inicio:  ymd(todayY, todayM, 1),
         ref_fim:     today,
-        comp_inicio: ymd(py, pm, 1),
-        comp_fim:    ymd(py, pm, dayCap),
+        comp_inicio: ymd(todayY - 1, todayM, 1),
+        comp_fim:    ymd(todayY - 1, todayM, dayCap),
       }
     }
     case 'last7': {
@@ -782,7 +781,7 @@ export default function FarolExecutivo() {
           { id: 'ytd'          as const, tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
           { id: 'yoy'          as const, tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
           { id: 'ant_corrente' as const, tip: 'Dois últimos meses completos carregados (M-1 vs M-2)' },
-          { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × Dia 1 até mesmo dia do mês anterior' },
+          { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × mesmo período do ano anterior' },
           { id: 'last7'        as const, tip: 'Últimos 7 dias × 7 dias anteriores' },
           { id: 'last30'       as const, tip: 'Últimos 30 dias × 30 dias anteriores' },
         ]).map(p => (

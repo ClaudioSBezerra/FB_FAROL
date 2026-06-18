@@ -210,14 +210,14 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'mes_corrente': {
-      let pm = todayM - 1, py = todayY
-      if (pm === 0) { pm = 12; py-- }
-      const dayCap = Math.min(todayD, lastDayOfMonth(py, pm))
+      // Dia 1 até hoje do mês corrente × MESMO período do ANO ANTERIOR
+      // (decisão do gestor — só WEB; mobile mantém em farolPresets.ts).
+      const dayCap = Math.min(todayD, lastDayOfMonth(todayY - 1, todayM))
       return {
         ref_inicio:  ymd(todayY, todayM, 1),
         ref_fim:     today,
-        comp_inicio: ymd(py, pm, 1),
-        comp_fim:    ymd(py, pm, dayCap),
+        comp_inicio: ymd(todayY - 1, todayM, 1),
+        comp_fim:    ymd(todayY - 1, todayM, dayCap),
       }
     }
     case 'last7': {
