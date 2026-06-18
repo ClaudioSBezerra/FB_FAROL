@@ -160,8 +160,9 @@ function HeaderResumo({
         {/* SEÇÃO 2: POSITIVAÇÃO */}
         <div className="border-t border-slate-100 pt-2.5">
           <SectionLabel banner tone="positivacao">Positivação</SectionLabel>
-          <div className="grid grid-cols-3 gap-2">
-            <Cell label="Posit. Anterior" value={fmtInt(kpi.total_positivados_ant)} valueClass="text-slate-500" />
+          <div className="grid grid-cols-4 gap-2">
+            <Cell label="Cl. Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
+            <Cell label="Posit. Ant" value={fmtInt(kpi.total_positivados_ant)} valueClass="text-slate-500" />
             <Cell label="Posit. Atual" value={fmtInt(kpi.total_positivados)} />
             <Cell label="% Posit" value={fmtPct(kpi.total_positpct)} />
           </div>
@@ -219,12 +220,13 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           </div>
         </div>
 
-        {/* SEÇÃO 2: POSITIVAÇÃO — Posit. Anterior | Posit. Atual | % Posit */}
+        {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Posit. Ant | Posit. Atual | % Posit */}
         {card.base_cli > 0 && (
           <div className="border-t border-slate-100 pt-2.5">
             <SectionLabel tone="positivacao">Positivação</SectionLabel>
-            <div className="grid grid-cols-3 gap-2">
-              <Cell label="Posit. Anterior" value={fmtInt(card.positivados_ant)} valueClass="text-slate-500" />
+            <div className="grid grid-cols-4 gap-2">
+              <Cell label="Cl. Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
+              <Cell label="Posit. Ant" value={fmtInt(card.positivados_ant)} valueClass="text-slate-500" />
               <Cell label="Posit. Atual" value={fmtInt(card.positivados)} />
               <Cell label="% Posit" value={fmtPct(card.positpct)} />
             </div>

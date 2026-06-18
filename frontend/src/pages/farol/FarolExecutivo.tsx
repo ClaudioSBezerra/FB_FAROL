@@ -268,7 +268,7 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
 
 // ─── Cabeçalho colorido + subtítulos (reutilizado em Total e Lista) ─────────
 
-const GRID_COLS = 'grid-cols-[minmax(180px,2fr)_3fr_3fr_1.2fr]'
+const GRID_COLS = 'grid-cols-[minmax(180px,2fr)_3fr_4fr_1.2fr]'
 
 function ColumnsHeader() {
   return (
@@ -298,7 +298,8 @@ function ColumnsHeader() {
           <div>Período Atual</div>
           <div>%</div>
         </div>
-        <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
+        <div className="grid grid-cols-4 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
+          <div>Clientes Ativos</div>
           <div>Posit. Anterior</div>
           <div>Posit. Atual</div>
           <div>% Posit.</div>
@@ -358,8 +359,9 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         </div>
       </div>
 
-      {/* POSITIVAÇÃO — clientes positivados Anterior × Atual + % penetração */}
-      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
+      {/* POSITIVAÇÃO — Clientes Ativos (carteira) + positivados Anterior × Atual + % penetração */}
+      <div className="grid grid-cols-4 gap-1 px-2 py-2.5 items-center">
+        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
         <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
         <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
         <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
