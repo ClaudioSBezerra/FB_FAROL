@@ -305,8 +305,8 @@ function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
           <div className="grid grid-cols-5 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
             <div>Clientes Ativos</div>
             <div>Posit. Anterior</div>
-            <div>Posit. Atual</div>
             <div>% Ant.</div>
+            <div>Posit. Atual</div>
             <div>% Atual</div>
           </div>
         )}
@@ -371,12 +371,12 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
       {!hidePosit && (
         <div className="grid grid-cols-5 gap-1 px-2 py-2.5 items-center">
           <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
+          {/* cada % ao lado da sua métrica: Anterior (cinza) e Atual (colorido) */}
           <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
-          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
-          {/* % positivação anterior (cinza) × atual (colorido pelo semáforo) */}
           <div className={cn('text-center tabular-nums text-sm font-semibold', isTotal ? 'text-slate-700' : 'text-slate-500')}>
             {fmtPct(card.positpct_ant)}
           </div>
+          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
           <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
             {fmtPct(card.positpct)}
           </div>
