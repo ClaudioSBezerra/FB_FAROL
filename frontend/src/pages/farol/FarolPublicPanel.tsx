@@ -122,10 +122,11 @@ function Cell({ label, value, valueClass = 'text-slate-800' }: {
 // ─── HeaderResumo — substitui KPIBar no mobile (formato planilha do esboço)
 
 function HeaderResumo({
-  kpi, periodo,
+  kpi, periodo, hidePosit,
 }: {
   kpi: KPI
   periodo: CardsResponse['periodo']
+  hidePosit?: boolean
 }) {
   const antLabel = periodo.ant_label || 'Anterior'
   const curLabel = periodo.cur_label || 'Atual'
@@ -157,7 +158,8 @@ function HeaderResumo({
           </div>
         </div>
 
-        {/* SEÇÃO 2: POSITIVAÇÃO */}
+        {/* SEÇÃO 2: POSITIVAÇÃO — escondida no nível Cliente/Produto */}
+        {!hidePosit && (
         <div className="border-t border-slate-100 pt-2.5">
           <SectionLabel banner tone="positivacao">Positivação</SectionLabel>
           <div className="grid grid-cols-4 gap-2">
@@ -167,6 +169,7 @@ function HeaderResumo({
             <Cell label="% Posit" value={fmtPct(kpi.total_positpct)} />
           </div>
         </div>
+        )}
 
         {/* SEÇÃO 3: MIX MÉDIO */}
         <div className="border-t border-slate-100 pt-2.5">
@@ -200,8 +203,9 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           <div className="flex items-start gap-2.5 min-w-0">
             <span className="mt-1.5"><StatusDot cor={card.cor} /></span>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{card.label}</p>
-              <p className="text-sm text-slate-400 mt-0.5 font-mono">{card.key}</p>
+              <p className="text-sm font-semibold text-slate-800 truncate leading-tight" title={`${card.key} - ${card.label}`}>
+                {card.key} - {card.label}
+              </p>
             </div>
           </div>
           <div className="text-right shrink-0">
@@ -220,8 +224,9 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           </div>
         </div>
 
-        {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Posit. Ant | Posit. Atual | % Posit */}
-        {card.base_cli > 0 && (
+        {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Posit. Ant | Posit. Atual | % Posit.
+            Escondida no nível Cliente/Produto (não faz sentido). */}
+        {card.base_cli > 0 && card.level !== 'cod_cli' && card.level !== 'cod_prod' && (
           <div className="border-t border-slate-100 pt-2.5">
             <SectionLabel tone="positivacao">Positivação</SectionLabel>
             <div className="grid grid-cols-4 gap-2">
@@ -380,7 +385,11 @@ export default function FarolPublicPanel() {
         {/* HEADER RESUMO — sempre visível (mesmo zerado) para o supervisor ter o
             totalizador do período, com a carteira e o comparativo. */}
         {data?.kpi && (
-          <HeaderResumo kpi={data.kpi} periodo={data.periodo} />
+          <HeaderResumo
+            kpi={data.kpi}
+            periodo={data.periodo}
+            hidePosit={data.cards[0]?.level === 'cod_cli' || data.cards[0]?.level === 'cod_prod'}
+          />
         )}
 
         {/* Botão VOLTAR — só aparece quando há drill ativo. Mobile precisa

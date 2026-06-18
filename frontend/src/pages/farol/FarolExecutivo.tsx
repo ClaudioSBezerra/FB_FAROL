@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
 import {
-  ChevronLeft, Search, X, Calendar, Filter, ChevronDown, Sparkles,
+  ChevronLeft, Search, X, Calendar, Filter, ChevronDown,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -266,28 +265,34 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
 
 // ─── Cabeçalho colorido + subtítulos (reutilizado em Total e Lista) ─────────
 
-const GRID_COLS = 'grid-cols-[minmax(180px,2fr)_3fr_4fr_1.2fr]'
+const GRID_COLS        = 'grid-cols-[minmax(180px,2fr)_3fr_4fr_1.2fr]'
+const GRID_COLS_NOPOS  = 'grid-cols-[minmax(180px,2fr)_3fr_1.4fr]'
+// Positivação não faz sentido no nível Cliente/Produto → coluna some.
+const gridCols = (hidePosit?: boolean) => (hidePosit ? GRID_COLS_NOPOS : GRID_COLS)
 
-function ColumnsHeader() {
+function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
+  const GC = gridCols(hidePosit)
   return (
     <>
       {/* Tarja preta única; cores apenas nos textos */}
-      <div className={cn('grid', GRID_COLS, TARJA_BG)}>
+      <div className={cn('grid', GC, TARJA_BG)}>
         <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold', COL_NOME_TXT)}>
           Nome
         </div>
         <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_VENDA_TXT)}>
           Venda
         </div>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_POSITIVACAO_TXT)}>
-          Positivação
-        </div>
+        {!hidePosit && (
+          <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_POSITIVACAO_TXT)}>
+            Positivação
+          </div>
+        )}
         <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_MIX_TXT)}>
           Mix Médio
         </div>
       </div>
       {/* Linha clara: subtítulos */}
-      <div className={cn('grid', GRID_COLS, 'bg-slate-50 border-y border-slate-200')}>
+      <div className={cn('grid', GC, 'bg-slate-50 border-y border-slate-200')}>
         <div className="px-3 py-1.5 text-sm uppercase tracking-wide text-slate-400 font-medium">
           {/* vazio */}
         </div>
@@ -296,12 +301,14 @@ function ColumnsHeader() {
           <div>Período Atual</div>
           <div>%</div>
         </div>
-        <div className="grid grid-cols-4 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
-          <div>Clientes Ativos</div>
-          <div>Posit. Anterior</div>
-          <div>Posit. Atual</div>
-          <div>% Posit.</div>
-        </div>
+        {!hidePosit && (
+          <div className="grid grid-cols-4 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
+            <div>Clientes Ativos</div>
+            <div>Posit. Anterior</div>
+            <div>Posit. Atual</div>
+            <div>% Posit.</div>
+          </div>
+        )}
         <div className="px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
           Realizado
         </div>
@@ -316,9 +323,10 @@ interface RowProps {
   card: CardItem
   isTotal?: boolean
   onClick?: () => void
+  hidePosit?: boolean
 }
 
-function DataRow({ card, isTotal = false, onClick }: RowProps) {
+function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
   const clickable = !!onClick
   const valueNum = isTotal
     ? 'text-sm font-bold tabular-nums text-slate-900'
@@ -332,7 +340,7 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
       role={clickable ? 'button' : undefined}
       onClick={onClick}
       className={cn(
-        'grid', GRID_COLS,
+        'grid', gridCols(hidePosit),
         'border-b border-slate-100 last:border-b-0',
         isTotal
           ? 'bg-gradient-to-r from-slate-400 via-slate-300 to-slate-500 border-b-2 border-slate-500'
@@ -340,12 +348,12 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         clickable && 'cursor-pointer hover:bg-slate-50 transition-colors',
       )}
     >
-      {/* Nome */}
+      {/* Nome — "código - descrição" (exceto no Total). Vale p/ Indústria, GGV,
+          Supervisor, RCA, Cliente e Produto. */}
       <div className="px-3 py-2.5 flex items-center">
-        <span className={cn('truncate', valueLabelCls, isTotal ? 'text-slate-900 uppercase tracking-wider' : 'text-slate-800')} title={card.label}>
-          {card.label}
+        <span className={cn('truncate', valueLabelCls, isTotal ? 'text-slate-900 uppercase tracking-wider' : 'text-slate-800')} title={isTotal ? card.label : `${card.key} - ${card.label}`}>
+          {isTotal ? card.label : `${card.key} - ${card.label}`}
         </span>
-        {/* level_label removido — agora aparece no banner sky acima da lista */}
       </div>
 
       {/* VENDA */}
@@ -357,15 +365,18 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         </div>
       </div>
 
-      {/* POSITIVAÇÃO — Clientes Ativos (carteira) + positivados Anterior × Atual + % penetração */}
-      <div className="grid grid-cols-4 gap-1 px-2 py-2.5 items-center">
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
-        <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
-          {fmtPct(card.positpct)}
+      {/* POSITIVAÇÃO — Clientes Ativos (carteira) + positivados Anterior × Atual + % penetração.
+          Escondida no nível Cliente/Produto (não faz sentido). */}
+      {!hidePosit && (
+        <div className="grid grid-cols-4 gap-1 px-2 py-2.5 items-center">
+          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
+          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
+          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
+          <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
+            {fmtPct(card.positpct)}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* MIX MÉDIO — "X de Y" (X = média SKUs por cliente, Y = universo de SKUs distintos) */}
       {/* No Totalizador (isTotal) o fundo é cinza → mix em preto (verde sumia). */}
@@ -621,7 +632,6 @@ export default function FarolExecutivo() {
   // navigate / canImport / refreshing removidos junto com os botões
   // "Importar" e "Consolidar" — gestor pediu pra retirar do painel (usuários
   // clicavam sem querer). Ações administrativas seguem disponíveis no menu.
-  const navigate = useNavigate()
   const { spRole, tipoPersona } = useAuth()
   void spRole; void tipoPersona // mantidos pra futuras gates de UI
 
@@ -714,6 +724,10 @@ export default function FarolExecutivo() {
     return cards.filter(c => c.label.toLowerCase().includes(s))
   }, [cards, search])
 
+  // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
+  const curLevel = cards[0]?.level ?? ''
+  const hidePosit = curLevel === 'cod_cli' || curLevel === 'cod_prod'
+
   // handleRefreshViews removido junto com o botão Consolidar.
 
   const FILTER_DIMS: { col: string; label: string; from: keyof DimsResponse }[] = [
@@ -739,17 +753,6 @@ export default function FarolExecutivo() {
 
   return (
     <div className="min-h-full p-4 md:p-6 bg-slate-50 uppercase text-sm [&_*]:uppercase">
-      {/* ── Toggle V1 → V2 (CEO comparação) ─────────────────────────────────── */}
-      <div className="flex justify-end mb-2">
-        <button
-          onClick={() => navigate('/farol/executivo-v2')}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold tracking-wide rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 transition-colors"
-          title="Visualizar a proposta V2 (visual modernizado)"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Ver Painel V2
-        </button>
-      </div>
 
       {/* ── Seletor de FLUXO (acima de tudo) ────────────────────────────────── */}
       <div className="mb-3">
@@ -952,8 +955,8 @@ export default function FarolExecutivo() {
       {/* ── TOTAL (card único com cabeçalho próprio) ────────────────────────── */}
       {totalCard && (
         <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4 shadow-sm">
-          <ColumnsHeader />
-          <DataRow card={totalCard} isTotal />
+          <ColumnsHeader hidePosit={hidePosit} />
+          <DataRow card={totalCard} isTotal hidePosit={hidePosit} />
         </div>
       )}
 
@@ -974,7 +977,7 @@ export default function FarolExecutivo() {
       {/* ── LISTA de fornecedores/GGV/equipe ─────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
         {/* Cabeçalho colorido da lista (mesmo padrão do total) */}
-        <ColumnsHeader />
+        <ColumnsHeader hidePosit={hidePosit} />
 
         {/* Linhas */}
         {isLoading && (
@@ -994,6 +997,7 @@ export default function FarolExecutivo() {
           <DataRow
             key={c.key}
             card={c}
+            hidePosit={hidePosit}
             onClick={c.level === 'cod_prod' ? undefined : () => handleDrill(c)}
           />
         ))}
