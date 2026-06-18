@@ -28,6 +28,7 @@ export interface CardItem {
   faturado: number
   transmitido: number
   positivados: number
+  positivados_ant: number
   base_cli: number
   positpct: number
   mix: number
@@ -41,6 +42,7 @@ export interface KPI {
   total_faturado: number
   total_transmitido: number
   total_positivados: number
+  total_positivados_ant: number
   total_base_cli: number
   total_positpct: number
   avg_mix: number

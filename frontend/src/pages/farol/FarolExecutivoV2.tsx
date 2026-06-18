@@ -345,7 +345,7 @@ function KpiHero({ kpi, refLabel, compLabel, isLoading }: KpiHeroProps) {
             icon={<Users className="h-4 w-4" />}
             label="Positivação"
             valueMain={fmtPct(kpi.total_positpct)}
-            valuePrev={`${fmtInt(kpi.total_positivados)} / ${fmtInt(kpi.total_base_cli)}`}
+            valuePrev={`${fmtInt(kpi.total_positivados_ant)} → ${fmtInt(kpi.total_positivados)} positivados`}
             pct={kpi.total_positpct - kpi.total_positpct_ant}
             cor={kpi.total_posit_cor}
             isPctValue
@@ -506,7 +506,7 @@ function CardRow({ card, onClick, index }: CardRowProps) {
               {fmtPct(card.positpct)}
             </span>
             <span className="text-sm font-medium text-slate-600 tabular-nums">
-              {fmtInt(card.positivados)} / {fmtInt(card.base_cli)}
+              {fmtInt(card.positivados_ant)} → {fmtInt(card.positivados)} / {fmtInt(card.base_cli)}
             </span>
           </div>
           <div className="mt-1.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">

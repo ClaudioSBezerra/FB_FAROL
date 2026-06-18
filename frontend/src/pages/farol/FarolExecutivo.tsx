@@ -299,8 +299,8 @@ function ColumnsHeader() {
           <div>%</div>
         </div>
         <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
-          <div>Clientes Ativos</div>
-          <div>Clientes Positivados</div>
+          <div>Posit. Anterior</div>
+          <div>Posit. Atual</div>
           <div>% Posit.</div>
         </div>
         <div className="px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
@@ -358,9 +358,9 @@ function DataRow({ card, isTotal = false, onClick }: RowProps) {
         </div>
       </div>
 
-      {/* POSITIVAÇÃO */}
+      {/* POSITIVAÇÃO — clientes positivados Anterior × Atual + % penetração */}
       <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
-        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
+        <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
         <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
         <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
           {fmtPct(card.positpct)}
