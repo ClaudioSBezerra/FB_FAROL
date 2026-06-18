@@ -1192,6 +1192,29 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 	wg.Wait()
 
+	// CONCEITO OFICIAL: clientes positivados = COUNT(DISTINCT cnpj) por agrupador
+	// no período (não a média mensal do queryAggregatedMes). Sobrescreve ref/comp
+	// lendo da tabela folha (grão cnpj). O caminho vendas_* (filtro cruzado) e
+	// queryProdutos já contam distinto; só o caminho agg precisava do ajuste.
+	if useAggMes && leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
+		ref := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+		for k, n := range ref {
+			if r, ok := atualMap[k]; ok {
+				r.positivados = n
+				atualMap[k] = r
+			}
+		}
+		if hasComp {
+			ant := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+			for k, n := range ant {
+				if r, ok := antMap[k]; ok {
+					r.positivados = n
+					antMap[k] = r
+				}
+			}
+		}
+	}
+
 	// Cor binária: verde se atingiu ≥ 100% do anterior, vermelho caso contrário.
 	// Sem comparativo, considera neutro (verde — sem alerta).
 	pickCor := func(atual, ant float64) (float64, string) {
@@ -1430,6 +1453,82 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 		return 0
 	}
 	return count
+}
+
+// leafTableFor — tabela folha (grão cnpj) da view: o nível mais profundo das
+// agg_*_mes (cliente/cnpj; produto não é agg). Tem cnpj + toda a hierarquia.
+func leafTableFor(fluxo fluxoCtx, view string) (string, int, bool) {
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+	lvls, ok := tables[view]
+	if !ok || len(lvls) == 0 {
+		return "", 0, false
+	}
+	leafIdx := len(lvls) - 1
+	return "farol." + lvls[leafIdx], leafIdx, true
+}
+
+// leafServesPositivados — true se a folha da view contém groupCol + todas as
+// colunas de drill/filtro (logo dá pra contar cnpj distinto por groupCol nela).
+func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) bool {
+	_, leafIdx, ok := leafTableFor(fluxo, view)
+	if !ok {
+		return false
+	}
+	cols := colsInAggTable(view, leafIdx)
+	if !cols[groupCol] {
+		return false
+	}
+	for _, d := range drillPath {
+		if !cols[d.Level] {
+			return false
+		}
+	}
+	for c := range filters {
+		if !cols[c] {
+			return false
+		}
+	}
+	return true
+}
+
+// queryDistinctPositivados — CONCEITO OFICIAL do gestor: clientes positivados =
+// COUNT(DISTINCT cnpj) por agrupador no período informado (não a média mensal).
+// Lê da tabela folha (grão cnpj×mês); um cliente que comprou em qualquer mês do
+// período conta 1. Substitui o AVG(positivados) do queryAggregatedMes.
+func queryDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) map[string]int {
+	leaf, _, ok := leafTableFor(fluxo, view)
+	if !ok {
+		return nil
+	}
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymStart, ymEnd, &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, COUNT(DISTINCT v.cnpj) AS positivados
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.positivados > 0 AND %s %s
+GROUP BY v.%s`, groupCol, leaf, groupCol, mesCond, cond, groupCol)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:posit] queryDistinctPositivados view=%s nível=%s ERRO: %v", view, groupCol, err)
+		return nil
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var key string
+		var n int
+		if rows.Scan(&key, &n) == nil {
+			out[key] = n
+		}
+	}
+	return out
 }
 
 // queryCompanyBaseCli retorna o total de clientes ativos da empresa via mv_*_carteira_rca.

@@ -166,7 +166,7 @@ function HeaderResumo({
             <Cell label="Cl. Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
             <Cell label="Posit. Ant" value={fmtInt(kpi.total_positivados_ant)} valueClass="text-slate-500" />
             <Cell label="Posit. Atual" value={fmtInt(kpi.total_positivados)} />
-            <Cell label="% Posit" value={fmtPct(kpi.total_positpct)} />
+            <Cell label="% Ant → Atual" value={`${fmtPct(kpi.total_positpct_ant)} → ${fmtPct(kpi.total_positpct)}`} />
           </div>
         </div>
         )}
@@ -233,7 +233,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
               <Cell label="Cl. Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
               <Cell label="Posit. Ant" value={fmtInt(card.positivados_ant)} valueClass="text-slate-500" />
               <Cell label="Posit. Atual" value={fmtInt(card.positivados)} />
-              <Cell label="% Posit" value={fmtPct(card.positpct)} />
+              <Cell label="% Ant → Atual" value={`${fmtPct(card.positpct_ant)} → ${fmtPct(card.positpct)}`} />
             </div>
           </div>
         )}

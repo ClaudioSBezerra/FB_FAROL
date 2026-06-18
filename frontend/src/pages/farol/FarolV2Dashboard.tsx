@@ -31,6 +31,7 @@ export interface CardItem {
   positivados_ant: number
   base_cli: number
   positpct: number
+  positpct_ant: number
   mix: number
 }
 
@@ -45,6 +46,7 @@ export interface KPI {
   total_positivados_ant: number
   total_base_cli: number
   total_positpct: number
+  total_positpct_ant: number
   avg_mix: number
   verdes: number
   vermelhos: number
