@@ -483,6 +483,11 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level == "cod_fornec" {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, spCtx.EmpresaID, pr, drillPath)
+		} else {
+			// mix_total do totalizador = universo DISTINTO da seleção (somar cards
+			// superestima fora do nível fornecedor). Ex: drill em P&G por gerente.
+			kpi.TotalMixTotal = queryDistinctMixTotal(db, fluxo, spCtx.EmpresaID, pr.RefInicio, pr.RefFim, drillPath, filters)
+			kpi.TotalMixTotalAnt = queryDistinctMixTotal(db, fluxo, spCtx.EmpresaID, pr.CompInicio, pr.CompFim, drillPath, filters)
 		}
 		periodos := fetchPeriodosDisponiveis(db, spCtx.EmpresaID)
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
@@ -750,13 +755,13 @@ SELECT
   AVG(v.mix)                     AS mix,
   %s                             AS mix_total
 FROM %s v
-WHERE v.empresa_id=$1 AND v.%s != '' AND v.%s != ''
+WHERE v.empresa_id=$1 AND v.%s != ''
 AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol,
 		mixTotalExpr,
 		viewName,
-		groupCol, nameCol, mesCond, drillCond,
+		groupCol, mesCond, drillCond,
 		groupCol,
 	)
 	rows, err := db.Query(q, args...)
@@ -1276,6 +1281,30 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	log.Printf("[farol:view] fetchCards fluxo=%s nível=%s → %d cards (atual=%d ant-only=%d) total=%v",
 		fluxo.name, groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0))
 	return cards
+}
+
+// queryDistinctMixTotal — universo de SKUs DISTINTOS da seleção atual
+// (drill + filtros) no período. Usado no totalizador quando o agrupamento NÃO é
+// por fornecedor: somar o mix_total dos cards (computeKPI) superestima, porque o
+// mesmo SKU aparece em vários cards (ex: drill numa indústria agrupando por
+// gerente — todos vendem os mesmos SKUs daquela indústria). COUNT(DISTINCT) dá
+// o universo correto (ex: P&G = 430, não a soma 1745).
+func queryDistinctMixTotal(db *sql.DB, fluxo fluxoCtx, empresaID string, ini, fim time.Time, drillPath []drillStep, filters multiFilters) int {
+	if ini.IsZero() || fim.IsZero() {
+		return 0
+	}
+	args := []any{empresaID}
+	rangeCond := buildRangeCond(fluxo.dateCol, ini, fim, &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+	q := fmt.Sprintf(`SELECT COUNT(DISTINCT v.cod_prod) FROM %s v
+		WHERE v.empresa_id=$1 AND v.cod_prod <> '' AND v.qt > 0 AND %s %s`,
+		fluxo.tableName, rangeCond, cond)
+	var n int
+	_ = db.QueryRow(q, args...).Scan(&n)
+	return n
 }
 
 // ─── computeKPI ──────────────────────────────────────────────────────────────
@@ -2064,6 +2093,9 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level == "cod_fornec" {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, empresaID, pr, drillPath)
+		} else {
+			kpi.TotalMixTotal = queryDistinctMixTotal(db, fluxo, empresaID, pr.RefInicio, pr.RefFim, drillPath, filters)
+			kpi.TotalMixTotalAnt = queryDistinctMixTotal(db, fluxo, empresaID, pr.CompInicio, pr.CompFim, drillPath, filters)
 		}
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
