@@ -80,9 +80,9 @@ function corPenetr(pct: number): { bar: string; text: string } {
 }
 
 const MODE_DESC: Record<string, string> = {
-  yoy: 'Compara o mesmo mês do ano atual com o mesmo mês do ano anterior.',
-  ytd: 'Extrapola o acumulado do ano atual para projetar o total anual.',
-  mom: 'Compara o mês atual com o mês imediatamente anterior.',
+  ytd: 'Acumulado do ano (Jan até o último mês) × mesmo período do ano anterior — janela igual.',
+  yoy: 'Último mês fechado × o mesmo mês do ano anterior.',
+  mom: 'Mês atual × o mês imediatamente anterior.',
 }
 
 // ─── Tipos detalhe de produto ─────────────────────────────────────────────────
@@ -868,7 +868,7 @@ function ClientesInativos({ clientes }: { clientes: ClienteInativo[] }) {
 
 export default function FarolMarketing() {
   const [view, setView]               = useState<'produto' | 'cliente' | 'fornec'>('produto')
-  const [compMode, setCompMode]       = useState('yoy')
+  const [compMode, setCompMode]       = useState('ytd')
   const [refAno, setRefAno]           = useState(0)
   const [refMes, setRefMes]           = useState(0)
   const [compAno, setCompAno]         = useState(0)
@@ -939,8 +939,8 @@ export default function FarolMarketing() {
         {/* Comparação */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
-            { id: 'yoy', label: 'Ano a Ano' },
-            { id: 'ytd', label: 'Acumulado Anual' },
+            { id: 'ytd', label: 'Ano × Ano' },
+            { id: 'yoy', label: 'Último mês YoY' },
             { id: 'mom', label: 'Mês a Mês' },
           ].map(m => (
             <TooltipProvider key={m.id} delayDuration={400}>

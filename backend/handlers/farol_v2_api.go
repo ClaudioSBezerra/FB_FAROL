@@ -388,6 +388,14 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 			res.CompAno = compAno
 			res.CompMes = compMes
 		} else if mode != "" {
+			// ytd ("Acumulado Anual"): o ref vem como mês único (ref_ano/ref_mes);
+			// expandir para Jan-1 do ano de ref → fim do mês de ref, para o
+			// comparativo (Jan-1 ano anterior → mesma data) ter JANELA IGUAL.
+			// Senão compararia 1 mês × vários meses.
+			if mode == "ytd" {
+				refInicio = time.Date(refFim.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+				res.RefInicio = refInicio
+			}
 			compInicio, compFim = deriveCompRange(refInicio, refFim, mode)
 			res.CompMode = mode
 		}

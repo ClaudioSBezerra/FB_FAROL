@@ -275,9 +275,10 @@ const REFETCH_MS = 60 * 60 * 1_000
 
 function useBiData(view: string) {
   return useQuery<BiResponse>({
-    queryKey: ['bi-cards', view],
+    queryKey: ['bi-cards', view, 'ytd'],
     queryFn: async () => {
-      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=yoy`)
+      // Ano × Ano acumulado (janela igual) — consistente com Executivo/Marketing.
+      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=ytd`)
       if (!r.ok) throw new Error(`Falha ao carregar BI (${view})`)
       return r.json()
     },
