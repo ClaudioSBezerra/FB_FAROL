@@ -378,17 +378,13 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
         </div>
       )}
 
-      {/* MIX MÉDIO — "X de Y" (X = média SKUs por cliente, Y = universo de SKUs distintos) */}
+      {/* MIX MÉDIO — só a média de SKUs/cliente. O "de Y" (universo) foi omitido
+          a pedido do gestor (gera confusão; muitas variáveis influenciam o total). */}
       {/* No Totalizador (isTotal) o fundo é cinza → mix em preto (verde sumia). */}
       <div className="px-2 py-2.5 flex items-center justify-center gap-1 flex-wrap">
         <span className={cn('font-bold tabular-nums', isTotal ? 'text-sm font-bold text-slate-900' : cn('text-sm', COR_TXT[card.mix_cor]))}>
           {fmtMix(card.mix)}
         </span>
-        {card.mix_total > 0 && (
-          <span className={cn('text-sm tabular-nums font-medium', isTotal ? 'text-slate-700' : 'text-slate-500')}>
-            de {fmtInt(card.mix_total)}
-          </span>
-        )}
       </div>
     </div>
   )
