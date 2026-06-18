@@ -317,8 +317,9 @@ func deriveCompRange(refInicio, refFim time.Time, mode string) (time.Time, time.
 		ini := fim.AddDate(0, 0, -(diasRange - 1))
 		return ini, fim
 	case "ytd":
+		// Acumulado do ano corrente × ANO ANTERIOR INTEIRO (01/jan a 31/dez).
 		ini := time.Date(refFim.Year()-1, 1, 1, 0, 0, 0, 0, time.UTC)
-		fim := time.Date(refFim.Year()-1, refFim.Month(), refFim.Day(), 0, 0, 0, 0, time.UTC)
+		fim := time.Date(refFim.Year()-1, 12, 31, 0, 0, 0, 0, time.UTC)
 		return ini, fim
 	}
 	return time.Time{}, time.Time{}
@@ -388,10 +389,9 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 			res.CompAno = compAno
 			res.CompMes = compMes
 		} else if mode != "" {
-			// ytd ("Acumulado Anual"): o ref vem como mês único (ref_ano/ref_mes);
-			// expandir para Jan-1 do ano de ref → fim do mês de ref, para o
-			// comparativo (Jan-1 ano anterior → mesma data) ter JANELA IGUAL.
-			// Senão compararia 1 mês × vários meses.
+			// ytd ("Ano × Ano"): o ref vem como mês único (ref_ano/ref_mes);
+			// expandir para Jan-1 do ano de ref → fim do mês de ref (acumulado do
+			// ano corrente). O comparativo é o ANO ANTERIOR INTEIRO (deriveCompRange).
 			if mode == "ytd" {
 				refInicio = time.Date(refFim.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 				res.RefInicio = refInicio

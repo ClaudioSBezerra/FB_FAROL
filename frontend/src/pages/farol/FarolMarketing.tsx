@@ -80,7 +80,7 @@ function corPenetr(pct: number): { bar: string; text: string } {
 }
 
 const MODE_DESC: Record<string, string> = {
-  ytd: 'Acumulado do ano (Jan até o último mês) × mesmo período do ano anterior — janela igual.',
+  ytd: 'Acumulado do ano corrente (Jan até o último mês) × o ano anterior inteiro (Jan–Dez).',
   yoy: 'Último mês fechado × o mesmo mês do ano anterior.',
   mom: 'Mês atual × o mês imediatamente anterior.',
 }
