@@ -455,14 +455,18 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[16] = getField(csvRow, iCodProd)
 		r.vals[17] = getField(csvRow, iNomeProd)
 		r.vals[18] = getField(csvRow, iEan)
+		// pvenda no CSV é preço UNITÁRIO (confirmado pela TI) → valor real da
+		// venda = pvenda * qt. Gravamos sempre o TOTAL em vendas_*.
 		// plucro vem no CSV como PERCENTUAL (ex.: 20 = 20%). Convertemos para
-		// valor absoluto (R$) na inserção: lucroValor = pvenda * (% / 100).
+		// valor absoluto (R$) sobre o total: lucroValor = pvendaTotal * (% / 100).
 		// Isso mantém compatibilidade com todas as MVs/handlers que somam plucro.
-		pvendaVal := parseNum(rawPvenda)
+		qtVal := parseNum(rawQt)
+		pvendaUnit := parseNum(rawPvenda)
 		plucroPct := parseNum(rawPlucro)
-		r.vals[19] = parseNum(rawQt)
-		r.vals[20] = pvendaVal
-		r.vals[21] = pvendaVal * plucroPct / 100.0
+		pvendaTotal := pvendaUnit * qtVal
+		r.vals[19] = qtVal
+		r.vals[20] = pvendaTotal
+		r.vals[21] = pvendaTotal * plucroPct / 100.0
 		r.vals[22] = getField(csvRow, iCNPJ)
 		// Campos visuais (mig 168) — só gravamos, não usamos em agregados
 		r.vals[23] = getField(csvRow, iCodRamo)
