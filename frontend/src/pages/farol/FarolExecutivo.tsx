@@ -953,6 +953,14 @@ export default function FarolExecutivo() {
         </div>
       )}
 
+      {/* ── Legenda do período: a quem "Anterior"/"Atual" se referem ────────── */}
+      {data?.periodo?.label && (
+        <div className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-sm">
+          <Calendar className="h-3.5 w-3.5 text-slate-400" />
+          {data.periodo.label}
+        </div>
+      )}
+
       {/* ── TOTAL (card único com cabeçalho próprio) ────────────────────────── */}
       {totalCard && (
         <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4 shadow-sm">
