@@ -301,6 +301,24 @@ func inferLastMonth(db *sql.DB, empresaID string) (int, int) {
 	return ano, mes
 }
 
+// inferLastDay — último DIA importado (max data_faturamento/transmissao) da
+// empresa. Usado pelo "Ano × Ano" (ytd) como fim do acumulado do ano corrente
+// ("até hoje" = até o último dia com dado). Zero se não houver dados.
+func inferLastDay(db *sql.DB, empresaID string) time.Time {
+	var d sql.NullTime
+	_ = db.QueryRow(`
+		SELECT MAX(d) FROM (
+			SELECT MAX(data_faturamento) AS d FROM vendas_faturadas   WHERE empresa_id=$1
+			UNION ALL
+			SELECT MAX(data_transmissao) AS d FROM vendas_transmitidas WHERE empresa_id=$1
+		) x
+	`, empresaID).Scan(&d)
+	if d.Valid {
+		return d.Time.UTC()
+	}
+	return time.Time{}
+}
+
 // deriveCompRange calcula um intervalo comparativo a partir de (refInicio, refFim)
 // e do compMode (yoy | mom | ytd). Retorna (zero, zero) se mode for desconhecido.
 //
@@ -389,12 +407,18 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 			res.CompAno = compAno
 			res.CompMes = compMes
 		} else if mode != "" {
-			// ytd ("Ano × Ano"): o ref vem como mês único (ref_ano/ref_mes);
-			// expandir para Jan-1 do ano de ref → fim do mês de ref (acumulado do
-			// ano corrente). O comparativo é o ANO ANTERIOR INTEIRO (deriveCompRange).
+			// ytd ("Ano × Ano"): acumulado do ano corrente = 01/jan → ÚLTIMO DIA
+			// IMPORTADO ("até hoje" = último dado). Comparativo = ANO ANTERIOR
+			// INTEIRO (deriveCompRange = 01/jan–31/dez).
 			if mode == "ytd" {
-				refInicio = time.Date(refFim.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+				last := inferLastDay(db, empresaID)
+				if last.IsZero() {
+					last = refFim // fallback: fim do mês de ref
+				}
+				refInicio = time.Date(last.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+				refFim = time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
 				res.RefInicio = refInicio
+				res.RefFim = refFim
 			}
 			compInicio, compFim = deriveCompRange(refInicio, refFim, mode)
 			res.CompMode = mode
