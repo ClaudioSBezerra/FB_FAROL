@@ -1192,25 +1192,25 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 	wg.Wait()
 
-	// CONCEITO OFICIAL: clientes positivados = COUNT(DISTINCT cnpj) por agrupador
-	// no período (não a média mensal do queryAggregatedMes). Sobrescreve ref/comp
-	// lendo da tabela folha (grão cnpj). O caminho vendas_* (filtro cruzado) e
-	// queryProdutos já contam distinto; só o caminho agg precisava do ajuste.
+	// Positivados = COUNT(DISTINCT cnpj) por agrupador no período informado.
+	// Clientes Ativos (base PROVISÓRIA do Heverton) = COUNT(DISTINCT cnpj) que já
+	// compraram no recorte, considerando TODO o período disponível (não 12M, não
+	// a carteira do Keslley — que segue no banco, só não é exibida). Ambos lidos
+	// da folha (grão cnpj). vendas_* (filtro cruzado) e produto já contam distinto.
 	if useAggMes && leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
-		ref := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
-		for k, n := range ref {
-			if r, ok := atualMap[k]; ok {
-				r.positivados = n
-				atualMap[k] = r
-			}
+		base := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
+		refPos := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+		for k, r := range atualMap {
+			r.positivados = refPos[k]
+			r.baseCli = base[k]
+			atualMap[k] = r
 		}
 		if hasComp {
-			ant := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
-			for k, n := range ant {
-				if r, ok := antMap[k]; ok {
-					r.positivados = n
-					antMap[k] = r
-				}
+			antPos := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+			for k, r := range antMap {
+				r.positivados = antPos[k]
+				r.baseCli = base[k]
+				antMap[k] = r
 			}
 		}
 	}
@@ -1553,11 +1553,12 @@ func queryCompanyBaseCli(db *sql.DB, fluxo fluxoCtx, empresaID string) int {
 // Quando drillPath está vazio (V01 L0), base_cli agora é rolling-12M por fornecedor,
 // então o MAX das linhas daria a base do maior fornecedor — corrigimos com o total real.
 func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view string, empresaID string, pr periodResolution, drillPath []drillStep) {
-	if len(drillPath) == 0 {
-		base := queryCompanyBaseCli(db, fluxo, empresaID)
-		kpi.TotalBaseCli = base
-		kpi.TotalBaseCliAnt = base
-	}
+	// Clientes Ativos (PROVISÓRIO Heverton) = COUNT(DISTINCT cnpj) que já
+	// compraram no recorte (TODO o período disponível). Antes: carteira Rotina 302
+	// (queryCompanyBaseCli), que segue no banco mas não é mais exibida.
+	base := queryDistinctCliPositivados(db, fluxo, view, empresaID, 0, 999912, drillPath)
+	kpi.TotalBaseCli = base
+	kpi.TotalBaseCliAnt = base
 	ref := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath)
 	kpi.TotalPositivados = ref
 	if kpi.TotalBaseCli > 0 {
