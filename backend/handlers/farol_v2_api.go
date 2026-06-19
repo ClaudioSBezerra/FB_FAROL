@@ -426,6 +426,18 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 				res.RefInicio = refInicio
 				res.RefFim = refFim
 			}
+
+				// mtd: mês atual (01/dia -> último dado) vs mês anterior inteiro
+				if mode == "mtd" {
+					last := inferLastDay(db, empresaID)
+					if last.IsZero() {
+						last = refFim // fallback: fim do mês de ref
+					}
+					refInicio = time.Date(last.Year(), last.Month(), 1, 0, 0, 0, 0, time.UTC)
+					refFim = time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
+					res.RefInicio = refInicio
+					res.RefFim = refFim
+				}
 			compInicio, compFim = deriveCompRange(refInicio, refFim, mode)
 			res.CompMode = mode
 		}
