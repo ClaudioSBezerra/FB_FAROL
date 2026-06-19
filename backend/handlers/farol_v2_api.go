@@ -1132,6 +1132,19 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 
 	useAggMes := groupCol != "cod_prod" && hasAgg && aggOK
 
+	// Range diário (NÃO cobre meses completos) → as agg_*_mes (grão mensal)
+	// expandiriam para o mês inteiro, falseando presets como "Dia Anterior".
+	// Nesse caso lemos o diário cru via queryAggregatedVendas (mesmo caminho
+	// do filtro cruzado), que respeita a data exata. Só vale quando há
+	// comparativo também diário — senão é um range mensal normal.
+	refDiario := !isCompleteMonthRange(pr.RefInicio, pr.RefFim)
+	if useAggMes && refDiario {
+		useAggMes = false
+		aggOK = false // força o switch a cair em queryAggregatedVendas
+		log.Printf("[farol:agg] range diário [%s..%s] → diário cru (vendas_*) em vez de agg_mes",
+			pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+	}
+
 	log.Printf("[farol:agg] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
 		empresaID, fluxo.name, aggName, groupCol,
 		pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"),
