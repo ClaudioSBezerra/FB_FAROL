@@ -320,11 +320,12 @@ func inferLastDay(db *sql.DB, empresaID string) time.Time {
 }
 
 // deriveCompRange calcula um intervalo comparativo a partir de (refInicio, refFim)
-// e do compMode (yoy | mom | ytd). Retorna (zero, zero) se mode for desconhecido.
+// e do compMode (yoy | mom | ytd | mtd). Retorna (zero, zero) se mode for desconhecido.
 //
 //	yoy → subtrai 1 ano nas duas pontas
 //	mom → range contíguo imediatamente anterior (mesma quantidade de dias)
 //	ytd → 1º jan do ano anterior até a mesma data (refFim com ano-1)
+//	mtd → 1º dia do mês anterior até o último dia daquele mês
 func deriveCompRange(refInicio, refFim time.Time, mode string) (time.Time, time.Time) {
 	switch strings.ToLower(mode) {
 	case "yoy":
@@ -338,6 +339,11 @@ func deriveCompRange(refInicio, refFim time.Time, mode string) (time.Time, time.
 		// Acumulado do ano corrente × ANO ANTERIOR INTEIRO (01/jan a 31/dez).
 		ini := time.Date(refFim.Year()-1, 1, 1, 0, 0, 0, 0, time.UTC)
 		fim := time.Date(refFim.Year()-1, 12, 31, 0, 0, 0, 0, time.UTC)
+		return ini, fim
+	case "mtd":
+		// Mês atual (01/dia até hoje) × MÊS ANTERIOR INTEIRO
+		ini := time.Date(refFim.Year(), refFim.Month()-1, 1, 0, 0, 0, 0, time.UTC)
+		fim := ini.AddDate(0, 1, -1) // último dia do mês anterior
 		return ini, fim
 	}
 	return time.Time{}, time.Time{}

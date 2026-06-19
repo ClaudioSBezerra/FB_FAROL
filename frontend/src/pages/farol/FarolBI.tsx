@@ -272,12 +272,13 @@ function RcaRanking({ cards }: { cards: CardItem[] }) {
 
 const REFETCH_MS = 60 * 60 * 1_000
 
-function useBiData(view: string) {
+type CompMode = 'ytd' | 'mtd'
+
+function useBiData(view: string, compMode: CompMode) {
   return useQuery<BiResponse>({
-    queryKey: ['bi-cards', view, 'ytd'],
+    queryKey: ['bi-cards', view, compMode],
     queryFn: async () => {
-      // Ano × Ano acumulado (janela igual) — consistente com Executivo/Marketing.
-      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=ytd`)
+      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=${compMode}`)
       if (!r.ok) throw new Error(`Falha ao carregar BI (${view})`)
       return r.json()
     },
@@ -292,11 +293,23 @@ function useBiData(view: string) {
 
 export default function FarolBI() {
   const [nextRefresh, setNextRefresh] = useState(Date.now() + REFETCH_MS)
+  const [compMode, setCompMode] = useState<CompMode>('ytd')
   const queryClient = useQueryClient()
 
-  const kpiQuery = useBiData('V03')
-  const indQuery = useBiData('V01')
-  const rcaQuery = useBiData('V02')
+  const kpiQuery = useBiData('V03', compMode)
+  const indQuery = useBiData('V01', compMode)
+  const rcaQuery = useBiData('V02', compMode)
+
+  function handleRefresh() {
+    queryClient.invalidateQueries({ queryKey: ['bi-cards'] })
+    setNextRefresh(Date.now() + REFETCH_MS)
+  }
+
+  function handleCompModeChange(mode: CompMode) {
+    if (mode !== compMode) {
+      setCompMode(mode)
+    }
+  }
 
   function handleRefresh() {
     queryClient.invalidateQueries({ queryKey: ['bi-cards'] })
@@ -328,17 +341,40 @@ export default function FarolBI() {
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <header className="relative z-10 flex items-center justify-between px-8 py-4 border-b border-slate-800/60 shrink-0">
-        <div className="flex items-center gap-4">
-          <img src="/logo-fb.png" alt="Logo" className="h-8 w-8 rounded-lg object-cover opacity-70" />
-          <div>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Painel BI — War Room</p>
-            <p className="text-sm font-semibold text-slate-200">
-              {periodo
-                ? periodo.ant_label
-                  ? `${periodo.cur_label} · vs ${periodo.ant_label}`
-                  : periodo.cur_label
-                : 'Carregando período…'}
-            </p>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <img src="/logo-fb.png" alt="Logo" className="h-8 w-8 rounded-lg object-cover opacity-70" />
+            <div>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Painel BI — War Room</p>
+              <p className="text-sm font-semibold text-slate-200">
+                {periodo
+                  ? periodo.ant_label
+                    ? `${periodo.cur_label} · vs ${periodo.ant_label}`
+                    : periodo.cur_label
+                  : 'Carregando período…'}
+              </p>
+            </div>
+          </div>
+          {/* Seletor YTD / MTD */}
+          <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1 border border-slate-800">
+            <button
+              onClick={() => handleCompModeChange('ytd')}
+              className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
+                compMode === 'ytd'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}>
+              Acumulado Ano
+            </button>
+            <button
+              onClick={() => handleCompModeChange('mtd')}
+              className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
+                compMode === 'mtd'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}>
+              Mês Atual
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-6">
