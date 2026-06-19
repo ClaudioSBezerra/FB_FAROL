@@ -93,15 +93,16 @@ function BiClock({ nextRefresh }: { nextRefresh: number }) {
 // ─── ArcGaugeDark ─────────────────────────────────────────────────────────────
 
 function ArcGaugeDark({
-  gaugeId, arcPct, centerText, label, sublabel, subvalue, comparisonText, color, size = 180,
+  gaugeId, arcPct, centerText, label, sublabel, subvalue, prevValue, curValue, color, size = 180,
 }: {
   gaugeId: string
   arcPct: number       // 0-100, controls arc fill
   centerText: string   // displayed in center
   label: string
-  sublabel: string
+  sublabel?: string
   subvalue?: string
-  comparisonText?: string  // "Anterior: R$ X × R$ Y Faturados"
+  prevValue?: string   // valor anterior (comparativo) — hierarquia secundária
+  curValue?: string    // valor atual faturado — hierarquia primária (grande, colorido)
   color: string
   size?: number
 }) {
@@ -153,14 +154,36 @@ function ArcGaugeDark({
       </div>
       {/* Valores apurados — espaço extra abaixo do arco */}
       <div className="text-center mt-5">
-        <p className="text-white font-semibold" style={{ fontSize: size * 0.088 }}>{sublabel}</p>
-        {comparisonText && (
-          <p className="text-slate-300 mt-2 font-medium" style={{ fontSize: size * 0.06 }}>
-            {comparisonText}
-          </p>
-        )}
-        {subvalue && !comparisonText && (
-          <p className="text-slate-500 mt-1" style={{ fontSize: size * 0.07 }}>{subvalue}</p>
+        {/* Comparativo Anterior → Atual como protagonista (grande + negrito) */}
+        {curValue ? (
+          <div className="flex flex-col items-center gap-1">
+            {prevValue && (
+              <div className="flex items-baseline justify-center gap-2">
+                <span className="text-slate-500 uppercase tracking-wide font-semibold"
+                  style={{ fontSize: size * 0.058 }}>
+                  Anterior
+                </span>
+                <span className="text-slate-400 font-bold tabular-nums"
+                  style={{ fontSize: size * 0.082 }}>
+                  {prevValue}
+                </span>
+              </div>
+            )}
+            <div className="flex items-baseline justify-center gap-2">
+              <span className="uppercase tracking-wide font-semibold"
+                style={{ fontSize: size * 0.058, color }}>
+                Atual
+              </span>
+              <span className="font-black tabular-nums" style={{ fontSize: size * 0.105, color }}>
+                {curValue}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <>
+            {sublabel && <p className="text-white font-semibold" style={{ fontSize: size * 0.088 }}>{sublabel}</p>}
+            {subvalue && <p className="text-slate-500 mt-1" style={{ fontSize: size * 0.07 }}>{subvalue}</p>}
+          </>
         )}
       </div>
     </div>
@@ -420,11 +443,8 @@ export default function FarolBI() {
                 arcPct={Math.min(kpi.total_pct, 100)}
                 centerText={fmtPct(kpi.total_pct)}
                 label="Objetivo Geral"
-                sublabel={fmtBRL(kpi.total_faturado) + ' faturado'}
-                comparisonText={kpi.total_ant > 0
-                  ? `Anterior: ${fmtBRL(kpi.total_ant)} × ${fmtBRL(kpi.total_faturado)} Faturados`
-                  : undefined
-                }
+                prevValue={kpi.total_ant > 0 ? fmtBRL(kpi.total_ant) : undefined}
+                curValue={fmtBRL(kpi.total_faturado)}
                 color={gaugeColor(kpi.total_pct)}
               />
             </div>
