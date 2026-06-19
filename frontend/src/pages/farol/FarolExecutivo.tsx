@@ -307,7 +307,7 @@ function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
             <div>Posit. Anterior</div>
             <div>% Posit. Ant.</div>
             <div>Posit. Atual</div>
-            <div>% Posit. Atual</div>
+            <div>% Posit. Atual X Anterior</div>
           </div>
         )}
         <div className="px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
