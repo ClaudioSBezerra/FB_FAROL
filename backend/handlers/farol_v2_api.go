@@ -1917,13 +1917,18 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 				                  WHERE a.empresa_id=$1 AND (a.pvenda <> 0 OR a.qt > 0))`,
 					src[1], lvl)
 			}
+			// ORDER BY label para todas as dims exceto cli (34k+ registros)
+			orderClause := "ORDER BY label"
+			if dimName == "cli" {
+				orderClause = "" // clientes não precisam de ordenação alfabética
+			}
 			rows, err := db.Query(fmt.Sprintf(`
 				SELECT d.key, MAX(d.label) AS label
 				  FROM %s d
 				 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != ''%s
 				 GROUP BY d.key
-				 ORDER BY label
-			`, dimsTable, comSemMov), spCtx.EmpresaID, dimName)
+				 %s
+			`, dimsTable, comSemMov, orderClause), spCtx.EmpresaID, dimName)
 			if err != nil {
 				log.Printf("[dims] %s ERRO em %v: %v", codCol, time.Since(td), err)
 				return nil
