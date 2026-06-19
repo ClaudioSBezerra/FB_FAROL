@@ -1202,15 +1202,24 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// a carteira do Keslley — que segue no banco, só não é exibida). Ambos lidos
 	// da folha (grão cnpj). vendas_* (filtro cruzado) e produto já contam distinto.
 	if useAggMes && leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
-		base := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
-		refPos := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+		var base, refPos, antPos map[string]int
+		var wgPos sync.WaitGroup
+		wgPos.Add(1)
+		go func() { defer wgPos.Done(); base = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters) }()
+		wgPos.Add(1)
+		go func() { defer wgPos.Done(); refPos = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters) }()
+		if hasComp {
+			wgPos.Add(1)
+			go func() { defer wgPos.Done(); antPos = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters) }()
+		}
+		wgPos.Wait()
+
 		for k, r := range atualMap {
 			r.positivados = refPos[k]
 			r.baseCli = base[k]
 			atualMap[k] = r
 		}
 		if hasComp {
-			antPos := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
 			for k, r := range antMap {
 				r.positivados = antPos[k]
 				r.baseCli = base[k]
