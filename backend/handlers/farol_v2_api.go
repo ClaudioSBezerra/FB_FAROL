@@ -1893,7 +1893,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			"gerente":    {"agg_%s_v03_l0_mes", "cod_gerente"},
 			"supervisor": {"agg_%s_v02_l0_mes", "cod_supervisor"},
 			"rca":        {"agg_%s_v04_l0_mes", "cod_rca"},
-			"cli":        {"agg_%s_mkt_cli_mes", "cod_cli"},
+			"cli":        {"agg_%s_v01_l4_mes", "cod_cli"},
 		}
 
 		// fetchDim(dimName) — retorna [{key, label}] para a dim solicitada.

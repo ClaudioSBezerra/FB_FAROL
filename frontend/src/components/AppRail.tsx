@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, Megaphone, PieChart } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -45,7 +45,6 @@ interface RailItem {
 
 const mainItems: RailItem[] = [
   { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
-  { id: 'marketing',      icon: Megaphone,   label: 'Painel Marketing',    path: '/farol/marketing',      dev: false, requiredModulo: 'marketing' },
   { id: 'bi',             icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },

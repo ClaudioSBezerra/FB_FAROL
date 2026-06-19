@@ -63,13 +63,11 @@ function RoleBadge({ role }: { role: string }) {
 
 const MODULOS = [
   { value: 'vendas',    label: 'Painel Vendas' },
-  { value: 'marketing', label: 'Painel Marketing' },
   { value: 'bi',        label: 'Painel BI' },
 ]
 
 const MODULO_COLORS: Record<string, string> = {
   vendas:    'bg-blue-50 text-blue-700 border-blue-200',
-  marketing: 'bg-pink-50 text-pink-700 border-pink-200',
   bi:        'bg-violet-50 text-violet-700 border-violet-200',
 }
 
