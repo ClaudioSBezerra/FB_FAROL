@@ -93,7 +93,7 @@ function BiClock({ nextRefresh }: { nextRefresh: number }) {
 // ─── ArcGaugeDark ─────────────────────────────────────────────────────────────
 
 function ArcGaugeDark({
-  gaugeId, arcPct, centerText, label, sublabel, subvalue, color, size = 180,
+  gaugeId, arcPct, centerText, label, sublabel, subvalue, comparisonText, color, size = 180,
 }: {
   gaugeId: string
   arcPct: number       // 0-100, controls arc fill
@@ -101,6 +101,7 @@ function ArcGaugeDark({
   label: string
   sublabel: string
   subvalue?: string
+  comparisonText?: string  // "Anterior: R$ X × R$ Y Faturados"
   color: string
   size?: number
 }) {
@@ -153,7 +154,12 @@ function ArcGaugeDark({
       {/* Valores apurados — espaço extra abaixo do arco */}
       <div className="text-center mt-5">
         <p className="text-white font-semibold" style={{ fontSize: size * 0.088 }}>{sublabel}</p>
-        {subvalue && (
+        {comparisonText && (
+          <p className="text-slate-300 mt-2 font-medium" style={{ fontSize: size * 0.06 }}>
+            {comparisonText}
+          </p>
+        )}
+        {subvalue && !comparisonText && (
           <p className="text-slate-500 mt-1" style={{ fontSize: size * 0.07 }}>{subvalue}</p>
         )}
       </div>
@@ -415,7 +421,10 @@ export default function FarolBI() {
                 centerText={fmtPct(kpi.total_pct)}
                 label="Objetivo Geral"
                 sublabel={fmtBRL(kpi.total_faturado) + ' faturado'}
-                subvalue={kpi.total_ant > 0 ? 'ref. ' + fmtBRL(kpi.total_ant) : undefined}
+                comparisonText={kpi.total_ant > 0
+                  ? `Anterior: ${fmtBRL(kpi.total_ant)} × ${fmtBRL(kpi.total_faturado)} Faturados`
+                  : undefined
+                }
                 color={gaugeColor(kpi.total_pct)}
               />
             </div>
