@@ -471,9 +471,11 @@ interface MultiSelectProps {
   options: { key: string; label: string }[]
   selected: string[]
   onChange: (next: string[]) => void
+  onOpen?: () => void   // disparado ao abrir (usado p/ lazy-load de Cliente)
+  loading?: boolean     // exibe "Carregando..." no lugar da lista
 }
 
-function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
+function MultiSelect({ label, options, selected, onChange, onOpen, loading }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -500,7 +502,7 @@ function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen(o => { const next = !o; if (next) onOpen?.(); return next })}
         className={cn(
           'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-md bg-white shadow-sm',
           selected.length > 0 ? 'border-slate-600 text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-50',
@@ -530,10 +532,13 @@ function MultiSelect({ label, options, selected, onChange }: MultiSelectProps) {
             </div>
           </div>
           <div className="max-h-64 overflow-y-auto">
-            {filtered.length === 0 && (
+            {loading && (
+              <div className="px-3 py-4 text-center text-sm text-slate-400">Carregando...</div>
+            )}
+            {!loading && filtered.length === 0 && (
               <div className="px-3 py-4 text-center text-sm text-slate-400">Nenhum resultado</div>
             )}
-            {filtered.map(opt => {
+            {!loading && filtered.map(opt => {
               const checked = selected.includes(opt.key)
               return (
                 <label key={opt.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
@@ -606,6 +611,23 @@ function useDims(fluxo: Fluxo, ref_inicio: string, ref_fim: string) {
       const p = new URLSearchParams({ fluxo, ref_inicio, ref_fim })
       const r = await fetch(`/api/v2/farol/dims?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar dimensões')
+      return r.json()
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// Lazy-load do dropdown de Cliente (cod_cli): 34k+ opções, ~3s. Só busca quando
+// `enabled` vira true (ao abrir o dropdown de Cliente pela primeira vez).
+function useDimsCli(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: boolean) {
+  return useQuery<{ cli: DimOption[] }>({
+    queryKey: ['farol-v2-dims-cli', fluxo, ref_inicio, ref_fim],
+    enabled: enabled && !!ref_inicio && !!ref_fim,
+    queryFn: async () => {
+      const p = new URLSearchParams({ fluxo, ref_inicio, ref_fim, dim: 'cli' })
+      const r = await fetch(`/api/v2/farol/dims?${p}`)
+      if (!r.ok) throw new Error('Falha ao carregar clientes')
       return r.json()
     },
     staleTime: 5 * 60_000,
@@ -690,6 +712,9 @@ export default function FarolExecutivo() {
     drillPath, filters,
   })
   const dimsQ = useDims(fluxo, refInicio, refFim)
+  // Lazy-load do dropdown de Cliente: só ativa após o usuário abri-lo uma vez.
+  const [cliEnabled, setCliEnabled] = useState(false)
+  const dimsCliQ = useDimsCli(fluxo, refInicio, refFim, cliEnabled)
 
   const handleDrill = (card: CardItem) => {
     if (card.level === 'cod_prod') return
@@ -742,6 +767,8 @@ export default function FarolExecutivo() {
   ]
 
   const optionsFor = (from: keyof DimsResponse): { key: string; label: string }[] => {
+    // Cliente vem do hook lazy (dimsCliQ); as demais do dims padrão.
+    if (from === 'cli') return dimsCliQ.data?.cli ?? []
     const v = dimsQ.data?.[from]
     if (!v) return []
     if (Array.isArray(v) && typeof v[0] === 'string') {
@@ -853,6 +880,8 @@ export default function FarolExecutivo() {
             options={optionsFor(d.from)}
             selected={filters[d.col] ?? []}
             onChange={(vs) => setFilter(d.col, vs)}
+            onOpen={d.from === 'cli' ? () => setCliEnabled(true) : undefined}
+            loading={d.from === 'cli' && cliEnabled && dimsCliQ.isLoading}
           />
         ))}
 

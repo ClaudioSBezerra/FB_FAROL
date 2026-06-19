@@ -1996,31 +1996,40 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			return out
 		}
 
-		fetchCli := func() []dimOption { return fetchDim("cod_cli", "cli") }
+		// LAZY-LOAD do cod_cli: a dim "cli" (34k+ clientes) é a mais cara (~3s) e
+		// raramente filtrada. Ela só é carregada quando o front pede ?dim=cli
+		// (ao abrir o dropdown de Cliente). O dims "padrão" (sem ?dim) carrega
+		// todas as OUTRAS dims rápidas, sem o cli — tira ~3s de todo login.
+		onlyDim := strings.ToLower(strings.TrimSpace(q.Get("dim")))
+		if onlyDim == "cli" {
+			cli := fetchDim("cod_cli", "cli")
+			log.Printf("[dims] fluxo=%s dim=cli total=%v", fluxo.name, time.Since(t0))
+			json.NewEncoder(w).Encode(map[string]any{"cli": cli})
+			return
+		}
 
 		var (
-			fornec, gerente, supervisor, rca, cli []dimOption
-			uf, empresa                           []string
-			wg                                    sync.WaitGroup
+			fornec, gerente, supervisor, rca []dimOption
+			uf, empresa                      []string
+			wg                               sync.WaitGroup
 		)
-		wg.Add(7)
+		wg.Add(6)
 		go func() { defer wg.Done(); fornec = fetchDim("cod_fornec", "fornec") }()
 		go func() { defer wg.Done(); gerente = fetchDim("cod_gerente", "gerente") }()
 		go func() { defer wg.Done(); supervisor = fetchDim("cod_supervisor", "supervisor") }()
 		go func() { defer wg.Done(); rca = fetchDim("cod_rca", "rca") }()
-		go func() { defer wg.Done(); cli = fetchCli() }()
 		go func() { defer wg.Done(); uf = fetchScalar("uf", "uf") }()
 		go func() { defer wg.Done(); empresa = fetchScalar("empresa", "empresa") }()
 		wg.Wait()
 
-		log.Printf("[dims] fluxo=%s paralelo=7 total=%v", fluxo.name, time.Since(t0))
+		log.Printf("[dims] fluxo=%s paralelo=6 (sem cli) total=%v", fluxo.name, time.Since(t0))
 
 		resp := map[string]any{
 			"fornec":     fornec,
 			"gerente":    gerente,
 			"supervisor": supervisor,
 			"rca":        rca,
-			"cli":        cli,
+			"cli":        []dimOption{}, // lazy: carregado via ?dim=cli ao abrir dropdown
 			"uf":         uf,
 			"empresa":    empresa,
 		}
