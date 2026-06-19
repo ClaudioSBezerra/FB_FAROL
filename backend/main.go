@@ -465,6 +465,7 @@ func main() {
 	http.HandleFunc("/api/farol/web/rca/",         gz(withSP(handlers.FarolWebRcaHandler,          "gestor_filial")))
 	http.HandleFunc("/api/farol/web/periodos",     gz(withSP(handlers.FarolWebPeriodosHandler,     "gestor_filial")))
 
+	http.HandleFunc("/api/farol/sup-pulso/",    gz(publicHandler(handlers.FarolPulsoHandler)))
 	http.HandleFunc("/api/farol/sup/",          gz(publicHandler(handlers.FarolSupervisorHandler)))
 	http.HandleFunc("/api/farol/rca/",          gz(publicHandler(handlers.FarolRcaDetailHandler)))
 	http.HandleFunc("/api/farol/periodos/",     gz(publicHandler(handlers.FarolPeriodosHandler)))
@@ -487,6 +488,7 @@ func main() {
 	http.HandleFunc("/api/v2/farol/cards",         gz(withSP(handlers.FarolV2CardsHandler,   "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos",      withSP(handlers.FarolV2PeriodosHandler,   "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/dims",          gz(withSP(handlers.FarolV2DimsHandler,    "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/pulso",         gz(withSP(handlers.FarolPulsoEmpresaHandler, "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler,      "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/ai/query",              gz(withSP(handlers.FarolAIQueryHandler,             "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/ai/export",             withSP(handlers.FarolAIExportHandler,              "gestor_filial"))

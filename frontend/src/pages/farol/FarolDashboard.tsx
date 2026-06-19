@@ -70,6 +70,105 @@ const CORS_TEXT: Record<Cor, string> = {
   verde: 'text-emerald-600', amarelo: 'text-amber-600', vermelho: 'text-red-500',
 }
 
+// ─── Pulso de Ontem ────────────────────────────────────────────────────────────
+
+interface PulsoResp {
+  dia_ref: string
+  dia_ref_label: string
+  vl_atual: number
+  qt_atual: number
+  vl_espelho: number
+  qt_espelho: number
+  espelho_label: string
+  espelho_data: string
+  pct: number
+  pct_qt: number
+  cor: Cor
+  parcial: boolean
+  sem_dado: boolean
+}
+
+function fmtDelta(pct: number): { txt: string; up: boolean } {
+  // pct=100 significa igual ao espelho. Delta = pct - 100.
+  const d = Math.round(pct - 100)
+  if (d >= 0) return { txt: `+${d}%`, up: true }
+  return { txt: `${d}%`, up: false }
+}
+
+function PulsoBanner({ cod, cnpj }: { cod?: string; cnpj?: string }) {
+  const { data } = useQuery<PulsoResp>({
+    queryKey: ['farol-pulso', cod, cnpj],
+    enabled: !!cod,
+    queryFn: () => {
+      const u = new URLSearchParams()
+      if (cnpj) u.set('cnpj', cnpj)
+      return fetch(`/api/farol/sup-pulso/${cod}?${u}`).then(r => {
+        if (!r.ok) throw new Error('pulso')
+        return r.json()
+      })
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+
+  if (!data || data.sem_dado) return null
+
+  const dVl = fmtDelta(data.pct)
+  const dQt = fmtDelta(data.pct_qt)
+  const deltaCls = (up: boolean) => up ? 'text-emerald-600' : 'text-red-500'
+
+  return (
+    <div className={`bg-white border border-slate-100 border-l-4 ${CORS_BORDER[data.cor]} rounded-xl shadow-sm overflow-hidden`}>
+      <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          Pedidos de ontem
+        </p>
+        <p className="text-[11px] text-slate-400 font-medium">{data.dia_ref_label}</p>
+      </div>
+
+      <div className="px-4 pb-3 grid grid-cols-2 gap-3">
+        {/* Valor transmitido */}
+        <div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl font-black text-slate-800 leading-none tabular-nums">
+              {fmtBRL(data.vl_atual)}
+            </span>
+            <span className={`text-sm font-bold tabular-nums ${deltaCls(dVl.up)}`}>
+              {dVl.up ? '▲' : '▼'} {dVl.txt}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">
+            Transmitido · vs {data.espelho_label}: {fmtBRL(data.vl_espelho)}
+          </p>
+        </div>
+
+        {/* Qtd pedidos (clientes distintos) */}
+        <div className="border-l border-slate-100 pl-3">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl font-black text-slate-800 leading-none tabular-nums">
+              {data.qt_atual}
+            </span>
+            <span className={`text-sm font-bold tabular-nums ${deltaCls(dQt.up)}`}>
+              {dQt.up ? '▲' : '▼'} {dQt.txt}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">
+            Pedidos · vs {data.qt_espelho} na {data.espelho_label}
+          </p>
+        </div>
+      </div>
+
+      {data.parcial && (
+        <div className="bg-slate-50 px-4 py-1.5">
+          <p className="text-[10px] text-slate-500 font-medium">
+            ⚠ Dado parcial — pode aumentar com a próxima importação
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Componente ──────────────────────────────────────────────────────────────
 
 export default function FarolDashboard({ embedded = false }: { embedded?: boolean } = {}) {
@@ -172,6 +271,9 @@ export default function FarolDashboard({ embedded = false }: { embedded?: boolea
           <p className="text-sm text-slate-400">{saudacao()}</p>
           <h2 className="text-2xl font-bold text-slate-800 leading-tight mt-0.5">{data.nome}</h2>
         </div>
+
+        {/* Pulso de ontem — primeira coisa que o supervisor vê */}
+        <PulsoBanner cod={cod} cnpj={cnpj} />
 
         {/* Seletor de período */}
         {periodos.length > 0 && (
