@@ -497,7 +497,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			if cards[i].Cor != cards[j].Cor {
 				return cards[i].Cor == "vermelho"
 			}
-			return cards[i].Pct < cards[j].Pct
+			return cards[i].ValorAtual > cards[j].ValorAtual
 		})
 
 		json.NewEncoder(w).Encode(cardsResponse{
@@ -2191,7 +2191,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			if cards[i].Cor != cards[j].Cor {
 				return cards[i].Cor == "vermelho"
 			}
-			return cards[i].Pct < cards[j].Pct
+			return cards[i].ValorAtual > cards[j].ValorAtual
 		})
 
 		json.NewEncoder(w).Encode(cardsResponse{
