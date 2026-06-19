@@ -1132,17 +1132,26 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 
 	useAggMes := groupCol != "cod_prod" && hasAgg && aggOK
 
-	// Range diário (NÃO cobre meses completos) → as agg_*_mes (grão mensal)
-	// expandiriam para o mês inteiro, falseando presets como "Dia Anterior".
-	// Nesse caso lemos o diário cru via queryAggregatedVendas (mesmo caminho
-	// do filtro cruzado), que respeita a data exata. Só vale quando há
-	// comparativo também diário — senão é um range mensal normal.
-	refDiario := !isCompleteMonthRange(pr.RefInicio, pr.RefFim)
+	// Range CURTO e parcial (ex: "Dia Anterior", "7 dias", "30 dias") → as
+	// agg_*_mes (grão mensal) expandiriam para o mês inteiro, falseando o
+	// resultado. Nesses casos lemos o diário cru via queryAggregatedVendas
+	// (mesmo caminho do filtro cruzado), que respeita a data exata.
+	// Ranges LONGOS parciais (YTD, MTD — começam no dia 1) seguem em agg_mes:
+	// a expansão do último mês parcial é inofensiva (não há dados futuros) e
+	// mantém o login rápido. Limite de 31 dias separa "atalho de dias" de
+	// "acumulado de meses".
+	// Discriminador: janelas deslizantes (last7/last30/dia_anterior) começam
+	// FORA do dia 1; acumulados de calendário (MTD/YTD) começam no dia 1 e o
+	// agg_mes os atende exato (não excluem dias com dado). Só janela deslizante
+	// curta (≤31d) e parcial precisa do diário cru.
+	rangeDias := int(pr.RefFim.Sub(pr.RefInicio).Hours()/24) + 1
+	refDiario := rangeDias <= 31 && !isCompleteMonthRange(pr.RefInicio, pr.RefFim) &&
+		(rangeDias == 1 || pr.RefInicio.Day() != 1)
 	if useAggMes && refDiario {
 		useAggMes = false
 		aggOK = false // força o switch a cair em queryAggregatedVendas
-		log.Printf("[farol:agg] range diário [%s..%s] → diário cru (vendas_*) em vez de agg_mes",
-			pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"))
+		log.Printf("[farol:agg] range curto/parcial [%s..%s] (%dd) → diário cru (vendas_*) em vez de agg_mes",
+			pr.RefInicio.Format("2006-01-02"), pr.RefFim.Format("2006-01-02"), rangeDias)
 	}
 
 	log.Printf("[farol:agg] fetchCards empresa=%s fluxo=%s view=%s nível=%s ref=[%s..%s] comp=[%s..%s] drill=%d filters=%d",
