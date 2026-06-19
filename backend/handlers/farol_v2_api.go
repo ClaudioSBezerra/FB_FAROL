@@ -1223,7 +1223,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		var base, refPos, antPos map[string]int
 		var wgPos sync.WaitGroup
 		wgPos.Add(1)
-		go func() { defer wgPos.Done(); base = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters) }()
+		go func() { defer wgPos.Done(); base = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters) }()
 		wgPos.Add(1)
 		go func() { defer wgPos.Done(); refPos = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters) }()
 		if hasComp {
@@ -1526,6 +1526,73 @@ func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []dr
 		}
 	}
 	return true
+}
+
+// ─── Cache da "base" de clientes ativos ──────────────────────────────────────
+// A query base (ymStart=0, ymEnd=999912 → período inteiro) é a MAIS cara do
+// queryDistinctPositivados: varre todas as partições da folha. Mas ela é
+// idêntica entre as 3 janelas do mesmo request (base/ref/comp), entre as views
+// do login, e entre usuários da mesma empresa — só muda quando dados são
+// importados. Cache em memória com TTL curto elimina a varredura repetida.
+type baseCacheEntry struct {
+	data map[string]int
+	at   time.Time
+}
+
+var (
+	baseCacheMu sync.RWMutex
+	baseCache   = map[string]baseCacheEntry{}
+)
+
+const baseCacheTTL = 5 * time.Minute
+
+// invalidateBaseCache limpa entradas de uma empresa (chamado após consolidação).
+func invalidateBaseCache(empresaID string) {
+	baseCacheMu.Lock()
+	for k := range baseCache {
+		if strings.HasPrefix(k, empresaID+"|") {
+			delete(baseCache, k)
+		}
+	}
+	baseCacheMu.Unlock()
+}
+
+func baseCacheKey(empresaID, fluxoName, view, groupCol string, drillPath []drillStep, filters multiFilters) string {
+	var sb strings.Builder
+	sb.WriteString(empresaID)
+	sb.WriteByte('|')
+	sb.WriteString(fluxoName)
+	sb.WriteByte('|')
+	sb.WriteString(view)
+	sb.WriteByte('|')
+	sb.WriteString(groupCol)
+	sb.WriteByte('|')
+	for _, d := range drillPath {
+		sb.WriteString(d.Level)
+		sb.WriteByte('=')
+		sb.WriteString(d.Value)
+		sb.WriteByte(';')
+	}
+	sb.WriteByte('|')
+	sb.WriteString(filters.names())
+	return sb.String()
+}
+
+// queryBasePositivados retorna a base (período inteiro) com cache em memória.
+func queryBasePositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) map[string]int {
+	key := baseCacheKey(empresaID, fluxo.name, view, groupCol, drillPath, filters)
+	baseCacheMu.RLock()
+	if e, ok := baseCache[key]; ok && time.Since(e.at) < baseCacheTTL {
+		baseCacheMu.RUnlock()
+		return e.data
+	}
+	baseCacheMu.RUnlock()
+
+	data := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
+	baseCacheMu.Lock()
+	baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
+	baseCacheMu.Unlock()
+	return data
 }
 
 // queryDistinctPositivados — CONCEITO OFICIAL do gestor: clientes positivados =
@@ -1835,6 +1902,9 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 				}
 			}
 		}
+
+		// Dados mudaram → invalida o cache da base de clientes ativos.
+		invalidateBaseCache(spCtx.EmpresaID)
 
 		var fatRows, transRows int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_fat_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&fatRows)

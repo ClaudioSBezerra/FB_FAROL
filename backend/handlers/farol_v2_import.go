@@ -685,6 +685,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			meses = append(meses, aggMesYM{Ano: ym[0], Mes: ym[1]})
 		}
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
+		invalidateBaseCache(spCtx.EmpresaID) // dados mudaram → limpa cache da base
 		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
 			jobID, len(mesesTocados), time.Since(tAgg))
 	} else {
