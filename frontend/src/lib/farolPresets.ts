@@ -3,13 +3,14 @@
 // Cada preset produz intervalos EXPLÍCITOS (ref + comparativo do MESMO tamanho),
 // evitando comparações incoerentes (ex: 1 mês × 5 meses).
 
-export type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
+export type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'dia_anterior' | 'last7' | 'last30'
 
 export const PRESET_LABEL: Record<Preset, string> = {
   ytd:          'Ano × Ano',
   yoy:          'Último mês YoY',
   ant_corrente: 'M-1 vs M-2',
   mes_corrente: 'Mês Corrente',
+  dia_anterior: 'Dia Anterior',
   last7:        '7 dias',
   last30:       '30 dias',
 }
@@ -20,12 +21,13 @@ export const PRESET_LABEL_MOBILE: Record<Preset, string> = {
   ytd:          'Acumulado do Ano',
   ant_corrente: 'Mês vs Mês Passado',
   mes_corrente: 'Mês Atual',
+  dia_anterior: 'Dia Anterior',
   last7:        '7 dias',
   last30:       '30 dias',
 }
 
 // Ordem de exibição dos botões (esquerda → direita).
-export const PRESET_ORDER: Preset[] = ['yoy', 'ytd', 'ant_corrente', 'mes_corrente', 'last7', 'last30']
+export const PRESET_ORDER: Preset[] = ['dia_anterior', 'yoy', 'ytd', 'ant_corrente', 'mes_corrente', 'last7', 'last30']
 
 export interface PresetRange {
   ref_inicio: string
@@ -94,6 +96,12 @@ export function presetRange(p: Preset, last?: { ano: number; mes: number }): Pre
         comp_inicio: ymd(py, pm, 1),
         comp_fim:    ymd(py, pm, dayCap),
       }
+    }
+    case 'dia_anterior': {
+      // Ontem × mesmo dia da semana 7 dias antes (régua do Pulso — evita
+      // falso alarme de fim de semana). Um único dia em cada ponta.
+      const ontem = addDays(today, -1)
+      return { ref_inicio: ontem, ref_fim: ontem, comp_inicio: addDays(ontem, -7), comp_fim: addDays(ontem, -7) }
     }
     case 'last7': {
       const fim = today

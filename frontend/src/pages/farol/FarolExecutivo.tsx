@@ -174,15 +174,17 @@ function fmtDateBR(s: string): string {
 //  yoy          — último mês 100% importado × mesmo mês ano anterior
 //  ant_corrente — dois últimos meses completos carregados (M-1 vs M-2)
 //  mes_corrente — dia 1 até hoje, mês corrente × mesmo período do ano anterior
+//  dia_anterior — ontem × mesmo dia da semana 7 dias antes (régua do Pulso)
 //  last7        — últimos 7 dias × 7 dias anteriores
 //  last30       — últimos 30 dias × 30 dias anteriores
-type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'last7' | 'last30'
+type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'dia_anterior' | 'last7' | 'last30'
 
 const PRESET_LABEL: Record<Preset, string> = {
   ytd:          'Ano × Ano',
   yoy:          'Último mês YoY',
   ant_corrente: 'M-1 vs M-2',
   mes_corrente: 'Mês Corrente',
+  dia_anterior: 'Dia Anterior',
   last7:        '7 dias',
   last30:       '30 dias',
 }
@@ -237,6 +239,17 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
         ref_fim:     today,
         comp_inicio: ymd(todayY - 1, todayM, 1),
         comp_fim:    ymd(todayY - 1, todayM, dayCap),
+      }
+    }
+    case 'dia_anterior': {
+      // Ontem × mesmo dia da semana 7 dias antes (régua do Pulso — evita
+      // falso alarme de fim de semana). Um único dia em cada ponta.
+      const ontem = addDays(today, -1)
+      return {
+        ref_inicio:  ontem,
+        ref_fim:     ontem,
+        comp_inicio: addDays(ontem, -7),
+        comp_fim:    addDays(ontem, -7),
       }
     }
     case 'last7': {
@@ -813,6 +826,7 @@ export default function FarolExecutivo() {
           { id: 'yoy'          as const, tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
           { id: 'ant_corrente' as const, tip: 'Dois últimos meses completos carregados (M-1 vs M-2)' },
           { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × mesmo período do ano anterior' },
+          { id: 'dia_anterior' as const, tip: 'Ontem × mesmo dia da semana 7 dias antes (evita falso alarme de fim de semana)' },
           { id: 'last7'        as const, tip: 'Últimos 7 dias × 7 dias anteriores' },
           { id: 'last30'       as const, tip: 'Últimos 30 dias × 30 dias anteriores' },
         ]).map(p => (
