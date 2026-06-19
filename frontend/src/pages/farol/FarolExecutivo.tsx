@@ -305,9 +305,9 @@ function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
           <div className="grid grid-cols-5 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
             <div>Clientes Ativos</div>
             <div>Posit. Anterior</div>
-            <div>% Ant.</div>
+            <div>% Posit. Ant.</div>
             <div>Posit. Atual</div>
-            <div>% Atual</div>
+            <div>% Posit. Atual</div>
           </div>
         )}
         <div className="px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
