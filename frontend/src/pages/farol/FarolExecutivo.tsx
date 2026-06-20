@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/farol/LoadingState'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -1032,15 +1033,15 @@ export default function FarolExecutivo() {
         <ColumnsHeader hidePosit={hidePosit} />
 
         {/* Linhas */}
-        {isLoading && (
-          <div className="text-center text-sm text-slate-500 py-8">Carregando…</div>
+        {(isLoading || !refInicio) && (
+          <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." cards={0} />
         )}
         {error != null && (
           <div className="text-center text-sm text-red-600 py-8">
             Erro ao carregar. {(error as Error).message}
           </div>
         )}
-        {!isLoading && error == null && visibleCards.length === 0 && (
+        {!isLoading && refInicio && error == null && visibleCards.length === 0 && (
           <div className="text-center text-sm text-slate-500 py-8">
             {search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
           </div>
