@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,22 @@ interface BiResponse {
   }
 }
 
+interface PulsoResp {
+  dia_ref: string
+  dia_ref_label: string
+  vl_atual: number
+  qt_atual: number
+  vl_espelho: number
+  qt_espelho: number
+  espelho_label: string
+  espelho_data: string
+  pct: number
+  pct_qt: number
+  cor: 'verde' | 'amarelo' | 'vermelho'
+  parcial: boolean
+  sem_dado: boolean
+}
+
 // ─── Utils ────────────────────────────────────────────────────────────────────
 
 function fmtBRL(v: number) {
@@ -63,6 +79,94 @@ function gaugeColor(pct: number) {
   if (pct >= 70)  return '#3b82f6'
   if (pct >= 50)  return '#eab308'
   return '#ef4444'
+}
+
+// ─── PulsoCard (War Room) ─────────────────────────────────────────────────────────
+
+type Cor = 'verde' | 'amarelo' | 'vermelho'
+
+function pulsoColor(cor: Cor): string {
+  switch (cor) {
+    case 'verde': return '#22c55e'
+    case 'amarelo': return '#eab308'
+    case 'vermelho': return '#ef4444'
+  }
+}
+
+function PulsoCard() {
+  const { data, isLoading } = useQuery<PulsoResp>({
+    queryKey: ['farol-pulso-empresa'],
+    queryFn: async () => {
+      const r = await fetch('/api/v2/farol/pulso')
+      if (!r.ok) throw new Error('Falha ao carregar pulso')
+      return r.json()
+    },
+    staleTime: 10 * 60_000,
+    refetchInterval: 10 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+
+  if (isLoading || !data || data.sem_dado) return null
+
+  const deltaVl = data.pct - 100
+  const deltaQt = data.pct_qt - 100
+  const color = pulsoColor(data.cor)
+
+  return (
+    <div className="bg-slate-900 rounded-xl border border-slate-800 px-4 py-2.5 min-w-[280px]">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          Pedidos de Ontem
+        </p>
+        <p className="text-[10px] text-slate-500">{data.dia_ref_label}</p>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        {/* Valor */}
+        <div className="flex-1">
+          <p className="text-2xl font-black text-white tabular-nums leading-none">
+            {fmtBRL(data.vl_atual)}
+          </p>
+          <div className="flex items-center gap-1 mt-1">
+            {deltaVl >= 0 ? (
+              <TrendingUp className="h-3 w-3 text-emerald-400" />
+            ) : (
+              <TrendingDown className="h-3 w-3 text-red-400" />
+            )}
+            <span className={`text-xs font-bold tabular-nums ${deltaVl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {deltaVl >= 0 ? '+' : ''}{deltaVl.toFixed(0)}%
+            </span>
+            <span className="text-[10px] text-slate-500">vs {data.espelho_label}</span>
+          </div>
+        </div>
+
+        {/* Qtd pedidos */}
+        <div className="text-right">
+          <p className="text-xl font-black text-white tabular-nums leading-none">
+            {data.qt_atual}
+          </p>
+          <div className="flex items-center gap-1 justify-end mt-1">
+            {deltaQt >= 0 ? (
+              <TrendingUp className="h-3 w-3 text-emerald-400" />
+            ) : (
+              <TrendingDown className="h-3 w-3 text-red-400" />
+            )}
+            <span className={`text-xs font-bold tabular-nums ${deltaQt >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {deltaQt >= 0 ? '+' : ''}{deltaQt.toFixed(0)}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {data.parcial && (
+        <div className="mt-2 pt-2 border-t border-slate-800">
+          <p className="text-[9px] text-amber-400 font-medium">
+            ⚠ Dado parcial — pode aumentar
+          </p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── BiClock ──────────────────────────────────────────────────────────────────
@@ -340,11 +444,6 @@ export default function FarolBI() {
     }
   }
 
-  function handleRefresh() {
-    queryClient.invalidateQueries({ queryKey: ['bi-cards'] })
-    setNextRefresh(Date.now() + REFETCH_MS)
-  }
-
   const kpi    = kpiQuery.data?.kpi
   const ind    = indQuery.data?.cards ?? []
   const rca    = rcaQuery.data?.cards ?? []
@@ -405,6 +504,8 @@ export default function FarolBI() {
               Mês Atual
             </button>
           </div>
+          {/* Card Pulso de Ontem */}
+          <PulsoCard />
         </div>
         <div className="flex items-center gap-6">
           <button onClick={handleRefresh}
