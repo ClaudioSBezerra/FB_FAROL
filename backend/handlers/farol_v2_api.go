@@ -1247,10 +1247,10 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		wgPos.Add(1)
 		go func() { defer wgPos.Done(); base = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters) }()
 		wgPos.Add(1)
-		go func() { defer wgPos.Done(); refPos = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters) }()
+		go func() { defer wgPos.Done(); refPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters) }()
 		if hasComp {
 			wgPos.Add(1)
-			go func() { defer wgPos.Done(); antPos = queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters) }()
+			go func() { defer wgPos.Done(); antPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters) }()
 		}
 		wgPos.Wait()
 
@@ -1551,11 +1551,11 @@ func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []dr
 }
 
 // ─── Cache da "base" de clientes ativos ──────────────────────────────────────
-// A query base (ymStart=0, ymEnd=999912 → período inteiro) é a MAIS cara do
-// queryDistinctPositivados: varre todas as partições da folha. Mas ela é
-// idêntica entre as 3 janelas do mesmo request (base/ref/comp), entre as views
-// do login, e entre usuários da mesma empresa — só muda quando dados são
-// importados. Cache em memória com TTL curto elimina a varredura repetida.
+// queryDistinctPositivados varre a folha (cnpj×mês) — cara em qualquer janela.
+// Mas resultados mudam só após nova importação. Cache em memória cobre:
+//   - base (ymStart=0, ymEnd=999912): idêntica entre views/requests/usuários
+//   - ref e comp: idêntica entre os 3 fetchCards do login (V01/V02/V03)
+// TTL 30min (invalidateBaseCache é chamado após consolidação de import).
 type baseCacheEntry struct {
 	data map[string]int
 	at   time.Time
@@ -1566,7 +1566,7 @@ var (
 	baseCache   = map[string]baseCacheEntry{}
 )
 
-const baseCacheTTL = 5 * time.Minute
+const baseCacheTTL = 30 * time.Minute
 
 // invalidateBaseCache limpa entradas de uma empresa (chamado após consolidação).
 func invalidateBaseCache(empresaID string) {
@@ -1579,7 +1579,7 @@ func invalidateBaseCache(empresaID string) {
 	baseCacheMu.Unlock()
 }
 
-func baseCacheKey(empresaID, fluxoName, view, groupCol string, drillPath []drillStep, filters multiFilters) string {
+func baseCacheKey(empresaID, fluxoName, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) string {
 	var sb strings.Builder
 	sb.WriteString(empresaID)
 	sb.WriteByte('|')
@@ -1588,6 +1588,10 @@ func baseCacheKey(empresaID, fluxoName, view, groupCol string, drillPath []drill
 	sb.WriteString(view)
 	sb.WriteByte('|')
 	sb.WriteString(groupCol)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.Itoa(ymStart))
+	sb.WriteByte('-')
+	sb.WriteString(strconv.Itoa(ymEnd))
 	sb.WriteByte('|')
 	for _, d := range drillPath {
 		sb.WriteString(d.Level)
@@ -1602,7 +1606,13 @@ func baseCacheKey(empresaID, fluxoName, view, groupCol string, drillPath []drill
 
 // queryBasePositivados retorna a base (período inteiro) com cache em memória.
 func queryBasePositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) map[string]int {
-	key := baseCacheKey(empresaID, fluxo.name, view, groupCol, drillPath, filters)
+	return cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
+}
+
+// cachedDistinctPositivados envolve queryDistinctPositivados com cache em memória.
+// Ref/ant do fetchCards compartilham o cache entre views no mesmo login.
+func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) map[string]int {
+	key := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymStart, ymEnd, drillPath, filters)
 	baseCacheMu.RLock()
 	if e, ok := baseCache[key]; ok && time.Since(e.at) < baseCacheTTL {
 		baseCacheMu.RUnlock()
@@ -1610,7 +1620,7 @@ func queryBasePositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, gr
 	}
 	baseCacheMu.RUnlock()
 
-	data := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
+	data := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
 	baseCacheMu.Lock()
 	baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
 	baseCacheMu.Unlock()
@@ -1937,7 +1947,79 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			"ok": true, "fat_rows": fatRows, "trans_rows": transRows,
 			"duration_ms": time.Since(t0).Milliseconds(),
 		})
+
+		// Pré-aquece as MVs em background (YTD atual vs ano anterior) para que o
+		// primeiro fetchCards do login não pague o custo de carregar páginas do
+		// disco. Sem isso, o primeiro login após import demora 15-17s por
+		// fetchCards (MVs geladas no cache do PostgreSQL).
+		go prewarmAggMes(db, spCtx.EmpresaID)
 	}
+}
+
+// prewarmAggMes executa queries representativas nas 3 views principais (V01/V02/V03)
+// nos períodos YTD atual e anterior. Aquece o cache do PostgreSQL para que o
+// primeiro fetchCards de um login seja tão rápido quanto os subsequentes.
+// Roda em background — não bloqueia a response HTTP nem atrapalha a transação.
+func prewarmAggMes(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+
+	anoAtual := time.Now().Year()
+	ymAtual := anoAtual*100 + int(time.Now().Month())
+	ymAnt := (anoAtual - 1) * 100 + 12 // dezembro ano anterior (YTD completo)
+
+	// 3 views × 2 fluxos × 2 períodos = 12 queries pequenas.
+	// Como são em paralelo e rodam após o usuário já ter recebido resposta,
+	// competem pouco com queries de usuário real.
+	views := []struct {
+		leaf, group string
+	}{
+		{"agg_fat_v01_l0_mes", "cod_fornec"},
+		{"agg_fat_v02_l0_mes", "cod_supervisor"},
+		{"agg_fat_v03_l0_mes", "cod_gerente"},
+		{"agg_trans_v01_l0_mes", "cod_fornec"},
+		{"agg_trans_v02_l0_mes", "cod_supervisor"},
+		{"agg_trans_v03_l0_mes", "cod_gerente"},
+	}
+	var wg sync.WaitGroup
+	for _, v := range views {
+		for _, ym := range []int{ymAtual, ymAnt} {
+			wg.Add(1)
+			v, ym := v, ym
+			go func() {
+				defer wg.Done()
+				_, _ = db.Exec(fmt.Sprintf(`
+					SELECT %s, COUNT(*) FROM farol.%s
+					WHERE empresa_id=$1 AND (ano*100+mes) <= $2
+					GROUP BY %s`, v.group, v.leaf, v.group),
+					empresaID, ym)
+			}()
+		}
+	}
+	// Aquece folha (positivados) — top-level de cada view × 2 fluxos.
+	leaves := []struct {
+		leaf, group string
+	}{
+		{"agg_fat_v01_l4_mes", "cod_fornec"},
+		{"agg_fat_v02_l3_mes", "cod_supervisor"},
+		{"agg_fat_v03_l3_mes", "cod_gerente"},
+		{"agg_trans_v01_l4_mes", "cod_fornec"},
+		{"agg_trans_v02_l3_mes", "cod_supervisor"},
+		{"agg_trans_v03_l3_mes", "cod_gerente"},
+	}
+	for _, l := range leaves {
+		wg.Add(1)
+		leaf := l
+		go func() {
+			defer wg.Done()
+			_, _ = db.Exec(fmt.Sprintf(`
+				SELECT %s, COUNT(DISTINCT cnpj) FROM farol.%s
+				WHERE empresa_id=$1 AND positivados > 0 AND %s <> ''
+				GROUP BY %s`, leaf.group, leaf.leaf, leaf.group, leaf.group),
+				empresaID)
+		}()
+	}
+	wg.Wait()
+	log.Printf("[farol:view] prewarmAggMes empresa=%s concluído em %v", empresaID, time.Since(t0))
 }
 
 // ─── FarolV2PeriodosHandler ──────────────────────────────────────────────────
