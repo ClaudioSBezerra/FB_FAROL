@@ -1026,10 +1026,11 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 //
 // Mais lento que queryAggregatedMes (varre vendas_*), mas só roda quando há
 // filtro cruzado ativo. Índices idx_v[ft]_mixtotal_* ajudam no GROUP BY.
-func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nameCol string,
+func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, nameCol string,
 	periodIni, periodFim time.Time, drillPath []drillStep, filters multiFilters) map[string]aggResult {
 
 	t0 := time.Now()
+	t1 := time.Now()
 	result := make(map[string]aggResult)
 
 	// Query 1 — métricas do período (valor, plucro, positivados, mix)
@@ -1063,39 +1064,69 @@ GROUP BY v.%s`,
 		}
 	}
 	rows.Close()
+	durQ1 := time.Since(t1)
 
-	// Query 2 — base_cli = compradores distintos rolling-12M do recorte
+	// Query 2 — base_cli = compradores distintos rolling-12M do recorte.
+	// OTIMIZAÇÃO: quando a folha (agg_<fluxo>_<view>_l<N>_mes) atende os
+	// filtros (sem filtro cruzado de UF/filial), usamos cachedDistinctPositivados
+	// em vez de reescanear vendas_*. A folha é grão cnpj×mês (muito menor que
+	// vendas_* ~5.8M linhas) e tem índices otimizados (mig 176/179). Reduz
+	// 27-46s para ~50ms.
+	t2 := time.Now()
 	base12mIni := time.Date(periodFim.Year(), periodFim.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
-	bargs := []any{empresaID}
-	brange := buildRangeCond(fluxo.dateCol, base12mIni, periodFim, &bargs)
-	bcond := buildDrillCond(drillPath, &bargs)
-	if fc := buildMultiFilterCond(filters, &bargs); fc != "" {
-		bcond += " " + fc
-	}
-	bq := fmt.Sprintf(`
+	ymStart := base12mIni.Year()*100 + int(base12mIni.Month())
+	ymEnd := periodFim.Year()*100 + int(periodFim.Month())
+
+	if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
+		// Caminho rápido: folha com cache.
+		baseMap := cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
+		for k, v := range baseMap {
+			if r, ok := result[k]; ok {
+				r.baseCli = v
+				result[k] = r
+			}
+		}
+	} else {
+		// Caminho fallback: scan rolling-12M em vendas_* (filtros não atendidos
+		// pela folha, ex: UF/Filial). Mantido por correção — caso raro.
+		bargs := []any{empresaID}
+		brange := buildRangeCond(fluxo.dateCol, base12mIni, periodFim, &bargs)
+		bcond := buildDrillCond(drillPath, &bargs)
+		if fc := buildMultiFilterCond(filters, &bargs); fc != "" {
+			bcond += " " + fc
+		}
+		bq := fmt.Sprintf(`
 SELECT v.%s AS key, COUNT(DISTINCT v.cnpj) AS base_cli
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND v.qt > 0 AND %s %s
 GROUP BY v.%s`,
-		groupCol, fluxo.tableName, groupCol, brange, bcond, groupCol)
-	if brows, berr := db.Query(bq, bargs...); berr == nil {
-		for brows.Next() {
-			var key string
-			var base int
-			if brows.Scan(&key, &base) == nil {
-				if r, ok := result[key]; ok {
-					r.baseCli = base
-					result[key] = r
+			groupCol, fluxo.tableName, groupCol, brange, bcond, groupCol)
+		if brows, berr := db.Query(bq, bargs...); berr == nil {
+			for brows.Next() {
+				var key string
+				var base int
+				if brows.Scan(&key, &base) == nil {
+					if r, ok := result[key]; ok {
+						r.baseCli = base
+						result[key] = r
+					}
 				}
 			}
+			brows.Close()
+		} else {
+			log.Printf("[farol:vendas] queryAggregatedVendas base12m nível=%s ERRO: %v", groupCol, berr)
 		}
-		brows.Close()
-	} else {
-		log.Printf("[farol:vendas] queryAggregatedVendas base12m nível=%s ERRO: %v", groupCol, berr)
 	}
+	durQ2 := time.Since(t2)
 
-	log.Printf("[farol:vendas] queryAggregatedVendas fluxo=%s nível=%s → %d grupos em %v (filtro cruzado)",
-		fluxo.name, groupCol, len(result), time.Since(t0))
+	log.Printf("[farol:vendas] queryAggregatedVendas fluxo=%s nível=%s → %d grupos em %v (Q1=%v Q2=%v %s)",
+		fluxo.name, groupCol, len(result), time.Since(t0), durQ1, durQ2,
+		func() string {
+			if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
+				return "via-folha"
+			}
+			return "via-vendas_*"
+		}())
 	return result
 }
 
@@ -1196,7 +1227,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		// Filtro cruzado → agrega de vendas_* (tem todas as colunas).
 		go func() {
 			defer wg.Done()
-			atualMap = queryAggregatedVendas(db, empresaID, fluxo, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
+			atualMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
 		}()
 	default:
 		go func() {
@@ -1219,7 +1250,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		case !aggOK:
 			go func() {
 				defer wg.Done()
-				antMap = queryAggregatedVendas(db, empresaID, fluxo, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
+				antMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
 			}()
 		default:
 			antArgsMes := []any{empresaID}
