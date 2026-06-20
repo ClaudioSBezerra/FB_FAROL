@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Semaforo, type Cor } from '@/components/farol/Semaforo'
+import { LoadingState } from '@/components/farol/LoadingState'
 
 type TabKey = 'fornec' | 'rca'
 
@@ -265,11 +266,7 @@ export function FarolWebList() {
       <TabSwitcher value={activeTab} onChange={t => { setActiveTab(t); setFiltro('') }} secondLabel="Por Supervisor" />
 
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />
-          ))}
-        </div>
+        <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." />
       )}
 
       {isError && (
@@ -446,9 +443,7 @@ export function FarolWebDashboard() {
       <TabSwitcher value={activeTab} onChange={setActiveTab} />
 
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(6)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
-        </div>
+        <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." />
       )}
       {isError && (
         <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">
@@ -552,9 +547,7 @@ export function FarolWebFornecRcas() {
       </button>
 
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(6)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
-        </div>
+        <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." />
       )}
       {isError && (
         <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">
@@ -650,9 +643,7 @@ export function FarolWebRcaDetail() {
       </button>
 
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(4)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
-        </div>
+        <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." cards={4} />
       )}
       {isError && (
         <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">
@@ -757,9 +748,7 @@ export function FarolWebFornecSups() {
       </button>
 
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[...Array(6)].map((_, i) => <div key={i} className="bg-slate-100 rounded-xl h-28 animate-pulse" />)}
-        </div>
+        <LoadingState message="Carregando dados, aguarde..." hint="Primeiro acesso do dia pode levar alguns segundos." />
       )}
       {isError && (
         <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-center text-red-600 text-sm">

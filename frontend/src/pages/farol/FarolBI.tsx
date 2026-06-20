@@ -518,8 +518,10 @@ export default function FarolBI() {
 
       {/* ── Loading ───────────────────────────────────────────────────────── */}
       {isLoading && (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="w-10 h-10 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <div className="w-12 h-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+          <p className="text-sm font-semibold text-slate-300">Carregando dados, aguarde...</p>
+          <p className="text-[11px] text-slate-600">Primeiro acesso do dia pode levar alguns segundos.</p>
         </div>
       )}
 

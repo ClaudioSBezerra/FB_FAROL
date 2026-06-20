@@ -2130,7 +2130,71 @@ func prewarmAggMes(db *sql.DB, empresaID string) {
 		}()
 	}
 	wg.Wait()
-	log.Printf("[farol:view] prewarmAggMes empresa=%s concluído em %v", empresaID, time.Since(t0))
+	log.Printf("[farol:view] prewarmAggMes MVs empresa=%s em %v", empresaID, time.Since(t0))
+
+	// Fase 2 — pré-aquece Q1 (vendasPeriodoCache) dos presets diários comuns.
+	// Sem isso, o 1º clique em "Dia Anterior" / "7 dias" / "30 dias" leva 2-13s.
+	// Roda em background após import; usuário não vê.
+	t1 := time.Now()
+	prewarmDailyRanges(db, empresaID)
+	log.Printf("[farol:view] prewarmAggMes diários empresa=%s em %v (total %v)",
+		empresaID, time.Since(t1), time.Since(t0))
+}
+
+// prewarmDailyRanges chama queryAggregatedVendas para os presets diários comuns
+// (dia anterior, 7d, 30d) em todas as views L0 × 2 fluxos. Popula o cache de Q1
+// para que o primeiro clique do usuário seja instantâneo (Q1 hit <100µs).
+//
+// Concorrência limitada via semaphore (semaphoreChan) para não saturar o pool
+// de conexões. 6 em paralelo = mesmo padrão dos dims.
+func prewarmDailyRanges(db *sql.DB, empresaID string) {
+	today := time.Now().UTC()
+	yesterday := today.AddDate(0, 0, -1)
+
+	ranges := []struct {
+		nome                string
+		iniAtual, fimAtual  time.Time
+		iniComp, fimComp    time.Time
+	}{
+		{"dia_anterior", yesterday, yesterday, yesterday.AddDate(0, 0, -7), yesterday.AddDate(0, 0, -7)},
+		{"7d", today.AddDate(0, 0, -6), today, today.AddDate(0, 0, -13), today.AddDate(0, 0, -7)},
+		{"30d", today.AddDate(0, 0, -29), today, today.AddDate(0, 0, -59), today.AddDate(0, 0, -30)},
+	}
+
+	type vc struct{ view, group, name string }
+	views := []vc{
+		{"V01", "cod_fornec", "nome_fornec"},
+		{"V02", "cod_supervisor", "nome_supervisor"},
+		{"V03", "cod_gerente", "nome_gerente"},
+	}
+	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
+
+	const maxParallel = 6
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for _, fl := range fluxos {
+		for _, v := range views {
+			for _, r := range ranges {
+				fl, v, r := fl, v, r
+				// Atual
+				wg.Add(1)
+				sem <- struct{}{}
+				go func() {
+					defer func() { <-sem; wg.Done() }()
+					queryAggregatedVendas(db, empresaID, fl, v.view, v.group, v.name, r.iniAtual, r.fimAtual, nil, nil)
+				}()
+				// Comp
+				wg.Add(1)
+				sem <- struct{}{}
+				go func() {
+					defer func() { <-sem; wg.Done() }()
+					queryAggregatedVendas(db, empresaID, fl, v.view, v.group, v.name, r.iniComp, r.fimComp, nil, nil)
+				}()
+			}
+		}
+	}
+	wg.Wait()
 }
 
 // ─── FarolV2PeriodosHandler ──────────────────────────────────────────────────
