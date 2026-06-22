@@ -81,6 +81,22 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// TIOnlyRoute — para personas 'ti', só permite acessar /farol/importar.
+// Para qualquer outra rota, redireciona para /farol/importar.
+function TIOnlyRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, tipoPersona } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  if (tipoPersona === 'ti') {
+    // TI só pode acessar /farol/importar
+    if (location.pathname !== '/farol/importar') {
+      return <Navigate to="/farol/importar" replace />
+    }
+  }
+  return <>{children}</>
+}
+
 // AdminFbtaxRoute — libera para admin de plataforma (MASTER) ou admin_fbtax do Farol.
 // Usado por telas de limpeza de dados e outras operações administrativas de tenant.
 function AdminFbtaxRoute({ children }: { children: React.ReactNode }) {
@@ -197,7 +213,8 @@ function AppLayout() {
         <ModuleTabs />
         <main className="flex-1 overflow-auto">
           <div className="p-4">
-            <Routes>
+            <TIOnlyRoute>
+              <Routes>
               <Route path="/" element={<Navigate to="/farol/v2" replace />} />
 
               {/* Painel de Calibragem */}
@@ -269,6 +286,7 @@ function AppLayout() {
               <Route path="/config/parametros-motor" element={<Navigate to="/gestao/regras" replace />} />
               <Route path="/config/gestao-ambiente"  element={<Navigate to="/config/ambiente" replace />} />
             </Routes>
+            </TIOnlyRoute>
           </div>
         </main>
       </div>

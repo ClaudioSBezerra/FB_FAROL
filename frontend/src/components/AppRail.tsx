@@ -84,12 +84,16 @@ export function AppRail() {
       .catch(() => {})
     return () => { if (blobURL) URL.revokeObjectURL(blobURL) }
   }, [token, companyId, logoTick])
-  const isTI    = tipoPersona === 'ti'
+  const isTI = tipoPersona === 'ti'
   const canImport = isAdmin || isTI
-  const visibleItems = mainItems.filter(it =>
-    (!it.adminOrTI || canImport) &&
-    (!it.requiredModulo || hasModulo(it.requiredModulo))
-  )
+
+  // TI só vê Importação; outros seguem a lógica normal
+  const visibleItems = isTI
+    ? mainItems.filter(it => it.id === 'importar')
+    : mainItems.filter(it =>
+        (!it.adminOrTI || canImport) &&
+        (!it.requiredModulo || hasModulo(it.requiredModulo))
+      )
   const active = getActiveModule(location.pathname)
 
   const [pwDialog,  setPwDialog]  = useState(false)
