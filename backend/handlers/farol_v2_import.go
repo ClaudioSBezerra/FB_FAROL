@@ -520,6 +520,53 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	}
 	log.Printf("[import:diag] roteamento: %d linhas → vendas_faturadas, %d linhas → vendas_transmitidas", len(allFat), len(allTrans))
 
+	// Dedup defensivo: o ION VENDAS exporta a mesma NF múltiplas vezes (uma por
+	// RCA cuja carteira inclui o cliente). Sem chave de NF para deduplicar
+	// semanticamente, usamos a tupla de negócio (data, cnpj|cli, prod, qt, pvenda)
+	// — colisão real é patológica (1 cliente comprando idêntico, mesmo dia, 2x+
+	// é raríssimo). Mantém a PRIMEIRA ocorrência (ordem do CSV); descarta o resto.
+	type dedupKey struct {
+		data    string
+		cliCnpj string
+		codProd string
+		qt      float64
+		pvenda  float64
+	}
+	dedupSlice := func(in []vendaRaw, label string) []vendaRaw {
+		if len(in) == 0 {
+			return in
+		}
+		seen := make(map[dedupKey]struct{}, len(in))
+		out := make([]vendaRaw, 0, len(in))
+		descartadas := 0
+		for _, r := range in {
+			cnpj, _ := r.vals[22].(string)
+			cli, _ := r.vals[12].(string)
+			key := dedupKey{
+				data:    r.vals[1].(time.Time).Format("2006-01-02"),
+				cliCnpj: cnpj + "|" + cli, // cnpj é primário, cli é fallback se cnpj vazio
+				codProd: r.vals[16].(string),
+				qt:      r.vals[19].(float64),
+				pvenda:  r.vals[20].(float64),
+			}
+			if _, dup := seen[key]; dup {
+				descartadas++
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, r)
+		}
+		if descartadas > 0 {
+			log.Printf("[import:dedup] %s — %d brutas → %d únicas (descartadas %d duplicatas inter-RCA, fator %.2fx)",
+				label, len(in), len(out), descartadas, float64(len(in))/float64(len(out)))
+		} else {
+			log.Printf("[import:dedup] %s — %d linhas, sem duplicatas", label, len(in))
+		}
+		return out
+	}
+	allFat = dedupSlice(allFat, "vendas_faturadas")
+	allTrans = dedupSlice(allTrans, "vendas_transmitidas")
+
 	// Libera rawBytes da memória agora que o CSV foi parseado
 	rawBytes = nil
 
