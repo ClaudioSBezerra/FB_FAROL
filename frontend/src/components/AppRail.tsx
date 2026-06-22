@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -47,6 +47,7 @@ const mainItems: RailItem[] = [
   { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
   { id: 'bi',             icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
+  { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false, adminOrTI: true },
   { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
   { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
 ]
@@ -87,9 +88,9 @@ export function AppRail() {
   const isTI = tipoPersona === 'ti'
   const canImport = isAdmin || isTI
 
-  // TI só vê Importação; outros seguem a lógica normal
+  // TI vê Importação e Relatórios; outros seguem a lógica normal
   const visibleItems = isTI
-    ? mainItems.filter(it => it.id === 'importar')
+    ? mainItems.filter(it => it.id === 'importar' || it.id === 'relatorios')
     : mainItems.filter(it =>
         (!it.adminOrTI || canImport) &&
         (!it.requiredModulo || hasModulo(it.requiredModulo))

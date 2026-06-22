@@ -32,6 +32,7 @@ import FarolV2Import from './pages/farol/FarolV2Import'
 import FarolUsuarios from './pages/farol/FarolUsuarios'
 import FarolBI from './pages/farol/FarolBI'
 import FarolAssistente from './pages/farol/FarolAssistente'
+import FarolRelatorios from './pages/farol/FarolRelatorios'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -81,7 +82,7 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// TIOnlyRoute — para personas 'ti', só permite acessar /farol/importar.
+// TIOnlyRoute — para personas 'ti', só permite acessar /farol/importar e /farol/relatorios.
 // Para qualquer outra rota, redireciona para /farol/importar.
 function TIOnlyRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading, tipoPersona } = useAuth()
@@ -89,8 +90,9 @@ function TIOnlyRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
   if (tipoPersona === 'ti') {
-    // TI só pode acessar /farol/importar
-    if (location.pathname !== '/farol/importar') {
+    // TI só pode acessar /farol/importar e /farol/relatorios
+    const allowedPaths = ['/farol/importar', '/farol/relatorios']
+    if (!allowedPaths.includes(location.pathname)) {
       return <Navigate to="/farol/importar" replace />
     }
   }
@@ -257,6 +259,7 @@ function AppLayout() {
               <Route path="/farol/assistente" element={<ProtectedRoute><FarolAssistente /></ProtectedRoute>} />
               <Route path="/farol/importar"   element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
               <Route path="/farol/usuarios"   element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
+              <Route path="/farol/relatorios" element={<AdminOrTIRoute><FarolRelatorios /></AdminOrTIRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
               <Route path="/farol"                              element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />
