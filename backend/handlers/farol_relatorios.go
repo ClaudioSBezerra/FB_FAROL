@@ -48,24 +48,21 @@ type RelatorioExtratoResponse struct {
 // ExtratoProdutoClienteHandler — relatório de vendas de um produto para um cliente
 func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Apenas autenticados
-		userID := r.Context().Value("user_id")
-		if userID == nil {
-			http.Error(w, "Não autorizado", http.StatusUnauthorized)
-			return
-		}
+		// Obtém FarolContext do contexto (injetado pelo FarolAuthMiddleware via withSP)
+		spCtx := GetSpContext(r)
+		empresaID := spCtx.EmpresaID
+		userID := spCtx.UserID
 
-		empresaID := r.Context().Value("company_id")
-		if empresaID == nil {
-			http.Error(w, "Empresa não encontrada", http.StatusBadRequest)
-			return
-		}
+		log.Printf("[relatorio] user_id=%s empresa_id=%s", userID, empresaID)
 
 		// Parâmetros
 		codProduto := r.URL.Query().Get("cod_produto")
 		codCliente := r.URL.Query().Get("cod_cliente")
 		dataInicio := r.URL.Query().Get("data_inicio")
 		dataFim := r.URL.Query().Get("data_fim")
+
+		log.Printf("[relatorio] cod_prod=%s cod_cli=%s data_inicio=%s data_fim=%s",
+			codProduto, codCliente, dataInicio, dataFim)
 
 		if codProduto == "" {
 			http.Error(w, "cod_produto é obrigatório", http.StatusBadRequest)
@@ -177,6 +174,8 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 
 			dados = append(dados, v)
 		}
+
+		log.Printf("[relatorio] retornando %d registros (produto=%s cliente=%s)", len(dados), nomeProd, nomeCli)
 
 		// Montar resposta
 		resp := RelatorioExtratoResponse{

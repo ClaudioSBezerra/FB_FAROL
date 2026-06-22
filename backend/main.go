@@ -498,7 +498,7 @@ func main() {
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup",           withSP(handlers.CleanupExecuteHandler,   "gestor_geral"))
 		// Relatórios — acesso TI e admin
-	http.HandleFunc("/api/v2/farol/relatorio/extrato-produto-cliente", withAuth(handlers.ExtratoProdutoClienteHandler, "somente_leitura"))
+	http.HandleFunc("/api/v2/farol/relatorio/extrato-produto-cliente", gz(withSP(handlers.ExtratoProdutoClienteHandler, "somente_leitura")))
 
 	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
 	// /api/cadastros/* desativado em 2026-05-27
