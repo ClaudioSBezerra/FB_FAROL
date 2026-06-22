@@ -8,6 +8,23 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 
+// Função para formatar data para input date (YYYY-MM-DD)
+function formatDateForInput(date: Date): string {
+  return date.toISOString().split('T')[0]
+}
+
+// Função para obter data de 1 ano atrás
+function getOneYearAgo(): string {
+  const date = new Date()
+  date.setFullYear(date.getFullYear() - 1)
+  return formatDateForInput(date)
+}
+
+// Função para obter data de hoje
+function getToday(): string {
+  return formatDateForInput(new Date())
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Venda {
@@ -54,15 +71,19 @@ export default function FarolRelatorios() {
   const { token } = useAuth()
   const [codProduto, setCodProduto] = useState('')
   const [codCliente, setCodCliente] = useState('')
+  const [dataInicio, setDataInicio] = useState(getOneYearAgo())
+  const [dataFim, setDataFim] = useState(getToday())
   const [searchExecuted, setSearchExecuted] = useState(false)
 
   const { data, isLoading, refetch } = useQuery<RelatorioResponse>({
-    queryKey: ['relatorio-extrato', codProduto, codCliente],
+    queryKey: ['relatorio-extrato', codProduto, codCliente, dataInicio, dataFim],
     queryFn: async () => {
       if (!codProduto || !codCliente) return { dados: [], produto: { cod: '', nome: '' }, cliente: { cod: '', nome: '' } }
       const params = new URLSearchParams({
         cod_produto: codProduto,
         cod_cliente: codCliente,
+        data_inicio: dataInicio,
+        data_fim: dataFim,
       })
       const res = await fetch(`/api/v2/farol/relatorio/extrato-produto-cliente?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -146,7 +167,7 @@ export default function FarolRelatorios() {
           Análise detalhada de vendas de um produto específico para um cliente, com histórico mês a mês.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="space-y-2">
             <Label htmlFor="cod_produto">Código do Produto</Label>
             <Input
@@ -165,6 +186,24 @@ export default function FarolRelatorios() {
               value={codCliente}
               onChange={e => setCodCliente(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="data_inicio">Data Início</Label>
+            <Input
+              id="data_inicio"
+              type="date"
+              value={dataInicio}
+              onChange={e => setDataInicio(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="data_fim">Data Fim</Label>
+            <Input
+              id="data_fim"
+              type="date"
+              value={dataFim}
+              onChange={e => setDataFim(e.target.value)}
             />
           </div>
           <div className="flex items-end">

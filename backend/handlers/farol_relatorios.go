@@ -64,6 +64,8 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 		// Parâmetros
 		codProduto := r.URL.Query().Get("cod_produto")
 		codCliente := r.URL.Query().Get("cod_cliente")
+		dataInicio := r.URL.Query().Get("data_inicio")
+		dataFim := r.URL.Query().Get("data_fim")
 
 		if codProduto == "" {
 			http.Error(w, "cod_produto é obrigatório", http.StatusBadRequest)
@@ -72,6 +74,14 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 		if codCliente == "" {
 			http.Error(w, "cod_cliente é obrigatório", http.StatusBadRequest)
 			return
+		}
+
+		// Se não informou data, usa todo o histórico disponível
+		if dataInicio == "" {
+			dataInicio = "2020-01-01"
+		}
+		if dataFim == "" {
+			dataFim = "2030-12-31"
 		}
 
 		// Query principal
@@ -95,7 +105,7 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 			WHERE vf.empresa_id = $1
 				AND vf.cod_prod = $2
 				AND vf.cod_cli = $3
-				AND vf.data_faturamento BETWEEN '2025-01-01' AND '2026-12-31'
+				AND vf.data_faturamento BETWEEN $4 AND $5
 			GROUP BY
 				EXTRACT(YEAR FROM vf.data_faturamento),
 				EXTRACT(MONTH FROM vf.data_faturamento),
@@ -107,7 +117,7 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 			ORDER BY ano DESC, mes DESC
 		`
 
-		rows, err := db.Query(query, empresaID, codProduto, codCliente)
+		rows, err := db.Query(query, empresaID, codProduto, codCliente, dataInicio, dataFim)
 		if err != nil {
 			log.Printf("[relatorio] erro na query: %v", err)
 			http.Error(w, "Erro ao buscar dados", http.StatusInternalServerError)
