@@ -280,13 +280,37 @@ export default function FarolPublicPanel() {
   const [compFim, setCompFim]       = useState('')
   // Toggle de visão: V02 = "Por RCA" (default), V05 = "Por Fornecedor".
   // Só faz sentido no scope=sup (rca já está fixo num nível mais profundo).
-  const [viewMode, setViewMode]   = useState<'V02' | 'V05'>('V02')
+  const [viewMode, setViewMode]   = useState<'V02' | 'V05'>(() => {
+    try {
+      const stored = localStorage.getItem('farol.public.view')
+      if (stored === 'V02' || stored === 'V05') return stored
+    } catch { /* indisponível — usa default */ }
+    return 'V02'
+  })
+  // Toggle de fluxo: Faturado (NFs emitidas) vs Transmitido (pedidos enviados
+  // pelo RCA, ainda em rota até virar NF). Útil pro supervisor acompanhar
+  // tanto a venda concretizada quanto o que está em curso.
+  const [fluxo, setFluxoState] = useState<'faturado' | 'transmitido'>(() => {
+    try {
+      const stored = localStorage.getItem('farol.public.fluxo')
+      if (stored === 'faturado' || stored === 'transmitido') return stored
+    } catch { /* indisponível — usa default */ }
+    return 'faturado'
+  })
+  const setFluxo = (f: 'faturado' | 'transmitido') => {
+    setFluxoState(f); setUserDrill([])
+    try { localStorage.setItem('farol.public.fluxo', f) } catch { /* ignora */ }
+  }
+  const setViewModePersist = (v: 'V02' | 'V05') => {
+    setViewMode(v); setUserDrill([])
+    try { localStorage.setItem('farol.public.view', v) } catch { /* ignora */ }
+  }
 
   const drillParam = JSON.stringify(userDrill)
   const { data, isLoading, error } = useQuery<CardsResponse>({
-    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, refInicio, refFim, compInicio, compFim, drillParam],
+    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, fluxo, refInicio, refFim, compInicio, compFim, drillParam],
     queryFn: async () => {
-      const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, view: viewMode })
+      const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, view: viewMode, fluxo })
       if (refInicio && refFim) { p.set('ref_inicio', refInicio); p.set('ref_fim', refFim) }
       if (compInicio && compFim) { p.set('comp_inicio', compInicio); p.set('comp_fim', compFim) }
       if (userDrill.length > 0) p.set('drill', drillParam)
@@ -353,27 +377,51 @@ export default function FarolPublicPanel() {
         <p className="text-sm text-slate-400 font-medium">{scopeLabel}</p>
         <h1 className="text-sm font-bold text-slate-800 leading-tight truncate">{scopeNome}</h1>
 
-        {/* Toggle Por RCA / Por Fornecedor — só faz sentido no escopo Supervisor */}
-        {scope === 'sup' && (
-          <div className="mt-2 inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
+        {/* Toggles de visão. Linha mobile-friendly: empilha quando não couber. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {/* Fluxo: Faturado (NFs) × Transmitido (pedidos em rota).
+              Vale pros 2 escopos (Supervisor e RCA). */}
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
             <button
-              onClick={() => { setViewMode('V02'); setUserDrill([]) }}
+              onClick={() => setFluxo('faturado')}
               className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                viewMode === 'V02' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                fluxo === 'faturado' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              Por RCA
+              Faturado
             </button>
             <button
-              onClick={() => { setViewMode('V05'); setUserDrill([]) }}
+              onClick={() => setFluxo('transmitido')}
               className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
-                viewMode === 'V05' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              Por Fornecedor
+              Transmitido
             </button>
           </div>
-        )}
+
+          {/* Por RCA / Por Fornecedor — só no escopo Supervisor (RCA já é fixo). */}
+          {scope === 'sup' && (
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
+              <button
+                onClick={() => setViewModePersist('V02')}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === 'V02' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Por RCA
+              </button>
+              <button
+                onClick={() => setViewModePersist('V05')}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
+                  viewMode === 'V05' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Por Fornecedor
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="p-4">
