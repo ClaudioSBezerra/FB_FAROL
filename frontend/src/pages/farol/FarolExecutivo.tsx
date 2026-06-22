@@ -6,7 +6,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/farol/LoadingState'
-import { SortToggle, useSortedCards } from '@/components/farol/SortToggle'
+import { SortIndicator, useSortedCards, type SortState } from '@/components/farol/SortToggle'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -285,14 +285,51 @@ const GRID_COLS_NOPOS  = 'grid-cols-[minmax(180px,2fr)_3fr_1.4fr]'
 // Positivação não faz sentido no nível Cliente/Produto → coluna some.
 const gridCols = (hidePosit?: boolean) => (hidePosit ? GRID_COLS_NOPOS : GRID_COLS)
 
-function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
+function ColumnsHeader({
+  hidePosit,
+  sortState,
+  onSortChange,
+  search,
+  onSearchChange,
+  searchPlaceholder,
+}: {
+  hidePosit?: boolean
+  sortState?: SortState
+  onSortChange?: (next: { field: 'valor' | 'pct' }) => void
+  search?: string
+  onSearchChange?: (v: string) => void
+  searchPlaceholder?: string
+}) {
   const GC = gridCols(hidePosit)
+  // Sort/search são opcionais — quando ausentes, header é apenas decorativo.
+  const interactive = !!sortState && !!onSortChange
   return (
     <>
       {/* Tarja preta única; cores apenas nos textos */}
       <div className={cn('grid', GC, TARJA_BG)}>
-        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold', COL_NOME_TXT)}>
-          Nome
+        <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold flex items-center gap-2', COL_NOME_TXT)}>
+          <span>Nome</span>
+          {/* Busca embutida na coluna Nome — antes ficava perdida na toolbar. */}
+          {onSearchChange !== undefined && (
+            <div className="relative ml-auto normal-case">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <input
+                value={search ?? ''}
+                onChange={e => onSearchChange(e.target.value)}
+                placeholder={searchPlaceholder ?? 'Buscar...'}
+                className="pl-7 pr-7 py-1 text-sm font-normal text-slate-700 bg-white border border-slate-300 rounded w-48"
+              />
+              {search && (
+                <button
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
+                  type="button"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className={cn('px-3 py-2 text-sm uppercase tracking-wider font-bold text-center', COL_VENDA_TXT)}>
           Venda
@@ -306,15 +343,33 @@ function ColumnsHeader({ hidePosit }: { hidePosit?: boolean }) {
           Mix Médio
         </div>
       </div>
-      {/* Linha clara: subtítulos */}
+      {/* Linha clara: subtítulos. "Período Atual" e "%" são clicáveis pra ordenar. */}
       <div className={cn('grid', GC, 'bg-slate-50 border-y border-slate-200')}>
         <div className="px-3 py-1.5 text-sm uppercase tracking-wide text-slate-400 font-medium">
           {/* vazio */}
         </div>
         <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
           <div>Período Anterior</div>
-          <div>Período Atual</div>
-          <div>%</div>
+          <div className="inline-flex items-center justify-center">
+            <span>Período Atual</span>
+            {interactive && (
+              <SortIndicator
+                active={sortState!.field === 'valor'}
+                direction={sortState!.direction}
+                onClick={() => onSortChange!({ field: 'valor' })}
+              />
+            )}
+          </div>
+          <div className="inline-flex items-center justify-center">
+            <span>%</span>
+            {interactive && (
+              <SortIndicator
+                active={sortState!.field === 'pct'}
+                direction={sortState!.direction}
+                onClick={() => onSortChange!({ field: 'pct' })}
+              />
+            )}
+          </div>
         </div>
         {!hidePosit && (
           <div className="grid grid-cols-5 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
@@ -769,10 +824,10 @@ export default function FarolExecutivo() {
     return cards.filter(c => c.label.toLowerCase().includes(s))
   }, [cards, search])
 
-  // Toggle Valor/Meta. Default = Valor (ranking absoluto), alternativa = Meta
-  // (cor vermelho topo + valor desc — Farol clássico). Preferência persistida.
-  const { sorted: visibleCards, mode: sortMode, setMode: setSortMode } =
-    useSortedCards(filteredCards, 'farol.sort.executivo', 'valor')
+  // Ordenação via setinhas no header do GRID — clique em "Período Atual" ou "%"
+  // (ver ColumnsHeader). Default = valor desc. Preferência persistida.
+  const { sorted: visibleCards, sortState, setSort } =
+    useSortedCards(filteredCards, 'farol.sort.executivo', { field: 'valor', direction: 'desc' })
 
   // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
   const curLevel = cards[0]?.level ?? ''
@@ -898,8 +953,6 @@ export default function FarolExecutivo() {
           ))}
         </div>
 
-        <SortToggle value={sortMode} onChange={setSortMode} />
-
         {FILTER_DIMS.map(d => (
           <MultiSelect
             key={d.col}
@@ -938,25 +991,8 @@ export default function FarolExecutivo() {
           </button>
         )}
 
-        {/* Busca encostada com os demais filtros (antes ficava perdida
-            no canto direito por causa de um spacer flex-1 — removido) */}
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={`Buscar ${visibleCards[0]?.level_label?.toLowerCase() ?? ''}...`}
-            className="pl-7 pr-7 py-1.5 text-sm border border-slate-300 rounded-md bg-white shadow-sm w-56"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+        {/* Busca foi movida pra DENTRO do header do GRID (coluna Nome) —
+            antes ficava perdida no fim da toolbar entre os filtros. */}
 
         {/* Botões Importar e Consolidar removidos a pedido do gestor —
             usuários estavam clicando sem querer. Ações de import/consolidação
@@ -1017,7 +1053,7 @@ export default function FarolExecutivo() {
         </div>
       )}
 
-      {/* ── TOTAL (card único com cabeçalho próprio) ────────────────────────── */}
+      {/* ── TOTAL (card único com cabeçalho próprio — header não interativo) ── */}
       {totalCard && (
         <div className="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4 shadow-sm">
           <ColumnsHeader hidePosit={hidePosit} />
@@ -1041,8 +1077,15 @@ export default function FarolExecutivo() {
 
       {/* ── LISTA de fornecedores/GGV/equipe ─────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-        {/* Cabeçalho colorido da lista (mesmo padrão do total) */}
-        <ColumnsHeader hidePosit={hidePosit} />
+        {/* Cabeçalho da lista — interativo: setinhas pra ordenar + busca embutida */}
+        <ColumnsHeader
+          hidePosit={hidePosit}
+          sortState={sortState}
+          onSortChange={setSort}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder={`Buscar ${visibleCards[0]?.level_label?.toLowerCase() ?? ''}...`}
+        />
 
         {/* Linhas */}
         {(isLoading || !refInicio) && (

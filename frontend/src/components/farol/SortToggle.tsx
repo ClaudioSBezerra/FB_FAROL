@@ -1,104 +1,119 @@
-// SortToggle — Botão duplo "Valor" / "Meta" pra ordenar GRIDs do Farol.
+// Sort de GRIDs do Farol — agora via setinhas clicáveis no header da tabela,
+// não mais via botão Valor/Meta na toolbar (ficava perdido no meio).
 //
-// O "Farol" historicamente ordenava por COR (vermelho topo / verde fundo) +
-// valor desc dentro da cor — pra destacar quem NÃO bateu meta. Mas isso
-// escondia os produtos/clientes de MAIOR venda absoluta quando estavam em
-// crescimento. O toggle deixa o usuário escolher: ranking puro de valor
-// (padrão) ou ranking pelo farol (alertas no topo).
+// Uso:
+//   const { sorted, sortState, setSort } = useSortedCards(
+//     cards, 'farol.sort.executivo', { field: 'valor', direction: 'desc' }
+//   )
 //
-// Persistência: localStorage por chave (ex: 'farol.sort.executivo').
+//   <SortIndicator
+//     active={sortState.field === 'valor'}
+//     direction={sortState.direction}
+//     onClick={() => setSort({ field: 'valor' })}
+//   />
 
-import { TrendingUp, AlertTriangle } from 'lucide-react'
+import { useState, useMemo, useCallback } from 'react'
+import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type SortMode = 'valor' | 'meta'
-
-export function SortToggle({
-  value, onChange, className,
-}: {
-  value: SortMode
-  onChange: (m: SortMode) => void
-  className?: string
-}) {
-  return (
-    <div
-      className={cn(
-        'flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0',
-        className,
-      )}
-      title="Critério de ordenação da lista"
-    >
-      <button
-        type="button"
-        onClick={() => onChange('valor')}
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors',
-          value === 'valor' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50',
-        )}
-      >
-        <TrendingUp className="h-3.5 w-3.5" />
-        Valor
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('meta')}
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors',
-          value === 'meta' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50',
-        )}
-      >
-        <AlertTriangle className="h-3.5 w-3.5" />
-        Meta
-      </button>
-    </div>
-  )
+export type SortField = 'valor' | 'pct'
+export type SortDirection = 'asc' | 'desc'
+export interface SortState {
+  field: SortField
+  direction: SortDirection
 }
-
-// Hook que reordena cards conforme o modo escolhido + persiste a preferência.
-//   - "valor": valor_atual desc (puro ranking de venda)
-//   - "meta":  cor (vermelho topo) + valor_atual desc dentro da cor (= ordem
-//              original do backend, equivale ao Farol clássico)
-import { useState, useMemo, useCallback } from 'react'
 
 interface SortableCard {
   valor_atual: number
+  pct: number
   cor: string
 }
 
+// Hook que reordena cards conforme campo/direção + persiste preferência.
+//   - field='valor': por venda atual
+//   - field='pct':   por % atingimento (cor é honrada como tiebreaker interno)
+// Click no campo ativo alterna direção; click em outro campo seta o novo campo
+// na direção desc por padrão.
 export function useSortedCards<T extends SortableCard>(
   cards: T[],
   storageKey: string,
-  defaultMode: SortMode = 'valor',
-): { sorted: T[]; mode: SortMode; setMode: (m: SortMode) => void } {
-  const [mode, setModeState] = useState<SortMode>(() => {
+  defaultState: SortState = { field: 'valor', direction: 'desc' },
+): {
+  sorted: T[]
+  sortState: SortState
+  setSort: (next: Partial<SortState> & { field: SortField }) => void
+} {
+  const [sortState, setSortState] = useState<SortState>(() => {
     try {
-      const stored = localStorage.getItem(storageKey)
-      if (stored === 'valor' || stored === 'meta') return stored
-    } catch { /* localStorage indisponível (SSR/privacy mode) — usa default */ }
-    return defaultMode
+      const raw = localStorage.getItem(storageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as SortState
+        if (
+          (parsed.field === 'valor' || parsed.field === 'pct') &&
+          (parsed.direction === 'asc' || parsed.direction === 'desc')
+        ) return parsed
+      }
+    } catch { /* localStorage indisponível ou JSON inválido — usa default */ }
+    return defaultState
   })
 
-  const setMode = useCallback((m: SortMode) => {
-    setModeState(m)
-    try { localStorage.setItem(storageKey, m) } catch { /* ignora */ }
+  // Click no header ativo → alterna direção; click em outro → reseta pra desc.
+  const setSort = useCallback((next: Partial<SortState> & { field: SortField }) => {
+    setSortState(prev => {
+      const newState: SortState =
+        prev.field === next.field
+          ? { field: prev.field, direction: prev.direction === 'desc' ? 'asc' : 'desc' }
+          : { field: next.field, direction: next.direction ?? 'desc' }
+      try { localStorage.setItem(storageKey, JSON.stringify(newState)) } catch { /* ignora */ }
+      return newState
+    })
   }, [storageKey])
 
   const sorted = useMemo(() => {
     const arr = [...cards]
-    if (mode === 'valor') {
-      arr.sort((a, b) => b.valor_atual - a.valor_atual)
-    } else {
-      // 'meta': cor primeiro (vermelho > amarelo > verde), depois valor desc
-      const corRank: Record<string, number> = { vermelho: 0, amarelo: 1, verde: 2 }
-      arr.sort((a, b) => {
-        const ra = corRank[a.cor] ?? 99
-        const rb = corRank[b.cor] ?? 99
-        if (ra !== rb) return ra - rb
-        return b.valor_atual - a.valor_atual
-      })
-    }
+    const sign = sortState.direction === 'desc' ? -1 : 1
+    arr.sort((a, b) => {
+      if (sortState.field === 'valor') {
+        return sign * (a.valor_atual - b.valor_atual)
+      }
+      // 'pct': itens sem comparativo (pct=0 e valor>0 caem como "novos") vão
+      // pro final em desc; pra evitar ranking artificial, ordena por valor desc
+      // como tiebreaker entre pcts iguais.
+      const diff = a.pct - b.pct
+      if (diff !== 0) return sign * diff
+      return -1 * (a.valor_atual - b.valor_atual)
+    })
     return arr
-  }, [cards, mode])
+  }, [cards, sortState])
 
-  return { sorted, mode, setMode }
+  return { sorted, sortState, setSort }
+}
+
+// Setinha clicável pra cabeçalhos de coluna. Mostra ↕ quando inativo, ↑/↓
+// quando ativo. Pode ser usada em qualquer cabeçalho de tabela.
+export function SortIndicator({
+  active, direction, onClick, className,
+}: {
+  active: boolean
+  direction: SortDirection
+  onClick: () => void
+  className?: string
+}) {
+  const Icon = !active ? ChevronsUpDown : direction === 'desc' ? ChevronDown : ChevronUp
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick() }}
+      className={cn(
+        'inline-flex items-center justify-center align-middle ml-1 p-0.5 rounded transition-colors',
+        active ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200/60',
+        className,
+      )}
+      title={active
+        ? (direction === 'desc' ? 'Maior → menor (clique pra inverter)' : 'Menor → maior (clique pra inverter)')
+        : 'Clique pra ordenar por esta coluna'}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  )
 }

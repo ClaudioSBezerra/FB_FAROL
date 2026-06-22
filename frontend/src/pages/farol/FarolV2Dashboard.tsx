@@ -9,7 +9,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover'
 import FarolExecutivo from './FarolExecutivo'
-import { SortToggle, useSortedCards } from '@/components/farol/SortToggle'
+import { useSortedCards } from '@/components/farol/SortToggle'
 
 const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral'])
 
@@ -543,10 +543,10 @@ export default function FarolV2Dashboard() {
 
   const periodos = data?.periodos ?? []
 
-  // Toggle Valor/Meta. Default = Valor (ranking absoluto), alternativa = Meta
-  // (cor vermelho topo + valor desc — Farol clássico). Preferência persistida.
-  const { sorted: sortedCards, mode: sortMode, setMode: setSortMode } =
-    useSortedCards(data?.cards ?? [], 'farol.sort.dashboard', 'valor')
+  // Cards ordenados por venda atual desc (ranking absoluto). Sem toggle UI
+  // — o painel mobile/dashboard é navegação por drill, não análise comparativa.
+  const { sorted: sortedCards } =
+    useSortedCards(data?.cards ?? [], 'farol.sort.dashboard', { field: 'valor', direction: 'desc' })
 
   if (isExecutivo) return <FarolExecutivo />
 
@@ -590,8 +590,6 @@ export default function FarolV2Dashboard() {
             </button>
           ))}
         </div>
-
-        <SortToggle value={sortMode} onChange={setSortMode} />
 
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
