@@ -9,6 +9,7 @@ import {
 } from './FarolV2Dashboard'
 import { presetRange, PRESET_LABEL_MOBILE, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
 import type { Cor } from '@/components/farol/Semaforo'
+import { SortToggle, useSortedCards } from '@/components/farol/SortToggle'
 
 // Painel público do ION VENDAS — aberto sem login via link parametrizado
 // (/m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod). Layout específico mobile-first em
@@ -297,6 +298,10 @@ export default function FarolPublicPanel() {
     staleTime: 2 * 60_000, gcTime: 5 * 60_000, refetchOnWindowFocus: false,
   })
 
+  // Toggle Valor/Meta. Default = Valor (ranking absoluto). Preferência persistida.
+  const { sorted: sortedCards, mode: sortMode, setMode: setSortMode } =
+    useSortedCards(data?.cards ?? [], 'farol.sort.public', 'valor')
+
   // Ao carregar, aplica o preset default (Último mês YoY) usando o último mês
   // com dados (periodos[0], ordem DESC do backend) como âncora.
   const periodos = data?.periodos ?? []
@@ -451,6 +456,7 @@ export default function FarolPublicPanel() {
                   <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-600 text-white text-sm font-bold uppercase tracking-wider shadow-sm">
                     {data.next_level_label}
                   </span>
+                  <SortToggle value={sortMode} onChange={setSortMode} className="ml-1" />
                 </div>
                 <span className="text-sm text-slate-500 tabular-nums shrink-0">
                   {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
@@ -458,7 +464,7 @@ export default function FarolPublicPanel() {
               </div>
 
               <div className="space-y-3">
-                {data.cards.map(card => (
+                {sortedCards.map(card => (
                   <CardVendaPublic key={card.key} card={card} onClick={() => handleDrill(card)} />
                 ))}
               </div>

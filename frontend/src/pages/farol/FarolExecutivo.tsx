@@ -6,6 +6,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/farol/LoadingState'
+import { SortToggle, useSortedCards } from '@/components/farol/SortToggle'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -761,11 +762,17 @@ export default function FarolExecutivo() {
     mix_total: kpi.total_mix_total, mix_total_ant: kpi.total_mix_total_ant,
   } : null
 
-  const visibleCards = useMemo(() => {
+  // Filtro por busca textual ANTES da ordenação — a ordenação é a última etapa.
+  const filteredCards = useMemo(() => {
     const s = search.trim().toLowerCase()
     if (!s) return cards
     return cards.filter(c => c.label.toLowerCase().includes(s))
   }, [cards, search])
+
+  // Toggle Valor/Meta. Default = Valor (ranking absoluto), alternativa = Meta
+  // (cor vermelho topo + valor desc — Farol clássico). Preferência persistida.
+  const { sorted: visibleCards, mode: sortMode, setMode: setSortMode } =
+    useSortedCards(filteredCards, 'farol.sort.executivo', 'valor')
 
   // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
   const curLevel = cards[0]?.level ?? ''
@@ -890,6 +897,8 @@ export default function FarolExecutivo() {
             </button>
           ))}
         </div>
+
+        <SortToggle value={sortMode} onChange={setSortMode} />
 
         {FILTER_DIMS.map(d => (
           <MultiSelect

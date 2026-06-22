@@ -9,6 +9,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover'
 import FarolExecutivo from './FarolExecutivo'
+import { SortToggle, useSortedCards } from '@/components/farol/SortToggle'
 
 const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral'])
 
@@ -542,6 +543,11 @@ export default function FarolV2Dashboard() {
 
   const periodos = data?.periodos ?? []
 
+  // Toggle Valor/Meta. Default = Valor (ranking absoluto), alternativa = Meta
+  // (cor vermelho topo + valor desc — Farol clássico). Preferência persistida.
+  const { sorted: sortedCards, mode: sortMode, setMode: setSortMode } =
+    useSortedCards(data?.cards ?? [], 'farol.sort.dashboard', 'valor')
+
   if (isExecutivo) return <FarolExecutivo />
 
   return (
@@ -584,6 +590,8 @@ export default function FarolV2Dashboard() {
             </button>
           ))}
         </div>
+
+        <SortToggle value={sortMode} onChange={setSortMode} />
 
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[
@@ -684,9 +692,9 @@ export default function FarolV2Dashboard() {
       )}
 
       {/* ── Grid de cards ───────────────────────────────────────────────── */}
-      {!isLoading && !error && data && data.cards.length > 0 && (
+      {!isLoading && !error && data && sortedCards.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {data.cards.map(card => (
+          {sortedCards.map(card => (
             <CardVenda
               key={card.key}
               card={card}
