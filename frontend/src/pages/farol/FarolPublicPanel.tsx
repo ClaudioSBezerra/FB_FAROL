@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Minus, ChevronLeft } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   Breadcrumb,
   parsePeriodo, fmtBRL, fmtPct, fmtNum, fmtInt,
@@ -45,19 +45,27 @@ const COR_BAR: Record<Cor, string> = {
   vermelho: 'bg-red-500',
 }
 
+// Cor binária pra % de positivação (não vem direta do tipo KPI compartilhado;
+// derivamos local pra evitar acoplamento adicional). ≥100% verde, senão vermelho.
+function corPosit(pct: number): Cor {
+  return pct >= 100 ? 'verde' : 'vermelho'
+}
+
 // ─── Sub-componentes pequenos ────────────────────────────────────────────
 
+// Dot maior pra ser visível em telas de RCA/Supervisor (público 60+).
 function StatusDot({ cor }: { cor: Cor }) {
   return (
-    <span className="relative flex h-2.5 w-2.5 shrink-0">
+    <span className="relative flex h-4 w-4 shrink-0">
       {cor === 'vermelho' && (
         <span className="absolute inline-flex h-full w-full rounded-full opacity-60 bg-red-400 animate-ping" />
       )}
-      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${COR_DOT[cor]}`} />
+      <span className={`relative inline-flex rounded-full h-4 w-4 ${COR_DOT[cor]}`} />
     </span>
   )
 }
 
+// DeltaPct com ícone e texto maiores. Cores saturadas pra contraste.
 function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
   const delta = anterior > 0 ? ((atual - anterior) / anterior) * 100 : 0
   const up = delta > 0.5
@@ -65,17 +73,17 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
   if (anterior <= 0) return null
   if (!up && !down) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-sm font-medium text-slate-400 tabular-nums">
-        <Minus className="h-3 w-3" strokeWidth={2.5} />
+      <span className="inline-flex items-center gap-1 text-base font-semibold text-slate-500 tabular-nums">
+        <Minus className="h-4 w-4" strokeWidth={3} />
         estável
       </span>
     )
   }
   return (
-    <span className={`inline-flex items-center gap-0.5 text-sm font-semibold tabular-nums ${
-      up ? 'text-emerald-600' : 'text-red-600'
+    <span className={`inline-flex items-center gap-1 text-base font-bold tabular-nums ${
+      up ? 'text-emerald-700' : 'text-red-700'
     }`}>
-      {up ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} /> : <TrendingDown className="h-3 w-3" strokeWidth={2.5} />}
+      {up ? <TrendingUp className="h-4 w-4" strokeWidth={3} /> : <TrendingDown className="h-4 w-4" strokeWidth={3} />}
       {Math.abs(delta).toFixed(1)}%
     </span>
   )
@@ -100,22 +108,26 @@ function SectionLabel({ children, tone = 'venda', banner = false }: {
 }) {
   if (banner) {
     return (
-      <p className={`text-sm uppercase tracking-wider font-bold mb-1.5 bg-[#1e293b] ${SECTION_COLOR[tone]} px-2 py-1 rounded`}>{children}</p>
+      <p className={`text-base uppercase tracking-wider font-extrabold mb-2 bg-[#1e293b] ${SECTION_COLOR[tone]} px-2.5 py-1.5 rounded`}>{children}</p>
     )
   }
   return (
-    <p className="text-sm uppercase tracking-wider font-bold text-slate-700 mb-1.5">{children}</p>
+    <p className="text-base uppercase tracking-wider font-extrabold text-slate-700 mb-2">{children}</p>
   )
 }
 
-// Cell: célula com label menor + valor
-function Cell({ label, value, valueClass = 'text-slate-800' }: {
-  label: string; value: React.ReactNode; valueClass?: string
+// Cell: label CAPS + valor. Tamanhos aumentados pra leitura em mobile 60+;
+// label slate-600 (não 400) pra contraste. Sem truncate — overflow-wrap quebra
+// se for muito longo, mas mantém o número inteiro visível.
+function Cell({ label, value, valueClass = 'text-slate-900', large = false }: {
+  label: string; value: React.ReactNode; valueClass?: string; large?: boolean
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-sm uppercase tracking-wide text-slate-400 font-medium leading-tight">{label}</p>
-      <p className={`text-sm font-semibold tabular-nums truncate leading-tight mt-0.5 ${valueClass}`}>{value}</p>
+      <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">{label}</p>
+      <p className={`tabular-nums leading-tight mt-1 ${large ? 'text-xl font-extrabold' : 'text-base font-bold'} ${valueClass}`}>
+        {value}
+      </p>
     </div>
   )
 }
@@ -134,53 +146,62 @@ function HeaderResumo({
   const barW     = Math.min(100, kpi.total_pct)
 
   return (
-    <div className={`relative ${COR_BG[kpi.total_cor]} border border-slate-200/60 ${COR_RING[kpi.total_cor]} rounded-xl shadow-sm overflow-hidden mb-4`}>
-      {/* Barra de atingimento no topo */}
-      <div className="h-1 bg-slate-100/80">
+    <div className={`relative ${COR_BG[kpi.total_cor]} border-2 border-slate-300 ${COR_RING[kpi.total_cor]} rounded-xl shadow-md overflow-hidden mb-5`}>
+      {/* Barra de atingimento no topo — mais grossa pra ser percebida */}
+      <div className="h-2 bg-slate-200">
         <div className={`h-full ${COR_BAR[kpi.total_cor]} transition-all duration-500`} style={{ width: `${barW}%` }} />
       </div>
 
-      <div className="p-4 space-y-3">
-        {/* SEÇÃO 1: VENDA */}
+      <div className="p-5 space-y-4">
+        {/* SEÇÃO 1: VENDA — hero do valor ATUAL + % grande */}
         <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <SectionLabel banner tone="venda">Venda</SectionLabel>
-            <div className="flex items-center gap-2">
-              <span className={`text-sm font-bold tabular-nums leading-none ${COR_TEXT[kpi.total_cor]}`}>
+          <SectionLabel banner tone="venda">Venda</SectionLabel>
+
+          {/* HERO — valor atual GRANDE + % colorido GRANDE */}
+          <div className="flex items-baseline justify-between gap-3 mb-3">
+            <div className="min-w-0">
+              <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">{curLabel}</p>
+              <p className="text-3xl sm:text-4xl font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+                {fmtBRL(kpi.total_atual)}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className={`text-3xl sm:text-4xl font-black tabular-nums leading-tight ${COR_TEXT[kpi.total_cor]}`}>
                 {fmtPct(kpi.total_pct)}
-              </span>
-              <DeltaPct atual={kpi.total_atual} anterior={kpi.total_ant} />
+              </p>
+              <div className="mt-1 flex justify-end"><DeltaPct atual={kpi.total_atual} anterior={kpi.total_ant} /></div>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Cell label={antLabel} value={fmtBRL(kpi.total_ant)} valueClass="text-slate-500" />
-            <Cell label={curLabel} value={fmtBRL(kpi.total_atual)} />
-            <Cell label="%" value={fmtPct(kpi.total_pct)} valueClass={COR_TEXT[kpi.total_cor]} />
+
+          {/* CONTEXTO — período anterior, discreto mas legível */}
+          <div className="text-base text-slate-600 tabular-nums">
+            <span className="font-semibold uppercase tracking-wide text-slate-500">{antLabel}:</span>{' '}
+            <span className="font-bold text-slate-700">{fmtBRL(kpi.total_ant)}</span>
           </div>
         </div>
 
         {/* SEÇÃO 2: POSITIVAÇÃO — escondida no nível Cliente/Produto */}
         {!hidePosit && (
-        <div className="border-t border-slate-100 pt-2.5">
+        <div className="border-t-2 border-slate-200 pt-3">
           <SectionLabel banner tone="positivacao">Positivação</SectionLabel>
-          <div className="grid grid-cols-3 gap-2">
-            <Cell label="Cl. Ativos" value={fmtInt(kpi.total_base_cli)} valueClass="text-slate-500" />
-            <Cell label="Posit. Anterior" valueClass="text-slate-500" value={
-              <>{fmtInt(kpi.total_positivados_ant)}<span className="block text-[11px] font-medium text-slate-400 leading-tight">{fmtPct(kpi.total_positpct_ant)}</span></>
+          <div className="grid grid-cols-3 gap-3">
+            <Cell label="Cl. Ativos" value={fmtInt(kpi.total_base_cli)} />
+            <Cell label="Posit. Ant." value={
+              <>{fmtInt(kpi.total_positivados_ant)}<span className="block text-sm font-bold text-slate-500 leading-tight mt-0.5">{fmtPct(kpi.total_positpct_ant)}</span></>
             } />
-            <Cell label="Posit. Atual" value={
-              <>{fmtInt(kpi.total_positivados)}<span className="block text-[11px] font-medium text-slate-500 leading-tight">{fmtPct(kpi.total_positpct)}</span></>
+            <Cell label="Posit. Atual" valueClass={COR_TEXT[corPosit(kpi.total_positpct)]} value={
+              <>{fmtInt(kpi.total_positivados)}<span className={`block text-sm font-bold leading-tight mt-0.5 ${COR_TEXT[corPosit(kpi.total_positpct)]}`}>{fmtPct(kpi.total_positpct)}</span></>
             } />
           </div>
         </div>
         )}
 
         {/* SEÇÃO 3: MIX MÉDIO */}
-        <div className="border-t border-slate-100 pt-2.5">
+        <div className="border-t-2 border-slate-200 pt-3">
           <SectionLabel banner tone="mix">Mix médio</SectionLabel>
-          <div className="grid grid-cols-3 gap-2">
-            <Cell label="Realizado" value={fmtNum(kpi.avg_mix) + ' itens/cli'} />
-          </div>
+          <p className="text-2xl font-extrabold text-slate-900 tabular-nums">
+            {fmtNum(kpi.avg_mix)} <span className="text-base font-semibold text-slate-600">itens/cli</span>
+          </p>
         </div>
       </div>
     </div>
@@ -191,67 +212,81 @@ function HeaderResumo({
 
 function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => void }) {
   const barW = Math.min(100, card.pct)
+  // Cliente/Produto é o nível folha — não tem drill, esconde chevron.
+  const isLeaf = card.level === 'cod_prod'
   return (
     <button
       onClick={onClick}
-      className={`group relative ${COR_BG[card.cor]} border border-slate-200/60 ${COR_RING[card.cor]} rounded-xl shadow-sm hover:shadow-md transition-all duration-200 text-left w-full overflow-hidden`}
+      disabled={isLeaf}
+      className={`group relative ${COR_BG[card.cor]} border-2 border-slate-300 ${COR_RING[card.cor]} rounded-xl shadow-sm hover:shadow-md active:scale-[0.99] transition-all duration-150 text-left w-full overflow-hidden ${isLeaf ? '' : 'cursor-pointer'}`}
     >
-      {/* Barra de progresso no topo */}
-      <div className="h-1 bg-slate-100/80">
+      {/* Barra de progresso no topo — mais grossa, melhor visibilidade. */}
+      <div className="h-2 bg-slate-200">
         <div className={`h-full ${COR_BAR[card.cor]} transition-all duration-500`} style={{ width: `${barW}%` }} />
       </div>
 
-      <div className="p-4 space-y-3">
-        {/* Header — nome + percentual + delta */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5 min-w-0">
-            <span className="mt-1.5"><StatusDot cor={card.cor} /></span>
+      <div className="p-5 space-y-4">
+        {/* HEADER — nome (em 2 linhas se necessário) + chevron de drill */}
+        <div className="flex items-start gap-3">
+          <span className="mt-1.5"><StatusDot cor={card.cor} /></span>
+          <p className="flex-1 text-lg font-bold text-slate-900 leading-snug min-w-0 break-words" title={`${card.key} - ${card.label}`}>
+            {card.key} - {card.label}
+          </p>
+          {!isLeaf && (
+            <ChevronRight className="h-6 w-6 text-slate-400 shrink-0 mt-1.5" strokeWidth={2.5} />
+          )}
+        </div>
+
+        {/* SEÇÃO 1: VENDA — HERO do valor atual + % grande + comparativo abaixo */}
+        <div className="border-t-2 border-slate-200 pt-3">
+          <SectionLabel tone="venda">Venda</SectionLabel>
+
+          <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 truncate leading-tight" title={`${card.key} - ${card.label}`}>
-                {card.key} - {card.label}
+              <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">Atual</p>
+              <p className="text-2xl sm:text-3xl font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+                {fmtBRL(card.valor_atual)}
               </p>
             </div>
+            <div className="text-right shrink-0">
+              <p className={`text-2xl sm:text-3xl font-black tabular-nums leading-tight ${COR_TEXT[card.cor]}`}>
+                {fmtPct(card.pct)}
+              </p>
+              <div className="mt-0.5 flex justify-end"><DeltaPct atual={card.valor_atual} anterior={card.valor_ant} /></div>
+            </div>
           </div>
-          <div className="text-right shrink-0">
-            <p className={`text-sm font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
-            <div className="mt-1 flex justify-end"><DeltaPct atual={card.valor_atual} anterior={card.valor_ant} /></div>
+
+          {/* Anterior como contexto discreto (mas legível) */}
+          <div className="text-base text-slate-600 tabular-nums">
+            <span className="font-semibold uppercase tracking-wide text-slate-500">Anterior:</span>{' '}
+            <span className="font-bold text-slate-700">{fmtBRL(card.valor_ant)}</span>
           </div>
         </div>
 
-        {/* SEÇÃO 1: VENDA — Período Anterior | Período Atual | % */}
-        <div className="border-t border-slate-100 pt-2.5">
-          <SectionLabel tone="venda">Venda</SectionLabel>
-          <div className="grid grid-cols-3 gap-2">
-            <Cell label="Período Anterior" value={fmtBRL(card.valor_ant)} valueClass="text-slate-500" />
-            <Cell label="Período Atual" value={fmtBRL(card.valor_atual)} />
-            <Cell label="%" value={fmtPct(card.pct)} valueClass={COR_TEXT[card.cor]} />
-          </div>
-        </div>
-
-        {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Posit. Ant | Posit. Atual | % Posit.
+        {/* SEÇÃO 2: POSITIVAÇÃO — Cl Ativos | Posit. Ant | Posit. Atual.
             Escondida no nível Cliente/Produto (não faz sentido). */}
         {card.base_cli > 0 && card.level !== 'cod_cli' && card.level !== 'cod_prod' && (
-          <div className="border-t border-slate-100 pt-2.5">
+          <div className="border-t-2 border-slate-200 pt-3">
             <SectionLabel tone="positivacao">Positivação</SectionLabel>
-            <div className="grid grid-cols-3 gap-2">
-              <Cell label="Cl. Ativos" value={fmtInt(card.base_cli)} valueClass="text-slate-500" />
-              <Cell label="Posit. Anterior" valueClass="text-slate-500" value={
-                <>{fmtInt(card.positivados_ant)}<span className="block text-[11px] font-medium text-slate-400 leading-tight">{fmtPct(card.positpct_ant)}</span></>
+            <div className="grid grid-cols-3 gap-3">
+              <Cell label="Cl. Ativos" value={fmtInt(card.base_cli)} />
+              <Cell label="Posit. Ant." value={
+                <>{fmtInt(card.positivados_ant)}<span className="block text-sm font-bold text-slate-500 leading-tight mt-0.5">{fmtPct(card.positpct_ant)}</span></>
               } />
-              <Cell label="Posit. Atual" value={
-                <>{fmtInt(card.positivados)}<span className="block text-[11px] font-medium text-slate-500 leading-tight">{fmtPct(card.positpct)}</span></>
+              <Cell label="Posit. Atual" valueClass={COR_TEXT[corPosit(card.positpct)]} value={
+                <>{fmtInt(card.positivados)}<span className={`block text-sm font-bold leading-tight mt-0.5 ${COR_TEXT[corPosit(card.positpct)]}`}>{fmtPct(card.positpct)}</span></>
               } />
             </div>
           </div>
         )}
 
-        {/* SEÇÃO 3: MIX MÉDIO — Realizado */}
+        {/* SEÇÃO 3: MIX MÉDIO */}
         {card.mix > 0 && (
-          <div className="border-t border-slate-100 pt-2.5">
+          <div className="border-t-2 border-slate-200 pt-3">
             <SectionLabel tone="mix">Mix médio</SectionLabel>
-            <div className="grid grid-cols-3 gap-2">
-              <Cell label="Realizado" value={fmtNum(card.mix) + ' itens/cli'} />
-            </div>
+            <p className="text-xl font-extrabold text-slate-900 tabular-nums">
+              {fmtNum(card.mix)} <span className="text-base font-semibold text-slate-600">itens/cli</span>
+            </p>
           </div>
         )}
       </div>
@@ -371,53 +406,54 @@ export default function FarolPublicPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 uppercase text-sm [&_*]:uppercase">
-      {/* Cabeçalho do escopo */}
-      <div className="bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-10">
-        <p className="text-sm text-slate-400 font-medium">{scopeLabel}</p>
-        <h1 className="text-sm font-bold text-slate-800 leading-tight truncate">{scopeNome}</h1>
+    // Public panel usado por SUPV/RCA em mobile, público 60+. Fontes generosas,
+    // sem [&_*]:uppercase global (uppercase é aplicado apenas em labels via classe).
+    <div className="min-h-screen bg-slate-50 text-base">
+      {/* Cabeçalho do escopo — sticky, mais alto pra acomodar os 2 toggles */}
+      <div className="bg-white border-b-2 border-slate-300 px-4 py-3 sticky top-0 z-10 shadow-sm">
+        <p className="text-sm uppercase tracking-wider text-slate-500 font-semibold">{scopeLabel}</p>
+        <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 leading-tight">{scopeNome}</h1>
 
-        {/* Toggles de visão. Linha mobile-friendly: empilha quando não couber. */}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {/* Fluxo: Faturado (NFs) × Transmitido (pedidos em rota).
-              Vale pros 2 escopos (Supervisor e RCA). */}
-          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
+        {/* Toggles de visão. Botões altos (44px+ pra toque) e fontes legíveis. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {/* Fluxo: Faturado (NFs) × Transmitido (pedidos em rota). */}
+          <div className="inline-flex rounded-lg border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
             <button
               onClick={() => setFluxo('faturado')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                fluxo === 'faturado' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+              className={`px-4 py-2.5 text-base font-bold uppercase tracking-wide transition-colors ${
+                fluxo === 'faturado' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
               Faturado
             </button>
             <button
               onClick={() => setFluxo('transmitido')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
-                fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+              className={`px-4 py-2.5 text-base font-bold uppercase tracking-wide transition-colors border-l-2 border-slate-300 ${
+                fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
               Transmitido
             </button>
           </div>
 
-          {/* Por RCA / Por Fornecedor — só no escopo Supervisor (RCA já é fixo). */}
+          {/* Por RCA / Por Fornecedor — só no escopo Supervisor. */}
           {scope === 'sup' && (
-            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm">
+            <div className="inline-flex rounded-lg border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
               <button
                 onClick={() => setViewModePersist('V02')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                  viewMode === 'V02' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                className={`px-4 py-2.5 text-base font-bold uppercase tracking-wide transition-colors ${
+                  viewMode === 'V02' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
                 }`}
               >
                 Por RCA
               </button>
               <button
                 onClick={() => setViewModePersist('V05')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
-                  viewMode === 'V05' ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                className={`px-4 py-2.5 text-base font-bold uppercase tracking-wide transition-colors border-l-2 border-slate-300 ${
+                  viewMode === 'V05' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                Por Fornecedor
+                Por Fornec.
               </button>
             </div>
           )}
@@ -425,21 +461,25 @@ export default function FarolPublicPanel() {
       </div>
 
       <div className="p-4">
-        {/* Controles — mesmos presets do painel executivo (intervalos coerentes) */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-4">
-          {PRESET_ORDER.map(p => (
-            <button
-              key={p}
-              onClick={() => applyPreset(p)}
-              className={`px-2.5 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
-                activePreset === p
-                  ? 'bg-slate-700 text-white border-slate-700'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {PRESET_LABEL_MOBILE[p]}
-            </button>
-          ))}
+        {/* Presets de período: scroll horizontal em vez de wrap (mobile 60+
+            cansa de buscar botão em múltiplas linhas). -mx-4 + px-4 fingem
+            "sangrar" pra borda da tela e dão dica visual de "tem mais → "). */}
+        <div className="mb-4 -mx-4 px-4 overflow-x-auto scrollbar-hide">
+          <div className="flex items-center gap-2 w-max">
+            {PRESET_ORDER.map(p => (
+              <button
+                key={p}
+                onClick={() => applyPreset(p)}
+                className={`shrink-0 px-4 py-3 text-base font-bold uppercase tracking-wide rounded-lg border-2 transition-colors ${
+                  activePreset === p
+                    ? 'bg-slate-800 text-white border-slate-800'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                {PRESET_LABEL_MOBILE[p]}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* HEADER RESUMO — sempre visível (mesmo zerado) para o supervisor ter o
