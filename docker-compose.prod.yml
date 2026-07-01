@@ -70,6 +70,7 @@ services:
       - api
     networks:
       - fb_net
+      - coolify
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.web.rule=Host(`www.fbtax.cloud`, `fbtax.cloud`)"
@@ -225,6 +226,8 @@ networks:
     ipam:
       config:
         - subnet: 172.20.0.0/16
+  coolify:
+    external: true
 
 volumes:
   postgres_data_prod:
