@@ -37,7 +37,9 @@ services:
       - backup_storage:/opt/fb_farol/backups
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - fb_net
+      fb_net:
+        aliases:
+          - farol-api
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8087/api/health"]
       interval: 30s
