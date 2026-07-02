@@ -33,8 +33,14 @@ services:
     volumes:
       - api_uploads:/root/uploads
     networks:
-      - fb_net
-      - coolify
+      # Alias único 'farol-api' evita colisão de DNS entre stacks Coolify — se
+      # outro produto (APU01/02/04, SMARTPICK, FBTAX) resolver o hostname
+      # genérico 'api', não colide. Padrão já aplicado nos irmãos, ver
+      # coolify-dns-collision.md.
+      fb_net:
+        aliases:
+          - farol-api
+      coolify: {}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
