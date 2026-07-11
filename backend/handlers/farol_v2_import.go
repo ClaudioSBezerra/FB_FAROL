@@ -279,9 +279,24 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iPeriodo         := col(-1, "periodo")
 	iEstado          := col(-1, "estado")
 	// Coluna ÚNICA de data — semântica dada pelo PERIODO/ESTADO:
-	//   PERIODO=TRANSMITIDO → linha vai pra vendas_transmitidas
-	//   PERIODO=FATURADO    → linha vai pra vendas_faturadas
+	//   ESTADO=FATURADO/TRANSMITIDO → linhas vão pra vendas_faturadas/transmitidas
+	//   ESTADO=CORTADO/CANCELADO/DEVOLVIDO → linhas vão pra vendas_ccd (mig 182)
 	iData            := col(-1, "data", "data_processo", "dataprocesso", "dt", "data_movimento")
+
+	// ── Colunas do NOVO LAYOUT (jul/2026) — opcionais, ficam vazias no CSV antigo.
+	//   Departamento/Seção/Categoria: hierarquia do produto (Fase 2 usará no GRID).
+	//   CodCliPrinc: cliente principal (rede) — Fase 2 usará em drill "Por Rede".
+	//   Fantasia: nome fantasia do cliente (informativo).
+	//   PvendaTotal: total já calculado (QT × PVENDA) — usa direto se presente.
+	iCodDepto     := col(-1, "codepto", "cod_depto", "coddepto")
+	iDepto        := col(-1, "departamento", "depto")
+	iCodSec       := col(-1, "codsec", "cod_sec", "codsecao")
+	iSecao        := col(-1, "secao", "sec")
+	iCodCategoria := col(-1, "codcategoria", "cod_categoria")
+	iCategoria    := col(-1, "categoria")
+	iCodCliPrinc  := col(-1, "codcliprinc", "cod_cliprinc", "codcliprincipal")
+	iFantasia     := col(-1, "fantasia", "nome_fantasia")
+	iPvendaTotal  := col(-1, "pvendatotal", "pvenda_total", "valor_total", "vl_total", "pvendatot")
 
 	// Log dos cabeçalhos detectados para diagnóstico de mapeamento de colunas
 	colLabel := func(idx int) string {
@@ -290,10 +305,12 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return fmt.Sprintf("%q (col %d)", headerRow[idx], idx)
 	}
-	log.Printf("[import:diag] colunas detectadas — qt=%s  pvenda=%s  plucro=%s  ean=%s  codCli=%s  codFornec=%s  periodo=%s  estado=%s  data=%s  qtrca_supervisor=%s",
-		colLabel(iQt), colLabel(iPvenda), colLabel(iPlucro), colLabel(iEan),
+	log.Printf("[import:diag] colunas detectadas — qt=%s  pvenda=%s  pvenda_total=%s  plucro=%s  ean=%s  codCli=%s  codFornec=%s  periodo=%s  estado=%s  data=%s  qtrca_supervisor=%s",
+		colLabel(iQt), colLabel(iPvenda), colLabel(iPvendaTotal), colLabel(iPlucro), colLabel(iEan),
 		colLabel(iCodCli), colLabel(iCodFornec), colLabel(iPeriodo), colLabel(iEstado),
 		colLabel(iData), colLabel(iQtrcaSupervisor))
+	log.Printf("[import:diag] colunas do novo layout — depto=%s  secao=%s  categoria=%s  cliprinc=%s  fantasia=%s",
+		colLabel(iCodDepto), colLabel(iCodSec), colLabel(iCodCategoria), colLabel(iCodCliPrinc), colLabel(iFantasia))
 
 	getField := func(row []string, idx int) string {
 		if idx < 0 || idx >= len(row) {
@@ -337,20 +354,35 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		v, _ := strconv.Atoi(cleaned)
 		return v
 	}
-	detectEstado := func(periodo, estadoField string) string {
-		if strings.Contains(strings.ToUpper(periodo), "TRANS") ||
-			strings.Contains(strings.ToUpper(estadoField), "TRANS") {
+	// detectEvento — classifica a linha em um dos 5 eventos possíveis do novo
+	// layout (jul/2026). Fallback é FATURADO para compat com CSVs antigos que
+	// só tinham as duas opções TRANSMITIDO/FATURADO.
+	//   FATURADO/TRANSMITIDO → vão pra vendas_faturadas/vendas_transmitidas
+	//   CORTADO/CANCELADO/DEVOLVIDO → vão pra vendas_ccd (mig 182)
+	detectEvento := func(periodo, estadoField string) string {
+		e := strings.ToUpper(estadoField)
+		p := strings.ToUpper(periodo)
+		switch {
+		case strings.Contains(e, "TRANS") || strings.Contains(p, "TRANS"):
 			return "TRANSMITIDO"
+		case strings.Contains(e, "CORT"):
+			return "CORTADO"
+		case strings.Contains(e, "CANCEL"):
+			return "CANCELADO"
+		case strings.Contains(e, "DEVOL"):
+			return "DEVOLVIDO"
+		default:
+			return "FATURADO"
 		}
-		return "FATURADO"
 	}
 
 	// ── Lê todas as linhas do CSV em memória; rota cada linha para o buffer
-	// correto conforme o PERIODO (FATURADO → vendas_faturadas; TRANSMITIDO →
-	// vendas_transmitidas).
+	// correto conforme o ESTADO:
+	//   FATURADO    → vendas_faturadas
+	//   TRANSMITIDO → vendas_transmitidas
+	//   CORTADO/CANCELADO/DEVOLVIDO → vendas_ccd (novo layout jul/2026)
 	//
-	// vals layout (23 colunas — IDÊNTICO para os dois fluxos; só muda o nome
-	// da coluna de data no DB):
+	// vals layout (38 colunas):
 	//   0: empresa_id        1: data
 	//   2: cod_gerente       3: nome_gerente
 	//   4: cod_supervisor    5: nome_supervisor  6: qtrca_supervisor
@@ -358,19 +390,31 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	//  10: cod_fornec        11: nome_fornec
 	//  12: cod_cli           13: nome_cli        14: uf            15: empresa
 	//  16: cod_prod          17: nome_prod       18: ean
-	//  19: qt                20: pvenda          21: plucro
+	//  19: qt                20: pvenda (TOTAL)  21: plucro
 	//  22: cnpj
 	//  23: cod_ramo          24: ramo            ← visual cliente (mig 168)
 	//  25: embalagem         26: qt_unit         27: qt_unit_cx    28: cod_bar ← visual produto (mig 168)
+	//   -- NOVO LAYOUT jul/2026 (mig 181) --
+	//  29: cod_depto         30: depto
+	//  31: cod_sec           32: secao
+	//  33: cod_categoria     34: categoria
+	//  35: cod_cliprinc      36: fantasia
+	//  37: pvenda_unit
+	//
+	// Campo `evento` é usado só para CCD (identifica qual dos 3 tipos:
+	// CORTADO/CANCELADO/DEVOLVIDO); fat/trans deixam vazio.
 	type vendaRaw struct {
-		vals [29]any
+		vals   [38]any
+		evento string
 	}
 	var allFat   []vendaRaw // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
+	var allCCD   []vendaRaw // → vendas_ccd (novo layout jul/2026)
 	diagSamples := 0
 	skippedNoData := 0
 	uniqueFatDates   := make(map[string]struct{})
 	uniqueTransDates := make(map[string]struct{})
+	uniqueCcdDates   := make(map[string]struct{})
 	// Contagem de linhas por (ano,mes) — usada para detectar a COMPETÊNCIA do
 	// arquivo pelos DADOS (mês dominante), em vez de confiar no nome do arquivo.
 	mesContagem := make(map[[2]int]int)
@@ -391,7 +435,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		periodo := getField(csvRow, iPeriodo)
 		estadoF := getField(csvRow, iEstado)
-		estado  := detectEstado(periodo, estadoF)
+		evento  := detectEvento(periodo, estadoF)
 
 		// Data única — semântica dada pelo estado/tabela destino.
 		dataProc := parseDateBR(getField(csvRow, iData))
@@ -404,13 +448,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			continue
 		}
 
-		rawPvenda := getField(csvRow, iPvenda)
-		rawPlucro := getField(csvRow, iPlucro)
-		rawQt     := getField(csvRow, iQt)
+		rawPvenda      := getField(csvRow, iPvenda)
+		rawPvendaTotal := getField(csvRow, iPvendaTotal)
+		rawPlucro      := getField(csvRow, iPlucro)
+		rawQt          := getField(csvRow, iQt)
 		if diagSamples < 5 {
-			log.Printf("[import:diag] amostra %d — data=%s estado=%s pvenda_raw=%q→%.4f plucro_raw=%q→%.4f qt_raw=%q→%.4f cli=%s fornec=%s",
-				diagSamples+1, dataProc.Format("2006-01-02"), estado,
-				rawPvenda, parseNum(rawPvenda), rawPlucro, parseNum(rawPlucro), rawQt, parseNum(rawQt),
+			log.Printf("[import:diag] amostra %d — data=%s evento=%s pvenda_raw=%q→%.4f pvenda_total_raw=%q plucro_raw=%q→%.4f qt_raw=%q→%.4f cli=%s fornec=%s",
+				diagSamples+1, dataProc.Format("2006-01-02"), evento,
+				rawPvenda, parseNum(rawPvenda), rawPvendaTotal, rawPlucro, parseNum(rawPlucro), rawQt, parseNum(rawQt),
 				codCli, codFornec)
 			diagSamples++
 		}
@@ -455,18 +500,30 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[16] = getField(csvRow, iCodProd)
 		r.vals[17] = getField(csvRow, iNomeProd)
 		r.vals[18] = getField(csvRow, iEan)
-		// pvenda no CSV é preço UNITÁRIO (confirmado pela TI) → valor real da
-		// venda = pvenda * qt. Gravamos sempre o TOTAL em vendas_*.
-		// plucro vem no CSV como PERCENTUAL (ex.: 20 = 20%). Convertemos para
-		// valor absoluto (R$) sobre o total: lucroValor = pvendaTotal * (% / 100).
-		// Isso mantém compatibilidade com todas as MVs/handlers que somam plucro.
+		// pvenda_total: preferência pelo valor vindo do CSV (novo layout jul/2026);
+		// fallback para PVENDA × QT (CSV antigo, quando iPvendaTotal=-1 ou vazio).
+		// Grava pvenda como TOTAL para compat com todas as agg_*_mes/queries
+		// SUM(pvenda). Grava pvenda_unit informativo (usado só em detalhes/futuro).
+		//
+		// plucro: no novo layout está marcado como "NÃO DEFINIDO"; se vier 0 ou
+		// vazio → plucro=0. Se vier valor (CSV antigo com %), calcula como antes
+		// (pvendaTotal × pct / 100) para preservar histórico.
 		qtVal := parseNum(rawQt)
 		pvendaUnit := parseNum(rawPvenda)
+		var pvendaTotal float64
+		if rawPvendaTotal != "" {
+			pvendaTotal = parseNum(rawPvendaTotal)
+		} else {
+			pvendaTotal = pvendaUnit * qtVal
+		}
 		plucroPct := parseNum(rawPlucro)
-		pvendaTotal := pvendaUnit * qtVal
+		plucroValor := 0.0
+		if plucroPct != 0 {
+			plucroValor = pvendaTotal * plucroPct / 100.0
+		}
 		r.vals[19] = qtVal
 		r.vals[20] = pvendaTotal
-		r.vals[21] = pvendaTotal * plucroPct / 100.0
+		r.vals[21] = plucroValor
 		r.vals[22] = getField(csvRow, iCNPJ)
 		// Campos visuais (mig 168) — só gravamos, não usamos em agregados
 		r.vals[23] = getField(csvRow, iCodRamo)
@@ -475,13 +532,28 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[26] = parseNum(getField(csvRow, iQtUnit))
 		r.vals[27] = parseNum(getField(csvRow, iQtUnitCx))
 		r.vals[28] = getField(csvRow, iCodBar)
+		// Novo layout jul/2026 (mig 181) — hierarquia de produto + rede + fantasia
+		r.vals[29] = getField(csvRow, iCodDepto)
+		r.vals[30] = getField(csvRow, iDepto)
+		r.vals[31] = getField(csvRow, iCodSec)
+		r.vals[32] = getField(csvRow, iSecao)
+		r.vals[33] = getField(csvRow, iCodCategoria)
+		r.vals[34] = getField(csvRow, iCategoria)
+		r.vals[35] = getField(csvRow, iCodCliPrinc)
+		r.vals[36] = getField(csvRow, iFantasia)
+		r.vals[37] = pvendaUnit // preserva o unitário original do CSV (informativo)
+		r.evento   = evento
 
 		dKey := dataProc.Format("2006-01-02")
 		mesContagem[[2]int{dataProc.Year(), int(dataProc.Month())}]++
-		if estado == "TRANSMITIDO" {
+		switch evento {
+		case "TRANSMITIDO":
 			uniqueTransDates[dKey] = struct{}{}
 			allTrans = append(allTrans, r)
-		} else {
+		case "CORTADO", "CANCELADO", "DEVOLVIDO":
+			uniqueCcdDates[dKey] = struct{}{}
+			allCCD = append(allCCD, r)
+		default: // FATURADO
 			uniqueFatDates[dKey] = struct{}{}
 			allFat = append(allFat, r)
 		}
@@ -518,7 +590,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	if skippedNoData > 0 {
 		log.Printf("[import:diag] %d linhas puladas — sem data válida (coluna DATA ausente e sem fallback)", skippedNoData)
 	}
-	log.Printf("[import:diag] roteamento: %d linhas → vendas_faturadas, %d linhas → vendas_transmitidas", len(allFat), len(allTrans))
+	log.Printf("[import:diag] roteamento: %d linhas → vendas_faturadas, %d linhas → vendas_transmitidas, %d linhas → vendas_ccd", len(allFat), len(allTrans), len(allCCD))
 
 	// Dedup defensivo: o ION VENDAS exporta a mesma NF múltiplas vezes (uma por
 	// RCA cuja carteira inclui o cliente). Sem chave de NF para deduplicar
@@ -566,11 +638,12 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	}
 	allFat = dedupSlice(allFat, "vendas_faturadas")
 	allTrans = dedupSlice(allTrans, "vendas_transmitidas")
+	allCCD = dedupSlice(allCCD, "vendas_ccd")
 
 	// Libera rawBytes da memória agora que o CSV foi parseado
 	rawBytes = nil
 
-	if len(allFat) == 0 && len(allTrans) == 0 {
+	if len(allFat) == 0 && len(allTrans) == 0 && len(allCCD) == 0 {
 		markStatus("error", "nenhuma linha válida encontrada no arquivo")
 		return
 	}
@@ -600,7 +673,17 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		"cnpj",
 		"cod_ramo", "ramo",                     // visual cliente (mig 168)
 		"embalagem", "qt_unit", "qt_unit_cx", "cod_bar", // visual produto (mig 168)
+		// Novo layout jul/2026 (mig 181) — 9 colunas adicionais
+		"cod_depto", "depto",
+		"cod_sec", "secao",
+		"cod_categoria", "categoria",
+		"cod_cliprinc", "fantasia",
+		"pvenda_unit",
 	}
+	// Colunas de vendas_ccd (mig 182): mesmas de fat/trans + coluna `evento`
+	// no final. Como o COPY exige alinhamento posicional entre `vals` e cols,
+	// tratamos CCD num processFlow separado que anexa o evento como último arg.
+	copyColsCcd := append(append([]string(nil), copyCols...), "evento")
 
 	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw) error {
 		// DELETE atômico pelos dias presentes no CSV — preserva dias anteriores
@@ -655,6 +738,60 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return nil
 	}
 
+	// processFlowCcd — variante para vendas_ccd. Diferença: anexa o campo
+	// `evento` (CORTADO/CANCELADO/DEVOLVIDO) como argumento adicional no COPY.
+	// Reutiliza a estrutura de DELETE prévio + chunks + PREPARE COPY.
+	processFlowCcd := func(dates map[string]struct{}, rows []vendaRaw) error {
+		dateList := make([]string, 0, len(dates))
+		for d := range dates {
+			dateList = append(dateList, d)
+		}
+		if len(dateList) > 0 {
+			_, dErr := tx.ExecContext(ctx,
+				`DELETE FROM vendas_ccd WHERE empresa_id=$1 AND data_evento = ANY($2::date[])`,
+				spCtx.EmpresaID, pq.Array(dateList),
+			)
+			if dErr != nil {
+				return fmt.Errorf("DELETE vendas_ccd: %w", dErr)
+			}
+			log.Printf("[ImportJob:%s] vendas_ccd — DELETE prévio cobriu %d dia(s): %v",
+				jobID, len(dateList), dateList)
+		}
+
+		cols := append([]string(nil), copyColsCcd...)
+		cols[1] = "data_evento"
+		for start := 0; start < len(rows); start += copyChunkRows {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			end := start + copyChunkRows
+			if end > len(rows) {
+				end = len(rows)
+			}
+			chunk := rows[start:end]
+
+			stmt, sErr := tx.PrepareContext(ctx, pq.CopyIn("vendas_ccd", cols...))
+			if sErr != nil {
+				return fmt.Errorf("PREPARE COPY vendas_ccd: %w", sErr)
+			}
+			for i := range chunk {
+				// Args = vals[0..37] + evento como último arg
+				args := append(append([]any(nil), chunk[i].vals[:]...), chunk[i].evento)
+				if _, eErr := stmt.Exec(args...); eErr != nil {
+					stmt.Close()
+					return fmt.Errorf("enfileirar vendas_ccd: %w", eErr)
+				}
+				processed.Add(1)
+			}
+			if _, fErr := stmt.Exec(); fErr != nil {
+				stmt.Close()
+				return fmt.Errorf("flush vendas_ccd: %w", fErr)
+			}
+			stmt.Close()
+		}
+		return nil
+	}
+
 	if err = processFlow("vendas_faturadas", "data_faturamento", uniqueFatDates, allFat); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
@@ -665,6 +802,15 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return
 	}
 	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans); err != nil {
+		tx.Rollback()
+		if ctx.Err() != nil {
+			markStatus("cancelled", "cancelado pelo usuário")
+		} else {
+			markStatus("error", err.Error())
+		}
+		return
+	}
+	if err = processFlowCcd(uniqueCcdDates, allCCD); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")
