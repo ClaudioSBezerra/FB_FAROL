@@ -93,16 +93,23 @@ func aggTablesForFluxo(fluxoPrefix string) []string {
 	return out
 }
 
-// purgeAggFluxo apaga (por empresa_id) todas as tabelas agregadas do fluxo dado
-// e retorna o total de linhas removidas. Usado tanto ao limpar vendas_* quanto
-// pela ação dedicada "Limpar VIEWS".
-func purgeAggFluxo(db *sql.DB, empresaID, fluxoPrefix string) int64 {
+// purgeAggFluxo apaga todas as tabelas agregadas do fluxo dado e retorna o
+// total de linhas removidas. Usado ao limpar vendas_* e pela ação "Limpar
+// VIEWS". Quando adminTruncate=true, usa TRUNCATE (zera TODAS empresas —
+// requer perfil admin e single-tenant efetivo); senão DELETE por empresa_id.
+func purgeAggFluxo(db *sql.DB, empresaID, fluxoPrefix string, adminTruncate bool) int64 {
 	var purged int64
 	for _, at := range aggTablesForFluxo(fluxoPrefix) {
 		if !tableExists(db, at) {
 			continue
 		}
-		an, aerr := deleteOrTruncate(db, at, empresaID)
+		var an int64
+		var aerr error
+		if adminTruncate {
+			an, aerr = truncateAllTenants(db, at)
+		} else {
+			an, aerr = deleteRowsForTenant(db, at, empresaID)
+		}
 		if aerr != nil {
 			log.Printf("[cleanup] empresa=%s purge %s ERRO: %v", empresaID, at, aerr)
 			continue
@@ -118,58 +125,31 @@ func tableExists(db *sql.DB, name string) bool {
 	return reg.Valid
 }
 
-// deleteOrTruncate — DELETE gera bloat massivo em tabelas grandes (Postgres
-// marca tuples como dead mas não devolve espaço em disco; só VACUUM FULL faz).
-// Quando a tabela só tem dados desta empresa (single-tenant efetivo), usa
-// TRUNCATE: instantâneo, devolve espaço na hora, ideal para fase de testes
-// que faz limpar+reimportar em ciclo. Se outra empresa tiver dados, cai no
-// DELETE por empresa_id (retrocompatível).
+// deleteRowsForTenant — DELETE por empresa_id. Preserva dados de outros
+// tenants (multi-tenant safe). Gera bloat no Postgres (tuples ficam como
+// dead até VACUUM). É o padrão do "Limpar dados do cliente".
+func deleteRowsForTenant(db *sql.DB, table, empresaID string) (int64, error) {
+	res, err := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// truncateAllTenants — TRUNCATE RESTART IDENTITY, ZERA TODA A TABELA
+// (dados de TODAS as empresas). Instantâneo, devolve espaço em disco.
 //
-// Retorna (rows removidas, erro). Quando via TRUNCATE, rows é a contagem
-// aproximada da empresa (via SELECT rápido); quando DELETE, é RowsAffected.
-func deleteOrTruncate(db *sql.DB, table, empresaID string) (int64, error) {
-	// Verifica se OUTRA empresa tem dados nessa tabela. LIMIT 1 pra ficar
-	// rápido em tabelas grandes — nem precisa contar tudo.
-	var otherExists int
-	err := db.QueryRow(fmt.Sprintf(
-		`SELECT 1 FROM %s WHERE empresa_id != $1 LIMIT 1`, table,
-	), empresaID).Scan(&otherExists)
-
-	// Se retornou linha (otherExists=1) → há outra empresa → DELETE.
-	// Se ErrNoRows → só há esta empresa (ou tabela vazia) → TRUNCATE.
-	// Se outro erro → tenta DELETE por segurança.
-	if err == nil {
-		// Multi-tenant: mantém DELETE
-		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
-		if dErr != nil {
-			return 0, dErr
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
-	}
-	if err != sql.ErrNoRows {
-		// Erro inesperado: fallback pra DELETE (comportamento antigo)
-		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
-		if dErr != nil {
-			return 0, dErr
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
-	}
-
-	// Sem outra empresa: conta antes pra reportar + TRUNCATE (libera espaço em disco).
-	// RESTART IDENTITY zera BIGSERIAL. Tabelas do cleanup não têm FKs relevantes.
+// ⚠️ APENAS para admin em ambientes single-tenant (dev, staging, cliente único)
+// ou quando se sabe que essa é a única empresa da instância. Verificação de
+// perfil é feita no handler (RequireAdmin).
+//
+// Retorna a contagem que existia antes do TRUNCATE (pra reportar no log).
+func truncateAllTenants(db *sql.DB, table string) (int64, error) {
 	var n int64
 	_ = db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table)).Scan(&n)
-	if _, tErr := db.Exec(fmt.Sprintf(`TRUNCATE TABLE %s RESTART IDENTITY`, table)); tErr != nil {
-		// TRUNCATE falhou (permissão, particionamento com FK, etc) — cai pro DELETE
-		log.Printf("[cleanup] empresa=%s TRUNCATE %s falhou (%v) — fallback DELETE", empresaID, table, tErr)
-		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
-		if dErr != nil {
-			return 0, dErr
-		}
-		n, _ = res.RowsAffected()
-		return n, nil
+	if _, err := db.Exec(fmt.Sprintf(`TRUNCATE TABLE %s RESTART IDENTITY`, table)); err != nil {
+		return 0, err
 	}
 	return n, nil
 }
@@ -220,12 +200,26 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var body struct {
-			Tables []string `json:"tables"`
+			Tables         []string `json:"tables"`
+			AdminTruncate  bool     `json:"admin_truncate,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Tables) == 0 {
 			http.Error(w, `{"error":"informe as tabelas a limpar"}`, http.StatusBadRequest)
 			return
 		}
+
+		// admin_truncate zera a tabela inteira (todas empresas). Restrito ao
+		// perfil admin_fbtax (super-usuário cross-tenant). Devolve espaço em
+		// disco imediatamente — ideal para dev/staging/instância single-tenant.
+		if body.AdminTruncate && !spCtx.IsAdminFbtax() {
+			http.Error(w, `{"error":"admin_truncate exige perfil admin_fbtax"}`, http.StatusForbidden)
+			return
+		}
+		modo := "delete-tenant"
+		if body.AdminTruncate {
+			modo = "TRUNCATE-ALL"
+		}
+		log.Printf("[cleanup] empresa=%s user=%s modo=%s tabelas=%v", spCtx.EmpresaID, spCtx.UserID, modo, body.Tables)
 
 		deleted := make(map[string]int64)
 		needRefresh := false
@@ -238,17 +232,23 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 			// Ação "Limpar VIEWS": purga todas as agg do fluxo (sem DELETE simples).
 			// Habilitada mesmo com vendas_* já vazias — remove dados fantasma.
 			if spec.AggFluxo != "" {
-				purged := purgeAggFluxo(db, spCtx.EmpresaID, spec.AggFluxo)
+				purged := purgeAggFluxo(db, spCtx.EmpresaID, spec.AggFluxo, body.AdminTruncate)
 				deleted[spec.Key] = purged
 				needRefresh = true
-				log.Printf("[cleanup] empresa=%s Limpar VIEWS agg_%s_* purgadas=%d", spCtx.EmpresaID, spec.AggFluxo, purged)
+				log.Printf("[cleanup] empresa=%s Limpar VIEWS agg_%s_* purgadas=%d modo=%s", spCtx.EmpresaID, spec.AggFluxo, purged, modo)
 				continue
 			}
 
 			if !tableExists(db, spec.Table) {
 				continue
 			}
-			n, err := deleteOrTruncate(db, spec.Table, spCtx.EmpresaID)
+			var n int64
+			var err error
+			if body.AdminTruncate {
+				n, err = truncateAllTenants(db, spec.Table)
+			} else {
+				n, err = deleteRowsForTenant(db, spec.Table, spCtx.EmpresaID)
+			}
 			if err != nil {
 				log.Printf("[cleanup] empresa=%s tabela=%s ERRO: %v", spCtx.EmpresaID, spec.Table, err)
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -258,7 +258,7 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 			if spec.RefreshViews {
 				needRefresh = true
 			}
-			log.Printf("[cleanup] empresa=%s tabela=%s removidas=%d", spCtx.EmpresaID, spec.Table, n)
+			log.Printf("[cleanup] empresa=%s tabela=%s removidas=%d modo=%s", spCtx.EmpresaID, spec.Table, n, modo)
 
 			// CRÍTICO: limpar vendas_* sem limpar as agg_*_mes deixa o painel
 			// mostrando dados fantasma (o painel lê das agg, e upsert_aggs_mes só
@@ -268,9 +268,9 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 				if spec.Key == "vendas_transmitidas" {
 					prefix = "trans"
 				}
-				purged := purgeAggFluxo(db, spCtx.EmpresaID, prefix)
+				purged := purgeAggFluxo(db, spCtx.EmpresaID, prefix, body.AdminTruncate)
 				deleted[spec.Key+"_agg"] = purged
-				log.Printf("[cleanup] empresa=%s agg_%s_* purgadas=%d", spCtx.EmpresaID, prefix, purged)
+				log.Printf("[cleanup] empresa=%s agg_%s_* purgadas=%d modo=%s", spCtx.EmpresaID, prefix, purged, modo)
 			}
 		}
 

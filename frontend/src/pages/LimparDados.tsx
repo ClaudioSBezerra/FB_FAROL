@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ShieldAlert, Trash2, Loader2 } from 'lucide-react'
+import { ShieldAlert, Trash2, Loader2, Zap } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 
 // Módulo de limpeza inteligente — apaga dados deste cliente por tabela.
 // Página em /config/limpar-dados (somente master). Backend: /api/v2/farol/cleanup*
@@ -15,11 +16,15 @@ interface CleanupItem {
 }
 
 const CONFIRM_WORD = 'LIMPAR'
+const CONFIRM_WORD_ADMIN = 'TRUNCATE'
 
 export default function LimparDados() {
   const qc = useQueryClient()
+  const { spRole } = useAuth()
+  const isAdminFbtax = spRole === 'admin_fbtax'
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmText, setConfirmText] = useState('')
+  const [adminMode, setAdminMode] = useState(false)
 
   const { data, isLoading, error, refetch } = useQuery<{ tables: CleanupItem[] }>({
     queryKey: ['cleanup-inventory'],
@@ -49,11 +54,11 @@ export default function LimparDados() {
   }
 
   const mutation = useMutation({
-    mutationFn: async (keys: string[]) => {
+    mutationFn: async ({ keys, admin }: { keys: string[]; admin: boolean }) => {
       const r = await fetch('/api/v2/farol/cleanup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tables: keys }),
+        body: JSON.stringify({ tables: keys, admin_truncate: admin }),
       })
       if (!r.ok) {
         const e = await r.json().catch(() => ({}))
@@ -63,9 +68,11 @@ export default function LimparDados() {
     },
     onSuccess: (res) => {
       const total = Object.values(res.deleted || {}).reduce((s, n) => s + n, 0)
-      toast.success(`Limpeza concluída — ${total.toLocaleString('pt-BR')} registros removidos`)
+      const modo = adminMode ? ' (TRUNCATE — espaço em disco liberado)' : ''
+      toast.success(`Limpeza concluída${modo} — ${total.toLocaleString('pt-BR')} registros removidos`)
       setSelected(new Set())
       setConfirmText('')
+      setAdminMode(false)
       refetch()
       qc.invalidateQueries({ queryKey: ['farol-v2-cards'] })
       qc.invalidateQueries({ queryKey: ['v2-periodos'] })
@@ -73,8 +80,9 @@ export default function LimparDados() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const requiredWord = adminMode ? CONFIRM_WORD_ADMIN : CONFIRM_WORD
   const canSubmit =
-    selected.size > 0 && confirmText.trim().toUpperCase() === CONFIRM_WORD && !mutation.isPending
+    selected.size > 0 && confirmText.trim().toUpperCase() === requiredWord && !mutation.isPending
 
   return (
     <div className="max-w-2xl mx-auto p-4">
@@ -142,31 +150,61 @@ export default function LimparDados() {
             })}
           </div>
 
+          {/* Modo Admin — TRUNCATE completo (só visível pra admin_fbtax) */}
+          {isAdminFbtax && (
+            <div className="mt-5 bg-purple-50 border-2 border-purple-300 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Zap className="h-4 w-4 text-purple-600 shrink-0" />
+                  <span className="text-sm font-bold text-purple-900">Modo Administrador (TRUNCATE)</span>
+                </div>
+                <label className="flex items-center gap-2 shrink-0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={adminMode}
+                    onChange={e => { setAdminMode(e.target.checked); setConfirmText('') }}
+                    className="rounded border-purple-400"
+                  />
+                  <span className="text-xs font-medium text-purple-800">Ativar</span>
+                </label>
+              </div>
+              <p className="text-xs text-purple-800 leading-relaxed">
+                Usa <strong>TRUNCATE</strong> em vez de DELETE — zera a tabela INTEIRA (todas as empresas)
+                e devolve o espaço em disco na hora. Ideal em instâncias single-tenant ou dev/staging.
+                Cuidado: em ambientes multi-cliente, apaga dados de todos os clientes.
+              </p>
+            </div>
+          )}
+
           {/* Confirmação */}
-          <div className="mt-5 bg-red-50 border border-red-200 rounded-xl p-4">
-            <p className="text-sm text-red-700 font-medium mb-1">
+          <div className={`mt-5 rounded-xl p-4 border ${adminMode ? 'bg-purple-50 border-purple-300' : 'bg-red-50 border-red-200'}`}>
+            <p className={`text-sm font-medium mb-1 ${adminMode ? 'text-purple-900' : 'text-red-700'}`}>
               {selected.size > 0
-                ? `Vai remover ${totalSelecionado.toLocaleString('pt-BR')} registros de ${selected.size} tabela(s).`
+                ? adminMode
+                  ? `Vai TRUNCAR ${selected.size} tabela(s) — zera dados de todas as empresas.`
+                  : `Vai remover ${totalSelecionado.toLocaleString('pt-BR')} registros de ${selected.size} tabela(s).`
                 : 'Selecione ao menos uma tabela acima.'}
             </p>
-            <p className="text-xs text-red-500 mb-3">
-              Para confirmar, digite <strong>{CONFIRM_WORD}</strong> no campo abaixo.
+            <p className={`text-xs mb-3 ${adminMode ? 'text-purple-700' : 'text-red-500'}`}>
+              Para confirmar, digite <strong>{requiredWord}</strong> no campo abaixo.
             </p>
             <div className="flex gap-2">
               <input
                 value={confirmText}
                 onChange={e => setConfirmText(e.target.value)}
-                placeholder={CONFIRM_WORD}
-                className="flex-1 h-9 rounded-lg border border-slate-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+                placeholder={requiredWord}
+                className={`flex-1 h-9 rounded-lg border px-3 text-sm focus:outline-none focus:ring-2 ${adminMode ? 'border-purple-200 focus:ring-purple-300' : 'border-slate-200 focus:ring-red-300'}`}
               />
               <button
                 disabled={!canSubmit}
-                onClick={() => mutation.mutate([...selected])}
-                className="h-9 px-4 rounded-lg bg-red-600 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-40 hover:bg-red-700 transition-colors"
+                onClick={() => mutation.mutate({ keys: [...selected], admin: adminMode })}
+                className={`h-9 px-4 rounded-lg text-white text-sm font-medium flex items-center gap-2 disabled:opacity-40 transition-colors ${adminMode ? 'bg-purple-700 hover:bg-purple-800' : 'bg-red-600 hover:bg-red-700'}`}
               >
                 {mutation.isPending
-                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Limpando…</>
-                  : <><Trash2 className="h-4 w-4" /> Limpar selecionados</>}
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> {adminMode ? 'Truncando…' : 'Limpando…'}</>
+                  : adminMode
+                    ? <><Zap className="h-4 w-4" /> TRUNCATE selecionados</>
+                    : <><Trash2 className="h-4 w-4" /> Limpar selecionados</>}
               </button>
             </div>
           </div>
