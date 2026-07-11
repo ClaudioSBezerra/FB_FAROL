@@ -786,9 +786,22 @@ func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillC
 	// l0-l2). Nos níveis-folha mais profundos (cliente em V01 l4, etc.) e no V04
 	// a coluna NÃO existe — referenciá-la quebra a query (e some o cliente no
 	// drill). Quando ausente, devolve 0.
+	shortName := strings.TrimPrefix(viewName, "farol.")
 	mixTotalExpr := "0"
-	if aggHasMixTotal[strings.TrimPrefix(viewName, "farol.")] {
+	if aggHasMixTotal[shortName] {
 		mixTotalExpr = "COALESCE(MAX(v.mix_total), 0)"
+	}
+	// base_cli/positivados/mix só existem em V01-V05. V06 (Por Rede) e V07 (Por
+	// Departamento), introduzidas na Fase 2 do adequação novo layout, guardam
+	// apenas pvenda/plucro/qt — sem métricas de positivação. Sem esse guard,
+	// SELECT v.base_cli quebra a query com "column does not exist".
+	baseCliExpr := "ROUND(AVG(v.base_cli))::int"
+	positivadosExpr := "ROUND(AVG(v.positivados))::int"
+	mixExpr := "AVG(v.mix)"
+	if aggWithoutPositivacao(shortName) {
+		baseCliExpr = "0::int"
+		positivadosExpr = "0::int"
+		mixExpr = "0::float"
 	}
 	q := fmt.Sprintf(`
 SELECT
@@ -796,15 +809,16 @@ SELECT
   MAX(v.%s)                      AS label,
   SUM(v.pvenda)                  AS valor,
   COALESCE(SUM(v.plucro), 0)     AS plucro,
-  ROUND(AVG(v.base_cli))::int    AS base_cli,
-  ROUND(AVG(v.positivados))::int AS positivados,
-  AVG(v.mix)                     AS mix,
+  %s                             AS base_cli,
+  %s                             AS positivados,
+  %s                             AS mix,
   %s                             AS mix_total
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != ''
 AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol,
+		baseCliExpr, positivadosExpr, mixExpr,
 		mixTotalExpr,
 		viewName,
 		groupCol, mesCond, drillCond,
@@ -944,6 +958,13 @@ var orgAncestors = map[string]map[string]bool{
 	"cod_rca":        {"cod_supervisor": true, "cod_gerente": true},
 	"cod_supervisor": {"cod_gerente": true},
 	"cod_gerente":    {},
+}
+
+// aggWithoutPositivacao — true se a tabela agg NÃO tem colunas base_cli,
+// positivados, mix (V06 "Por Rede" e V07 "Por Departamento", migrations 183/184).
+// Retornar 0 nessas queries evita "column does not exist".
+func aggWithoutPositivacao(shortTableName string) bool {
+	return strings.Contains(shortTableName, "_v06_") || strings.Contains(shortTableName, "_v07_")
 }
 
 // aggHasMixTotal — tabelas agg que receberam a coluna mix_total (migration 175).
@@ -1665,7 +1686,13 @@ func leafTableFor(fluxo fluxoCtx, view string) (string, int, bool) {
 
 // leafServesPositivados — true se a folha da view contém groupCol + todas as
 // colunas de drill/filtro (logo dá pra contar cnpj distinto por groupCol nela).
+// V06/V07 (Fase 2 novo layout) não têm métricas de positivação — retorna false
+// pra evitar que queryDistinctPositivados/queryDistinctCliPositivados sejam
+// chamadas em tabelas onde v.positivados/v.cnpj não existem.
 func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) bool {
+	if view == "V06" || view == "V07" {
+		return false
+	}
 	_, leafIdx, ok := leafTableFor(fluxo, view)
 	if !ok {
 		return false
