@@ -37,6 +37,11 @@ var cleanupTables = []cleanupTableSpec{
 		Description: "Base de FATURAMENTO (NF emitida). Limpar exige reimportar.", RefreshViews: true},
 	{Key: "vendas_transmitidas", Table: "vendas_transmitidas", Label: "Vendas transmitidas",
 		Description: "Base de TRANSMISSÃO (pedido digitado pelo RCA). Limpar exige reimportar.", RefreshViews: true},
+	// vendas_ccd (mig 182, novo layout jul/2026) — eventos negativos (Cortado,
+	// Cancelado, Devolvido) exportados em arquivos _CCD.csv. Ainda não tem
+	// agg_*_mes própria; DELETE direto sem RefreshViews basta.
+	{Key: "vendas_ccd", Table: "vendas_ccd", Label: "Vendas CCD (Cort/Canc/Dev)",
+		Description: "Base de eventos negativos (Cortado/Cancelado/Devolvido) do novo layout ION VENDAS. Limpar exige reimportar os arquivos _CCD.csv."},
 	{Key: "agg_faturado", Table: "farol.agg_fat_v01_l0_mes", Label: "Painel agregado — Faturado",
 		Description:  "Tabelas que alimentam o painel (faturado). Limpar zera o painel mesmo com as vendas já apagadas — útil para remover dados fantasma sem reimportar.",
 		RefreshViews: true, AggFluxo: "fat"},
