@@ -102,12 +102,11 @@ func purgeAggFluxo(db *sql.DB, empresaID, fluxoPrefix string) int64 {
 		if !tableExists(db, at) {
 			continue
 		}
-		ares, aerr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, at), empresaID)
+		an, aerr := deleteOrTruncate(db, at, empresaID)
 		if aerr != nil {
 			log.Printf("[cleanup] empresa=%s purge %s ERRO: %v", empresaID, at, aerr)
 			continue
 		}
-		an, _ := ares.RowsAffected()
 		purged += an
 	}
 	return purged
@@ -117,6 +116,62 @@ func tableExists(db *sql.DB, name string) bool {
 	var reg sql.NullString
 	_ = db.QueryRow(`SELECT to_regclass($1)`, name).Scan(&reg)
 	return reg.Valid
+}
+
+// deleteOrTruncate — DELETE gera bloat massivo em tabelas grandes (Postgres
+// marca tuples como dead mas não devolve espaço em disco; só VACUUM FULL faz).
+// Quando a tabela só tem dados desta empresa (single-tenant efetivo), usa
+// TRUNCATE: instantâneo, devolve espaço na hora, ideal para fase de testes
+// que faz limpar+reimportar em ciclo. Se outra empresa tiver dados, cai no
+// DELETE por empresa_id (retrocompatível).
+//
+// Retorna (rows removidas, erro). Quando via TRUNCATE, rows é a contagem
+// aproximada da empresa (via SELECT rápido); quando DELETE, é RowsAffected.
+func deleteOrTruncate(db *sql.DB, table, empresaID string) (int64, error) {
+	// Verifica se OUTRA empresa tem dados nessa tabela. LIMIT 1 pra ficar
+	// rápido em tabelas grandes — nem precisa contar tudo.
+	var otherExists int
+	err := db.QueryRow(fmt.Sprintf(
+		`SELECT 1 FROM %s WHERE empresa_id != $1 LIMIT 1`, table,
+	), empresaID).Scan(&otherExists)
+
+	// Se retornou linha (otherExists=1) → há outra empresa → DELETE.
+	// Se ErrNoRows → só há esta empresa (ou tabela vazia) → TRUNCATE.
+	// Se outro erro → tenta DELETE por segurança.
+	if err == nil {
+		// Multi-tenant: mantém DELETE
+		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
+		if dErr != nil {
+			return 0, dErr
+		}
+		n, _ := res.RowsAffected()
+		return n, nil
+	}
+	if err != sql.ErrNoRows {
+		// Erro inesperado: fallback pra DELETE (comportamento antigo)
+		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
+		if dErr != nil {
+			return 0, dErr
+		}
+		n, _ := res.RowsAffected()
+		return n, nil
+	}
+
+	// Sem outra empresa: conta antes pra reportar + TRUNCATE (libera espaço em disco).
+	// RESTART IDENTITY zera BIGSERIAL. Tabelas do cleanup não têm FKs relevantes.
+	var n int64
+	_ = db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table)).Scan(&n)
+	if _, tErr := db.Exec(fmt.Sprintf(`TRUNCATE TABLE %s RESTART IDENTITY`, table)); tErr != nil {
+		// TRUNCATE falhou (permissão, particionamento com FK, etc) — cai pro DELETE
+		log.Printf("[cleanup] empresa=%s TRUNCATE %s falhou (%v) — fallback DELETE", empresaID, table, tErr)
+		res, dErr := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, table), empresaID)
+		if dErr != nil {
+			return 0, dErr
+		}
+		n, _ = res.RowsAffected()
+		return n, nil
+	}
+	return n, nil
 }
 
 // CleanupInventoryHandler — GET /api/v2/farol/cleanup/inventory
@@ -193,13 +248,12 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 			if !tableExists(db, spec.Table) {
 				continue
 			}
-			res, err := db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1`, spec.Table), spCtx.EmpresaID)
+			n, err := deleteOrTruncate(db, spec.Table, spCtx.EmpresaID)
 			if err != nil {
 				log.Printf("[cleanup] empresa=%s tabela=%s ERRO: %v", spCtx.EmpresaID, spec.Table, err)
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 				return
 			}
-			n, _ := res.RowsAffected()
 			deleted[spec.Key] = n
 			if spec.RefreshViews {
 				needRefresh = true
