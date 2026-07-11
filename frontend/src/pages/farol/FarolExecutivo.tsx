@@ -731,7 +731,7 @@ export default function FarolExecutivo() {
   const { spRole, tipoPersona } = useAuth()
   void spRole; void tipoPersona // mantidos pra futuras gates de UI
 
-  const [view, setView] = useState<'V01' | 'V02' | 'V03'>('V01')
+  const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [search, setSearch] = useState('')
@@ -794,7 +794,7 @@ export default function FarolExecutivo() {
     setDrillPath(prev => [...prev, { level: card.level, value: card.key, label: card.label }])
   }
   const handleBack = () => setDrillPath(prev => prev.slice(0, -1))
-  const handleViewChange = (v: 'V01' | 'V02' | 'V03') => { setView(v); setDrillPath([]) }
+  const handleViewChange = (v: 'V01' | 'V02' | 'V03' | 'V06' | 'V07') => { setView(v); setDrillPath([]) }
 
   const cards = data?.cards ?? []
   const kpi = data?.kpi
@@ -831,7 +831,10 @@ export default function FarolExecutivo() {
 
   // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
   const curLevel = cards[0]?.level ?? ''
-  const hidePosit = curLevel === 'cod_cli' || curLevel === 'cod_prod'
+  // Positivação escondida nas folhas cliente/produto E também nas views V06/V07
+  // (só valor, sem base_cli/positivados/mix — decisão da Fase 2).
+  const hidePosit = view === 'V06' || view === 'V07' ||
+                    curLevel === 'cod_cli' || curLevel === 'cod_prod'
 
   // handleRefreshViews removido junto com o botão Consolidar.
 
@@ -939,6 +942,8 @@ export default function FarolExecutivo() {
             { id: 'V01' as const, label: 'Por Indústria' },
             { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V02' as const, label: 'Por Equipe' },
+            { id: 'V06' as const, label: 'Por Rede' },
+            { id: 'V07' as const, label: 'Por Departamento' },
           ]).map(v => (
             <button
               key={v.id}

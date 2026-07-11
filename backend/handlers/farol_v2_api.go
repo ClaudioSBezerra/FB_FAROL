@@ -90,6 +90,23 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
+	// V06 "Por Rede" (mig 183/185) — só valor, sem positivação. Rede é
+	// identificada pelo cod_cliprinc; cnpjs diferentes podem compartilhar
+	// a mesma rede (padarias/redes de mercado).
+	"V06": {
+		{Level: "cod_cliprinc", NameField: "nome_cliprinc", Label: "Rede"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
+	// V07 "Por Departamento" (mig 184/185) — hierarquia merceológica de
+	// produto. Só valor, sem positivação.
+	"V07": {
+		{Level: "cod_depto", NameField: "depto", Label: "Departamento"},
+		{Level: "cod_sec", NameField: "secao", Label: "Seção"},
+		{Level: "cod_categoria", NameField: "categoria", Label: "Categoria"},
+		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
+	},
 }
 
 // Tabelas agg_*_mes (granularidade mensal, migration 162+165).
@@ -100,6 +117,8 @@ var aggTablesFat = map[string][]string{
 	"V03": {"agg_fat_v03_l0_mes", "agg_fat_v03_l1_mes", "agg_fat_v03_l2_mes", "agg_fat_v03_l3_mes"},
 	"V04": {"agg_fat_v04_l0_mes", "agg_fat_v04_l1_mes", "agg_fat_v04_l2_mes"},
 	"V05": {"agg_fat_v05_l0_mes", "agg_fat_v05_l1_mes", "agg_fat_v05_l2_mes", "agg_fat_v05_l3_mes"},
+	"V06": {"agg_fat_v06_l0_mes", "agg_fat_v06_l1_mes", "agg_fat_v06_l2_mes"},
+	"V07": {"agg_fat_v07_l0_mes", "agg_fat_v07_l1_mes", "agg_fat_v07_l2_mes"},
 }
 
 var aggTablesTrans = map[string][]string{
@@ -108,6 +127,8 @@ var aggTablesTrans = map[string][]string{
 	"V03": {"agg_trans_v03_l0_mes", "agg_trans_v03_l1_mes", "agg_trans_v03_l2_mes", "agg_trans_v03_l3_mes"},
 	"V04": {"agg_trans_v04_l0_mes", "agg_trans_v04_l1_mes", "agg_trans_v04_l2_mes"},
 	"V05": {"agg_trans_v05_l0_mes", "agg_trans_v05_l1_mes", "agg_trans_v05_l2_mes", "agg_trans_v05_l3_mes"},
+	"V06": {"agg_trans_v06_l0_mes", "agg_trans_v06_l1_mes", "agg_trans_v06_l2_mes"},
+	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes", "agg_trans_v07_l2_mes"},
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -562,6 +583,12 @@ var allowedCols = map[string]bool{
 	"cod_cli": true, "nome_cli": true,
 	"cod_prod": true, "nome_prod": true,
 	"empresa": true, "uf": true,
+	// V06 (mig 183) — dimensão Rede + reuso de cod_fornec/cod_cli
+	"cod_cliprinc": true, "nome_cliprinc": true,
+	// V07 (mig 184) — hierarquia merceológica do produto
+	"cod_depto": true, "depto": true,
+	"cod_sec": true, "secao": true,
+	"cod_categoria": true, "categoria": true,
 }
 
 func safeColName(col string) string {
@@ -1921,9 +1948,19 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				t1 := time.Now()
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
-				} else {
-					log.Printf("[farol:agg] w=%d UPSERT %04d-%02d OK em %v", wid, m.Ano, m.Mes, time.Since(t1))
+					continue
 				}
+				// V06/V07 (mig 185) — funções auxiliares populam agg_*_v06_*/v07_*.
+				// Rodam sequencialmente após a principal; se cod_cliprinc/cod_depto
+				// não existem nos dados daquele mês (CSVs no layout antigo), as
+				// temp tables ficam vazias e o custo é ~0.
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v06($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V06 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v07($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V07 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				log.Printf("[farol:agg] w=%d UPSERT %04d-%02d OK em %v", wid, m.Ano, m.Mes, time.Since(t1))
 			}
 		}(i)
 	}
