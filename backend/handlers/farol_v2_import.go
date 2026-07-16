@@ -668,6 +668,19 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	}
 	log.Printf("[import:diag] roteamento: %d linhas → vendas_faturadas, %d linhas → vendas_transmitidas, %d linhas → vendas_ccd", len(allFat), len(allTrans), len(allCCD))
 
+	// Parse terminou — arquivo em disco não é mais necessário. Apaga já em
+	// vez de esperar o defer (que só roda após COPY + refresh de views, ~10min
+	// pra arquivos grandes). Libera ~100MB de disco no meio do job, o que
+	// ajuda quando entram vários imports em sequência.
+	// Fecha explicitamente antes de remover (defer f.Close continua no fim).
+	f.Close()
+	if rmErr := os.Remove(uploadedPath); rmErr == nil {
+		log.Printf("[ImportJob:%s] arquivo temp %s removido após parse", jobID, filepath.Base(uploadedPath))
+		uploadedPath = "" // sinaliza pro defer não tentar remover de novo
+	} else {
+		log.Printf("[ImportJob:%s] falha ao remover %s após parse: %v (defer tentará novamente)", jobID, uploadedPath, rmErr)
+	}
+
 	// Dedup defensivo: o ION VENDAS exporta a mesma NF múltiplas vezes (uma por
 	// RCA cuja carteira inclui o cliente). Sem chave de NF para deduplicar
 	// semanticamente, usamos a tupla de negócio (data, cnpj|cli, prod, qt, pvenda)
