@@ -23,6 +23,7 @@ services:
       - SMTP_FROM=${SMTP_FROM}
       - APP_URL=${APP_URL:-https://farol.fbtax.cloud}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://farol.fbtax.cloud}
+      - IMPORT_UPLOAD_DIR=/root/uploads/imports
     depends_on:
       db:
         condition: service_healthy

@@ -11,7 +11,6 @@ package handlers
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -21,6 +20,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,8 @@ import (
 
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 // importJobs guarda a função de cancelamento de cada job ativo.
@@ -72,16 +75,21 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		skipRefreshStr := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("skip_refresh")))
 		skipRefresh    := skipRefreshStr == "true" || skipRefreshStr == "1"
 
-		// ── Ler arquivo — suporta até 2 GB (aumentado pra 400 fornecedores).
+		// ── Ler arquivo — Fase B (jul/2026): salva em disco via io.Copy em
+		// stream. Antes fazia io.ReadAll (RAM inteira, ~1 GB para CSVs grandes
+		// de 400 fornecedores). Agora RAM constante ~4 MB (buffer do io.Copy).
+		// Arquivo em disco é apagado no fim do processImportJob (defer os.Remove).
+		//
 		// Aceita CSV plain OU comprimido gzip: cliente pode subir .csv.gz
-		// direto, poupando 5-10× de banda de upload (CSV é altamente
-		// compressível). Detecção é por magic bytes (1F 8B), não pelo nome.
+		// direto, poupando 5-10× de banda de upload. Detecção por magic bytes
+		// (1F 8B), NÃO descomprime aqui — grava .gz no disco (economiza espaço),
+		// o worker descomprime on-the-fly ao ler.
 		_ = r.ParseMultipartForm(2048 << 20)
 		var rawReader io.Reader
-		file, _, ferr := r.FormFile("file")
+		formFile, _, ferr := r.FormFile("file")
 		if ferr == nil {
-			defer file.Close()
-			rawReader = file
+			defer formFile.Close()
+			rawReader = formFile
 		} else {
 			rawReader = r.Body
 		}
@@ -91,69 +99,65 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		head, _ := peekReader.Peek(2)
 		isGzip := len(head) == 2 && head[0] == 0x1F && head[1] == 0x8B
 
-		var effectiveReader io.Reader = peekReader
-		if isGzip {
-			gz, gErr := gzip.NewReader(peekReader)
-			if gErr != nil {
-				http.Error(w, `{"error":"arquivo .gz inválido: `+gErr.Error()+`"}`, http.StatusBadRequest)
-				return
-			}
-			defer gz.Close()
-			effectiveReader = gz
+		// Diretório de imports temporários. Configurável via IMPORT_UPLOAD_DIR
+		// (prod: Coolify mapeia volume; local: cai no TempDir do OS).
+		// Cleanup é responsabilidade do processImportJob (defer os.Remove).
+		uploadsDir := strings.TrimSpace(os.Getenv("IMPORT_UPLOAD_DIR"))
+		if uploadsDir == "" {
+			uploadsDir = filepath.Join(os.TempDir(), "farol-imports")
 		}
-
-		rawBytes, err := io.ReadAll(effectiveReader)
-		if err != nil || len(rawBytes) == 0 {
-			http.Error(w, `{"error":"falha ao ler arquivo"}`, http.StatusBadRequest)
+		if mErr := os.MkdirAll(uploadsDir, 0755); mErr != nil {
+			http.Error(w, `{"error":"falha ao criar dir uploads: `+mErr.Error()+`"}`, http.StatusInternalServerError)
 			return
 		}
+		suffix := ".csv"
 		if isGzip {
-			log.Printf("[VendasImport] upload gzip detectado — descomprimido para %d MB", len(rawBytes)/1024/1024)
+			suffix = ".csv.gz"
 		}
+		tmpFile, cErr := os.CreateTemp(uploadsDir, "upload-*"+suffix)
+		if cErr != nil {
+			http.Error(w, `{"error":"falha ao criar arquivo temp: `+cErr.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		uploadedBytes, copyErr := io.Copy(tmpFile, peekReader)
+		tmpFile.Close()
+		if copyErr != nil || uploadedBytes == 0 {
+			os.Remove(tmpFile.Name())
+			http.Error(w, `{"error":"falha ao gravar arquivo em disco"}`, http.StatusBadRequest)
+			return
+		}
+		uploadedPath := tmpFile.Name()
 
-		// Strip UTF-8 BOM
-		if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
-			rawBytes = rawBytes[3:]
-		}
-		// Latin-1 / Windows-1252 → UTF-8
-		if !utf8.Valid(rawBytes) {
-			out := make([]byte, 0, len(rawBytes)+len(rawBytes)/8)
-			for _, b := range rawBytes {
-				if b < 0x80 {
-					out = append(out, b)
-				} else {
-					var buf [4]byte
-					n := utf8.EncodeRune(buf[:], rune(b))
-					out = append(out, buf[:n]...)
-				}
-			}
-			rawBytes = out
-		}
+		log.Printf("[VendasImport] empresa=%s fallback=%d/%d arquivo=%dMB (%s) salvo em %s",
+			spCtx.EmpresaID, fallbackAno, fallbackMes,
+			int(uploadedBytes)/1024/1024,
+			map[bool]string{true: "gzip", false: "plain"}[isGzip],
+			filepath.Base(uploadedPath))
 
-		lineCount := bytes.Count(rawBytes, []byte{'\n'})
-		if len(rawBytes) > 0 && rawBytes[len(rawBytes)-1] != '\n' {
-			lineCount++
+		// Estimativa de linhas (para progress %): baseada no tamanho.
+		// Média empírica: linha CSV do ION VENDAS tem ~400 bytes. Se gzip,
+		// aplica fator 10× (compressão típica). Só serve para o cálculo de
+		// % — o total real vem do parse.
+		estBytesPerLine := int64(400)
+		multiplier := int64(1)
+		if isGzip {
+			multiplier = 10
 		}
-		estimatedRows := lineCount - 1
-		if estimatedRows < 0 {
-			estimatedRows = 0
-		}
-		log.Printf("[VendasImport] empresa=%s fallback=%d/%d arquivo=%dMB ~%d linhas",
-			spCtx.EmpresaID, fallbackAno, fallbackMes, len(rawBytes)/1024/1024, estimatedRows)
+		estimatedRows := int((uploadedBytes * multiplier) / estBytesPerLine)
 
 		// ── Cria job no banco ─────────────────────────────────────────────────
 		// ano/mes do job representa o "balde de competência" do upload (mantido
 		// para a tela de histórico de importações). Não afeta semântica dos dados.
 		var jobID string
-		err = db.QueryRow(`
+		if jErr := db.QueryRow(`
 			INSERT INTO vendas_import_jobs
 				(empresa_id, ano, mes, status, total_lines)
 			VALUES ($1, $2, $3, 'pending', $4)
 			RETURNING id`,
 			spCtx.EmpresaID, fallbackAno, fallbackMes, estimatedRows,
-		).Scan(&jobID)
-		if err != nil {
-			http.Error(w, `{"error":"erro ao criar job: `+err.Error()+`"}`, http.StatusInternalServerError)
+		).Scan(&jobID); jErr != nil {
+			os.Remove(uploadedPath)
+			http.Error(w, `{"error":"erro ao criar job: `+jErr.Error()+`"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -161,8 +165,9 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		ctx, cancel := context.WithCancel(context.Background())
 		importJobs.Store(jobID, cancel)
 
-		// rawBytes é passado por referência ao goroutine (GC mantém vivo até ele terminar)
-		go processImportJob(ctx, db, jobID, rawBytes, spCtx, fallbackAno, fallbackMes, skipRefresh)
+		// Worker recebe path + flag gzip. Ele é responsável por abrir, ler em
+		// stream, e apagar o arquivo do disco no fim (defer os.Remove).
+		go processImportJob(ctx, db, jobID, uploadedPath, isGzip, spCtx, fallbackAno, fallbackMes, skipRefresh)
 
 		// Retorna job_id imediatamente
 		w.Header().Set("Content-Type", "application/json")
@@ -194,7 +199,17 @@ func parseDateBR(s string) time.Time {
 }
 
 func processImportJob(ctx context.Context, db *sql.DB, jobID string,
-	rawBytes []byte, spCtx *FarolContext, fallbackAno, fallbackMes int, skipRefresh bool) {
+	uploadedPath string, isGzip bool,
+	spCtx *FarolContext, fallbackAno, fallbackMes int, skipRefresh bool) {
+
+	// Cleanup do arquivo em disco — sempre roda, sucesso ou falha.
+	defer func() {
+		if uploadedPath != "" {
+			if rmErr := os.Remove(uploadedPath); rmErr != nil {
+				log.Printf("[ImportJob:%s] falha ao remover %s: %v", jobID, uploadedPath, rmErr)
+			}
+		}
+	}()
 
 	defer func() {
 		importJobs.Delete(jobID)
@@ -240,8 +255,45 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 	}()
 
-	// ── Parse CSV ─────────────────────────────────────────────────────────────
-	csvReader := csv.NewReader(bytes.NewReader(rawBytes))
+	// ── Parse CSV em stream (Fase B) ──────────────────────────────────────────
+	// Pipeline: arquivo em disco → [gzip decoder se .gz] → bufio → strip BOM
+	//   → charset auto-detect (UTF-8 raw | Windows-1252/Latin-1 via transform)
+	//   → csv.Reader. RAM constante (~64 KB buffer), nada de rawBytes na heap.
+	f, oErr := os.Open(uploadedPath)
+	if oErr != nil {
+		markStatus("error", "falha ao abrir arquivo temp: "+oErr.Error())
+		return
+	}
+	defer f.Close()
+
+	var streamReader io.Reader = f
+	if isGzip {
+		gz, gzErr := gzip.NewReader(f)
+		if gzErr != nil {
+			markStatus("error", "falha ao descomprimir gzip: "+gzErr.Error())
+			return
+		}
+		defer gz.Close()
+		streamReader = gz
+	}
+
+	bufReader := bufio.NewReaderSize(streamReader, 64<<10)
+
+	// Strip UTF-8 BOM se presente.
+	if bom, _ := bufReader.Peek(3); len(bom) == 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF {
+		bufReader.Discard(3)
+	}
+
+	// Detecção de charset via peek: amostra 32 KB e testa UTF-8.
+	// ION VENDAS costuma gerar Windows-1252; se UTF-8 for válido no header, mantém.
+	sample, _ := bufReader.Peek(32 << 10)
+	var csvSource io.Reader = bufReader
+	if !utf8.Valid(sample) {
+		csvSource = transform.NewReader(bufReader, charmap.Windows1252.NewDecoder())
+		log.Printf("[ImportJob:%s] charset Windows-1252/Latin-1 detectado — convertendo em stream", jobID)
+	}
+
+	csvReader := csv.NewReader(csvSource)
 	csvReader.Comma = ';'
 	csvReader.LazyQuotes = true
 	csvReader.TrimLeadingSpace = true
@@ -660,12 +712,17 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return out
 	}
+	// Total bruto ANTES do dedup — é o que o campo "importados" do job vai
+	// mostrar na UI. Reflete quantas linhas do CSV o parser efetivamente
+	// entendeu, sem deduzir as duplicatas inter-RCA que o ION VENDAS gera
+	// (mesma NF replicada por cada RCA cuja carteira inclui o cliente).
+	// Se mostrássemos só o pós-dedup, o gestor pensaria que o arquivo teve
+	// perda — mas foi o próprio ION que replicou.
+	brutoImportadas := len(allFat) + len(allTrans) + len(allCCD)
+
 	allFat = dedupSlice(allFat, "vendas_faturadas")
 	allTrans = dedupSlice(allTrans, "vendas_transmitidas")
 	allCCD = dedupSlice(allCCD, "vendas_ccd")
-
-	// Libera rawBytes da memória agora que o CSV foi parseado
-	rawBytes = nil
 
 	if len(allFat) == 0 && len(allTrans) == 0 && len(allCCD) == 0 {
 		markStatus("error", "nenhuma linha válida encontrada no arquivo")
@@ -853,8 +910,15 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return
 	}
 
-	importados := int(processed.Load())
-	log.Printf("[ImportJob:%s] concluído: %d linhas via COPY", jobID, importados)
+	// "importados" = total BRUTO lido do CSV (inclui as duplicatas inter-RCA
+	// que o dedup depois descartou). É esse número que sobe na UI e que o
+	// gestor compara com wc -l do arquivo.
+	// `processed.Load()` reflete só o que foi efetivamente COPIADO pós-dedup
+	// — útil pro log de auditoria, não pra UI.
+	importados := brutoImportadas
+	copiadas := int(processed.Load())
+	log.Printf("[ImportJob:%s] concluído: %d linhas brutas do CSV (%d após dedup via COPY)",
+		jobID, importados, copiadas)
 
 	if !skipRefresh {
 		// Sinaliza "Consolidando..." e faz REFRESH da view materializada.
