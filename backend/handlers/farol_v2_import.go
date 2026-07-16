@@ -10,7 +10,9 @@ package handlers
 //   DELETE /api/v2/vendas/clear           → remove período
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -70,8 +72,11 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		skipRefreshStr := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("skip_refresh")))
 		skipRefresh    := skipRefreshStr == "true" || skipRefreshStr == "1"
 
-		// ── Ler arquivo — suporta até 1 GB (350 MB típico) ───────────────────
-		_ = r.ParseMultipartForm(512 << 20)
+		// ── Ler arquivo — suporta até 2 GB (aumentado pra 400 fornecedores).
+		// Aceita CSV plain OU comprimido gzip: cliente pode subir .csv.gz
+		// direto, poupando 5-10× de banda de upload (CSV é altamente
+		// compressível). Detecção é por magic bytes (1F 8B), não pelo nome.
+		_ = r.ParseMultipartForm(2048 << 20)
 		var rawReader io.Reader
 		file, _, ferr := r.FormFile("file")
 		if ferr == nil {
@@ -81,10 +86,29 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 			rawReader = r.Body
 		}
 
-		rawBytes, err := io.ReadAll(rawReader)
+		// Peek nos 2 primeiros bytes para detectar gzip magic (1F 8B).
+		peekReader := bufio.NewReaderSize(rawReader, 4<<20) // 4MB buffer
+		head, _ := peekReader.Peek(2)
+		isGzip := len(head) == 2 && head[0] == 0x1F && head[1] == 0x8B
+
+		var effectiveReader io.Reader = peekReader
+		if isGzip {
+			gz, gErr := gzip.NewReader(peekReader)
+			if gErr != nil {
+				http.Error(w, `{"error":"arquivo .gz inválido: `+gErr.Error()+`"}`, http.StatusBadRequest)
+				return
+			}
+			defer gz.Close()
+			effectiveReader = gz
+		}
+
+		rawBytes, err := io.ReadAll(effectiveReader)
 		if err != nil || len(rawBytes) == 0 {
 			http.Error(w, `{"error":"falha ao ler arquivo"}`, http.StatusBadRequest)
 			return
+		}
+		if isGzip {
+			log.Printf("[VendasImport] upload gzip detectado — descomprimido para %d MB", len(rawBytes)/1024/1024)
 		}
 
 		// Strip UTF-8 BOM
