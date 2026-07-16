@@ -83,8 +83,13 @@ function ImportForm({ onDone, token }: { onDone: () => void; token: string | nul
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return
+    const isAccepted = (name: string) => {
+      const n = name.toLowerCase()
+      return n.endsWith('.csv') || n.endsWith('.txt') ||
+             n.endsWith('.csv.gz') || n.endsWith('.txt.gz') || n.endsWith('.gz')
+    }
     const arr = Array.from(files)
-      .filter(f => f.name.endsWith('.csv') || f.name.endsWith('.txt'))
+      .filter(f => isAccepted(f.name))
       .sort((a, b) => a.name.localeCompare(b.name))
     setItems(arr.map(file => ({ file, status: 'waiting', job: null })))
   }
