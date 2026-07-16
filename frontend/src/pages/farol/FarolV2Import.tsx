@@ -216,12 +216,14 @@ function ImportForm({ onDone, token }: { onDone: () => void; token: string | nul
         >
           <UploadCloud className="h-8 w-8 text-slate-300 mx-auto mb-2" />
           <p className="text-sm text-slate-500">Clique ou arraste um ou vários arquivos</p>
-          <p className="text-xs text-slate-400 mt-1">Seleção múltipla · CSV com separador ; · até 1 GB por arquivo</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Seleção múltipla · CSV com separador ; · até 2 GB por arquivo · aceita <strong>.gz</strong> (5-10× menor)
+          </p>
         </div>
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.txt,text/csv,text/plain"
+          accept=".csv,.txt,.gz,.csv.gz,.txt.gz,text/csv,text/plain,application/gzip,application/x-gzip"
           multiple
           className="hidden"
           onChange={e => handleFiles(e.target.files)}
