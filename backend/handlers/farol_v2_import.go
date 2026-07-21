@@ -374,6 +374,20 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iFantasia     := col(-1, "fantasia", "nome_fantasia")
 	iPvendaTotal  := col(-1, "pvendatotal", "pvenda_total", "valor_total", "vl_total", "pvendatot")
 
+	// ── TIPO_VENDA (jul/2026) — ÚLTIMA coluna do novo layout. Só é gravada no
+	// fluxo faturado (mig 187). Detecção primária por header; se o header não
+	// bater por nome, aceita a última coluna SÓ quando ela parece ser tipo_venda
+	// (contém "tipo" e "venda"). Sem esse guard, um CSV antigo — cuja última
+	// coluna NÃO é tipo_venda — teria seu último campo lido erroneamente.
+	// Ausente → -1 → getField devolve "" → tipo_venda='' (compat CSV antigo).
+	iTipoVenda := col(-1, "tipovenda", "tipo_venda", "tipodevenda")
+	if iTipoVenda < 0 && len(headerRow) > 0 {
+		lastIdx := len(headerRow) - 1
+		if h := norm(headerRow[lastIdx]); strings.Contains(h, "tipo") && strings.Contains(h, "venda") {
+			iTipoVenda = lastIdx
+		}
+	}
+
 	// Log dos cabeçalhos detectados para diagnóstico de mapeamento de colunas
 	colLabel := func(idx int) string {
 		if idx < 0 || idx >= len(headerRow) {
@@ -385,8 +399,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		colLabel(iQt), colLabel(iPvenda), colLabel(iPvendaTotal), colLabel(iPlucro), colLabel(iEan),
 		colLabel(iCodCli), colLabel(iCodFornec), colLabel(iPeriodo), colLabel(iEstado),
 		colLabel(iData), colLabel(iQtrcaSupervisor))
-	log.Printf("[import:diag] colunas do novo layout — depto=%s  secao=%s  categoria=%s  cliprinc=%s  fantasia=%s",
-		colLabel(iCodDepto), colLabel(iCodSec), colLabel(iCodCategoria), colLabel(iCodCliPrinc), colLabel(iFantasia))
+	log.Printf("[import:diag] colunas do novo layout — depto=%s  secao=%s  categoria=%s  cliprinc=%s  fantasia=%s  tipo_venda=%s",
+		colLabel(iCodDepto), colLabel(iCodSec), colLabel(iCodCategoria), colLabel(iCodCliPrinc), colLabel(iFantasia), colLabel(iTipoVenda))
 
 	getField := func(row []string, idx int) string {
 		if idx < 0 || idx >= len(row) {
@@ -480,8 +494,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// Campo `evento` é usado só para CCD (identifica qual dos 3 tipos:
 	// CORTADO/CANCELADO/DEVOLVIDO); fat/trans deixam vazio.
 	type vendaRaw struct {
-		vals   [38]any
-		evento string
+		vals      [38]any
+		evento    string
+		tipoVenda string // jul/2026 — só gravado no fluxo faturado (mig 187)
 	}
 	var allFat   []vendaRaw // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
@@ -618,7 +633,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[35] = getField(csvRow, iCodCliPrinc)
 		r.vals[36] = getField(csvRow, iFantasia)
 		r.vals[37] = pvendaUnit // preserva o unitário original do CSV (informativo)
-		r.evento   = evento
+		r.evento    = evento
+		r.tipoVenda = getField(csvRow, iTipoVenda) // '' se coluna ausente
 
 		dKey := dataProc.Format("2006-01-02")
 		mesContagem[[2]int{dataProc.Year(), int(dataProc.Month())}]++
@@ -779,7 +795,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// tratamos CCD num processFlow separado que anexa o evento como último arg.
 	copyColsCcd := append(append([]string(nil), copyCols...), "evento")
 
-	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw) error {
+	// extraCol/extraVal: coluna adicional gravada só em alguns fluxos (ex.:
+	// tipo_venda no faturado). extraCol=="" → COPY usa apenas o vals layout.
+	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw, extraCol string, extraVal func(vendaRaw) any) error {
 		// DELETE atômico pelos dias presentes no CSV — preserva dias anteriores
 		// não incluídos neste upload (cliente sobe vendas diárias).
 		dateList := make([]string, 0, len(dates))
@@ -802,6 +820,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		// COPY em chunks; cancelamento checado entre chunks.
 		cols := append([]string(nil), copyCols...)
 		cols[1] = dateColName
+		if extraCol != "" {
+			cols = append(cols, extraCol)
+		}
 		for start := 0; start < len(rows); start += copyChunkRows {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -817,7 +838,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 				return fmt.Errorf("PREPARE COPY %s: %w", tableName, sErr)
 			}
 			for i := range chunk {
-				if _, eErr := stmt.Exec(chunk[i].vals[:]...); eErr != nil {
+				var eErr error
+				if extraCol != "" {
+					args := append(append([]any(nil), chunk[i].vals[:]...), extraVal(chunk[i]))
+					_, eErr = stmt.Exec(args...)
+				} else {
+					_, eErr = stmt.Exec(chunk[i].vals[:]...)
+				}
+				if eErr != nil {
 					stmt.Close()
 					return fmt.Errorf("enfileirar %s: %w", tableName, eErr)
 				}
@@ -886,7 +914,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return nil
 	}
 
-	if err = processFlow("vendas_faturadas", "data_faturamento", uniqueFatDates, allFat); err != nil {
+	if err = processFlow("vendas_faturadas", "data_faturamento", uniqueFatDates, allFat,
+		"tipo_venda", func(r vendaRaw) any { return r.tipoVenda }); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")
@@ -895,7 +924,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return
 	}
-	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans); err != nil {
+	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans, "", nil); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")

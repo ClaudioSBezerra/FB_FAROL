@@ -87,6 +87,7 @@ interface DimsResponse {
   cli?: DimOption[]
   uf?: string[]
   empresa?: string[]
+  tipo_venda?: DimOption[] // mig 187/188 — só no fluxo faturado
 }
 
 // ─── Tons ────────────────────────────────────────────────────────────────────
@@ -846,6 +847,11 @@ export default function FarolExecutivo() {
     { col: 'cod_cli',        label: 'Cliente',    from: 'cli' },
     { col: 'uf',             label: 'UF',         from: 'uf' },
     { col: 'empresa',        label: 'Filial',     from: 'empresa' },
+    // Tipo de Venda: só no fluxo faturado (filtro cruzado; a coluna não existe
+    // no transmitido). Ver Spec Change Log 2026-07-21.
+    ...(fluxo === 'faturado'
+      ? [{ col: 'tipo_venda', label: 'Tipo de Venda', from: 'tipo_venda' as const }]
+      : []),
   ]
 
   const optionsFor = (from: keyof DimsResponse): { key: string; label: string }[] => {
@@ -873,7 +879,7 @@ export default function FarolExecutivo() {
           ]).map(f => (
             <button
               key={f.id}
-              onClick={() => { setFluxo(f.id); setDrillPath([]) }}
+              onClick={() => { setFluxo(f.id); setDrillPath([]); if (f.id !== 'faturado') setFilter('tipo_venda', []) }}
               className={cn(
                 'px-5 py-2 text-sm font-bold uppercase tracking-wide transition-colors',
                 fluxo === f.id ? cn(f.color, 'text-white') : 'text-slate-600 hover:bg-slate-50',
