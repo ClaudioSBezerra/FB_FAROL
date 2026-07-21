@@ -92,13 +92,14 @@ var hierarquias = map[string][]hierLevel{
 	},
 	// V06 "Por Rede" (mig 183/185) — só valor, sem positivação. Rede é
 	// identificada pelo cod_cliprinc; cnpjs diferentes podem compartilhar
-	// a mesma rede (padarias/redes de mercado). Drill (2026-07-21): abrir a
-	// rede lista os CLIENTES filhos (CNPJs) ordenados por valor desc; clicar
-	// segue para Produto (como nas demais views). Nível Rede usa a agg (rápido,
-	// com composição/líquido); Cliente/Produto sob a rede leem a base escopada.
+	// a mesma rede (padarias/redes de mercado). Drill (2026-07-21): Rede →
+	// Cliente (CNPJs filhos, ordenados por valor desc) → Fornecedor → Produto.
+	// Nível Rede usa a agg (rápido, com composição/líquido); Cliente/Fornecedor/
+	// Produto sob a rede leem a base escopada pelo drill.
 	"V06": {
 		{Level: "cod_cliprinc", NameField: "nome_cliprinc", Label: "Rede"},
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
 	// V07 "Por Departamento" (mig 184/185) — hierarquia merceológica de

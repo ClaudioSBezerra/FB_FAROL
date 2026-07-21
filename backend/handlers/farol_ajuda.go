@@ -34,7 +34,7 @@ Painel que mostra, em segundos, quem está atingindo objetivo e quem não está,
 - **Por Indústria**: Fornecedor → Gerente → Supervisor → RCA → Cliente → Produto.
 - **Por Gerência**: Gerência → Supervisor → RCA → Cliente → Produto.
 - **Por Equipe**: Supervisor → RCA → Fornecedor → Cliente → Produto.
-- **Por Rede**: Rede → Cliente (CNPJs filhos) → Produto.
+- **Por Rede**: Rede → Cliente (CNPJs filhos) → Fornecedor → Produto.
 - **Por Departamento**: Departamento → Seção → Categoria → Produto.
 Clicar num card DESCE um nível; use o caminho (breadcrumb) para voltar. A lista vem ordenada do MAIOR para o menor valor (quando não há venda no período atual, ordena pelo período anterior).
 
