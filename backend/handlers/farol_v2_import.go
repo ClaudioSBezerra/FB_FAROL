@@ -374,19 +374,27 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	iFantasia     := col(-1, "fantasia", "nome_fantasia")
 	iPvendaTotal  := col(-1, "pvendatotal", "pvenda_total", "valor_total", "vl_total", "pvendatot")
 
-	// ── TIPO_VENDA (jul/2026) — ÚLTIMA coluna do novo layout. Só é gravada no
-	// fluxo faturado (mig 187). Detecção primária por header; se o header não
-	// bater por nome, aceita a última coluna SÓ quando ela parece ser tipo_venda
-	// (contém "tipo" e "venda"). Sem esse guard, um CSV antigo — cuja última
-	// coluna NÃO é tipo_venda — teria seu último campo lido erroneamente.
+	// ── CONDVENDA (jul/2026) — CÓDIGO do tipo de venda (ex.: 1=Normal,
+	// 5=Bonificação, 10=Transferência). Conforme a legenda oficial do ION VENDAS,
+	// o novo layout traz DUAS colunas ao final: CONDVENDA (código) e
+	// DESC_CONDVENDA (descrição). Gravamos SÓ o código em tipo_venda.
+	// Detecção primária por nome (CONDVENDA); fallback por conteúdo (cabeçalho
+	// contém "cond" e "venda", MAS não "desc" — para nunca pegar DESC_CONDVENDA).
 	// Ausente → -1 → getField devolve "" → tipo_venda='' (compat CSV antigo).
-	iTipoVenda := col(-1, "tipovenda", "tipo_venda", "tipodevenda")
-	if iTipoVenda < 0 && len(headerRow) > 0 {
-		lastIdx := len(headerRow) - 1
-		if h := norm(headerRow[lastIdx]); strings.Contains(h, "tipo") && strings.Contains(h, "venda") {
-			iTipoVenda = lastIdx
+	iTipoVenda := col(-1, "condvenda", "cond_venda", "tipovenda", "tipo_venda", "tipodevenda")
+	if iTipoVenda < 0 {
+		for i, h := range headerRow {
+			n := norm(h)
+			if strings.Contains(n, "cond") && strings.Contains(n, "venda") && !strings.Contains(n, "desc") {
+				iTipoVenda = i
+				break
+			}
 		}
 	}
+	// DESC_CONDVENDA — descrição oficial do ERP (ex.: "VENDA PADRAO",
+	// "BONIFICACAO SIMPLES"). Usada como RÓTULO do dropdown (fonte da verdade;
+	// cobre qualquer código). Ausente → '' → o dropdown cai no tipo_venda_label.
+	iDescCondVenda := col(-1, "desccondvenda", "desc_condvenda", "descricaocondvenda")
 
 	// Log dos cabeçalhos detectados para diagnóstico de mapeamento de colunas
 	colLabel := func(idx int) string {
@@ -494,9 +502,10 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// Campo `evento` é usado só para CCD (identifica qual dos 3 tipos:
 	// CORTADO/CANCELADO/DEVOLVIDO); fat/trans deixam vazio.
 	type vendaRaw struct {
-		vals      [38]any
-		evento    string
-		tipoVenda string // jul/2026 — só gravado no fluxo faturado (mig 187)
+		vals          [38]any
+		evento        string
+		tipoVenda     string // CONDVENDA — código (mig 187)
+		tipoVendaDesc string // DESC_CONDVENDA — rótulo do ERP (mig 192)
 	}
 	var allFat   []vendaRaw // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
@@ -633,8 +642,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[35] = getField(csvRow, iCodCliPrinc)
 		r.vals[36] = getField(csvRow, iFantasia)
 		r.vals[37] = pvendaUnit // preserva o unitário original do CSV (informativo)
-		r.evento    = evento
-		r.tipoVenda = getField(csvRow, iTipoVenda) // '' se coluna ausente
+		r.evento        = evento
+		r.tipoVenda     = getField(csvRow, iTipoVenda)     // CONDVENDA (código); '' se ausente
+		r.tipoVendaDesc = getField(csvRow, iDescCondVenda) // DESC_CONDVENDA; '' se ausente
 
 		dKey := dataProc.Format("2006-01-02")
 		mesContagem[[2]int{dataProc.Year(), int(dataProc.Month())}]++
@@ -796,9 +806,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// como últimos args (nessa ordem).
 	copyColsCcd := append(append([]string(nil), copyCols...), "tipo_venda", "evento")
 
-	// extraCol/extraVal: coluna adicional gravada só em alguns fluxos (ex.:
-	// tipo_venda no faturado). extraCol=="" → COPY usa apenas o vals layout.
-	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw, extraCol string, extraVal func(vendaRaw) any) error {
+	// extraCols/extraVals: colunas adicionais gravadas só em alguns fluxos (ex.:
+	// tipo_venda + desc_condvenda no faturado). Vazio → COPY usa só o vals layout.
+	processFlow := func(tableName, dateColName string, dates map[string]struct{}, rows []vendaRaw, extraCols []string, extraVals func(vendaRaw) []any) error {
 		// DELETE atômico pelos dias presentes no CSV — preserva dias anteriores
 		// não incluídos neste upload (cliente sobe vendas diárias).
 		dateList := make([]string, 0, len(dates))
@@ -821,9 +831,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		// COPY em chunks; cancelamento checado entre chunks.
 		cols := append([]string(nil), copyCols...)
 		cols[1] = dateColName
-		if extraCol != "" {
-			cols = append(cols, extraCol)
-		}
+		cols = append(cols, extraCols...)
 		for start := 0; start < len(rows); start += copyChunkRows {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -840,8 +848,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			}
 			for i := range chunk {
 				var eErr error
-				if extraCol != "" {
-					args := append(append([]any(nil), chunk[i].vals[:]...), extraVal(chunk[i]))
+				if len(extraCols) > 0 {
+					args := append(append([]any(nil), chunk[i].vals[:]...), extraVals(chunk[i])...)
 					_, eErr = stmt.Exec(args...)
 				} else {
 					_, eErr = stmt.Exec(chunk[i].vals[:]...)
@@ -916,7 +924,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	}
 
 	if err = processFlow("vendas_faturadas", "data_faturamento", uniqueFatDates, allFat,
-		"tipo_venda", func(r vendaRaw) any { return r.tipoVenda }); err != nil {
+		[]string{"tipo_venda", "desc_condvenda"},
+		func(r vendaRaw) []any { return []any{r.tipoVenda, r.tipoVendaDesc} }); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")
@@ -925,7 +934,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return
 	}
-	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans, "", nil); err != nil {
+	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans, nil, nil); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")

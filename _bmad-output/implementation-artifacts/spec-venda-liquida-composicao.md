@@ -14,6 +14,17 @@ branch: '(a criar) feat/venda-liquida-composicao'
 
 **Approach:** Tornar o **Líquido** o padrão do painel faturado, com a venda decomposta em categorias somáveis. Cada categoria excluída ganha um **botão "Incluir X"** que soma seu valor de volta ao total exibido (para devolução/cancelada, ligar = deixar de subtrair). O filtro por tipo (já entregue no spec anterior, cross-filter) serve para *isolar* um tipo quando tudo está somado. Duas **novas abas** dão visibilidade aos eventos negativos: uma para CANCELADO+DEVOLVIDO (lado faturado), outra para CORTADO (lado transmitido).
 
+## Correção de layout (2026-07-21, via legenda oficial)
+
+A coluna do CSV **não** é `TIPO_VENDA` — são DUAS: **`CONDVENDA`** (código) e
+**`DESC_CONDVENDA`** (descrição do ERP, ex.: "VENDA PADRAO", "BONIFICACAO
+SIMPLES", "TRANSFERENCIA:"). O import passou a detectar `CONDVENDA` (por nome +
+fallback cond/venda≠desc) e a gravar o código em `tipo_venda` e a descrição em
+`vendas_faturadas.desc_condvenda` (mig 192). O RÓTULO do dropdown vem da
+`DESC_CONDVENDA` (fonte da verdade), com fallback `tipo_venda_label`. Nota da
+legenda: CORTADO e DEVOLVIDO não foram gerados no 1º arquivo (só CANCELADO) —
+tratado graciosamente (abas/deltas ficam 0 até os dados existirem).
+
 ## Classificação de tipo_venda (CONFIRMADA 2026-07-21)
 
 | Categoria | Códigos | Entra no Líquido? | Botão |
