@@ -82,12 +82,14 @@ Colunas de valor por categoria em cada `agg_fat_*_mes` (populadas pelo upsert; g
 - **D4 — `pvenda` legado:** ✅ RESOLVIDO (2026-07-21) — `pvenda` PERMANECE bruto (preserva objetivos/KPIs). Líquido entra como COLUNA NOVA `liquido`. Painel faturado passa a exibir `liquido` por padrão; toggles somam as categorias de volta.
 - **D5 — Recalc dos toggles:** client-side (API devolve todas as colunas e o front soma) — mais rápido e sem round-trip — ou server-side por querystring? (recomendado: client-side)
 
-## Fases sugeridas
+## Fases — TODAS CONCLUÍDAS (2026-07-21, direto na main)
 
-- **Fase 1 — Captura:** `tipo_venda` em `vendas_ccd` (mig + import). Sem UI. Barato, destrava o resto.
-- **Fase 2 — Líquido + colunas de valor:** colunas `pv_*` nas `agg_fat_*` + upsert popula (inclui devol/cancel do CCD). API devolve as colunas; painel passa a abrir no Líquido.
-- **Fase 3 — Botões "Incluir":** UI dos toggles + soma client-side.
-- **Fase 4 — Abas CCD:** aba Cancelado/Devolvido e aba Cortado.
+- **Fase 1 ✅** — `tipo_venda` em `vendas_ccd` + 6 colunas nas agg_fat (mig 189, import). commit 02edaac.
+- **Fase 2 ✅** — `farol.upsert_venda_liquida_cols` popula liquido/pv_* (mig 190, validado em Postgres). commit ef503f9.
+- **Fase 3 ✅** — API devolve composição; painel abre no Líquido; botões "Incluir" com recálculo client-side (semáforo segue a tela). commit b843d9c.
+- **Fase 4 ✅** — abas Cancel./Devol. (evento IN CANCELADO,DEVOLVIDO) e Cortado (evento=CORTADO), via eventoFilter no fluxoCtx (scan de vendas_ccd, sem agg/positivação). commit c94be34.
+
+**Pendente:** reimportar no ambiente (liquido só popula no import) e validar com o gestor. Se a classificação de tipos precisar de ajuste, editar `farol.tipo_venda_label`/`upsert_venda_liquida_cols` (mig 190) e o FILTER da venda_real.
 
 ## Verification
 
