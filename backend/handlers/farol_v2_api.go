@@ -1438,8 +1438,12 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	switch {
 	case groupCol == "cod_prod":
 		go func() { defer wg.Done(); atualMap = queryProdutos(db, fluxo, atualCond, drillCond, atualArgs) }()
-	case !aggOK:
-		// Filtro cruzado → agrega de vendas_* (tem todas as colunas).
+	case !useAggMes:
+		// Sem agg utilizável (filtro cruzado, OU nível sem tabela agg como
+		// Cliente/Produto sob a Rede em V06) → agrega de vendas_* (tem todas as
+		// colunas). Usa !useAggMes (não !aggOK): aggOK é true sem filtros mas o
+		// nível pode não ter agg (hasAgg=false) → queryAggregatedMes quebraria
+		// com view vazia.
 		go func() {
 			defer wg.Done()
 			atualMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
@@ -1462,7 +1466,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		switch {
 		case groupCol == "cod_prod":
 			go func() { defer wg.Done(); antMap = queryProdutosAnterior(db, fluxo, antCond, antDrill, antArgs) }()
-		case !aggOK:
+		case !useAggMes:
 			go func() {
 				defer wg.Done()
 				antMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
