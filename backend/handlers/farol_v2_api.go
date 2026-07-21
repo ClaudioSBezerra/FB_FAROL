@@ -518,6 +518,12 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		filters := parseMultiFilters(q)
+		// tipo_venda só existe no fluxo faturado. No transmitido, ignora
+		// silenciosamente (a coluna não existe em vendas_transmitidas → scan
+		// quebraria). Ver I/O matrix do spec: "Filtro no transmitido → ignorado".
+		if fluxo.name != "faturado" {
+			delete(filters, "tipo_venda")
+		}
 		cards := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		// Totalizador = distinct do recorte (drill+filtros) em todos os níveis com
@@ -589,6 +595,11 @@ var allowedCols = map[string]bool{
 	"cod_depto": true, "depto": true,
 	"cod_sec": true, "secao": true,
 	"cod_categoria": true, "categoria": true,
+	// tipo_venda (mig 187) — filtro CRUZADO só do fluxo faturado. Existe apenas
+	// em vendas_faturadas; nenhuma tabela agg tem a coluna, então aggServesFilters
+	// retorna false e fetchCards cai em queryAggregatedVendas (scan da base), que
+	// calcula todos os indicadores corretamente. Ver Spec Change Log 2026-07-21.
+	"tipo_venda": true,
 }
 
 func safeColName(col string) string {
@@ -642,7 +653,9 @@ func (mf multiFilters) names() string {
 //	?cod_gerente=...     ?cod_cli=...         ?uf=SP,RJ  ?empresa=NORDESTE
 func parseMultiFilters(q map[string][]string) multiFilters {
 	mf := multiFilters{}
-	cols := []string{"cod_fornec", "cod_gerente", "cod_supervisor", "cod_rca", "cod_cli", "uf", "empresa"}
+	// tipo_venda: filtro cruzado só do fluxo faturado. O chamador remove-o quando
+	// fluxo=transmitido (a coluna não existe em vendas_transmitidas).
+	cols := []string{"cod_fornec", "cod_gerente", "cod_supervisor", "cod_rca", "cod_cli", "uf", "empresa", "tipo_venda"}
 	for _, c := range cols {
 		raw := ""
 		if vs, ok := q[c]; ok && len(vs) > 0 {
@@ -1987,6 +2000,11 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v07($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V07 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
+				// tipo_venda (mig 188) — popula dim='tipo_venda' do fluxo faturado
+				// para o dropdown do filtro cruzado. Barato (agrega poucos códigos).
+				if _, e := db.Exec(`SELECT farol.upsert_tipo_venda_dims($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT tipo_venda_dims %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
 				log.Printf("[farol:agg] w=%d UPSERT %04d-%02d OK em %v", wid, m.Ano, m.Mes, time.Since(t1))
 			}
 		}(i)
@@ -2446,6 +2464,11 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			"uf":         uf,
 			"empresa":    empresa,
 		}
+		// tipo_venda (mig 187/188) — só no fluxo faturado. Poucos códigos, fetch
+		// síncrono barato; rótulo já vem de farol.tipo_venda_label no dims_mes.
+		if fluxo.name == "faturado" {
+			resp["tipo_venda"] = fetchDim("tipo_venda", "tipo_venda")
+		}
 		json.NewEncoder(w).Encode(resp)
 	}
 }
@@ -2633,6 +2656,10 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		filters := parseMultiFilters(q)
+		// tipo_venda só existe no fluxo faturado (ver handler principal).
+		if fluxo.name != "faturado" {
+			delete(filters, "tipo_venda")
+		}
 		cards := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
