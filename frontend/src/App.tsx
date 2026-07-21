@@ -36,6 +36,7 @@ import FarolRelatorios from './pages/farol/FarolRelatorios'
 import { AppRail } from '@/components/AppRail'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
+import { FarolAjudaChat } from '@/components/farol/FarolAjudaChat'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { FilialProvider } from './contexts/FilialContext'
 import { getActiveModule, modules } from '@/lib/navigation'
@@ -295,6 +296,7 @@ function AppLayout() {
       </div>
       <Toaster />
       {/* <AjudaChat /> */}
+      <FarolAjudaChat />
     </div>
   )
 }
