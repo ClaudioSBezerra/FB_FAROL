@@ -11,7 +11,7 @@ import { SortIndicator, useSortedCards, type SortState } from '@/components/faro
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 type Cor = 'verde' | 'amarelo' | 'vermelho'
-type Fluxo = 'faturado' | 'transmitido'
+type Fluxo = 'faturado' | 'transmitido' | 'cancdev' | 'cortado'
 
 interface DrillStep { level: string; value: string; label: string }
 
@@ -891,9 +891,12 @@ export default function FarolExecutivo() {
 
   // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
   const curLevel = cards[0]?.level ?? ''
-  // Positivação escondida nas folhas cliente/produto E também nas views V06/V07
-  // (só valor, sem base_cli/positivados/mix — decisão da Fase 2).
-  const hidePosit = view === 'V06' || view === 'V07' ||
+  // Fluxos CCD (Cancelado/Devolvido, Cortado) — só valor do evento, sem
+  // positivação nem toggles de composição.
+  const isCCD = fluxo === 'cancdev' || fluxo === 'cortado'
+  // Positivação escondida nas folhas cliente/produto, nas views V06/V07
+  // (Fase 2) e nos fluxos CCD.
+  const hidePosit = isCCD || view === 'V06' || view === 'V07' ||
                     curLevel === 'cod_cli' || curLevel === 'cod_prod'
 
   // handleRefreshViews removido junto com o botão Consolidar.
@@ -935,6 +938,8 @@ export default function FarolExecutivo() {
           {([
             { id: 'faturado'    as const, label: 'Faturado',    color: 'bg-[#1e293b]' },
             { id: 'transmitido' as const, label: 'Transmitido', color: 'bg-emerald-700' },
+            { id: 'cancdev'     as const, label: 'Cancel./Devol.', color: 'bg-rose-700' },
+            { id: 'cortado'     as const, label: 'Cortado',     color: 'bg-amber-700' },
           ]).map(f => (
             <button
               key={f.id}

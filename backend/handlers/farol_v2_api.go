@@ -137,25 +137,36 @@ type fluxoCtx struct {
 	name      string
 	tableName string
 	dateCol   string
+	// eventoFilter — fragmento SQL adicional (ex.: `AND v.evento IN (...)`) usado
+	// pelos fluxos CCD (Cancelado/Devolvido, Cortado) que leem vendas_ccd. Vazio
+	// para faturado/transmitido. Valores são literais fixos (sem injeção).
+	eventoFilter string
+	// isCCD — fluxo lê vendas_ccd (sem agg, sem positivação). Força scan da base.
+	isCCD bool
 }
 
 func resolveFluxo(s string) fluxoCtx {
-	if strings.EqualFold(s, "transmitido") || strings.EqualFold(s, "trans") {
-		return fluxoCtx{
-			name:      "transmitido",
-			tableName: "vendas_transmitidas",
-			dateCol:   "data_transmissao",
-		}
-	}
-	return fluxoCtx{
-		name:      "faturado",
-		tableName: "vendas_faturadas",
-		dateCol:   "data_faturamento",
+	switch {
+	case strings.EqualFold(s, "transmitido") || strings.EqualFold(s, "trans"):
+		return fluxoCtx{name: "transmitido", tableName: "vendas_transmitidas", dateCol: "data_transmissao"}
+	case strings.EqualFold(s, "cancdev"):
+		// Cancelado + Devolvido (lado faturado) — mig 182/189.
+		return fluxoCtx{name: "cancdev", tableName: "vendas_ccd", dateCol: "data_evento",
+			eventoFilter: "AND v.evento IN ('CANCELADO','DEVOLVIDO')", isCCD: true}
+	case strings.EqualFold(s, "cortado"):
+		// Cortado (lado transmitido — venda perdida).
+		return fluxoCtx{name: "cortado", tableName: "vendas_ccd", dateCol: "data_evento",
+			eventoFilter: "AND v.evento = 'CORTADO'", isCCD: true}
+	default:
+		return fluxoCtx{name: "faturado", tableName: "vendas_faturadas", dateCol: "data_faturamento"}
 	}
 }
 
 // getAggTableName retorna a tabela agg_*_mes para (fluxo, view, drillIdx), ou ("", false).
 func getAggTableName(fluxo fluxoCtx, view string, drillIdx int) (string, bool) {
+	if fluxo.isCCD {
+		return "", false // CCD não tem tabelas agg → sempre scan da base
+	}
 	tables := aggTablesFat
 	if fluxo.name == "transmitido" {
 		tables = aggTablesTrans
@@ -921,8 +932,8 @@ SELECT
   0::int                    AS positivados,
   0::float                  AS mix
 FROM %s v
-WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
-GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
+WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s %s
+GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond, fluxo.eventoFilter)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -957,8 +968,8 @@ SELECT
   0::int                    AS positivados,
   0::float                  AS mix
 FROM %s v
-WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s
-GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
+WHERE v.empresa_id=$1 AND v.cod_prod != '' AND %s %s %s
+GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond, fluxo.eventoFilter)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -1213,6 +1224,9 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nam
 	if fc := buildMultiFilterCond(filters, &args); fc != "" {
 		cond += " " + fc
 	}
+	if fluxo.eventoFilter != "" {
+		cond += " " + fluxo.eventoFilter // fluxos CCD (cancdev/cortado)
+	}
 	q := fmt.Sprintf(`
 SELECT v.%s AS key, MAX(v.%s) AS label,
        SUM(v.pvenda) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
@@ -1268,7 +1282,10 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 	ymStart := base12mIni.Year()*100 + int(base12mIni.Month())
 	ymEnd := periodFim.Year()*100 + int(periodFim.Month())
 
-	if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
+	if fluxo.isCCD {
+		// CCD (cancelado/devolvido/cortado): sem base de clientes/positivação.
+		// Pula o cálculo de base_cli — os cards mostram só o valor do evento.
+	} else if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
 		// Caminho rápido: folha com cache.
 		baseMap := cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
 		for k, v := range baseMap {
@@ -1345,7 +1362,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// para o scan de vendas_* (2+ min → painel congelava). Agora tenta uma tabela
 	// agg de OUTRA view, no mesmo grão, que contenha groupCol + os filtros → segue
 	// rápido. Só cai para vendas_* se nenhuma agg servir (ex: filtro por UF/Filial).
-	if !aggOK && groupCol != "cod_prod" {
+	if !aggOK && groupCol != "cod_prod" && !fluxo.isCCD {
 		if alt, ok := pickAggForCrossFilter(fluxo, groupCol, drillPath, filters); ok {
 			log.Printf("[farol:agg] filtro cruzado (filtros=%s) → tabela agg alternativa %s (em vez de scan vendas_*)", filters.names(), alt)
 			aggName, hasAgg, aggOK = alt, true, true
@@ -1778,8 +1795,8 @@ func leafTableFor(fluxo fluxoCtx, view string) (string, int, bool) {
 // pra evitar que queryDistinctPositivados/queryDistinctCliPositivados sejam
 // chamadas em tabelas onde v.positivados/v.cnpj não existem.
 func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) bool {
-	if view == "V06" || view == "V07" {
-		return false
+	if fluxo.isCCD || view == "V06" || view == "V07" {
+		return false // CCD não tem agg/positivação
 	}
 	_, leafIdx, ok := leafTableFor(fluxo, view)
 	if !ok {
