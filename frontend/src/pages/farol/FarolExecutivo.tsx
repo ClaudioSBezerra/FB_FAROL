@@ -38,6 +38,44 @@ interface CardItem {
   mix_cor: Cor
   mix_total: number
   mix_total_ant: number
+  comp?: Composicao      // deltas das categorias (faturado) p/ os toggles "Incluir X"
+  comp_ant?: Composicao
+}
+
+// Composição da venda líquida (mig 189/190). valor_atual/valor_ant já são o
+// Líquido; estes deltas são somados quando o botão "Incluir X" está ligado.
+interface Composicao { bonif: number; transf: number; remessa: number; devol: number; cancel: number }
+
+// Categorias somáveis ao Líquido via botões "Incluir X" (só fluxo faturado).
+const INCLUIR_CATS = [
+  { key: 'bonif',   label: 'Bonificação' },
+  { key: 'transf',  label: 'Transferência' },
+  { key: 'remessa', label: 'Remessa' },
+  { key: 'devol',   label: 'Devoluções' },
+  { key: 'cancel',  label: 'Canceladas' },
+] as const
+type CompKey = typeof INCLUIR_CATS[number]['key']
+
+// Soma dos deltas das categorias ligadas (0 se comp ausente — transmitido/scan).
+function sumDelta(comp: Composicao | undefined, inc: Set<CompKey>): number {
+  if (!comp || inc.size === 0) return 0
+  let d = 0
+  if (inc.has('bonif'))   d += comp.bonif
+  if (inc.has('transf'))  d += comp.transf
+  if (inc.has('remessa')) d += comp.remessa
+  if (inc.has('devol'))   d += comp.devol
+  if (inc.has('cancel'))  d += comp.cancel
+  return d
+}
+
+// Replica farol_v2_api.pickCor: verde se atual ≥ anterior; neutro (verde) sem
+// comparativo. Usado no recálculo client-side quando um toggle está ligado.
+function corFor(atual: number, ant: number, hasComp: boolean): { pct: number; cor: Cor } {
+  if (!hasComp) return { pct: 0, cor: 'verde' }
+  let pct = 0
+  if (ant > 0) pct = (atual / ant) * 100
+  else if (atual > 0) pct = 100
+  return { pct, cor: pct >= 100 ? 'verde' : 'vermelho' }
 }
 
 interface KPI {
@@ -59,6 +97,8 @@ interface KPI {
   mix_cor: Cor
   total_mix_total: number
   total_mix_total_ant: number
+  comp?: Composicao
+  comp_ant?: Composicao
 }
 
 interface CardsResponse {
@@ -734,6 +774,8 @@ export default function FarolExecutivo() {
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
+  // Toggles "Incluir X" (venda líquida). Vazio = Líquido puro (padrão).
+  const [incluir, setIncluir] = useState<Set<CompKey>>(() => new Set())
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
   const [search, setSearch] = useState('')
   const [activePreset, setActivePreset] = useState<Preset | null>('ytd')
@@ -797,26 +839,43 @@ export default function FarolExecutivo() {
   const handleBack = () => setDrillPath(prev => prev.slice(0, -1))
   const handleViewChange = (v: 'V01' | 'V02' | 'V03' | 'V06' | 'V07') => { setView(v); setDrillPath([]) }
 
-  const cards = data?.cards ?? []
   const kpi = data?.kpi
+  const hasComp = !!data?.periodo?.comp_inicio
+  const anyToggle = incluir.size > 0
+
+  // Venda líquida: valor_atual/valor_ant já vêm como Líquido. Quando há toggle
+  // ligado, soma os deltas da composição e RECALCULA pct/cor (semáforo segue a
+  // tela). Sem toggle, usa o que o servidor mandou (Líquido puro).
+  const cards = useMemo<CardItem[]>(() => {
+    const raw = data?.cards ?? []
+    if (!anyToggle) return raw
+    return raw.map(c => {
+      const va  = c.valor_atual + sumDelta(c.comp, incluir)
+      const van = c.valor_ant   + sumDelta(c.comp_ant, incluir)
+      const { pct, cor } = corFor(va, van, hasComp)
+      return { ...c, valor_atual: va, valor_ant: van, pct, cor }
+    })
+  }, [data?.cards, incluir, anyToggle, hasComp])
 
   // Constrói o "card total" virtual a partir do KPI pra reaproveitar o componente DataRow
-  const totalCard: CardItem | null = kpi ? {
-    key: '__total__', label: 'TOTAL',
-    level: '', level_label: '',
-    valor_atual: kpi.total_atual,
-    valor_ant: kpi.total_ant,
-    pct: kpi.total_pct,
-    cor: kpi.total_cor,
-    plucro: kpi.total_plucro, plucro_ant: kpi.total_plucro_ant,
-    positivados: kpi.total_positivados, base_cli: kpi.total_base_cli,
-    positpct: kpi.total_positpct,
-    positivados_ant: kpi.total_positivados_ant, base_cli_ant: kpi.total_base_cli_ant,
-    positpct_ant: kpi.total_positpct_ant,
-    posit_cor: kpi.total_posit_cor,
-    mix: kpi.avg_mix, mix_ant: kpi.avg_mix_ant, mix_cor: kpi.mix_cor,
-    mix_total: kpi.total_mix_total, mix_total_ant: kpi.total_mix_total_ant,
-  } : null
+  const totalCard: CardItem | null = kpi ? (() => {
+    const va  = kpi.total_atual + sumDelta(kpi.comp, incluir)
+    const van = kpi.total_ant   + sumDelta(kpi.comp_ant, incluir)
+    const { pct, cor } = anyToggle ? corFor(va, van, hasComp) : { pct: kpi.total_pct, cor: kpi.total_cor }
+    return {
+      key: '__total__', label: 'TOTAL',
+      level: '', level_label: '',
+      valor_atual: va, valor_ant: van, pct, cor,
+      plucro: kpi.total_plucro, plucro_ant: kpi.total_plucro_ant,
+      positivados: kpi.total_positivados, base_cli: kpi.total_base_cli,
+      positpct: kpi.total_positpct,
+      positivados_ant: kpi.total_positivados_ant, base_cli_ant: kpi.total_base_cli_ant,
+      positpct_ant: kpi.total_positpct_ant,
+      posit_cor: kpi.total_posit_cor,
+      mix: kpi.avg_mix, mix_ant: kpi.avg_mix_ant, mix_cor: kpi.mix_cor,
+      mix_total: kpi.total_mix_total, mix_total_ant: kpi.total_mix_total_ant,
+    }
+  })() : null
 
   // Filtro por busca textual ANTES da ordenação — a ordenação é a última etapa.
   const filteredCards = useMemo(() => {
@@ -879,7 +938,7 @@ export default function FarolExecutivo() {
           ]).map(f => (
             <button
               key={f.id}
-              onClick={() => { setFluxo(f.id); setDrillPath([]); if (f.id !== 'faturado') setFilter('tipo_venda', []) }}
+              onClick={() => { setFluxo(f.id); setDrillPath([]); setIncluir(new Set()); if (f.id !== 'faturado') setFilter('tipo_venda', []) }}
               className={cn(
                 'px-5 py-2 text-sm font-bold uppercase tracking-wide transition-colors',
                 fluxo === f.id ? cn(f.color, 'text-white') : 'text-slate-600 hover:bg-slate-50',
@@ -1009,6 +1068,50 @@ export default function FarolExecutivo() {
             usuários estavam clicando sem querer. Ações de import/consolidação
             ficam restritas ao menu de administração (não neste painel). */}
       </div>
+
+      {/* ── Composição do faturado: Líquido (padrão) + botões "Incluir X" ─────
+          Só no fluxo faturado e sem filtro de Tipo de Venda ativo (esse filtro
+          isola um tipo, tornando os toggles redundantes). Recálculo é client-side
+          (venda líquida Fase 3). */}
+      {fluxo === 'faturado' && !(filters['tipo_venda']?.length) && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+          <span className="text-sm uppercase tracking-wider text-slate-500 font-semibold mr-1">
+            Faturado:{' '}
+            <span className="font-bold text-slate-700">
+              {incluir.size === 0 ? 'Líquido' : 'Líquido + incluídos'}
+            </span>
+          </span>
+          {INCLUIR_CATS.map(cat => {
+            const on = incluir.has(cat.key)
+            return (
+              <button
+                key={cat.key}
+                onClick={() => setIncluir(prev => {
+                  const n = new Set(prev)
+                  if (n.has(cat.key)) n.delete(cat.key); else n.add(cat.key)
+                  return n
+                })}
+                title={on ? `Remover ${cat.label} do total` : `Incluir ${cat.label} no total`}
+                className={cn(
+                  'px-2.5 py-1 text-xs font-semibold uppercase tracking-wide rounded-md border transition-colors',
+                  on ? 'bg-slate-700 text-white border-slate-700'
+                     : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50',
+                )}
+              >
+                {on ? '✓ ' : '+ '}{cat.label}
+              </button>
+            )
+          })}
+          {incluir.size > 0 && (
+            <button
+              onClick={() => setIncluir(new Set())}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded-md"
+            >
+              <X className="h-3 w-3" /> Voltar ao Líquido
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Chips dos filtros ativos ────────────────────────────────────────── */}
       {totalFiltersActive > 0 && (

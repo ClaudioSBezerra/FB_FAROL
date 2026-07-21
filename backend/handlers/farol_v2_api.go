@@ -196,6 +196,17 @@ type drillStep struct {
 	Label string `json:"label"`
 }
 
+// composicao — valores por categoria excluída do Líquido (mig 189/190). O
+// front usa como delta dos botões "Incluir X": valor exibido = liquido (=
+// ValorAtual) + Σ(deltas ligados). Ver spec-venda-liquida-composicao.md.
+type composicao struct {
+	Bonif   float64 `json:"bonif"`
+	Transf  float64 `json:"transf"`
+	Remessa float64 `json:"remessa"`
+	Devol   float64 `json:"devol"`
+	Cancel  float64 `json:"cancel"`
+}
+
 type cardItem struct {
 	Key         string  `json:"key"`
 	Label       string  `json:"label"`
@@ -224,6 +235,10 @@ type cardItem struct {
 	// Mix Total — SKUs distintos do fornecedor no período (universo)
 	MixTotal    int `json:"mix_total"`
 	MixTotalAnt int `json:"mix_total_ant"`
+	// Venda líquida (faturado): ValorAtual/ValorAnt já são o Líquido; Comp/CompAnt
+	// trazem as categorias para os botões "Incluir X" somarem no front.
+	Comp    composicao `json:"comp"`
+	CompAnt composicao `json:"comp_ant"`
 }
 
 type kpiSummary struct {
@@ -253,6 +268,10 @@ type kpiSummary struct {
 	TotalMixTotalAnt int `json:"total_mix_total_ant"`
 	Verdes           int `json:"verdes"`
 	Vermelhos        int `json:"vermelhos"`
+	// Composição agregada (faturado) — TotalAtual/TotalAnt já são o Líquido; o
+	// front soma estes deltas quando um toggle "Incluir X" está ligado.
+	Comp    composicao `json:"comp"`
+	CompAnt composicao `json:"comp_ant"`
 }
 
 type periodoInfo struct {
@@ -705,6 +724,14 @@ type aggResult struct {
 	positivados int
 	mix         float64
 	mixTotal    int // universo de SKUs distintos (P1: materializado em agg.mix_total)
+	// Composição da venda líquida (mig 189/190) — só faturado via agg. Nos demais
+	// caminhos (scan da base, produto) liquido recebe = valor e os deltas ficam 0.
+	liquido float64 // Σ tipos reais − devol − cancel
+	bonif   float64 // pv_bonif
+	transf  float64 // pv_transf
+	remessa float64 // pv_remessa
+	devol   float64 // pv_devol
+	cancel  float64 // pv_cancel
 }
 
 // ─── queryAggregated ─────────────────────────────────────────────────────────
@@ -744,6 +771,7 @@ GROUP BY v.%s`,
 		var r aggResult
 		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			r.liquido = r.valor // sem composição neste caminho → líquido = bruto
 			result[key] = r
 		}
 	}
@@ -782,6 +810,7 @@ GROUP BY v.%s`, groupCol, nameCol, viewName, groupCol, rangeCond, drillCond, gro
 		var r aggResult
 		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			r.liquido = r.valor // sem composição neste caminho → líquido = bruto
 			result[key] = r
 		}
 	}
@@ -816,6 +845,21 @@ func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillC
 		positivadosExpr = "0::int"
 		mixExpr = "0::float"
 	}
+	// Composição da venda líquida (mig 189/190) só existe nas agg_fat_*. Para
+	// agg_trans_* (transmitido) as colunas não existem → devolve 0 (o transmitido
+	// exibe o valor bruto, sem toggles). liquido default = valor (ajustado no scan
+	// quando faturado, abaixo).
+	liquidoExpr, bonifExpr, transfExpr := "0::numeric", "0::numeric", "0::numeric"
+	remessaExpr, devolExpr, cancelExpr := "0::numeric", "0::numeric", "0::numeric"
+	faturadoAgg := strings.HasPrefix(shortName, "agg_fat_")
+	if faturadoAgg {
+		liquidoExpr = "COALESCE(SUM(v.liquido), 0)"
+		bonifExpr = "COALESCE(SUM(v.pv_bonif), 0)"
+		transfExpr = "COALESCE(SUM(v.pv_transf), 0)"
+		remessaExpr = "COALESCE(SUM(v.pv_remessa), 0)"
+		devolExpr = "COALESCE(SUM(v.pv_devol), 0)"
+		cancelExpr = "COALESCE(SUM(v.pv_cancel), 0)"
+	}
 	q := fmt.Sprintf(`
 SELECT
   v.%s                           AS key,
@@ -825,7 +869,8 @@ SELECT
   %s                             AS base_cli,
   %s                             AS positivados,
   %s                             AS mix,
-  %s                             AS mix_total
+  %s                             AS mix_total,
+  %s AS liquido, %s AS bonif, %s AS transf, %s AS remessa, %s AS devol, %s AS cancel
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s != ''
 AND %s %s
@@ -833,6 +878,7 @@ GROUP BY v.%s`,
 		groupCol, nameCol,
 		baseCliExpr, positivadosExpr, mixExpr,
 		mixTotalExpr,
+		liquidoExpr, bonifExpr, transfExpr, remessaExpr, devolExpr, cancelExpr,
 		viewName,
 		groupCol, mesCond, drillCond,
 		groupCol,
@@ -847,7 +893,11 @@ GROUP BY v.%s`,
 	for rows.Next() {
 		var key string
 		var r aggResult
-		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.baseCli, &r.positivados, &r.mix, &r.mixTotal); err == nil {
+		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.baseCli, &r.positivados, &r.mix, &r.mixTotal,
+			&r.liquido, &r.bonif, &r.transf, &r.remessa, &r.devol, &r.cancel); err == nil {
+			if !faturadoAgg {
+				r.liquido = r.valor // transmitido: sem líquido, exibe bruto
+			}
 			result[key] = r
 		}
 	}
@@ -887,6 +937,7 @@ GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
 		var r aggResult
 		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			r.liquido = r.valor // sem composição neste caminho → líquido = bruto
 			result[key] = r
 		}
 	}
@@ -922,6 +973,7 @@ GROUP BY v.cod_prod`, fluxo.tableName, rangeCond, drillCond)
 		var r aggResult
 		if err := rows.Scan(&key, &r.label, &r.valor, &r.plucro,
 			&r.baseCli, &r.positivados, &r.mix); err == nil {
+			r.liquido = r.valor // sem composição neste caminho → líquido = bruto
 			result[key] = r
 		}
 	}
@@ -1181,6 +1233,7 @@ GROUP BY v.%s`,
 		var key string
 		var r aggResult
 		if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix, &r.mixTotal) == nil {
+			r.liquido = r.valor // scan da base (filtro cruzado) sem composição → líquido = bruto
 			result[key] = r
 		}
 	}
@@ -1464,8 +1517,13 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		seen[key] = true
 		ant := antMap[key] // aggResult zero se não existir
 
-		// Venda
-		pct, cor := pickCor(r.valor, ant.valor)
+		// Venda — no faturado a base exibida é o LÍQUIDO (semáforo segue a tela);
+		// o front soma os toggles por cima. No transmitido, segue o valor bruto.
+		baseAtual, baseAnt := r.valor, ant.valor
+		if fluxo.name == "faturado" {
+			baseAtual, baseAnt = r.liquido, ant.liquido
+		}
+		pct, cor := pickCor(baseAtual, baseAnt)
 
 		// Positivação — % de positivados sobre base de clientes ativos
 		positPct := 0.0
@@ -1484,7 +1542,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		card := cardItem{
 			Key: key, Label: r.label,
 			Level: level.Level, LevelLabel: level.Label,
-			ValorAtual: r.valor, ValorAnt: ant.valor,
+			ValorAtual: baseAtual, ValorAnt: baseAnt,
 			Pct: pct, Cor: cor,
 			Plucro: r.plucro, PlucroAnt: ant.plucro,
 			Positivados: r.positivados, BaseCli: r.baseCli, PositPct: positPct,
@@ -1492,11 +1550,13 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PositCor: positCor,
 			Mix:      r.mix, MixAnt: ant.mix, MixCor: mixCor,
 			MixTotal: r.mixTotal, MixTotalAnt: ant.mixTotal,
+			Comp:    composicao{Bonif: r.bonif, Transf: r.transf, Remessa: r.remessa, Devol: r.devol, Cancel: r.cancel},
+			CompAnt: composicao{Bonif: ant.bonif, Transf: ant.transf, Remessa: ant.remessa, Devol: ant.devol, Cancel: ant.cancel},
 		}
 		if fluxo.name == "transmitido" {
-			card.Transmitido = r.valor
+			card.Transmitido = baseAtual
 		} else {
-			card.Faturado = r.valor
+			card.Faturado = baseAtual
 		}
 		cards = append(cards, card)
 	}
@@ -1506,6 +1566,10 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		if seen[key] || ant.valor == 0 {
 			continue
 		}
+		baseAnt := ant.valor
+		if fluxo.name == "faturado" {
+			baseAnt = ant.liquido
+		}
 		positPctAnt := 0.0
 		if ant.baseCli > 0 {
 			positPctAnt = float64(ant.positivados) / float64(ant.baseCli) * 100
@@ -1513,12 +1577,13 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		cards = append(cards, cardItem{
 			Key: key, Label: ant.label,
 			Level: level.Level, LevelLabel: level.Label,
-			ValorAtual: 0, ValorAnt: ant.valor,
+			ValorAtual: 0, ValorAnt: baseAnt,
 			Pct: 0, Cor: "vermelho",
 			PlucroAnt:      ant.plucro,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: "vermelho", MixAnt: ant.mix, MixCor: "vermelho",
 			MixTotalAnt: ant.mixTotal,
+			CompAnt: composicao{Bonif: ant.bonif, Transf: ant.transf, Remessa: ant.remessa, Devol: ant.devol, Cancel: ant.cancel},
 		})
 	}
 
@@ -1593,6 +1658,16 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 		// Em outros níveis pode haver SKU compartilhado entre cards (aproximação razoável).
 		kpi.TotalMixTotal += c.MixTotal
 		kpi.TotalMixTotalAnt += c.MixTotalAnt
+		kpi.Comp.Bonif += c.Comp.Bonif
+		kpi.Comp.Transf += c.Comp.Transf
+		kpi.Comp.Remessa += c.Comp.Remessa
+		kpi.Comp.Devol += c.Comp.Devol
+		kpi.Comp.Cancel += c.Comp.Cancel
+		kpi.CompAnt.Bonif += c.CompAnt.Bonif
+		kpi.CompAnt.Transf += c.CompAnt.Transf
+		kpi.CompAnt.Remessa += c.CompAnt.Remessa
+		kpi.CompAnt.Devol += c.CompAnt.Devol
+		kpi.CompAnt.Cancel += c.CompAnt.Cancel
 		if c.Cor == "verde" {
 			kpi.Verdes++
 		} else {
