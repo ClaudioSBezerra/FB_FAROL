@@ -25,6 +25,7 @@ export interface SortState {
 
 interface SortableCard {
   valor_atual: number
+  valor_ant: number
   pct: number
   cor: string
 }
@@ -74,14 +75,21 @@ export function useSortedCards<T extends SortableCard>(
     const sign = sortState.direction === 'desc' ? -1 : 1
     arr.sort((a, b) => {
       if (sortState.field === 'valor') {
-        return sign * (a.valor_atual - b.valor_atual)
+        // Desempate por valor ANTERIOR: quando o período atual está vazio
+        // (todos os valor_atual = 0, ex.: painel abre num mês sem venda), a
+        // lista ordena pelo anterior — do maior pro menor em desc.
+        const d = a.valor_atual - b.valor_atual
+        if (d !== 0) return sign * d
+        return sign * ((a.valor_ant ?? 0) - (b.valor_ant ?? 0))
       }
       // 'pct': itens sem comparativo (pct=0 e valor>0 caem como "novos") vão
       // pro final em desc; pra evitar ranking artificial, ordena por valor desc
-      // como tiebreaker entre pcts iguais.
+      // como tiebreaker entre pcts iguais (atual e, se empatar, anterior).
       const diff = a.pct - b.pct
       if (diff !== 0) return sign * diff
-      return -1 * (a.valor_atual - b.valor_atual)
+      const dv = a.valor_atual - b.valor_atual
+      if (dv !== 0) return -1 * dv
+      return -1 * ((a.valor_ant ?? 0) - (b.valor_ant ?? 0))
     })
     return arr
   }, [cards, sortState])
