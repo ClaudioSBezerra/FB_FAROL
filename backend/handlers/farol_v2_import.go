@@ -790,10 +790,11 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		"cod_cliprinc", "fantasia",
 		"pvenda_unit",
 	}
-	// Colunas de vendas_ccd (mig 182): mesmas de fat/trans + coluna `evento`
-	// no final. Como o COPY exige alinhamento posicional entre `vals` e cols,
-	// tratamos CCD num processFlow separado que anexa o evento como último arg.
-	copyColsCcd := append(append([]string(nil), copyCols...), "evento")
+	// Colunas de vendas_ccd (mig 182): mesmas de fat/trans + `tipo_venda` (mig 189)
+	// + `evento` no final. Como o COPY exige alinhamento posicional entre `vals` e
+	// cols, tratamos CCD num processFlow separado que anexa tipo_venda e evento
+	// como últimos args (nessa ordem).
+	copyColsCcd := append(append([]string(nil), copyCols...), "tipo_venda", "evento")
 
 	// extraCol/extraVal: coluna adicional gravada só em alguns fluxos (ex.:
 	// tipo_venda no faturado). extraCol=="" → COPY usa apenas o vals layout.
@@ -897,8 +898,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 				return fmt.Errorf("PREPARE COPY vendas_ccd: %w", sErr)
 			}
 			for i := range chunk {
-				// Args = vals[0..37] + evento como último arg
-				args := append(append([]any(nil), chunk[i].vals[:]...), chunk[i].evento)
+				// Args = vals[0..37] + tipo_venda + evento (alinha com copyColsCcd)
+				args := append(append([]any(nil), chunk[i].vals[:]...), chunk[i].tipoVenda, chunk[i].evento)
 				if _, eErr := stmt.Exec(args...); eErr != nil {
 					stmt.Close()
 					return fmt.Errorf("enfileirar vendas_ccd: %w", eErr)
