@@ -161,7 +161,7 @@ function HeaderResumo({
           <div className="flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">{curLabel}</p>
-              <p className="text-3xl sm:text-4xl font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+              <p className="text-[clamp(1.25rem,7vw,2.25rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 whitespace-nowrap">
                 {fmtBRL(kpi.total_atual)}
               </p>
             </div>
@@ -244,7 +244,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">Atual</p>
-              <p className="text-2xl sm:text-3xl font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+              <p className="text-[clamp(1.1rem,6vw,1.875rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 whitespace-nowrap">
                 {fmtBRL(card.valor_atual)}
               </p>
             </div>
