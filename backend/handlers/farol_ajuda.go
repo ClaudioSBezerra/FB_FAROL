@@ -111,7 +111,7 @@ func FarolAjudaChatHandler(_ *sql.DB) http.HandlerFunc {
 			turns = append(turns, services.ZAIChatTurn{Role: m.Role, Content: m.Content})
 		}
 
-		result, err := ai.AskChat(system, turns, 1024)
+		result, err := ai.AskChat(system, turns, 3000) // teto alto: respostas de treinamento são longas e o modelo gasta tokens em raciocínio
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `{"error":%q}`, "Falha ao contactar o assistente: "+err.Error())
