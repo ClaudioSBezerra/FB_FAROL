@@ -92,10 +92,12 @@ var hierarquias = map[string][]hierLevel{
 	},
 	// V06 "Por Rede" (mig 183/185) — só valor, sem positivação. Rede é
 	// identificada pelo cod_cliprinc; cnpjs diferentes podem compartilhar
-	// a mesma rede (padarias/redes de mercado).
+	// a mesma rede (padarias/redes de mercado). Drill (2026-07-21): abrir a
+	// rede lista os CLIENTES filhos (CNPJs) ordenados por valor desc; clicar
+	// segue para Produto (como nas demais views). Nível Rede usa a agg (rápido,
+	// com composição/líquido); Cliente/Produto sob a rede leem a base escopada.
 	"V06": {
 		{Level: "cod_cliprinc", NameField: "nome_cliprinc", Label: "Rede"},
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
@@ -117,7 +119,10 @@ var aggTablesFat = map[string][]string{
 	"V03": {"agg_fat_v03_l0_mes", "agg_fat_v03_l1_mes", "agg_fat_v03_l2_mes", "agg_fat_v03_l3_mes"},
 	"V04": {"agg_fat_v04_l0_mes", "agg_fat_v04_l1_mes", "agg_fat_v04_l2_mes"},
 	"V05": {"agg_fat_v05_l0_mes", "agg_fat_v05_l1_mes", "agg_fat_v05_l2_mes", "agg_fat_v05_l3_mes"},
-	"V06": {"agg_fat_v06_l0_mes", "agg_fat_v06_l1_mes", "agg_fat_v06_l2_mes"},
+	// V06: só o nível Rede (l0) usa agg; Cliente/Produto sob a rede leem a base
+	// escopada (drill Rede→Cliente→Produto, 2026-07-21). As agg_fat_v06_l1/l2
+	// (cliprinc,fornec[,cnpj]) continuam populadas mas não são mais lidas.
+	"V06": {"agg_fat_v06_l0_mes"},
 	"V07": {"agg_fat_v07_l0_mes", "agg_fat_v07_l1_mes", "agg_fat_v07_l2_mes"},
 }
 
@@ -127,7 +132,7 @@ var aggTablesTrans = map[string][]string{
 	"V03": {"agg_trans_v03_l0_mes", "agg_trans_v03_l1_mes", "agg_trans_v03_l2_mes", "agg_trans_v03_l3_mes"},
 	"V04": {"agg_trans_v04_l0_mes", "agg_trans_v04_l1_mes", "agg_trans_v04_l2_mes"},
 	"V05": {"agg_trans_v05_l0_mes", "agg_trans_v05_l1_mes", "agg_trans_v05_l2_mes", "agg_trans_v05_l3_mes"},
-	"V06": {"agg_trans_v06_l0_mes", "agg_trans_v06_l1_mes", "agg_trans_v06_l2_mes"},
+	"V06": {"agg_trans_v06_l0_mes"},
 	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes", "agg_trans_v07_l2_mes"},
 }
 
@@ -1282,9 +1287,9 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 	ymStart := base12mIni.Year()*100 + int(base12mIni.Month())
 	ymEnd := periodFim.Year()*100 + int(periodFim.Month())
 
-	if fluxo.isCCD {
-		// CCD (cancelado/devolvido/cortado): sem base de clientes/positivação.
-		// Pula o cálculo de base_cli — os cards mostram só o valor do evento.
+	if fluxo.isCCD || view == "V06" || view == "V07" {
+		// CCD e V06/V07 (Rede/Departamento) não têm positivação — pula base_cli
+		// (evita scan caro; a positivação é escondida na UI nesses casos).
 	} else if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
 		// Caminho rápido: folha com cache.
 		baseMap := cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
