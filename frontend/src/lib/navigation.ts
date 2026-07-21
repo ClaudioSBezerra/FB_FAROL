@@ -22,8 +22,6 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel Vendas',
     tabs: [
       { label: 'Painel Vendas',  path: '/farol/v2' },
-      { label: 'Assistente IA',  path: '/farol/assistente' },
-      { label: 'Usuários',       path: '/farol/usuarios', managerOnly: true },
     ],
   },
   // ── Painel BI — War Room para CEO/Diretoria ───────────────────────────────
