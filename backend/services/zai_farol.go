@@ -95,6 +95,36 @@ func (c *ZAIClient) Ask(system, user, model string, maxTokens int) (*ZAIResult, 
 	return result, err
 }
 
+// ZAIChatTurn — um turno de conversa (role user/assistant) para AskChat.
+type ZAIChatTurn struct {
+	Role    string
+	Content string
+}
+
+// AskChat — como Ask, mas com histórico de conversa (system + N turnos).
+// Usado pelo assistente de treinamento do Farol, no MESMO endpoint/modelos/chave
+// do text-to-SQL (ZAI_API_KEY, /paas/v4), com fallback em 429.
+func (c *ZAIClient) AskChat(system string, turns []ZAIChatTurn, maxTokens int) (*ZAIResult, error) {
+	if !c.IsAvailable() {
+		return nil, fmt.Errorf("ZAI_API_KEY não configurado")
+	}
+	if maxTokens == 0 {
+		maxTokens = 1024
+	}
+	msgs := make([]zaiMessage, 0, len(turns)+1)
+	if system != "" {
+		msgs = append(msgs, zaiMessage{Role: "system", Content: system})
+	}
+	for _, t := range turns {
+		msgs = append(msgs, zaiMessage{Role: t.Role, Content: t.Content})
+	}
+	result, err := c.call(zaiRequest{Model: ZAIModelPrimary, MaxTokens: maxTokens, Messages: msgs})
+	if err != nil && strings.Contains(err.Error(), "429") {
+		result, err = c.call(zaiRequest{Model: ZAIModelFallback, MaxTokens: maxTokens, Messages: msgs})
+	}
+	return result, err
+}
+
 func (c *ZAIClient) call(req zaiRequest) (*ZAIResult, error) {
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequest("POST", zaiEndpoint, bytes.NewReader(body))

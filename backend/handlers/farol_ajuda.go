@@ -1,23 +1,20 @@
 package handlers
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
-	"os"
+
+	"fb_farol/services"
 )
 
 // farol_ajuda.go — Assistente de TREINAMENTO do Farol (mesmo formato do
-// SMARTPICK, sp_ajuda.go). Chat puro: explica COMO USAR a ferramenta e COMO os
-// dados são carregados, calculados e exibidos. Não consulta o banco (isso é o
-// /api/v2/farol/ai/query, text-to-SQL). Usa a Z.AI (GLM) como o SMARTPICK.
-//
-// Reaproveita os tipos ajudaMessage/mistralRequest/mistralResponse e o client
-// ajudaHTTPClient definidos em sp_ajuda.go (mesmo pacote).
+// SMARTPICK). Chat puro: explica COMO USAR a ferramenta e COMO os dados são
+// carregados, calculados e exibidos. Não consulta o banco (isso é o
+// /api/v2/farol/ai/query, text-to-SQL). Usa o MESMO client Z.AI do text-to-SQL
+// do FAROL (services.ZAIClient / ZAI_API_KEY, endpoint /paas/v4) — comprovado
+// funcionando com a chave do app do FAROL.
 
 const farolAjudaSystemPrompt = `Você é o assistente de treinamento do FAROL DE VENDAS da JC Distribuição. Responda SEMPRE em português do Brasil, de forma direta, curta e prática, em tópicos quando ajudar. Nunca invente números; se pedirem dados reais (ex.: "quanto vendeu o fornecedor X"), oriente a usar o modo "Consulta de dados" do assistente.
 
@@ -69,8 +66,18 @@ Web autenticado para gestores/GGVs/supervisores; RCAs em campo acessam por URL p
 
 Se a dúvida for sobre um número específico do negócio, diga que no modo "Consulta de dados" ele pode perguntar em linguagem natural que o sistema gera a consulta e mostra a tabela.`
 
+type farolAjudaMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type farolAjudaRequest struct {
+	Messages []farolAjudaMessage `json:"messages"`
+	Context  string              `json:"context,omitempty"`
+}
+
 // FarolAjudaChatHandler — POST /api/v2/farol/ai/chat
-// Body: { messages: [{role, content}], context?: "aba/visão atual" }
+// Body: { messages: [{role, content}], context?: "página atual" }
 // Resposta: { reply }
 func FarolAjudaChatHandler(_ *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -79,118 +86,35 @@ func FarolAjudaChatHandler(_ *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
-		apiKey := os.Getenv("ZAI_API_KEY")
-		if apiKey == "" {
+
+		ai := services.NewZAIClient()
+		if !ai.IsAvailable() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"error":"Assistente não configurado. Contate o administrador."}`))
+			w.Write([]byte(`{"error":"Assistente não configurado (ZAI_API_KEY ausente). Contate o administrador."}`))
 			return
 		}
 
-		var req ajudaChatRequest
+		var req farolAjudaRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Messages) == 0 {
 			http.Error(w, `{"error":"Requisição inválida"}`, http.StatusBadRequest)
 			return
 		}
 
-		systemContent := farolAjudaSystemPrompt
+		system := farolAjudaSystemPrompt
 		if req.Context != "" {
-			systemContent += "\n\n## CONTEXTO ATUAL\nO usuário está em: " + req.Context
+			system += "\n\n## CONTEXTO ATUAL\nO usuário está em: " + req.Context
 		}
-		messages := append([]ajudaMessage{{Role: "system", Content: systemContent}}, req.Messages...)
+		turns := make([]services.ZAIChatTurn, 0, len(req.Messages))
+		for _, m := range req.Messages {
+			turns = append(turns, services.ZAIChatTurn{Role: m.Role, Content: m.Content})
+		}
 
-		reply, status, apiErr := zaiChat(messages, apiKey)
-		if apiErr != "" {
-			w.WriteHeader(status)
-			fmt.Fprintf(w, `{"error":%q}`, apiErr)
+		result, err := ai.AskChat(system, turns, 1024)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `{"error":%q}`, "Falha ao contactar o assistente: "+err.Error())
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"reply": reply})
+		json.NewEncoder(w).Encode(map[string]string{"reply": result.Text})
 	}
-}
-
-// zaiChat — chamada de chat à Z.AI (GLM) com retry no modelo free em caso de
-// sobrecarga/limite. Mesmo comportamento do SMARTPICK (sp_ajuda.go), extraído
-// aqui para o assistente do Farol. Retorna (reply, httpStatus, mensagemDeErro).
-func zaiChat(messages []ajudaMessage, apiKey string) (string, int, string) {
-	buildPayload := func(model string) []byte {
-		b, _ := json.Marshal(mistralRequest{
-			Model:       model,
-			Messages:    messages,
-			MaxTokens:   1024,
-			Temperature: 0.3,
-		})
-		return b
-	}
-	doRequest := func(body []byte) (*http.Response, []byte, error) {
-		req, err := http.NewRequest("POST", "https://api.z.ai/api/coding/paas/v4/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return nil, nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := ajudaHTTPClient.Do(req)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp, raw, nil
-	}
-
-	resp, raw, err := doRequest(buildPayload("glm-4.5-air"))
-	if err != nil {
-		return "", http.StatusBadGateway, "Falha ao contactar o assistente. Tente novamente."
-	}
-	// 429: tenta o modelo free como fallback (exceto saldo insuficiente).
-	if resp.StatusCode == http.StatusTooManyRequests {
-		var ec struct {
-			Error struct{ Code string } `json:"error"`
-		}
-		_ = json.Unmarshal(raw, &ec)
-		if ec.Error.Code != "1113" {
-			log.Printf("[farol:ajuda] 429 glm-4.5-air (body=%s), retry glm-4.7-flash", string(raw))
-			resp, raw, err = doRequest(buildPayload("glm-4.7-flash"))
-			if err != nil {
-				return "", http.StatusServiceUnavailable, "Serviço de IA momentaneamente indisponível. Tente novamente em alguns segundos."
-			}
-		}
-	}
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[farol:ajuda] Z.AI status=%d body=%s", resp.StatusCode, string(raw))
-		var eb struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(raw, &eb)
-		if eb.Error.Code == "1113" {
-			return "", http.StatusBadGateway, "Saldo insuficiente na conta de IA. Contate o administrador."
-		}
-		msg := eb.Error.Message
-		if msg == "" {
-			msg = eb.Message
-		}
-		if msg == "" {
-			msg = fmt.Sprintf("Erro da API (status %d)", resp.StatusCode)
-		}
-		return "", http.StatusBadGateway, msg
-	}
-
-	var mr mistralResponse
-	if err := json.Unmarshal(raw, &mr); err != nil {
-		return "", http.StatusBadGateway, "Resposta inesperada do assistente"
-	}
-	if len(mr.Choices) == 0 {
-		if mr.Message != "" {
-			return "", http.StatusBadGateway, "Erro da API: " + mr.Message
-		}
-		return "", http.StatusBadGateway, "Assistente não retornou resposta"
-	}
-	reply := mr.Choices[0].Message.Content
-	if reply == "" {
-		reply = mr.Choices[0].Message.ReasoningContent
-	}
-	return reply, http.StatusOK, ""
 }
