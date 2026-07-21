@@ -2,7 +2,9 @@
 title: 'Tipo de Venda — nova coluna de import + filtro no fluxo faturado'
 type: 'feature'
 created: '2026-07-16'
-status: 'in-progress'
+status: 'concluída'
+closed: '2026-07-21'
+version: 'v1.2.0'
 context: []
 baseline_commit: '84fefc9956527ac67ad52db79c883520fba6c3b7'
 branch: 'feat/tipo-venda-filtro-faturado'

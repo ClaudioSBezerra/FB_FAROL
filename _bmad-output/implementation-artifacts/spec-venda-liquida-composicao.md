@@ -2,7 +2,9 @@
 title: 'Venda Líquida — composição do faturado (toggles) + abas CCD'
 type: 'feature'
 created: '2026-07-21'
-status: 'draft-aguardando-aprovacao'
+status: 'concluída'
+closed: '2026-07-21'
+version: 'v1.2.0'
 context: ['spec-tipo-venda-filtro-faturado.md']
 baseline_commit: '43613da'
 branch: '(a criar) feat/venda-liquida-composicao'
