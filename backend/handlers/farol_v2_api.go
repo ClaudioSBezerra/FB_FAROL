@@ -2005,6 +2005,12 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				if _, e := db.Exec(`SELECT farol.upsert_tipo_venda_dims($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT tipo_venda_dims %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
+				// venda líquida (mig 190) — popula liquido/pv_* nas agg_fat a partir
+				// de vendas_faturadas + vendas_ccd. Passada extra sobre o mês; roda
+				// depois de todas as agg estarem populadas (v01-v07).
+				if _, e := db.Exec(`SELECT farol.upsert_venda_liquida_cols($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT venda_liquida %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
 				log.Printf("[farol:agg] w=%d UPSERT %04d-%02d OK em %v", wid, m.Ano, m.Mes, time.Since(t1))
 			}
 		}(i)
