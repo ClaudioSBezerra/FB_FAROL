@@ -484,17 +484,17 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 				res.RefFim = refFim
 			}
 
-				// mtd: mês atual (01/dia -> último dado) vs mês anterior inteiro
-				if mode == "mtd" {
-					last := inferLastDay(db, empresaID)
-					if last.IsZero() {
-						last = refFim // fallback: fim do mês de ref
-					}
-					refInicio = time.Date(last.Year(), last.Month(), 1, 0, 0, 0, 0, time.UTC)
-					refFim = time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
-					res.RefInicio = refInicio
-					res.RefFim = refFim
+			// mtd: mês atual (01/dia -> último dado) vs mês anterior inteiro
+			if mode == "mtd" {
+				last := inferLastDay(db, empresaID)
+				if last.IsZero() {
+					last = refFim // fallback: fim do mês de ref
 				}
+				refInicio = time.Date(last.Year(), last.Month(), 1, 0, 0, 0, 0, time.UTC)
+				refFim = time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
+				res.RefInicio = refInicio
+				res.RefFim = refFim
+			}
 			compInicio, compFim = deriveCompRange(refInicio, refFim, mode)
 			res.CompMode = mode
 		}
@@ -1335,7 +1335,12 @@ GROUP BY v.%s`,
 
 	log.Printf("[farol:vendas] queryAggregatedVendas fluxo=%s nível=%s → %d grupos em %v (Q1=%v%s Q2=%v %s)",
 		fluxo.name, groupCol, len(result), time.Since(t0), durQ1,
-		func() string { if q1Hit { return " (hit)" }; return "" }(),
+		func() string {
+			if q1Hit {
+				return " (hit)"
+			}
+			return ""
+		}(),
 		durQ2,
 		func() string {
 			if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
@@ -1496,12 +1501,21 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		var base, refPos, antPos map[string]int
 		var wgPos sync.WaitGroup
 		wgPos.Add(1)
-		go func() { defer wgPos.Done(); base = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters) }()
+		go func() {
+			defer wgPos.Done()
+			base = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters)
+		}()
 		wgPos.Add(1)
-		go func() { defer wgPos.Done(); refPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters) }()
+		go func() {
+			defer wgPos.Done()
+			refPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+		}()
 		if hasComp {
 			wgPos.Add(1)
-			go func() { defer wgPos.Done(); antPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters) }()
+			go func() {
+				defer wgPos.Done()
+				antPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+			}()
 		}
 		wgPos.Wait()
 
@@ -1610,7 +1624,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			PositivadosAnt: ant.positivados, BaseCliAnt: ant.baseCli, PositPctAnt: positPctAnt,
 			PositCor: "vermelho", MixAnt: ant.mix, MixCor: "vermelho",
 			MixTotalAnt: ant.mixTotal,
-			CompAnt: composicao{Bonif: ant.bonif, Transf: ant.transf, Remessa: ant.remessa, Devol: ant.devol, Cancel: ant.cancel},
+			CompAnt:     composicao{Bonif: ant.bonif, Transf: ant.transf, Remessa: ant.remessa, Devol: ant.devol, Cancel: ant.cancel},
 		})
 	}
 
@@ -1834,6 +1848,7 @@ func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []dr
 // Mas resultados mudam só após nova importação. Cache em memória cobre:
 //   - base (ymStart=0, ymEnd=999912): idêntica entre views/requests/usuários
 //   - ref e comp: idêntica entre os 3 fetchCards do login (V01/V02/V03)
+//
 // TTL 30min (invalidateBaseCache é chamado após consolidação de import).
 type baseCacheEntry struct {
 	data map[string]int
@@ -2235,6 +2250,12 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Consolidação terminou → carimbo "dados de" do Painel BI.
+		// É AQUI que a carga multi-arquivo (skip_refresh) de fato consolida.
+		if len(meses) > 0 {
+			marcaConsolidacao(db, spCtx.EmpresaID)
+		}
+
 		// Dados mudaram → invalida o cache da base de clientes ativos.
 		invalidateBaseCache(spCtx.EmpresaID)
 		invalidateVendasPeriodoCache(spCtx.EmpresaID)
@@ -2269,7 +2290,7 @@ func prewarmAggMes(db *sql.DB, empresaID string) {
 
 	anoAtual := time.Now().Year()
 	ymAtual := anoAtual*100 + int(time.Now().Month())
-	ymAnt := (anoAtual - 1) * 100 + 12 // dezembro ano anterior (YTD completo)
+	ymAnt := (anoAtual-1)*100 + 12 // dezembro ano anterior (YTD completo)
 
 	// 3 views × 2 fluxos × 2 períodos = 12 queries pequenas.
 	// Como são em paralelo e rodam após o usuário já ter recebido resposta,
@@ -2345,9 +2366,9 @@ func prewarmDailyRanges(db *sql.DB, empresaID string) {
 	yesterday := today.AddDate(0, 0, -1)
 
 	ranges := []struct {
-		nome                string
-		iniAtual, fimAtual  time.Time
-		iniComp, fimComp    time.Time
+		nome               string
+		iniAtual, fimAtual time.Time
+		iniComp, fimComp   time.Time
 	}{
 		{"dia_anterior", yesterday, yesterday, yesterday.AddDate(0, 0, -7), yesterday.AddDate(0, 0, -7)},
 		{"7d", today.AddDate(0, 0, -6), today, today.AddDate(0, 0, -13), today.AddDate(0, 0, -7)},

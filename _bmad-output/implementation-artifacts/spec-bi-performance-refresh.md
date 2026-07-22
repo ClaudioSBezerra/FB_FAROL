@@ -98,7 +98,24 @@ Nenhum achado tocou o bloco congelado. Todos viraram correção de código (comm
 - `biFetchL0`/`biKPI` apenas **chamam** `fetchCards`/`computeKPI` — nunca reimplementar agregação.
 - O guard de `fixOverlappingBaseKPI` tem de continuar idêntico ao do `/cards`.
 
-**Em aberto (Ask First):** `atualizado_em` carimba o fim do **upload**. No import multi-arquivo (`skip_refresh=true`) a consolidação real vem depois, no RefreshViews — que não avança o carimbo.
+### 2026-07-22 — renegociação do bloco congelado (autorizada pelo gestor)
+
+O item "Ask First" sobre o critério de `atualizado_em` foi resolvido: o carimbo
+passa a vir do fim da **consolidação**, não do fim do upload.
+
+Isso exigiu quebrar um "Never" do bloco congelado — *"não criar migration nem
+alterar schema"* — porque não existe nenhum lugar durável para o timestamp: as
+`agg_*` não têm coluna de tempo e as tabelas de config existentes são de outro
+domínio. **O gestor autorizou explicitamente a migration 193.** O texto do
+"Never" fica como está para preservar o registro do que foi acordado
+originalmente; esta entrada é a autorização da exceção.
+
+- `backend/migrations/193_consolidacao_log.sql` — tabela aditiva, 1 linha por
+  empresa, sem reconsolidação.
+- Gravada em `processImportJob` (após `upsertAggsMesParallel`) e em
+  `RefreshViewsHandler` (onde a carga multi-arquivo de fato consolida).
+- `biUltimoImport` lê dela; só cai no critério antigo enquanto a empresa não
+  passar por uma consolidação após a 193.
 
 ## Design Notes
 

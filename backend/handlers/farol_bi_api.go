@@ -322,19 +322,52 @@ func biTopEquipesDe(cards []cardItem) []biEquipe {
 	return out
 }
 
-// biUltimoImport — horário do último import que efetivamente entrou.
-// Vazio quando a empresa nunca concluiu um import.
+// biUltimoImport — de quando é o dado que está na tela.
+//
+// Fonte primária: farol.consolidacao_log (mig 193), gravado quando a
+// consolidação TERMINA. É o carimbo honesto: enquanto o upsert_aggs_mes não
+// roda, os números na tela continuam sendo os da carga anterior.
+//
+// Fallback: MAX(atualizado_em) dos jobs concluídos — usado só enquanto a
+// empresa não passou por nenhuma consolidação após a mig 193. Esse critério
+// carimba o fim do UPLOAD, e no import multi-arquivo (skip_refresh) o upload
+// fecha bem antes da consolidação; por isso ele é fallback, não fonte.
+//
+// Vazio quando não há nem um nem outro.
 func biUltimoImport(db *sql.DB, empresaID string) string {
 	var t sql.NullTime
 	err := db.QueryRow(
-		`SELECT MAX(atualizado_em) FROM vendas_import_jobs WHERE empresa_id=$1 AND status='done'`,
+		`SELECT concluido_em FROM farol.consolidacao_log WHERE empresa_id=$1`,
 		empresaID).Scan(&t)
-	if err != nil {
-		log.Printf("[farol:bi] biUltimoImport empresa=%s ERRO: %v", empresaID, err)
+	if err == nil && t.Valid {
+		return t.Time.Format(time.RFC3339)
+	}
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("[farol:bi] consolidacao_log empresa=%s ERRO: %v", empresaID, err)
+	}
+
+	if err := db.QueryRow(
+		`SELECT MAX(atualizado_em) FROM vendas_import_jobs WHERE empresa_id=$1 AND status='done'`,
+		empresaID).Scan(&t); err != nil {
+		log.Printf("[farol:bi] biUltimoImport (fallback) empresa=%s ERRO: %v", empresaID, err)
 		return ""
 	}
 	if !t.Valid {
 		return ""
 	}
 	return t.Time.Format(time.RFC3339)
+}
+
+// marcaConsolidacao registra que a consolidação da empresa terminou AGORA.
+// Chamada nos dois caminhos que rodam upsert_aggs_mes (import e RefreshViews).
+// Falha aqui não pode derrubar a consolidação — só loga: o pior efeito é o
+// painel exibir um carimbo mais antigo do que a realidade.
+func marcaConsolidacao(db *sql.DB, empresaID string) {
+	if _, err := db.Exec(`
+		INSERT INTO farol.consolidacao_log (empresa_id, concluido_em)
+		VALUES ($1, now())
+		ON CONFLICT (empresa_id) DO UPDATE SET concluido_em = EXCLUDED.concluido_em`,
+		empresaID); err != nil {
+		log.Printf("[farol:bi] marcaConsolidacao empresa=%s ERRO: %v", empresaID, err)
+	}
 }

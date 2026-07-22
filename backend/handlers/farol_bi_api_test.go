@@ -213,6 +213,52 @@ func TestBIInvalidacaoDescartaCalculoVelho(t *testing.T) {
 	invalidateBICache(empresaID)
 }
 
+// TestBICarimboPrefereConsolidacao — o "dados de" tem de vir do fim da
+// CONSOLIDAÇÃO, não do fim do upload. Usa empresa fictícia para não mexer na
+// linha da empresa real (a tabela não tem FK para companies).
+func TestBICarimboPrefereConsolidacao(t *testing.T) {
+	db, _ := biTestDB(t)
+	defer db.Close()
+
+	var existe bool
+	_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.tables
+		WHERE table_schema='farol' AND table_name='consolidacao_log')`).Scan(&existe)
+	if !existe {
+		t.Skip("migration 193 ainda não aplicada — teste pulado")
+	}
+
+	fake := "00000000-0000-4000-8000-0000000f0001"
+	defer db.Exec(`DELETE FROM farol.consolidacao_log WHERE empresa_id=$1`, fake)
+
+	// Sem linha e sem jobs → vazio, não uma data inventada.
+	db.Exec(`DELETE FROM farol.consolidacao_log WHERE empresa_id=$1`, fake)
+	if got := biUltimoImport(db, fake); got != "" {
+		t.Errorf("empresa sem consolidação e sem import → %q, esperado vazio", got)
+	}
+
+	// Depois de consolidar, o carimbo aparece e é recente.
+	marcaConsolidacao(db, fake)
+	got := biUltimoImport(db, fake)
+	if got == "" {
+		t.Fatal("após marcaConsolidacao, carimbo veio vazio")
+	}
+	ts, err := time.Parse(time.RFC3339, got)
+	if err != nil {
+		t.Fatalf("carimbo %q não é RFC3339: %v", got, err)
+	}
+	if d := time.Since(ts); d > time.Minute || d < -time.Minute {
+		t.Errorf("carimbo %v está a %v de agora — esperado ~0", ts, d)
+	}
+
+	// Segunda consolidação avança o carimbo (UPSERT, não INSERT duplicado).
+	time.Sleep(1100 * time.Millisecond)
+	marcaConsolidacao(db, fake)
+	got2 := biUltimoImport(db, fake)
+	if got2 == got {
+		t.Errorf("segunda consolidação não avançou o carimbo (%q)", got2)
+	}
+}
+
 // TestBIFluxoInvalidoNaoVaraParaCCD — ?fluxo=cancdev cairia em scan da base.
 func TestBIFluxoInvalidoNaoVaraParaCCD(t *testing.T) {
 	db, empresaID := biTestDB(t)
