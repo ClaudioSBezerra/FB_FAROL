@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts'
 import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -185,7 +185,8 @@ function BiClock({ atualizadoEm }: { atualizadoEm?: string }) {
       <p className={`text-[10px] tabular-nums ${velho ? 'text-amber-400' : 'text-slate-600'}`}>
         {valido
           ? `dados de ${dado.toLocaleString('pt-BR', {
-              day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+              day: '2-digit', month: '2-digit', year: '2-digit',
+              hour: '2-digit', minute: '2-digit',
             })}`
           : 'sem import registrado'}
       </p>
@@ -350,7 +351,10 @@ function IndustryDonut({ industrias }: { industrias: BiIndustria[] }) {
 
 // Já chega ordenado e cortado no top 12 pelo backend.
 function RcaRanking({ equipes }: { equipes: BiEquipe[] }) {
-  const maxFat = equipes[0]?.faturado ?? 1
+  // `?? 1` não cobria topo == 0 (início de mês, ou mês só com devolução):
+  // 0/0 = NaN vira width:"NaN%" e a barra some. Valores negativos dariam
+  // largura negativa. Daí o piso em 1 e o clamp de barW abaixo.
+  const maxFat = Math.max(equipes[0]?.faturado ?? 0, 1)
 
   function barColor(pct: number) {
     if (pct >= 100) return '#22c55e'
@@ -366,7 +370,7 @@ function RcaRanking({ equipes }: { equipes: BiEquipe[] }) {
       <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0">
         {equipes.map((c, i) => {
           const col  = barColor(c.pct)
-          const barW = (c.faturado / maxFat) * 100
+          const barW = Math.min(Math.max((c.faturado / maxFat) * 100, 0), 100)
           return (
             <div key={c.key} className="flex items-center gap-2">
               <span className="w-5 text-[10px] font-bold text-slate-600 shrink-0 text-right">{i + 1}</span>
@@ -408,29 +412,33 @@ type CompMode = 'ytd' | 'mtd'
 
 // ─── FarolBI ─────────────────────────────────────────────────────────────────
 
+async function fetchBI(compMode: CompMode, nocache = false): Promise<BiResponse> {
+  const r = await fetch(`/api/v2/farol/bi?comp_mode=${compMode}${nocache ? '&nocache=1' : ''}`)
+  if (!r.ok) throw new Error('Falha ao carregar o painel BI')
+  return r.json()
+}
+
 export default function FarolBI() {
   const [compMode, setCompMode] = useState<CompMode>('ytd')
-  // "Atualizar" precisa furar o cache do servidor, o refetch automático não.
-  const forceRef = useRef(false)
+  const queryClient = useQueryClient()
 
-  const { data, isLoading, isError, refetch } = useQuery<BiResponse>({
+  const { data, isLoading, isError } = useQuery<BiResponse>({
     queryKey: ['bi', compMode],
-    queryFn: async () => {
-      const force = forceRef.current
-      forceRef.current = false
-      const r = await fetch(`/api/v2/farol/bi?comp_mode=${compMode}${force ? '&nocache=1' : ''}`)
-      if (!r.ok) throw new Error('Falha ao carregar o painel BI')
-      return r.json()
-    },
+    queryFn: () => fetchBI(compMode),
     staleTime: REFETCH_MS,
     gcTime:    REFETCH_MS + 5 * 60_000,
     refetchInterval: REFETCH_MS,
     refetchOnWindowFocus: false,
   })
 
+  // "Atualizar" tem de furar o cache do SERVIDOR de forma determinística.
+  // Com refetch() + flag num ref, o React Query podia deduplicar o clique numa
+  // request já em voo (montada sem nocache) — o botão parecia funcionar e
+  // devolvia o mesmo dado cacheado, que é pior do que não ter botão.
   function handleRefresh() {
-    forceRef.current = true
-    refetch()
+    fetchBI(compMode, true)
+      .then(fresh => queryClient.setQueryData(['bi', compMode], fresh))
+      .catch(() => queryClient.invalidateQueries({ queryKey: ['bi', compMode] }))
   }
 
   function handleCompModeChange(mode: CompMode) {
@@ -517,14 +525,25 @@ export default function FarolBI() {
         </div>
       )}
 
-      {isError && !isLoading && (
+      {/* Erro só toma a tela quando não há NADA para mostrar. Se já houve uma
+          carga boa, o painel continua exibindo o último dado válido com uma
+          faixa de aviso — numa TV, tela vermelha é pior que dado de 5 min. */}
+      {isError && !isLoading && !kpi && (
         <div className="flex-1 flex items-center justify-center">
           <p className="text-red-400 text-sm">Erro ao carregar dados. Verifique a conexão.</p>
         </div>
       )}
 
+      {isError && kpi && (
+        <div className="relative z-10 px-8 py-1.5 bg-red-950/60 border-b border-red-900/60 shrink-0">
+          <p className="text-[11px] text-red-300 font-semibold">
+            ⚠ Falha na última atualização — exibindo os dados anteriores.
+          </p>
+        </div>
+      )}
+
       {/* ── Conteúdo ──────────────────────────────────────────────────────── */}
-      {!isLoading && !isError && kpi && (
+      {!isLoading && kpi && (
         <div className="relative z-10 flex-1 grid grid-rows-[auto_1fr] p-6 gap-6"
           style={{ minHeight: 0 }}>
 

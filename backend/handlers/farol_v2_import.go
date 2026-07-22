@@ -73,7 +73,7 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 		fallbackAno, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("ano")))
 		fallbackMes, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("mes")))
 		skipRefreshStr := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("skip_refresh")))
-		skipRefresh    := skipRefreshStr == "true" || skipRefreshStr == "1"
+		skipRefresh := skipRefreshStr == "true" || skipRefreshStr == "1"
 
 		// ── Ler arquivo — Fase B (jul/2026): salva em disco via io.Copy em
 		// stream. Antes fazia io.ReadAll (RAM inteira, ~1 GB para CSVs grandes
@@ -324,55 +324,55 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		return def
 	}
 
-	iCodGerente      := col(-1, "codgerente", "cod_gerente")
-	iNomeGerente     := col(-1, "gerente", "nome_gerente")
-	iCodSup          := col(-1, "codsupervisor", "cod_supervisor")
-	iNomeSup         := col(-1, "supervisor", "nome_supervisor")
+	iCodGerente := col(-1, "codgerente", "cod_gerente")
+	iNomeGerente := col(-1, "gerente", "nome_gerente")
+	iCodSup := col(-1, "codsupervisor", "cod_supervisor")
+	iNomeSup := col(-1, "supervisor", "nome_supervisor")
 	iQtrcaSupervisor := col(-1, "qtrcasupervisor", "qtrca_supervisor")
-	iCodRca          := col(-1, "codusur", "cod_rca", "codrca")
-	iNomeRca         := col(-1, "rca", "nome_rca")
-	iQtcliRca        := col(-1, "qtclirca", "qtcli_rca")
-	iCodFornec       := col(-1, "codfornec", "cod_fornec")
-	iNomeFornec      := col(-1, "fornecedor", "nome_fornec")
-	iCodCli          := col(-1, "codcli", "cod_cli")
-	iNomeCli         := col(-1, "cliente", "nome_cli")
-	iCNPJ            := col(-1, "cnpj", "cnpj_cli", "cnpj_cliente")
-	iUf              := col(-1, "uf")
-	iEmpresa         := col(-1, "empresa")
-	iCodProd         := col(-1, "codprod", "cod_prod")
-	iNomeProd        := col(-1, "produto", "nome_prod")
-	iEan             := col(-1, "ean", "codean", "cod_ean")
+	iCodRca := col(-1, "codusur", "cod_rca", "codrca")
+	iNomeRca := col(-1, "rca", "nome_rca")
+	iQtcliRca := col(-1, "qtclirca", "qtcli_rca")
+	iCodFornec := col(-1, "codfornec", "cod_fornec")
+	iNomeFornec := col(-1, "fornecedor", "nome_fornec")
+	iCodCli := col(-1, "codcli", "cod_cli")
+	iNomeCli := col(-1, "cliente", "nome_cli")
+	iCNPJ := col(-1, "cnpj", "cnpj_cli", "cnpj_cliente")
+	iUf := col(-1, "uf")
+	iEmpresa := col(-1, "empresa")
+	iCodProd := col(-1, "codprod", "cod_prod")
+	iNomeProd := col(-1, "produto", "nome_prod")
+	iEan := col(-1, "ean", "codean", "cod_ean")
 	// Campos puramente visuais — mig 168 (sem agregação, exibidos nos detalhes)
-	iCodRamo         := col(-1, "codramo", "cod_ramo")
-	iRamo            := col(-1, "ramo", "nome_ramo")
-	iEmbalagem       := col(-1, "embalagem")
-	iQtUnit          := col(-1, "qtunit", "qt_unit")
-	iQtUnitCx        := col(-1, "qtunitcx", "qt_unit_cx", "qtunitcaixa")
-	iCodBar          := col(-1, "codbar", "cod_bar", "codigobar")
-	iQt              := col(-1, "qt", "quantidade")
-	iPvenda          := col(-1, "pvenda", "valor", "vl_venda")
-	iPlucro          := col(-1, "plucro", "lucro", "vl_lucro")
-	iPeriodo         := col(-1, "periodo")
-	iEstado          := col(-1, "estado")
+	iCodRamo := col(-1, "codramo", "cod_ramo")
+	iRamo := col(-1, "ramo", "nome_ramo")
+	iEmbalagem := col(-1, "embalagem")
+	iQtUnit := col(-1, "qtunit", "qt_unit")
+	iQtUnitCx := col(-1, "qtunitcx", "qt_unit_cx", "qtunitcaixa")
+	iCodBar := col(-1, "codbar", "cod_bar", "codigobar")
+	iQt := col(-1, "qt", "quantidade")
+	iPvenda := col(-1, "pvenda", "valor", "vl_venda")
+	iPlucro := col(-1, "plucro", "lucro", "vl_lucro")
+	iPeriodo := col(-1, "periodo")
+	iEstado := col(-1, "estado")
 	// Coluna ÚNICA de data — semântica dada pelo PERIODO/ESTADO:
 	//   ESTADO=FATURADO/TRANSMITIDO → linhas vão pra vendas_faturadas/transmitidas
 	//   ESTADO=CORTADO/CANCELADO/DEVOLVIDO → linhas vão pra vendas_ccd (mig 182)
-	iData            := col(-1, "data", "data_processo", "dataprocesso", "dt", "data_movimento")
+	iData := col(-1, "data", "data_processo", "dataprocesso", "dt", "data_movimento")
 
 	// ── Colunas do NOVO LAYOUT (jul/2026) — opcionais, ficam vazias no CSV antigo.
 	//   Departamento/Seção/Categoria: hierarquia do produto (Fase 2 usará no GRID).
 	//   CodCliPrinc: cliente principal (rede) — Fase 2 usará em drill "Por Rede".
 	//   Fantasia: nome fantasia do cliente (informativo).
 	//   PvendaTotal: total já calculado (QT × PVENDA) — usa direto se presente.
-	iCodDepto     := col(-1, "codepto", "cod_depto", "coddepto")
-	iDepto        := col(-1, "departamento", "depto")
-	iCodSec       := col(-1, "codsec", "cod_sec", "codsecao")
-	iSecao        := col(-1, "secao", "sec")
+	iCodDepto := col(-1, "codepto", "cod_depto", "coddepto")
+	iDepto := col(-1, "departamento", "depto")
+	iCodSec := col(-1, "codsec", "cod_sec", "codsecao")
+	iSecao := col(-1, "secao", "sec")
 	iCodCategoria := col(-1, "codcategoria", "cod_categoria")
-	iCategoria    := col(-1, "categoria")
-	iCodCliPrinc  := col(-1, "codcliprinc", "cod_cliprinc", "codcliprincipal")
-	iFantasia     := col(-1, "fantasia", "nome_fantasia")
-	iPvendaTotal  := col(-1, "pvendatotal", "pvenda_total", "valor_total", "vl_total", "pvendatot")
+	iCategoria := col(-1, "categoria")
+	iCodCliPrinc := col(-1, "codcliprinc", "cod_cliprinc", "codcliprincipal")
+	iFantasia := col(-1, "fantasia", "nome_fantasia")
+	iPvendaTotal := col(-1, "pvendatotal", "pvenda_total", "valor_total", "vl_total", "pvendatot")
 
 	// ── CONDVENDA (jul/2026) — CÓDIGO do tipo de venda (ex.: 1=Normal,
 	// 5=Bonificação, 10=Transferência). Conforme a legenda oficial do ION VENDAS,
@@ -507,14 +507,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		tipoVenda     string // CONDVENDA — código (mig 187)
 		tipoVendaDesc string // DESC_CONDVENDA — rótulo do ERP (mig 192)
 	}
-	var allFat   []vendaRaw // → vendas_faturadas
+	var allFat []vendaRaw   // → vendas_faturadas
 	var allTrans []vendaRaw // → vendas_transmitidas
-	var allCCD   []vendaRaw // → vendas_ccd (novo layout jul/2026)
+	var allCCD []vendaRaw   // → vendas_ccd (novo layout jul/2026)
 	diagSamples := 0
 	skippedNoData := 0
-	uniqueFatDates   := make(map[string]struct{})
+	uniqueFatDates := make(map[string]struct{})
 	uniqueTransDates := make(map[string]struct{})
-	uniqueCcdDates   := make(map[string]struct{})
+	uniqueCcdDates := make(map[string]struct{})
 	// Contagem de linhas por (ano,mes) — usada para detectar a COMPETÊNCIA do
 	// arquivo pelos DADOS (mês dominante), em vez de confiar no nome do arquivo.
 	mesContagem := make(map[[2]int]int)
@@ -528,14 +528,14 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			continue
 		}
 		codFornec := getField(csvRow, iCodFornec)
-		codRca    := getField(csvRow, iCodRca)
-		codCli    := getField(csvRow, iCodCli)
+		codRca := getField(csvRow, iCodRca)
+		codCli := getField(csvRow, iCodCli)
 		if codFornec == "" && codRca == "" && codCli == "" {
 			continue
 		}
 		periodo := getField(csvRow, iPeriodo)
 		estadoF := getField(csvRow, iEstado)
-		evento  := detectEvento(periodo, estadoF)
+		evento := detectEvento(periodo, estadoF)
 
 		// Data única — semântica dada pelo estado/tabela destino.
 		dataProc := parseDateBR(getField(csvRow, iData))
@@ -548,10 +548,10 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			continue
 		}
 
-		rawPvenda      := getField(csvRow, iPvenda)
+		rawPvenda := getField(csvRow, iPvenda)
 		rawPvendaTotal := getField(csvRow, iPvendaTotal)
-		rawPlucro      := getField(csvRow, iPlucro)
-		rawQt          := getField(csvRow, iQt)
+		rawPlucro := getField(csvRow, iPlucro)
+		rawQt := getField(csvRow, iQt)
 		if diagSamples < 5 {
 			log.Printf("[import:diag] amostra %d — data=%s evento=%s pvenda_raw=%q→%.4f pvenda_total_raw=%q plucro_raw=%q→%.4f qt_raw=%q→%.4f cli=%s fornec=%s",
 				diagSamples+1, dataProc.Format("2006-01-02"), evento,
@@ -565,9 +565,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		// cod_supervisor<>'' / cod_gerente<>''. Em vez de perder a venda (e travar
 		// o filtro com RCA órfão), atribui um bucket genérico "NÃO IDENTIFICADO"
 		// (código 99999999, que não colide com vendedor/gerente real da base).
-		codGer  := getField(csvRow, iCodGerente)
+		codGer := getField(csvRow, iCodGerente)
 		nomeGer := getField(csvRow, iNomeGerente)
-		codSup  := getField(csvRow, iCodSup)
+		codSup := getField(csvRow, iCodSup)
 		nomeSup := getField(csvRow, iNomeSup)
 		nomeRca := getField(csvRow, iNomeRca)
 		if codSup == "" {
@@ -581,16 +581,16 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 
 		var r vendaRaw
-		r.vals[0]  = spCtx.EmpresaID
-		r.vals[1]  = dataProc
-		r.vals[2]  = codGer
-		r.vals[3]  = nomeGer
-		r.vals[4]  = codSup
-		r.vals[5]  = nomeSup
-		r.vals[6]  = parseInt3(getField(csvRow, iQtrcaSupervisor))
-		r.vals[7]  = codRca
-		r.vals[8]  = nomeRca
-		r.vals[9]  = parseInt3(getField(csvRow, iQtcliRca))
+		r.vals[0] = spCtx.EmpresaID
+		r.vals[1] = dataProc
+		r.vals[2] = codGer
+		r.vals[3] = nomeGer
+		r.vals[4] = codSup
+		r.vals[5] = nomeSup
+		r.vals[6] = parseInt3(getField(csvRow, iQtrcaSupervisor))
+		r.vals[7] = codRca
+		r.vals[8] = nomeRca
+		r.vals[9] = parseInt3(getField(csvRow, iQtcliRca))
 		r.vals[10] = codFornec
 		r.vals[11] = getField(csvRow, iNomeFornec)
 		r.vals[12] = codCli
@@ -642,8 +642,8 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		r.vals[35] = getField(csvRow, iCodCliPrinc)
 		r.vals[36] = getField(csvRow, iFantasia)
 		r.vals[37] = pvendaUnit // preserva o unitário original do CSV (informativo)
-		r.evento        = evento
-		r.tipoVenda     = getField(csvRow, iTipoVenda)     // CONDVENDA (código); '' se ausente
+		r.evento = evento
+		r.tipoVenda = getField(csvRow, iTipoVenda)         // CONDVENDA (código); '' se ausente
 		r.tipoVendaDesc = getField(csvRow, iDescCondVenda) // DESC_CONDVENDA; '' se ausente
 
 		dKey := dataProc.Format("2006-01-02")
@@ -791,7 +791,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		"cod_prod", "nome_prod", "ean",
 		"qt", "pvenda", "plucro",
 		"cnpj",
-		"cod_ramo", "ramo",                     // visual cliente (mig 168)
+		"cod_ramo", "ramo", // visual cliente (mig 168)
 		"embalagem", "qt_unit", "qt_unit_cx", "cod_bar", // visual produto (mig 168)
 		// Novo layout jul/2026 (mig 181) — 9 colunas adicionais
 		"cod_depto", "depto",
@@ -1020,7 +1020,6 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
 		invalidateBaseCache(spCtx.EmpresaID)          // dados mudaram → limpa cache da base
 		invalidateVendasPeriodoCache(spCtx.EmpresaID) // limpa cache Q1 de ranges diários
-		invalidateBICache(spCtx.EmpresaID)            // painel BI serve resposta pronta do cache
 		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
 			jobID, len(mesesTocados), time.Since(tAgg))
 	} else {
@@ -1030,6 +1029,12 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	db.Exec(`UPDATE vendas_import_jobs
 		SET status='done', progress=100, importados=$1, message='', atualizado_em=NOW()
 		WHERE id=$2`, importados, jobID)
+
+	// DEPOIS do status='done', e fora do if/else: o BI carimba a tela com
+	// MAX(atualizado_em) dos jobs concluídos. Invalidar antes deste UPDATE
+	// deixaria o cache com números novos e carimbo do import anterior; deixar
+	// dentro do `if` pularia a invalidação no caminho skip_refresh.
+	invalidateBICache(spCtx.EmpresaID)
 
 	// Criação de usuários em background — não bloqueia.
 	// Usa fallbackAno/fallbackMes (vindo da URL) como "competência do upload"
@@ -1319,7 +1324,7 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		//   sem parâmetros                               → apaga a base inteira
 		// Para apagar 1 dia, passar mesma data nos dois campos.
 		dataInicio := strings.TrimSpace(r.URL.Query().Get("data_inicio"))
-		dataFim    := strings.TrimSpace(r.URL.Query().Get("data_fim"))
+		dataFim := strings.TrimSpace(r.URL.Query().Get("data_fim"))
 		validRange := dataInicio != "" && dataFim != ""
 
 		// Apaga em AMBAS as tabelas — cada CSV importado povoou as duas.
@@ -1368,7 +1373,13 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		if rerr := refreshAllFarolViews(db); rerr != nil {
 			log.Printf("[VendasClear] delete OK (%d linhas) mas REFRESH falhou: %v", n, rerr)
 		}
-		invalidateBICache(spCtx.EmpresaID) // senão o BI segue exibindo o que foi apagado
+		// Os três caches guardam dados que acabaram de ser apagados. Invalidar só
+		// o do BI faria o painel zerar na hora e o Executivo seguir mostrando
+		// positivação/base do que já não existe por até 30 min — os dois têm de
+		// cair juntos, senão viram números divergentes.
+		invalidateBICache(spCtx.EmpresaID)
+		invalidateBaseCache(spCtx.EmpresaID)
+		invalidateVendasPeriodoCache(spCtx.EmpresaID)
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n})
 	}
 }

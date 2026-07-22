@@ -76,12 +76,35 @@ type biCacheEntry struct {
 var (
 	biCacheMu sync.RWMutex
 	biCache   = map[string]biCacheEntry{}
+	// biGen — contador de invalidações por empresa, protegido por biCacheMu.
+	// Existe por causa de uma corrida real: o cálculo leva dezenas de segundos;
+	// se o import terminar NO MEIO dele, a invalidação limpa um cache vazio e
+	// logo depois a goroutine grava o resultado PRÉ-import, que então vive o TTL
+	// inteiro. Comparar a geração antes de gravar descarta esse resultado velho.
+	biGen = map[string]uint64{}
 )
 
 const biCacheTTL = 10 * time.Minute
 
 func biCacheKey(empresaID, fluxoName, compMode string) string {
 	return empresaID + "|" + fluxoName + "|" + compMode
+}
+
+func biGeneration(empresaID string) uint64 {
+	biCacheMu.RLock()
+	defer biCacheMu.RUnlock()
+	return biGen[empresaID]
+}
+
+// biStore grava a resposta apenas se nenhuma invalidação ocorreu desde `gen`.
+func biStore(empresaID, key string, gen uint64, data biResponse) bool {
+	biCacheMu.Lock()
+	defer biCacheMu.Unlock()
+	if biGen[empresaID] != gen {
+		return false
+	}
+	biCache[key] = biCacheEntry{data: data, at: time.Now()}
+	return true
 }
 
 func invalidateBICache(empresaID string) {
@@ -91,6 +114,7 @@ func invalidateBICache(empresaID string) {
 			delete(biCache, k)
 		}
 	}
+	biGen[empresaID]++
 	biCacheMu.Unlock()
 }
 
@@ -106,7 +130,13 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		q := r.URL.Query()
+		// Só faturado/transmitido. resolveFluxo também aceita cancdev/cortado,
+		// que não têm agg: cairiam em scan da base 3× em janela YTD — qualquer
+		// URL forjada viraria um tiro de performance no Postgres.
 		fluxo := resolveFluxo(q.Get("fluxo"))
+		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
+			fluxo = resolveFluxo("faturado")
+		}
 		// O painel só oferece "Acumulado Ano" (ytd) e "Mês Atual" (mtd).
 		compMode := strings.ToLower(strings.TrimSpace(q.Get("comp_mode")))
 		if compMode != "mtd" {
@@ -127,6 +157,8 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		t0 := time.Now()
+		// Geração ANTES de computar — ver comentário em biGen.
+		gen := biGeneration(spCtx.EmpresaID)
 		pr := resolvePeriods(db, spCtx.EmpresaID, map[string][]string{"comp_mode": {compMode}})
 
 		out := biResponse{
@@ -140,6 +172,8 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		if pr.RefInicio.IsZero() || pr.RefFim.IsZero() {
 			out.Pulso.SemDado = true
 			out.Pulso.Cor = "vermelho"
+			out.Periodo.CurLabel = "Sem dados"
+			out.AtualizadoEm = biUltimoImport(db, spCtx.EmpresaID)
 			json.NewEncoder(w).Encode(out)
 			return
 		}
@@ -153,19 +187,31 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 			atualizado string
 		)
 
+		// Cada bloco roda isolado: um panic aqui dentro NÃO pode derrubar o
+		// processo. O recover do net/http só cobre a goroutine do handler, e
+		// este binário serve também as URLs do ION VENDAS em campo.
+		bloco := func(nome string, fn func()) {
+			defer wg.Done()
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("[farol:bi] PANIC no bloco %s: %v", nome, rec)
+				}
+			}()
+			fn()
+		}
+
 		wg.Add(4)
 		// KPI (gauges) — V03, exatamente como o /cards monta hoje.
-		go func() { defer wg.Done(); kpi = biKPI(db, spCtx.EmpresaID, fluxo, pr) }()
+		go bloco("kpi", func() { kpi = biKPI(db, spCtx.EmpresaID, fluxo, pr) })
 		// Donut — V01 nível Fornecedor.
-		go func() { defer wg.Done(); indCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V01", pr) }()
+		go bloco("industrias", func() { indCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V01", pr) })
 		// Ranking — V02 nível Supervisor.
-		go func() { defer wg.Done(); eqCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V02", pr) }()
+		go bloco("equipes", func() { eqCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V02", pr) })
 		// Pulso de ontem + carimbo do último import (dois SELECTs curtos).
-		go func() {
-			defer wg.Done()
+		go bloco("pulso", func() {
 			pulso = computePulso(db, spCtx.EmpresaID, "", nil)
 			atualizado = biUltimoImport(db, spCtx.EmpresaID)
-		}()
+		})
 		wg.Wait()
 
 		out.KPI = kpi
@@ -175,9 +221,18 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		out.AtualizadoEm = atualizado
 		out.Periodo.CurLabel, out.Periodo.AntLabel, _ = buildPeriodoLabels(pr)
 
-		biCacheMu.Lock()
-		biCache[key] = biCacheEntry{data: out, at: time.Now()}
-		biCacheMu.Unlock()
+		// As queries abaixo logam e devolvem vazio em vez de erro (padrão do
+		// fetchCards), então "tudo zerado" é indistinguível de falha de banco.
+		// Cachear isso congelaria um painel zerado por 10 min DEPOIS do banco
+		// voltar. Empresa legitimamente sem venda no período também não cacheia
+		// — o custo é um miss por request, e ela não é o caso de uso do BI.
+		degradado := len(out.Industrias) == 0 && len(out.Equipes) == 0 && kpi.TotalFaturado == 0
+		if degradado {
+			log.Printf("[farol:bi] resposta VAZIA empresa=%s fluxo=%s modo=%s — não cacheada (pode ser falha de query)",
+				spCtx.EmpresaID, fluxo.name, compMode)
+		} else if !biStore(spCtx.EmpresaID, key, gen, out) {
+			log.Printf("[farol:bi] descartado: dados invalidados durante o cálculo (empresa=%s)", spCtx.EmpresaID)
+		}
 
 		log.Printf("[farol:bi] CACHE MISS empresa=%s fluxo=%s modo=%s — %d ind, %d equipes em %v",
 			spCtx.EmpresaID, fluxo.name, compMode, len(out.Industrias), len(out.Equipes), time.Since(t0))
@@ -216,39 +271,53 @@ func biKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) kp
 	return kpi
 }
 
-// biTopIndustriasComOutros — top 8 por faturado; a cauda vira uma fatia "Outros".
-// Agregar aqui (e não no front) deixa o donut apenas pintando o que recebeu.
-func biTopIndustriasComOutros(cards []cardItem) []biIndustria {
+// biValor — o valor do card no fluxo pedido. cardItem.Faturado só é preenchido
+// no fluxo faturado (no transmitido o valor vai para .Transmitido), então usar
+// .Faturado direto zeraria donut e ranking inteiros em ?fluxo=transmitido.
+// ValorAtual carrega o mesmo número nos dois fluxos.
+func biValor(c cardItem) float64 { return c.ValorAtual }
+
+// biOrdenaPorValor devolve uma cópia ordenada por valor desc. SliceStable
+// porque empate é comum (vários zerados no começo do mês) e ordem instável
+// congelada no cache faz o ranking "mudar sozinho" entre refreshes.
+func biOrdenaPorValor(cards []cardItem) []cardItem {
 	sorted := make([]cardItem, len(cards))
 	copy(sorted, cards)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Faturado > sorted[j].Faturado })
+	sort.SliceStable(sorted, func(i, j int) bool { return biValor(sorted[i]) > biValor(sorted[j]) })
+	return sorted
+}
+
+// biTopIndustriasComOutros — top 8 por valor; a cauda vira uma fatia "Outros".
+// Agregar aqui (e não no front) deixa o donut apenas pintando o que recebeu.
+func biTopIndustriasComOutros(cards []cardItem) []biIndustria {
+	sorted := biOrdenaPorValor(cards)
 
 	out := make([]biIndustria, 0, biTopIndustrias+1)
 	var outros float64
 	for i, c := range sorted {
 		if i < biTopIndustrias {
-			out = append(out, biIndustria{Label: c.Label, Faturado: c.Faturado})
+			out = append(out, biIndustria{Label: c.Label, Faturado: biValor(c)})
 			continue
 		}
-		outros += c.Faturado
+		outros += biValor(c)
 	}
+	// Cauda negativa (devolução > venda) não vira fatia: o donut não desenha
+	// ângulo negativo. Mesma regra que o front aplicava antes.
 	if outros > 0 {
 		out = append(out, biIndustria{Label: "Outros", Faturado: outros})
 	}
 	return out
 }
 
-// biTopEquipesDe — top 12 por faturado, na ordem em que o ranking desenha.
+// biTopEquipesDe — top 12 por valor, na ordem em que o ranking desenha.
 func biTopEquipesDe(cards []cardItem) []biEquipe {
-	sorted := make([]cardItem, len(cards))
-	copy(sorted, cards)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Faturado > sorted[j].Faturado })
+	sorted := biOrdenaPorValor(cards)
 	if len(sorted) > biTopEquipes {
 		sorted = sorted[:biTopEquipes]
 	}
 	out := make([]biEquipe, 0, len(sorted))
 	for _, c := range sorted {
-		out = append(out, biEquipe{Key: c.Key, Label: c.Label, Faturado: c.Faturado, Pct: c.Pct})
+		out = append(out, biEquipe{Key: c.Key, Label: c.Label, Faturado: biValor(c), Pct: c.Pct})
 	}
 	return out
 }
