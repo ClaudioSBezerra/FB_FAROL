@@ -73,6 +73,33 @@ baseline_commit: 'c72256d'
 - Given um `RefreshViews` executado, when o BI recarrega, then os números refletem o import e `atualizado_em` mostra o horário novo.
 - Given os mesmos período e fluxo, when BI e painel Executivo são comparados, then objetivo %, positivação, mix e faturado por indústria batem exatamente.
 
+## Spec Change Log
+
+### 2026-07-22 — revisão adversarial (Blind Hunter + Edge Case Hunter + Acceptance Auditor)
+
+Nenhum achado tocou o bloco congelado. Todos viraram correção de código (commit `c293f9b`):
+
+1. Panic em goroutina derrubava o **processo inteiro** → `recover()` por bloco.
+2. Resposta degradada (falha de query → 200 zerado) era cacheada 10 min → guarda `degradado` recusa cachear payload vazio.
+3. Cálculo iniciado antes de um import gravava resultado pré-import no cache → contador de geração (`biGen`).
+4. `?fluxo=cancdev` caía em scan de `vendas_ccd` → fluxo validado.
+5. `cardItem.Faturado` é zero no fluxo transmitido → passou a usar `ValorAtual`.
+6. `sort.Slice` instável fazia o ranking mudar sozinho → `SliceStable`.
+7. `invalidateBICache` estava antes de `status='done'` e dentro do `if` → caminho `skip_refresh` nunca invalidava; movido para depois e para fora.
+8. `VendasClear` invalidava só o cache do BI → derruba os três juntos.
+9. Front: "Atualizar" podia ser deduplicado numa request já em voo → busca com `nocache=1` de forma determinística.
+10. Barra do ranking com `maxFat` 0/negativo → piso e clamp.
+11. Falha de rede apagava o painel inteiro → mantém último dado válido com aviso.
+
+**Estado conhecido-ruim evitado:** um blip no Postgres congelaria painel zerado na TV por 10 min **depois** do banco voltar — pior que o problema original.
+
+**KEEP (deve sobreviver a qualquer re-derivação):**
+- A paridade `biKPI` × `FarolV2CardsHandler` foi conferida parâmetro a parâmetro e está correta. Não reescrever `biKPI` sem refazer essa conferência.
+- `biFetchL0`/`biKPI` apenas **chamam** `fetchCards`/`computeKPI` — nunca reimplementar agregação.
+- O guard de `fixOverlappingBaseKPI` tem de continuar idêntico ao do `/cards`.
+
+**Em aberto (Ask First):** `atualizado_em` carimba o fim do **upload**. No import multi-arquivo (`skip_refresh=true`) a consolidação real vem depois, no RefreshViews — que não avança o carimbo.
+
 ## Design Notes
 
 `atualizado_em` = `SELECT MAX(atualizado_em) FROM vendas_import_jobs WHERE empresa_id=$1 AND status='done'` — é o carimbo do último import que efetivamente entrou. Devolver em RFC3339 e formatar no front (evita divergência de fuso no servidor).
@@ -98,10 +125,10 @@ Se uma das goroutines falhar, o bloco correspondente sai vazio e o painel render
 
 **Commands:**
 - `cd backend && go build ./...` -- expected: compila sem erro
-- `cd backend && go vet ./handlers` -- expected: sem novos avisos
-- `cd frontend && npm run build` -- expected: build TypeScript limpo, sem `any` novo
+- `cd frontend && npx tsc --noEmit` -- expected: sem erro de tipo
+- `cd backend && set -a && source .env && set +a && go test ./handlers -run TestBI -v -vet=off` -- expected: paridade BI × /cards em ytd e mtd. Precisa de banco com migrations em dia (a coluna `mix_total` da 175); sem ela, `/cards` e `/bi` falham igual e o teste aborta em vez de passar vazio. O `-vet=off` é obrigatório por causa de 2 erros de vet pré-existentes em `objetivos.go`.
 
-**Manual checks (if no CLI):** validar os Acceptance Criteria no navegador — não há ambiente local de banco para automatizar.
+**Manual checks:** com o painel aberto, a aba Network deve mostrar uma única request de dados; o header deve trazer "dados de DD/MM/AA HH:MM" coerente com o último import.
 
 ## Suggested Review Order
 
