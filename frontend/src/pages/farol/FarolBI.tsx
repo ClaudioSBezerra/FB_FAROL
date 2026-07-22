@@ -1,19 +1,23 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts'
 import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+//
+// Tudo abaixo vem de GET /api/v2/farol/bi — uma única request. Antes eram 4
+// (/cards ×3 + /pulso), cada uma recalculando período e positivação no servidor.
 
-interface CardItem {
+interface BiIndustria {
+  label: string
+  faturado: number
+}
+
+interface BiEquipe {
   key: string
   label: string
-  pct: number
   faturado: number
-  positivados: number
-  base_cli: number
-  positpct: number
-  mix: number
+  pct: number
 }
 
 interface KPI {
@@ -31,13 +35,12 @@ interface KPI {
 }
 
 interface BiResponse {
-  cards: CardItem[]
   kpi: KPI
-  periodo: {
-    ref_ano: number; ref_mes: number
-    label: string; cur_label: string; ant_label: string
-    fluxo: string
-  }
+  industrias: BiIndustria[]   // top 8 + "Outros" já agregado no backend
+  equipes: BiEquipe[]         // top 12 por faturado
+  pulso: PulsoResp
+  periodo: { fluxo: string; cur_label: string; ant_label: string }
+  atualizado_em: string       // RFC3339 do último import concluído ('' se nenhum)
 }
 
 interface PulsoResp {
@@ -93,20 +96,8 @@ function pulsoColor(cor: Cor): string {
   }
 }
 
-function PulsoCard() {
-  const { data, isLoading } = useQuery<PulsoResp>({
-    queryKey: ['farol-pulso-empresa'],
-    queryFn: async () => {
-      const r = await fetch('/api/v2/farol/pulso')
-      if (!r.ok) throw new Error('Falha ao carregar pulso')
-      return r.json()
-    },
-    staleTime: 10 * 60_000,
-    refetchInterval: 10 * 60_000,
-    refetchOnWindowFocus: false,
-  })
-
-  if (isLoading || !data || data.sem_dado) return null
+function PulsoCard({ data }: { data?: PulsoResp }) {
+  if (!data || data.sem_dado) return null
 
   const deltaVl = data.pct - 100
   const deltaQt = data.pct_qt - 100
@@ -171,24 +162,32 @@ function PulsoCard() {
 
 // ─── BiClock ──────────────────────────────────────────────────────────────────
 
-function BiClock({ nextRefresh }: { nextRefresh: number }) {
+// O relógio marca a hora certa; a linha de baixo diz de quando é o DADO.
+// Sem isso, o painel na TV mostra número de horas atrás com cara de tempo real.
+const STALE_MS = 24 * 60 * 60 * 1_000
+
+function BiClock({ atualizadoEm }: { atualizadoEm?: string }) {
   const [now, setNow] = useState(new Date())
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  const secsLeft = Math.max(0, Math.ceil((nextRefresh - Date.now()) / 1000))
-  const mins = Math.floor(secsLeft / 60)
-  const secs = secsLeft % 60
+  const dado = atualizadoEm ? new Date(atualizadoEm) : null
+  const valido = dado !== null && !Number.isNaN(dado.getTime())
+  const velho  = valido && Date.now() - dado.getTime() > STALE_MS
 
   return (
     <div className="text-right">
       <p className="text-xl font-black tabular-nums text-white">
         {now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
       </p>
-      <p className="text-[10px] text-slate-600 tabular-nums">
-        refresh em {mins}:{String(secs).padStart(2, '0')}
+      <p className={`text-[10px] tabular-nums ${velho ? 'text-amber-400' : 'text-slate-600'}`}>
+        {valido
+          ? `dados de ${dado.toLocaleString('pt-BR', {
+              day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+            })}`
+          : 'sem import registrado'}
       </p>
     </div>
   )
@@ -301,14 +300,12 @@ const DONUT_COLORS = [
   '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4', '#64748b',
 ]
 
-function IndustryDonut({ cards }: { cards: CardItem[] }) {
-  const sorted = [...cards].sort((a, b) => b.faturado - a.faturado)
-  const top8   = sorted.slice(0, 8)
-  const outros = sorted.slice(8).reduce((s, c) => s + c.faturado, 0)
-  const data = [
-    ...top8.map((c, i) => ({ name: c.label, value: c.faturado, color: DONUT_COLORS[i] })),
-    ...(outros > 0 ? [{ name: 'Outros', value: outros, color: DONUT_COLORS[8] }] : []),
-  ]
+// Recebe pronto do backend: top 8 por faturado + "Outros" (cauda somada) na
+// última posição — por isso a cor sai direto do índice.
+function IndustryDonut({ industrias }: { industrias: BiIndustria[] }) {
+  const data = industrias.map((c, i) => ({
+    name: c.label, value: c.faturado, color: DONUT_COLORS[i] ?? DONUT_COLORS[8],
+  }))
   const total = data.reduce((s, d) => s + d.value, 0)
 
   return (
@@ -351,9 +348,9 @@ function IndustryDonut({ cards }: { cards: CardItem[] }) {
 
 // ─── RcaRanking ───────────────────────────────────────────────────────────────
 
-function RcaRanking({ cards }: { cards: CardItem[] }) {
-  const sorted = [...cards].sort((a, b) => b.faturado - a.faturado).slice(0, 12)
-  const maxFat = sorted[0]?.faturado ?? 1
+// Já chega ordenado e cortado no top 12 pelo backend.
+function RcaRanking({ equipes }: { equipes: BiEquipe[] }) {
+  const maxFat = equipes[0]?.faturado ?? 1
 
   function barColor(pct: number) {
     if (pct >= 100) return '#22c55e'
@@ -367,7 +364,7 @@ function RcaRanking({ cards }: { cards: CardItem[] }) {
         Ranking por Equipe
       </h3>
       <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0">
-        {sorted.map((c, i) => {
+        {equipes.map((c, i) => {
           const col  = barColor(c.pct)
           const barW = (c.faturado / maxFat) * 100
           return (
@@ -393,7 +390,7 @@ function RcaRanking({ cards }: { cards: CardItem[] }) {
             </div>
           )
         })}
-        {sorted.length === 0 && (
+        {equipes.length === 0 && (
           <p className="text-slate-600 text-sm text-center mt-8">Sem dados</p>
         )}
       </div>
@@ -403,16 +400,26 @@ function RcaRanking({ cards }: { cards: CardItem[] }) {
 
 // ─── Hook de dados ────────────────────────────────────────────────────────────
 
-const REFETCH_MS = 60 * 60 * 1_000
+// Polling curto porque a resposta é servida do cache do backend (TTL 10 min,
+// invalidado no import): custa quase nada e encurta a janela de dado velho.
+const REFETCH_MS = 5 * 60 * 1_000
 
 type CompMode = 'ytd' | 'mtd'
 
-function useBiData(view: string, compMode: CompMode) {
-  return useQuery<BiResponse>({
-    queryKey: ['bi-cards', view, compMode],
+// ─── FarolBI ─────────────────────────────────────────────────────────────────
+
+export default function FarolBI() {
+  const [compMode, setCompMode] = useState<CompMode>('ytd')
+  // "Atualizar" precisa furar o cache do servidor, o refetch automático não.
+  const forceRef = useRef(false)
+
+  const { data, isLoading, isError, refetch } = useQuery<BiResponse>({
+    queryKey: ['bi', compMode],
     queryFn: async () => {
-      const r = await fetch(`/api/v2/farol/cards?view=${view}&comp_mode=${compMode}`)
-      if (!r.ok) throw new Error(`Falha ao carregar BI (${view})`)
+      const force = forceRef.current
+      forceRef.current = false
+      const r = await fetch(`/api/v2/farol/bi?comp_mode=${compMode}${force ? '&nocache=1' : ''}`)
+      if (!r.ok) throw new Error('Falha ao carregar o painel BI')
       return r.json()
     },
     staleTime: REFETCH_MS,
@@ -420,22 +427,10 @@ function useBiData(view: string, compMode: CompMode) {
     refetchInterval: REFETCH_MS,
     refetchOnWindowFocus: false,
   })
-}
-
-// ─── FarolBI ─────────────────────────────────────────────────────────────────
-
-export default function FarolBI() {
-  const [nextRefresh, setNextRefresh] = useState(Date.now() + REFETCH_MS)
-  const [compMode, setCompMode] = useState<CompMode>('ytd')
-  const queryClient = useQueryClient()
-
-  const kpiQuery = useBiData('V03', compMode)
-  const indQuery = useBiData('V01', compMode)
-  const rcaQuery = useBiData('V02', compMode)
 
   function handleRefresh() {
-    queryClient.invalidateQueries({ queryKey: ['bi-cards'] })
-    setNextRefresh(Date.now() + REFETCH_MS)
+    forceRef.current = true
+    refetch()
   }
 
   function handleCompModeChange(mode: CompMode) {
@@ -444,13 +439,10 @@ export default function FarolBI() {
     }
   }
 
-  const kpi    = kpiQuery.data?.kpi
-  const ind    = indQuery.data?.cards ?? []
-  const rca    = rcaQuery.data?.cards ?? []
-  const periodo = kpiQuery.data?.periodo
-
-  const isLoading = kpiQuery.isLoading || indQuery.isLoading || rcaQuery.isLoading
-  const isError   = kpiQuery.isError   || indQuery.isError   || rcaQuery.isError
+  const kpi     = data?.kpi
+  const ind     = data?.industrias ?? []
+  const rca     = data?.equipes ?? []
+  const periodo = data?.periodo
 
   const mixMax = 8
   const mixPct = kpi ? Math.min((kpi.avg_mix / mixMax) * 100, 100) : 0
@@ -505,14 +497,14 @@ export default function FarolBI() {
             </button>
           </div>
           {/* Card Pulso de Ontem */}
-          <PulsoCard />
+          <PulsoCard data={data?.pulso} />
         </div>
         <div className="flex items-center gap-6">
           <button onClick={handleRefresh}
             className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-300 transition-colors">
             <RefreshCw className="h-3.5 w-3.5" /> Atualizar
           </button>
-          <BiClock nextRefresh={nextRefresh} />
+          <BiClock atualizadoEm={data?.atualizado_em} />
         </div>
       </header>
 
@@ -591,12 +583,12 @@ export default function FarolBI() {
           <div className="grid grid-cols-2 gap-6" style={{ minHeight: 0 }}>
             <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 flex flex-col" style={{ minHeight: 0 }}>
               {ind.length > 0
-                ? <IndustryDonut cards={ind} />
+                ? <IndustryDonut industrias={ind} />
                 : <p className="text-slate-600 text-sm text-center my-auto">Sem dados de indústria</p>}
             </div>
             <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 flex flex-col" style={{ minHeight: 0 }}>
               {rca.length > 0
-                ? <RcaRanking cards={rca} />
+                ? <RcaRanking equipes={rca} />
                 : <p className="text-slate-600 text-sm text-center my-auto">Sem dados de equipe</p>}
             </div>
           </div>

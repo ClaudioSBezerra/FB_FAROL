@@ -489,6 +489,7 @@ func main() {
 	http.HandleFunc("/api/v2/farol/periodos",      withSP(handlers.FarolV2PeriodosHandler,   "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/dims",          gz(withSP(handlers.FarolV2DimsHandler,    "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/pulso",         gz(withSP(handlers.FarolPulsoEmpresaHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/bi",            gz(withSP(handlers.FarolV2BIHandler,      "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler,      "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/ai/query",              gz(withSP(handlers.FarolAIQueryHandler,             "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/ai/export",             withSP(handlers.FarolAIExportHandler,              "gestor_filial"))

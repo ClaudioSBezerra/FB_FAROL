@@ -2238,6 +2238,9 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		// Dados mudaram → invalida o cache da base de clientes ativos.
 		invalidateBaseCache(spCtx.EmpresaID)
 		invalidateVendasPeriodoCache(spCtx.EmpresaID)
+		// Painel BI serve resposta pronta do cache; sem isto a TV continuaria
+		// mostrando o número de antes do import até o TTL vencer.
+		invalidateBICache(spCtx.EmpresaID)
 
 		var fatRows, transRows int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM farol.agg_fat_v01_l0_mes WHERE empresa_id=$1`, spCtx.EmpresaID).Scan(&fatRows)

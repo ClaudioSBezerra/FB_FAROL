@@ -1020,6 +1020,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
 		invalidateBaseCache(spCtx.EmpresaID)          // dados mudaram → limpa cache da base
 		invalidateVendasPeriodoCache(spCtx.EmpresaID) // limpa cache Q1 de ranges diários
+		invalidateBICache(spCtx.EmpresaID)            // painel BI serve resposta pronta do cache
 		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
 			jobID, len(mesesTocados), time.Since(tAgg))
 	} else {
@@ -1367,6 +1368,7 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		if rerr := refreshAllFarolViews(db); rerr != nil {
 			log.Printf("[VendasClear] delete OK (%d linhas) mas REFRESH falhou: %v", n, rerr)
 		}
+		invalidateBICache(spCtx.EmpresaID) // senão o BI segue exibindo o que foi apagado
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n})
 	}
 }
