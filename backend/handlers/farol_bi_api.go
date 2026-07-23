@@ -18,6 +18,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -28,20 +29,26 @@ import (
 
 // Quantos itens cada bloco da tela realmente mostra (o resto é peso morto no fio).
 const (
-	biTopIndustrias = 8  // + "Outros" agregado
-	biTopEquipes    = 12 // ranking horizontal
+	biTopIndustrias = 8 // + "Outros" agregado
+	biPareto        = 5 // "top 5 indústrias = X%" (concentração)
 )
 
 type biIndustria struct {
 	Label    string  `json:"label"`
 	Faturado float64 `json:"faturado"`
+	// Pct/Cor = atingimento vs período anterior (YoY), já calculados na V01.
+	// A fatia "Outros" fica com Cor vazia (não faz sentido colorir a cauda).
+	Pct float64 `json:"pct"`
+	Cor string  `json:"cor"`
 }
 
-type biEquipe struct {
-	Key      string  `json:"key"`
-	Label    string  `json:"label"`
-	Faturado float64 `json:"faturado"`
-	Pct      float64 `json:"pct"`
+// biUF — faturado por estado (UF do cliente) com atingimento YoY.
+type biUF struct {
+	Estado      string  `json:"estado"`
+	Faturado    float64 `json:"faturado"`
+	FaturadoAnt float64 `json:"faturado_ant"`
+	Pct         float64 `json:"pct"`
+	Cor         string  `json:"cor"`
 }
 
 type biPeriodo struct {
@@ -53,9 +60,12 @@ type biPeriodo struct {
 type biResponse struct {
 	KPI        kpiSummary    `json:"kpi"`
 	Industrias []biIndustria `json:"industrias"`
-	Equipes    []biEquipe    `json:"equipes"`
-	Pulso      pulsoResp     `json:"pulso"`
-	Periodo    biPeriodo     `json:"periodo"`
+	UFs        []biUF        `json:"ufs"`
+	// ConcentracaoTop5 — % do faturado total de indústria nas 5 maiores (0-100).
+	// Sinal de risco de dependência para o CEO.
+	ConcentracaoTop5 float64   `json:"concentracao_top5"`
+	Pulso            pulsoResp `json:"pulso"`
+	Periodo          biPeriodo `json:"periodo"`
 	// AtualizadoEm — RFC3339 do último import concluído. Vazio se nunca houve.
 	// O front carimba a tela com isso; é o que diz ao gestor se o painel na TV
 	// está mostrando dado de hoje ou de anteontem.
@@ -163,7 +173,7 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 
 		out := biResponse{
 			Industrias: []biIndustria{},
-			Equipes:    []biEquipe{},
+			UFs:        []biUF{},
 			Periodo:    biPeriodo{Fluxo: fluxo.name},
 		}
 
@@ -182,7 +192,8 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 			wg         sync.WaitGroup
 			kpi        kpiSummary
 			indCards   []cardItem
-			eqCards    []cardItem
+			ufs        []biUF
+			ufOK       bool
 			pulso      pulsoResp
 			atualizado string
 		)
@@ -203,10 +214,10 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		wg.Add(4)
 		// KPI (gauges) — V03, exatamente como o /cards monta hoje.
 		go bloco("kpi", func() { kpi = biKPI(db, spCtx.EmpresaID, fluxo, pr) })
-		// Donut — V01 nível Fornecedor.
+		// Indústria (donut + Pareto) — V01 nível Fornecedor.
 		go bloco("industrias", func() { indCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V01", pr) })
-		// Ranking — V02 nível Supervisor.
-		go bloco("equipes", func() { eqCards = biFetchL0(db, spCtx.EmpresaID, fluxo, "V02", pr) })
+		// UF — faturado por estado (scan de vendas_*, dimensão sem agg).
+		go bloco("ufs", func() { ufs, ufOK = biFaturadoPorUF(db, spCtx.EmpresaID, fluxo, pr) })
 		// Pulso de ontem + carimbo do último import (dois SELECTs curtos).
 		go bloco("pulso", func() {
 			pulso = computePulso(db, spCtx.EmpresaID, "", nil)
@@ -215,27 +226,29 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 		wg.Wait()
 
 		out.KPI = kpi
-		out.Industrias = biTopIndustriasComOutros(indCards)
-		out.Equipes = biTopEquipesDe(eqCards)
+		out.Industrias, out.ConcentracaoTop5 = biIndustriasEConcentracao(indCards)
+		out.UFs = ufs
 		out.Pulso = pulso
 		out.AtualizadoEm = atualizado
 		out.Periodo.CurLabel, out.Periodo.AntLabel, _ = buildPeriodoLabels(pr)
 
-		// As queries abaixo logam e devolvem vazio em vez de erro (padrão do
-		// fetchCards), então "tudo zerado" é indistinguível de falha de banco.
-		// Cachear isso congelaria um painel zerado por 10 min DEPOIS do banco
-		// voltar. Empresa legitimamente sem venda no período também não cacheia
-		// — o custo é um miss por request, e ela não é o caso de uso do BI.
-		degradado := len(out.Industrias) == 0 && len(out.Equipes) == 0 && kpi.TotalFaturado == 0
-		if degradado {
-			log.Printf("[farol:bi] resposta VAZIA empresa=%s fluxo=%s modo=%s — não cacheada (pode ser falha de query)",
-				spCtx.EmpresaID, fluxo.name, compMode)
+		// Não cachear resposta degradada — congelaria um painel quebrado por 10
+		// min DEPOIS do banco voltar. Dois gatilhos:
+		//  - tudo vazio: os blocos de agg devolvem vazio tanto em falha quanto em
+		//    "sem venda"; só o conjunto todo zerado é sinal forte de falha (ou
+		//    empresa em setup, que também não é caso de uso do cache).
+		//  - UF falhou: é o único bloco cujo erro conseguimos distinguir de
+		//    "sem dado" (os de agg passam por fetchCards, que engole o erro).
+		vazio := len(out.Industrias) == 0 && len(out.UFs) == 0 && kpi.TotalFaturado == 0
+		if vazio || !ufOK {
+			log.Printf("[farol:bi] resposta degradada (vazio=%t ufOK=%t) empresa=%s fluxo=%s modo=%s — não cacheada",
+				vazio, ufOK, spCtx.EmpresaID, fluxo.name, compMode)
 		} else if !biStore(spCtx.EmpresaID, key, gen, out) {
 			log.Printf("[farol:bi] descartado: dados invalidados durante o cálculo (empresa=%s)", spCtx.EmpresaID)
 		}
 
-		log.Printf("[farol:bi] CACHE MISS empresa=%s fluxo=%s modo=%s — %d ind, %d equipes em %v",
-			spCtx.EmpresaID, fluxo.name, compMode, len(out.Industrias), len(out.Equipes), time.Since(t0))
+		log.Printf("[farol:bi] CACHE MISS empresa=%s fluxo=%s modo=%s — %d ind, %d ufs em %v",
+			spCtx.EmpresaID, fluxo.name, compMode, len(out.Industrias), len(out.UFs), time.Since(t0))
 
 		json.NewEncoder(w).Encode(out)
 	}
@@ -287,39 +300,149 @@ func biOrdenaPorValor(cards []cardItem) []cardItem {
 	return sorted
 }
 
-// biTopIndustriasComOutros — top 8 por valor; a cauda vira uma fatia "Outros".
-// Agregar aqui (e não no front) deixa o donut apenas pintando o que recebeu.
-func biTopIndustriasComOutros(cards []cardItem) []biIndustria {
+// biIndustriasEConcentracao — top 8 por valor (cauda vira "Outros"), levando
+// junto o atingimento (pct/cor) que a V01 já calcula, e o Pareto: quanto do
+// faturado TOTAL de indústria está nas 5 maiores. O denominador do Pareto é o
+// total de TODAS as indústrias (antes do corte top-8), não só das exibidas.
+func biIndustriasEConcentracao(cards []cardItem) ([]biIndustria, float64) {
 	sorted := biOrdenaPorValor(cards)
+
+	var total, top5 float64
+	for i, c := range sorted {
+		v := biValor(c)
+		total += v
+		if i < biPareto && v > 0 {
+			top5 += v
+		}
+	}
 
 	out := make([]biIndustria, 0, biTopIndustrias+1)
 	var outros float64
 	for i, c := range sorted {
 		if i < biTopIndustrias {
-			out = append(out, biIndustria{Label: c.Label, Faturado: biValor(c)})
+			out = append(out, biIndustria{Label: c.Label, Faturado: biValor(c), Pct: c.Pct, Cor: c.Cor})
 			continue
 		}
 		outros += biValor(c)
 	}
 	// Cauda negativa (devolução > venda) não vira fatia: o donut não desenha
-	// ângulo negativo. Mesma regra que o front aplicava antes.
+	// ângulo negativo. A fatia "Outros" não recebe cor de atingimento.
 	if outros > 0 {
 		out = append(out, biIndustria{Label: "Outros", Faturado: outros})
 	}
-	return out
+
+	concentracao := 0.0
+	if total > 0 {
+		concentracao = top5 / total * 100
+	}
+	return out, concentracao
 }
 
-// biTopEquipesDe — top 12 por valor, na ordem em que o ranking desenha.
-func biTopEquipesDe(cards []cardItem) []biEquipe {
-	sorted := biOrdenaPorValor(cards)
-	if len(sorted) > biTopEquipes {
-		sorted = sorted[:biTopEquipes]
+// biFaturadoPorUF — faturado por estado (UF do cliente) com atingimento YoY.
+//
+// Faturado: lê a MV farol.mv_fat_uf_mes (mig 194), que precomputa o LÍQUIDO por
+// UF com a mesma fórmula da mig 190 — assim o total por UF fecha com os gauges
+// e o donut (que também exibem líquido). Grão mensal, então o range parcial
+// expande pro mês inteiro, igual ao resto do painel (BI só faz ytd/mtd).
+//
+// Transmitido: não há MV; o transmitido exibe BRUTO em todo o painel, então
+// scan de vendas_transmitidas (SUM pvenda) por UF é coerente.
+//
+// Retorna `ok=false` quando a query do período ATUAL falha (erro de banco). É o
+// único bloco cujo erro o handler consegue distinguir de "sem dado" — os blocos
+// de agg passam por fetchCards, que engole o erro. O handler usa esse sinal
+// para NÃO cachear uma resposta com UF vazio por falha (evita congelar o bloco
+// por 10 min depois do banco voltar).
+func biFaturadoPorUF(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) (result []biUF, ok bool) {
+	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
+
+	scan := func(inicio, fim time.Time) (map[string]float64, error) {
+		args := []any{empresaID}
+		var q string
+		if fluxo.name == "transmitido" {
+			cond := buildRangeCond(fluxo.dateCol, inicio, fim, &args) // v.<dateCol> BETWEEN ...
+			q = fmt.Sprintf(`
+				SELECT COALESCE(NULLIF(v.uf,''),'—') AS uf, COALESCE(SUM(v.pvenda),0) AS fat
+				FROM %s v
+				WHERE v.empresa_id=$1 AND %s
+				GROUP BY 1`, fluxo.tableName, cond)
+		} else {
+			// MV: uf já vem coalescida; grão mensal via buildMesCond (usa alias v).
+			cond := buildMesCond(ym(inicio), ym(fim), &args)
+			q = fmt.Sprintf(`
+				SELECT v.uf, COALESCE(SUM(v.liquido),0) AS fat
+				FROM farol.mv_fat_uf_mes v
+				WHERE v.empresa_id=$1 AND %s
+				GROUP BY v.uf`, cond)
+		}
+		rows, err := db.Query(q, args...)
+		if err != nil {
+			log.Printf("[farol:bi] biFaturadoPorUF (%s) ERRO: %v", fluxo.name, err)
+			return nil, err
+		}
+		defer rows.Close()
+		m := make(map[string]float64)
+		for rows.Next() {
+			var uf string
+			var fat float64
+			if rows.Scan(&uf, &fat) == nil {
+				m[uf] = fat
+			}
+		}
+		return m, nil
 	}
-	out := make([]biEquipe, 0, len(sorted))
-	for _, c := range sorted {
-		out = append(out, biEquipe{Key: c.Key, Label: c.Label, Faturado: biValor(c), Pct: c.Pct})
+
+	var (
+		atual, ant map[string]float64
+		errAtual   error
+		wg         sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() { defer wg.Done(); atual, errAtual = scan(pr.RefInicio, pr.RefFim) }()
+	if hasComp {
+		wg.Add(1)
+		// Erro no comparativo é tolerado: só apaga o atingimento (cor vira verde
+		// neutro para os UFs sem `ant`). Não invalida o bloco.
+		go func() { defer wg.Done(); ant, _ = scan(pr.CompInicio, pr.CompFim) }()
 	}
-	return out
+	wg.Wait()
+
+	if errAtual != nil {
+		return nil, false
+	}
+
+	out := make([]biUF, 0, len(atual))
+	for uf, fat := range atual {
+		antFat := ant[uf]
+		out = append(out, biUF{
+			Estado: uf, Faturado: fat, FaturadoAnt: antFat,
+			Pct: biPct(fat, antFat, hasComp), Cor: biCor(fat, antFat, hasComp),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Faturado > out[j].Faturado })
+	return out, true
+}
+
+// biPct / biCor — régua idêntica ao pickCor do fetchCards (farol_v2_api.go):
+// sem comparativo → neutro/verde; senão verde se atual ≥ anterior.
+func biPct(atual, ant float64, hasComp bool) float64 {
+	if !hasComp {
+		return 0
+	}
+	if ant > 0 {
+		return atual / ant * 100
+	}
+	if atual > 0 {
+		return 100
+	}
+	return 0
+}
+
+func biCor(atual, ant float64, hasComp bool) string {
+	if biPct(atual, ant, hasComp) >= 100 || !hasComp {
+		return "verde"
+	}
+	return "vermelho"
 }
 
 // biUltimoImport — de quando é o dado que está na tela.
@@ -356,6 +479,18 @@ func biUltimoImport(db *sql.DB, empresaID string) string {
 		return ""
 	}
 	return t.Time.Format(time.RFC3339)
+}
+
+// refreshUFMV recomputa a MV de faturado por UF (mig 194). CONCURRENTLY não
+// bloqueia leituras; cai para o REFRESH comum se não houver índice único ainda
+// (primeira vez / ambiente sem a mig). Chamada nos mesmos pontos que consolidam
+// as agg. Falha aqui não derruba a consolidação — só loga.
+func refreshUFMV(db *sql.DB) {
+	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_fat_uf_mes`); err != nil {
+		if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW farol.mv_fat_uf_mes`); err2 != nil {
+			log.Printf("[farol:bi] refreshUFMV ERRO: %v", err2)
+		}
+	}
 }
 
 // marcaConsolidacao registra que a consolidação da empresa terminou AGORA.

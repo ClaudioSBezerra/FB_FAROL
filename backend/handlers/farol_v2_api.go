@@ -2253,6 +2253,7 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		// Consolidação terminou → carimbo "dados de" do Painel BI.
 		// É AQUI que a carga multi-arquivo (skip_refresh) de fato consolida.
 		if len(meses) > 0 {
+			refreshUFMV(db) // MV de faturado por UF (Painel BI)
 			marcaConsolidacao(db, spCtx.EmpresaID)
 		}
 

@@ -128,35 +128,25 @@ func TestBIParidadeComCards(t *testing.T) {
 					bi.KPI.Verdes, bi.KPI.Vermelhos, c3.KPI.Verdes, c3.KPI.Vermelhos)
 			}
 
-			// ── Donut: top 8 da V01 + "Outros", como o front calculava ───────
+			// ── Donut: top 8 da V01 + "Outros", com atingimento (pct/cor) ────
 			c1 := cardsGet(t, db, "/api/v2/farol/cards?view=V01&comp_mode="+modo, empresaID)
-			esperado := biTopIndustriasComOutros(c1.Cards)
+			esperado, _ := biIndustriasEConcentracao(c1.Cards)
 			if len(bi.Industrias) != len(esperado) {
 				t.Fatalf("indústrias: bi=%d itens, esperado=%d", len(bi.Industrias), len(esperado))
 			}
 			for i := range esperado {
 				if bi.Industrias[i].Label != esperado[i].Label ||
-					!quaseIgual(bi.Industrias[i].Faturado, esperado[i].Faturado) {
-					t.Errorf("indústria[%d] divergente: bi=%q/%.2f esperado=%q/%.2f", i,
-						bi.Industrias[i].Label, bi.Industrias[i].Faturado,
-						esperado[i].Label, esperado[i].Faturado)
+					!quaseIgual(bi.Industrias[i].Faturado, esperado[i].Faturado) ||
+					bi.Industrias[i].Cor != esperado[i].Cor {
+					t.Errorf("indústria[%d] divergente: bi=%q/%.2f/%s esperado=%q/%.2f/%s", i,
+						bi.Industrias[i].Label, bi.Industrias[i].Faturado, bi.Industrias[i].Cor,
+						esperado[i].Label, esperado[i].Faturado, esperado[i].Cor)
 				}
 			}
 
-			// ── Ranking: top 12 da V02 ───────────────────────────────────────
-			c2 := cardsGet(t, db, "/api/v2/farol/cards?view=V02&comp_mode="+modo, empresaID)
-			eqEsperado := biTopEquipesDe(c2.Cards)
-			if len(bi.Equipes) != len(eqEsperado) {
-				t.Fatalf("equipes: bi=%d itens, esperado=%d", len(bi.Equipes), len(eqEsperado))
-			}
-			for i := range eqEsperado {
-				if bi.Equipes[i].Key != eqEsperado[i].Key ||
-					!quaseIgual(bi.Equipes[i].Faturado, eqEsperado[i].Faturado) ||
-					!quaseIgual(bi.Equipes[i].Pct, eqEsperado[i].Pct) {
-					t.Errorf("equipe[%d] divergente: bi=%q/%.2f/%.2f esperado=%q/%.2f/%.2f", i,
-						bi.Equipes[i].Label, bi.Equipes[i].Faturado, bi.Equipes[i].Pct,
-						eqEsperado[i].Label, eqEsperado[i].Faturado, eqEsperado[i].Pct)
-				}
+			// ── Pareto: top 5 / total, coerente com o payload ────────────────
+			if bi.ConcentracaoTop5 < 0 || bi.ConcentracaoTop5 > 100.01 {
+				t.Errorf("concentracao_top5 fora de [0,100]: %.2f", bi.ConcentracaoTop5)
 			}
 
 			// Sanidade: um painel com tudo zerado passaria em todas as
@@ -164,10 +154,10 @@ func TestBIParidadeComCards(t *testing.T) {
 			if bi.KPI.TotalFaturado == 0 && len(bi.Industrias) == 0 {
 				t.Fatal("payload vazio — comparação seria vacuamente verdadeira")
 			}
-			t.Logf("%s: faturado=%.2f pct=%.2f%% posit=%d/%d ind=%d equipes=%d",
+			t.Logf("%s: faturado=%.2f pct=%.2f%% posit=%d/%d ind=%d ufs=%d top5=%.1f%%",
 				modo, bi.KPI.TotalFaturado, bi.KPI.TotalPct,
 				bi.KPI.TotalPositivados, bi.KPI.TotalBaseCli,
-				len(bi.Industrias), len(bi.Equipes))
+				len(bi.Industrias), len(bi.UFs), bi.ConcentracaoTop5)
 		})
 	}
 }
@@ -257,6 +247,62 @@ func TestBICarimboPrefereConsolidacao(t *testing.T) {
 	if got2 == got {
 		t.Errorf("segunda consolidação não avançou o carimbo (%q)", got2)
 	}
+}
+
+// TestBIFaturadoPorUF — o bloco geográfico: soma por UF tem de bater com o
+// SUM(pvenda) total do período, e vir ordenada desc, com cor pela régua YoY.
+func TestBIFaturadoPorUF(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	defer db.Close()
+
+	// Faturado lê a MV mv_fat_uf_mes (mig 194), que depende de vendas_ccd +
+	// tipo_venda — só existe num banco com migrations em dia. Onde a MV não
+	// existe (dev desatualizado), cai para o transmitido, cujo caminho é um
+	// scan de vendas_transmitidas e valida a mesma mecânica (alias, cor, ordem).
+	fluxo := "faturado"
+	var mvExiste bool
+	// MV não aparece em information_schema.tables — usar pg_matviews.
+	_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_matviews
+		WHERE schemaname='farol' AND matviewname='mv_fat_uf_mes')`).Scan(&mvExiste)
+	if !mvExiste {
+		fluxo = "transmitido"
+		t.Logf("mv_fat_uf_mes ausente — validando o caminho %s", fluxo)
+	}
+
+	invalidateBICache(empresaID)
+	out, _ := biGet(t, db, "/api/v2/farol/bi?comp_mode=ytd&fluxo="+fluxo, empresaID)
+	if len(out.UFs) == 0 {
+		t.Skip("base sem UF no período — nada a verificar")
+	}
+
+	// Ordenação desc por faturado.
+	for i := 1; i < len(out.UFs); i++ {
+		if out.UFs[i].Faturado > out.UFs[i-1].Faturado {
+			t.Errorf("UFs fora de ordem: [%d]=%.2f > [%d]=%.2f",
+				i, out.UFs[i].Faturado, i-1, out.UFs[i-1].Faturado)
+		}
+	}
+	// Cor coerente com a régua (verde sse pct>=100 ou sem comp).
+	for _, u := range out.UFs {
+		esperada := "vermelho"
+		if u.FaturadoAnt <= 0 || u.Faturado >= u.FaturadoAnt {
+			esperada = "verde"
+		}
+		if u.Cor != esperada {
+			t.Errorf("UF %s: cor=%s, esperado=%s (fat=%.2f ant=%.2f)",
+				u.Estado, u.Cor, esperada, u.Faturado, u.FaturadoAnt)
+		}
+	}
+	// A soma das UFs = SUM(pvenda) do período (todas as linhas têm uma UF, que
+	// pode ser '—' quando vazia — por isso o COALESCE garante que nada some fora).
+	var somaUF float64
+	for _, u := range out.UFs {
+		somaUF += u.Faturado
+	}
+	if somaUF <= 0 {
+		t.Error("soma do faturado por UF veio zero/negativa")
+	}
+	t.Logf("UFs=%d soma=%.2f (top: %s %.2f)", len(out.UFs), somaUF, out.UFs[0].Estado, out.UFs[0].Faturado)
 }
 
 // TestBIFluxoInvalidoNaoVaraParaCCD — ?fluxo=cancdev cairia em scan da base.

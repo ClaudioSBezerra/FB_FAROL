@@ -11,13 +11,16 @@ import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 interface BiIndustria {
   label: string
   faturado: number
+  pct: number   // atingimento vs período anterior (YoY)
+  cor: string   // 'verde' | 'vermelho' | '' (fatia "Outros")
 }
 
-interface BiEquipe {
-  key: string
-  label: string
+interface BiUF {
+  estado: string
   faturado: number
+  faturado_ant: number
   pct: number
+  cor: string   // 'verde' | 'vermelho'
 }
 
 interface KPI {
@@ -37,7 +40,8 @@ interface KPI {
 interface BiResponse {
   kpi: KPI
   industrias: BiIndustria[]   // top 8 + "Outros" já agregado no backend
-  equipes: BiEquipe[]         // top 12 por faturado
+  ufs: BiUF[]                 // faturado por estado (UF do cliente), desc
+  concentracao_top5: number   // % do faturado de indústria nas 5 maiores (0-100)
   pulso: PulsoResp
   periodo: { fluxo: string; cur_label: string; ant_label: string }
   atualizado_em: string       // RFC3339 do último import concluído ('' se nenhum)
@@ -301,19 +305,34 @@ const DONUT_COLORS = [
   '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4', '#64748b',
 ]
 
+// Ponto de atingimento (verde/vermelho) por indústria; cinza para "Outros".
+function atingColor(cor: string) {
+  if (cor === 'verde') return '#22c55e'
+  if (cor === 'vermelho') return '#ef4444'
+  return '#64748b'
+}
+
 // Recebe pronto do backend: top 8 por faturado + "Outros" (cauda somada) na
-// última posição — por isso a cor sai direto do índice.
-function IndustryDonut({ industrias }: { industrias: BiIndustria[] }) {
+// última posição — por isso a cor da fatia sai direto do índice. A legenda
+// ganha um ponto de atingimento (YoY) por indústria; o cabeçalho traz o Pareto.
+function IndustryDonut({ industrias, concentracao }: { industrias: BiIndustria[]; concentracao: number }) {
   const data = industrias.map((c, i) => ({
-    name: c.label, value: c.faturado, color: DONUT_COLORS[i] ?? DONUT_COLORS[8],
+    name: c.label, value: c.faturado, color: DONUT_COLORS[i] ?? DONUT_COLORS[8], cor: c.cor,
   }))
   const total = data.reduce((s, d) => s + d.value, 0)
 
   return (
     <div className="flex flex-col h-full">
-      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 shrink-0">
-        Faturado por Indústria
-      </h3>
+      <div className="flex items-baseline justify-between mb-3 shrink-0">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+          Faturado por Indústria
+        </h3>
+        {concentracao > 0 && (
+          <span className="text-[11px] text-slate-500 tabular-nums">
+            Top 5 = <span className="font-black text-slate-300">{concentracao.toFixed(0)}%</span>
+          </span>
+        )}
+      </div>
       <div className="flex flex-1 gap-4 min-h-0">
         <div className="w-[45%] shrink-0">
           <ResponsiveContainer width="100%" height="100%">
@@ -336,7 +355,12 @@ function IndustryDonut({ industrias }: { industrias: BiIndustria[] }) {
             <div key={i} className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
               <span className="text-[11px] text-slate-300 truncate flex-1 leading-none">{d.name}</span>
-              <span className="text-[11px] text-slate-400 font-bold tabular-nums shrink-0">
+              {/* ponto de atingimento (YoY); "Outros" (cor vazia) não marca */}
+              {d.cor && (
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: atingColor(d.cor) }}
+                  title={d.cor === 'verde' ? 'Acima do ano anterior' : 'Abaixo do ano anterior'} />
+              )}
+              <span className="text-[11px] text-slate-400 font-bold tabular-nums shrink-0 w-9 text-right">
                 {total > 0 ? ((d.value / total) * 100).toFixed(0) + '%' : '0%'}
               </span>
             </div>
@@ -347,40 +371,31 @@ function IndustryDonut({ industrias }: { industrias: BiIndustria[] }) {
   )
 }
 
-// ─── RcaRanking ───────────────────────────────────────────────────────────────
+// ─── UFRanking ────────────────────────────────────────────────────────────────
 
-// Já chega ordenado e cortado no top 12 pelo backend.
-function RcaRanking({ equipes }: { equipes: BiEquipe[] }) {
-  // `?? 1` não cobria topo == 0 (início de mês, ou mês só com devolução):
-  // 0/0 = NaN vira width:"NaN%" e a barra some. Valores negativos dariam
-  // largura negativa. Daí o piso em 1 e o clamp de barW abaixo.
-  const maxFat = Math.max(equipes[0]?.faturado ?? 0, 1)
-
-  function barColor(pct: number) {
-    if (pct >= 100) return '#22c55e'
-    if (pct >= 70)  return '#eab308'
-    return '#ef4444'
-  }
+// Faturado por estado (UF do cliente), já ordenado desc pelo backend. Barra
+// proporcional ao faturado; cor pelo atingimento YoY (verde ≥ ano anterior).
+function UFRanking({ ufs }: { ufs: BiUF[] }) {
+  // piso em 1 evita 0/0=NaN (mês só com devolução); clamp evita barra negativa.
+  const maxFat = Math.max(ufs[0]?.faturado ?? 0, 1)
 
   return (
     <div className="flex flex-col h-full">
       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 shrink-0">
-        Ranking por Equipe
+        Faturado por UF
       </h3>
       <div className="flex-1 space-y-2.5 overflow-y-auto min-h-0">
-        {equipes.map((c, i) => {
-          const col  = barColor(c.pct)
-          const barW = Math.min(Math.max((c.faturado / maxFat) * 100, 0), 100)
+        {ufs.map((u, i) => {
+          const col  = atingColor(u.cor)
+          const barW = Math.min(Math.max((u.faturado / maxFat) * 100, 0), 100)
           return (
-            <div key={c.key} className="flex items-center gap-2">
+            <div key={u.estado} className="flex items-center gap-2">
               <span className="w-5 text-[10px] font-bold text-slate-600 shrink-0 text-right">{i + 1}</span>
+              <span className="w-7 text-xs font-black text-slate-200 shrink-0">{u.estado}</span>
               <div className="flex-1 min-w-0">
-                <div className="flex items-baseline justify-between mb-0.5">
-                  <span className="text-xs font-semibold text-slate-200 truncate leading-none" title={c.label}>
-                    {c.label.length > 18 ? c.label.slice(0, 18) + '…' : c.label}
-                  </span>
-                  <span className="text-xs font-black tabular-nums ml-2 shrink-0" style={{ color: col }}>
-                    {fmtPct(c.pct)}
+                <div className="flex items-baseline justify-end mb-0.5">
+                  <span className="text-xs font-black tabular-nums shrink-0" style={{ color: col }}>
+                    {fmtPct(u.pct)}
                   </span>
                 </div>
                 <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -388,13 +403,13 @@ function RcaRanking({ equipes }: { equipes: BiEquipe[] }) {
                     style={{ width: `${barW}%`, background: col }} />
                 </div>
               </div>
-              <span className="text-[10px] text-slate-500 tabular-nums shrink-0 w-14 text-right">
-                {fmtBRL(c.faturado)}
+              <span className="text-[10px] text-slate-500 tabular-nums shrink-0 w-16 text-right">
+                {fmtBRL(u.faturado)}
               </span>
             </div>
           )
         })}
-        {equipes.length === 0 && (
+        {ufs.length === 0 && (
           <p className="text-slate-600 text-sm text-center mt-8">Sem dados</p>
         )}
       </div>
@@ -449,7 +464,8 @@ export default function FarolBI() {
 
   const kpi     = data?.kpi
   const ind     = data?.industrias ?? []
-  const rca     = data?.equipes ?? []
+  const ufs     = data?.ufs ?? []
+  const top5    = data?.concentracao_top5 ?? 0
   const periodo = data?.periodo
 
   const mixMax = 8
@@ -598,17 +614,17 @@ export default function FarolBI() {
             </div>
           </div>
 
-          {/* Linha 2: Donut + Ranking */}
+          {/* Linha 2: Indústria (com atingimento + Pareto) + UF */}
           <div className="grid grid-cols-2 gap-6" style={{ minHeight: 0 }}>
             <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 flex flex-col" style={{ minHeight: 0 }}>
               {ind.length > 0
-                ? <IndustryDonut industrias={ind} />
+                ? <IndustryDonut industrias={ind} concentracao={top5} />
                 : <p className="text-slate-600 text-sm text-center my-auto">Sem dados de indústria</p>}
             </div>
             <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 flex flex-col" style={{ minHeight: 0 }}>
-              {rca.length > 0
-                ? <RcaRanking equipes={rca} />
-                : <p className="text-slate-600 text-sm text-center my-auto">Sem dados de equipe</p>}
+              {ufs.length > 0
+                ? <UFRanking ufs={ufs} />
+                : <p className="text-slate-600 text-sm text-center my-auto">Sem dados de UF</p>}
             </div>
           </div>
         </div>
