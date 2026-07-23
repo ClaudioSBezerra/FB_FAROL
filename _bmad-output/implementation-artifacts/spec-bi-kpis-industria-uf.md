@@ -99,6 +99,33 @@ UF precisou aliasar a tabela); e o gatilho de não-cachear passou a incluir
 `!ufOK` (falha do scan de UF, o único bloco cujo erro é distinguível de
 "sem dado").
 
+### 2026-07-22 — revisão adversarial (Blind Hunter + Edge Case Hunter + Acceptance Auditor)
+
+As duas verificações críticas passaram: fórmula de líquido da MV **idêntica à
+mig 190** e Executivo/`/cards` **intocado**. Correções aplicadas em follow-up
+(nenhuma toca o bloco congelado):
+
+1. **Concentração >100%** (3 revisores, ALTA) — `top5` só somava positivos, `total`
+   somava tudo. Agora ambos só-positivos → `∈ [0,100]`.
+2. **Fatia negativa no donut** — indústria com líquido ≤0 não vira fatia (Pie não
+   desenha ângulo negativo); contador de positivos preserva o top-8.
+3. **`ufs` null→[]** em falha do scan (JSON não emite `null`).
+4. **Erro do REFRESH CONCURRENTLY** passou a ser logado antes do fallback bloqueante.
+5. **Teste de cor** alinhado ao `pickCor` (verde sse pct≥100), corrigindo asserção
+   que dava falso-negativo para UF com líquido ≤0 e sem ano anterior.
+6. **Asserção de reconciliação** somaUF ≈ KPI faturado (1% tolerância) — valida o
+   motivo de existir da MV. No dado sintético: 2200 == 2200 exato.
+
+**Aceito com documentação (ver deferred-work):** a MV pode divergir do headline em
+2 cascos raros (chave vazia; devol/cancel sem faturado casado) — o agg os trata
+diferente e replicá-los por UF é impraticável; a cor YoY parcial×ano-inteiro é
+herança do painel; refresh global da MV; UF zerada some do ranking.
+
+**Divergências matriz×código (aceitas):** a I/O Matrix congelada descreve UF via
+"scan de vendas_faturadas" e "pct=0 sem comparativo" — a implementação virou MV
+(renegociada acima) e `pct=100` (fiel ao `pickCor`, que a régua Always manda
+seguir). A régua Always tem precedência sobre o literal da matriz.
+
 ## Design Notes
 
 `biFaturadoPorUF` espelha o padrão de `queryAggregatedVendas` (scan de `vendas_*` com `buildRangeCond`), mas agrupa por `uf` — dimensão sem agg. Duas queries (atual/comp) em paralelo dentro da própria goroutine; cada uma ~1,6s/mês medido, absorvido pelo `biCache` (TTL 10 min) e sobreposto às outras 4 goroutines.

@@ -2,6 +2,45 @@
 
 Itens levantados nas revisões que **não** foram corrigidos, com a razão.
 
+## 2026-07-22 — spec-bi-kpis-industria-uf (revisão adversarial, 3 revisores)
+
+### Corrigidos (commit de follow-up) — não ficam aqui, só registro
+Concentração >100% (denominador só-positivo), fatia negativa no donut (pula ≤0),
+`ufs` null→[], erro do REFRESH CONCURRENTLY logado, teste de cor alinhado ao
+`pickCor`, asserção de reconciliação somaUF×KPI no teste.
+
+### Adiados / aceitos com documentação
+
+- **MV de UF não reconcilia ao centavo com os aggs em 2 cascos raros**
+  (Auditor #1, Edge #2). A fórmula por-linha é idêntica à mig 190, mas:
+  (a) os aggs excluem chave vazia (`cod_fornec/gerente <> ''`), a MV inclui —
+  órfãos viram sentinela `99999999` (não vazio), então raro; (b) devolução/
+  cancelamento sem faturado casado no mês: o agg só subtrai via JOIN por chave,
+  a MV subtrai por UF sempre. Não corrigido porque replicar os quirks do agg
+  por UF é impraticável (uf não é chave do JOIN) e propagaria limitações do
+  agg. O total por UF é o líquido geográfico "limpo"; documentado no código.
+  **Verificar em produção** se a soma-UF bate com o headline no dado real.
+
+- **UF que zerou este ano some do ranking** (Edge #4). `biFaturadoPorUF` itera
+  só o mapa do período atual; um estado que vendia e caiu a zero não aparece
+  (nenhuma barra vermelha sinaliza a perda). Mostrar quedas exigiria iterar
+  `atual ∪ ant` — mudança de semântica que o gestor não pediu. O bloco lista
+  UFs com atividade no período atual.
+
+- **Cor YoY compara parcial × ano anterior inteiro** (Edge #5). No `ytd`, atual
+  (jan→hoje, parcial) × ano anterior inteiro (jan–dez) → no meio do ano quase
+  toda UF/indústria fica vermelha. É herança do `deriveCompRange` do painel
+  (mesma régua dos gauges e do /cards); corrigir para YTD-vs-YTD mexeria em
+  lógica compartilhada e violaria "não divergir do /cards". Aceito como está.
+
+- **REFRESH global da MV a cada import** (Blind #3, Edge #7). `refreshUFMV`
+  recomputa a MV de todas as empresas em todo import; dois imports simultâneos
+  disputam o mesmo REFRESH. Monoempresa hoje → custo baixo. Multi-tenant
+  exigiria MV por empresa (tabela upsertada como os aggs) ou advisory lock.
+
+- **Sem cap de top-N no ranking de UF** (Blind #7). Lista todas as UFs (~8
+  reais, teto 27 + bucket '—'); o container faz scroll. Sem risco prático.
+
 ## 2026-07-22 — spec-bi-performance-refresh (revisão adversarial, 3 revisores)
 
 ### Adiados por escopo/risco

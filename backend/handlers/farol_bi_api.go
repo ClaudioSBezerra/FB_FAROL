@@ -227,7 +227,9 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 
 		out.KPI = kpi
 		out.Industrias, out.ConcentracaoTop5 = biIndustriasEConcentracao(indCards)
-		out.UFs = ufs
+		if ufs != nil { // falha do scan devolve nil; mantém [] p/ o JSON não virar null
+			out.UFs = ufs
+		}
 		out.Pulso = pulso
 		out.AtualizadoEm = atualizado
 		out.Periodo.CurLabel, out.Periodo.AntLabel, _ = buildPeriodoLabels(pr)
@@ -302,38 +304,52 @@ func biOrdenaPorValor(cards []cardItem) []cardItem {
 
 // biIndustriasEConcentracao — top 8 por valor (cauda vira "Outros"), levando
 // junto o atingimento (pct/cor) que a V01 já calcula, e o Pareto: quanto do
-// faturado TOTAL de indústria está nas 5 maiores. O denominador do Pareto é o
-// total de TODAS as indústrias (antes do corte top-8), não só das exibidas.
+// faturado de indústria está nas 5 maiores.
+//
+// Só valores POSITIVOS entram no donut e no Pareto. Líquido negativo (mês com
+// devolução > venda numa indústria) não vira fatia — o PieChart não desenha
+// ângulo negativo — e não pode entrar no denominador do Pareto: numerador
+// só-positivo sobre um total que soma negativos daria concentração > 100%.
 func biIndustriasEConcentracao(cards []cardItem) ([]biIndustria, float64) {
 	sorted := biOrdenaPorValor(cards)
 
 	var total, top5 float64
-	for i, c := range sorted {
+	positivos := 0
+	for _, c := range sorted {
 		v := biValor(c)
+		if v <= 0 {
+			continue
+		}
 		total += v
-		if i < biPareto && v > 0 {
+		if positivos < biPareto { // 5 maiores positivos (sorted é desc)
 			top5 += v
 		}
+		positivos++
 	}
 
 	out := make([]biIndustria, 0, biTopIndustrias+1)
 	var outros float64
-	for i, c := range sorted {
-		if i < biTopIndustrias {
-			out = append(out, biIndustria{Label: c.Label, Faturado: biValor(c), Pct: c.Pct, Cor: c.Cor})
+	emitidos := 0
+	for _, c := range sorted {
+		v := biValor(c)
+		if v <= 0 {
+			continue // fatia (top-8 ou cauda) só existe para valor positivo
+		}
+		if emitidos < biTopIndustrias {
+			out = append(out, biIndustria{Label: c.Label, Faturado: v, Pct: c.Pct, Cor: c.Cor})
+			emitidos++
 			continue
 		}
-		outros += biValor(c)
+		outros += v
 	}
-	// Cauda negativa (devolução > venda) não vira fatia: o donut não desenha
-	// ângulo negativo. A fatia "Outros" não recebe cor de atingimento.
+	// A fatia "Outros" não recebe cor de atingimento.
 	if outros > 0 {
 		out = append(out, biIndustria{Label: "Outros", Faturado: outros})
 	}
 
 	concentracao := 0.0
 	if total > 0 {
-		concentracao = top5 / total * 100
+		concentracao = top5 / total * 100 // ∈ [0,100]: top5 ⊆ total (ambos positivos)
 	}
 	return out, concentracao
 }
@@ -341,9 +357,15 @@ func biIndustriasEConcentracao(cards []cardItem) ([]biIndustria, float64) {
 // biFaturadoPorUF — faturado por estado (UF do cliente) com atingimento YoY.
 //
 // Faturado: lê a MV farol.mv_fat_uf_mes (mig 194), que precomputa o LÍQUIDO por
-// UF com a mesma fórmula da mig 190 — assim o total por UF fecha com os gauges
-// e o donut (que também exibem líquido). Grão mensal, então o range parcial
-// expande pro mês inteiro, igual ao resto do painel (BI só faz ytd/mtd).
+// UF com a mesma fórmula por-linha da mig 190 (líquido = venda_real − devol −
+// cancel). O total por UF reconcilia com os gauges/donut no caso comum; pode
+// diferir por dois cascos raros que os aggs tratam diferente: (1) linhas de
+// chave vazia — os aggs excluem (cod_fornec/gerente <> ”), a MV inclui (órfãos
+// viram sentinela 99999999, não vazio, então raro); (2) devolução/cancelamento
+// sem faturado casado no mês — o agg só subtrai via JOIN por chave, a MV
+// subtrai por UF sempre. Ambos negligenciáveis; ver deferred-work.
+// Grão mensal, então o range parcial expande pro mês inteiro, igual ao resto
+// do painel (BI só faz ytd/mtd).
 //
 // Transmitido: não há MV; o transmitido exibe BRUTO em todo o painel, então
 // scan de vendas_transmitidas (SUM pvenda) por UF é coerente.
@@ -487,6 +509,11 @@ func biUltimoImport(db *sql.DB, empresaID string) string {
 // as agg. Falha aqui não derruba a consolidação — só loga.
 func refreshUFMV(db *sql.DB) {
 	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_fat_uf_mes`); err != nil {
+		// Loga a falha do CONCURRENTLY (senão o fallback bloqueante fica
+		// invisível): pode ser refresh concorrente de outro import, ou a 1ª
+		// carga antes do índice único. O REFRESH comum toma ACCESS EXCLUSIVE
+		// e trava a leitura do bloco UF durante a consolidação.
+		log.Printf("[farol:bi] refreshUFMV CONCURRENTLY falhou (%v) → REFRESH bloqueante", err)
 		if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW farol.mv_fat_uf_mes`); err2 != nil {
 			log.Printf("[farol:bi] refreshUFMV ERRO: %v", err2)
 		}

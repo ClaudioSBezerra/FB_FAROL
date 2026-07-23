@@ -282,10 +282,13 @@ func TestBIFaturadoPorUF(t *testing.T) {
 				i, out.UFs[i].Faturado, i-1, out.UFs[i-1].Faturado)
 		}
 	}
-	// Cor coerente com a régua (verde sse pct>=100 ou sem comp).
+	// Cor idêntica à régua do pickCor (mesma de biCor): verde sse pct>=100,
+	// onde pct = atual/ant (ant>0) | 100 (ant<=0 e atual>0) | 0 (senão).
 	for _, u := range out.UFs {
+		verde := (u.FaturadoAnt > 0 && u.Faturado >= u.FaturadoAnt) ||
+			(u.FaturadoAnt <= 0 && u.Faturado > 0)
 		esperada := "vermelho"
-		if u.FaturadoAnt <= 0 || u.Faturado >= u.FaturadoAnt {
+		if verde {
 			esperada = "verde"
 		}
 		if u.Cor != esperada {
@@ -293,8 +296,7 @@ func TestBIFaturadoPorUF(t *testing.T) {
 				u.Estado, u.Cor, esperada, u.Faturado, u.FaturadoAnt)
 		}
 	}
-	// A soma das UFs = SUM(pvenda) do período (todas as linhas têm uma UF, que
-	// pode ser '—' quando vazia — por isso o COALESCE garante que nada some fora).
+
 	var somaUF float64
 	for _, u := range out.UFs {
 		somaUF += u.Faturado
@@ -302,7 +304,23 @@ func TestBIFaturadoPorUF(t *testing.T) {
 	if somaUF <= 0 {
 		t.Error("soma do faturado por UF veio zero/negativa")
 	}
-	t.Logf("UFs=%d soma=%.2f (top: %s %.2f)", len(out.UFs), somaUF, out.UFs[0].Estado, out.UFs[0].Faturado)
+
+	// Reconciliação (o motivo de existir da MV): no faturado, a soma por UF tem
+	// de bater com o faturado do KPI (ambos são líquido). Pode diferir por
+	// órfãos/eventos sem faturado casado (ver deferred-work) — por isso 1% de
+	// tolerância em vez de igualdade exata.
+	if fluxo == "faturado" && out.KPI.TotalFaturado > 0 {
+		diff := somaUF - out.KPI.TotalFaturado
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > out.KPI.TotalFaturado*0.01 {
+			t.Errorf("soma UF (%.2f) diverge do faturado do KPI (%.2f) além de 1%%",
+				somaUF, out.KPI.TotalFaturado)
+		}
+	}
+	t.Logf("UFs=%d somaUF=%.2f kpiFat=%.2f (top: %s %.2f)",
+		len(out.UFs), somaUF, out.KPI.TotalFaturado, out.UFs[0].Estado, out.UFs[0].Faturado)
 }
 
 // TestBIFluxoInvalidoNaoVaraParaCCD — ?fluxo=cancdev cairia em scan da base.
