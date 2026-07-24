@@ -16,6 +16,7 @@ package handlers
 // mesmo computeKPI/fixOverlappingBaseKPI. O BI não pode divergir do Executivo.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -503,21 +504,45 @@ func biUltimoImport(db *sql.DB, empresaID string) string {
 	return t.Time.Format(time.RFC3339)
 }
 
-// refreshUFMV recomputa a MV de faturado por UF (mig 194). CONCURRENTLY não
-// bloqueia leituras; cai para o REFRESH comum se não houver índice único ainda
-// (primeira vez / ambiente sem a mig). Chamada nos mesmos pontos que consolidam
-// as agg. Falha aqui não derruba a consolidação — só loga.
+// ufMVLockKey — advisory lock fixo da MV de UF (194 = nº da migration).
+const ufMVLockKey int64 = 8_720_194
+
+// refreshUFMV recomputa a MV de faturado por UF (mig 194). SEMPRE chamar como
+// `go refreshUFMV(db)`: é best-effort e não pode entrar no caminho síncrono do
+// import/RefreshViews.
+//
+// INCIDENTE 2026-07-23: a versão anterior rodava SÍNCRONA e, quando dois
+// RefreshViews concorriam (backfill), o CONCURRENTLY falhava e caía num REFRESH
+// comum que toma ACCESS EXCLUSIVE — serializando e travando a consolidação já
+// pesada. Agora: advisory lock (pula se outro refresh está rodando — o próximo
+// import atualiza) e SEM fallback bloqueante. A MV é criada já populada com
+// índice único (mig 194), então o CONCURRENTLY não precisa do fallback.
 func refreshUFMV(db *sql.DB) {
-	if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_fat_uf_mes`); err != nil {
-		// Loga a falha do CONCURRENTLY (senão o fallback bloqueante fica
-		// invisível): pode ser refresh concorrente de outro import, ou a 1ª
-		// carga antes do índice único. O REFRESH comum toma ACCESS EXCLUSIVE
-		// e trava a leitura do bloco UF durante a consolidação.
-		log.Printf("[farol:bi] refreshUFMV CONCURRENTLY falhou (%v) → REFRESH bloqueante", err)
-		if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW farol.mv_fat_uf_mes`); err2 != nil {
-			log.Printf("[farol:bi] refreshUFMV ERRO: %v", err2)
-		}
+	ctx := context.Background()
+	conn, err := db.Conn(ctx) // advisory lock precisa da MESMA conexão
+	if err != nil {
+		log.Printf("[farol:bi] refreshUFMV conn ERRO: %v", err)
+		return
 	}
+	defer conn.Close()
+
+	var got bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, ufMVLockKey).Scan(&got); err != nil {
+		log.Printf("[farol:bi] refreshUFMV advisory ERRO: %v", err)
+		return
+	}
+	if !got {
+		log.Printf("[farol:bi] refreshUFMV: refresh já em andamento, pulando")
+		return
+	}
+	defer conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, ufMVLockKey)
+
+	t0 := time.Now()
+	if _, err := conn.ExecContext(ctx, `REFRESH MATERIALIZED VIEW CONCURRENTLY farol.mv_fat_uf_mes`); err != nil {
+		log.Printf("[farol:bi] refreshUFMV CONCURRENTLY ERRO: %v", err)
+		return
+	}
+	log.Printf("[farol:bi] refreshUFMV OK em %v", time.Since(t0))
 }
 
 // marcaConsolidacao registra que a consolidação da empresa terminou AGORA.

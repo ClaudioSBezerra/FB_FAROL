@@ -1018,7 +1018,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			meses = append(meses, aggMesYM{Ano: ym[0], Mes: ym[1]})
 		}
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
-		refreshUFMV(db)                               // MV de faturado por UF (Painel BI)
+		go refreshUFMV(db)                            // MV de UF em background (não bloqueia o import)
 		marcaConsolidacao(db, spCtx.EmpresaID)        // carimbo "dados de" do Painel BI
 		invalidateBaseCache(spCtx.EmpresaID)          // dados mudaram → limpa cache da base
 		invalidateVendasPeriodoCache(spCtx.EmpresaID) // limpa cache Q1 de ranges diários
