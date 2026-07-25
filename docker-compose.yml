@@ -80,6 +80,18 @@ services:
   db:
     image: postgres:15-alpine
     restart: always
+    # Tuning 25/07/2026 — host migrou KVM2→KVM4 (15GB RAM, 4vCPU, ~13GB livres).
+    # Antes rodava no default de fábrica (shared_buffers=128MB, work_mem=4MB):
+    # o "P3" documentado em .planning/performance-plan.md foi aplicado só no
+    # docker-compose.prod.yml, que o Coolify NÃO usa — nunca chegou a valer.
+    # Orçamento de ~4GB pro Postgres do FAROL (maior tenant do host, 44GB de
+    # dado vs ~9GB do 2º maior) deixando o resto pros outros ~6 projetos.
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=4GB
+      -c maintenance_work_mem=512MB
+      -c work_mem=32MB
     environment:
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}

@@ -97,12 +97,28 @@ function ImportForm({ onDone, token }: { onDone: () => void; token: string | nul
   const pollJob = (jobId: string, idx: number): Promise<ImportJob> =>
     new Promise((resolve, reject) => {
       if (pollRef.current) clearInterval(pollRef.current)
+      // Um blip de rede (ou um restart rápido do backend) numa única consulta
+      // não pode abortar o arquivo inteiro — o import pode continuar rodando
+      // no servidor mesmo que uma consulta isolada falhe. Só desiste depois
+      // de falhas CONSECUTIVAS por ~60s (30×2s); uma resposta OK no meio reseta
+      // a contagem.
+      const MAX_CONSECUTIVE_FAILURES = 30
+      let consecutiveFailures = 0
       pollRef.current = setInterval(async () => {
         try {
           const r = await fetch(`/api/v2/vendas/job/${jobId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           })
-          if (!r.ok) return
+          if (!r.ok) {
+            consecutiveFailures++
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              clearInterval(pollRef.current!)
+              pollRef.current = null
+              reject(new Error(`Servidor não respondeu (HTTP ${r.status}) após várias tentativas`))
+            }
+            return
+          }
+          consecutiveFailures = 0
           const j: ImportJob = await r.json()
           updateItem(idx, { job: j, status: j.status as ItemStatus })
           if (j.status === 'done' || j.status === 'error' || j.status === 'cancelled') {
@@ -110,7 +126,14 @@ function ImportForm({ onDone, token }: { onDone: () => void; token: string | nul
             pollRef.current = null
             resolve(j)
           }
-        } catch (e) { reject(e) }
+        } catch (e) {
+          consecutiveFailures++
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            clearInterval(pollRef.current!)
+            pollRef.current = null
+            reject(e)
+          }
+        }
       }, 2000)
     })
 
