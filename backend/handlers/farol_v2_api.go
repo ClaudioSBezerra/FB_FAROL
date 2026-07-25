@@ -2321,28 +2321,33 @@ func prewarmAggMes(db *sql.DB, empresaID string) {
 			}()
 		}
 	}
-	// Aquece folha (positivados) — top-level de cada view × 2 fluxos.
-	leaves := []struct {
-		leaf, group string
-	}{
-		{"agg_fat_v01_l4_mes", "cod_fornec"},
-		{"agg_fat_v02_l3_mes", "cod_supervisor"},
-		{"agg_fat_v03_l3_mes", "cod_gerente"},
-		{"agg_trans_v01_l4_mes", "cod_fornec"},
-		{"agg_trans_v02_l3_mes", "cod_supervisor"},
-		{"agg_trans_v03_l3_mes", "cod_gerente"},
+	// Aquece a folha (positivados/base_cli) — top-level de cada view × 2 fluxos.
+	//
+	// ANTES: rodava um db.Exec cru com a MESMA query que queryDistinctPositivados
+	// faria, mas jogava o resultado fora — só esquentava o disco/shared_buffers
+	// do Postgres, não o baseCache da aplicação (mapa em memória). A 1ª request
+	// REAL de cada view pagava a reexecução inteira do zero: 25-34s no V01/V02
+	// logo após um import grande (COUNT DISTINCT cnpj em toda a história, sem
+	// filtro de período — é o "base" de queryBasePositivados, ymStart=0..999912).
+	//
+	// AGORA: chama queryBasePositivados de verdade, que por baixo passa por
+	// cachedDistinctPositivados e GRAVA no baseCache com a mesma chave que uma
+	// request real vai procurar. A 1ª visualização do usuário vira cache HIT.
+	posViews := []struct{ view, group string }{
+		{"V01", "cod_fornec"},
+		{"V02", "cod_supervisor"},
+		{"V03", "cod_gerente"},
 	}
-	for _, l := range leaves {
-		wg.Add(1)
-		leaf := l
-		go func() {
-			defer wg.Done()
-			_, _ = db.Exec(fmt.Sprintf(`
-				SELECT %s, COUNT(DISTINCT cnpj) FROM farol.%s
-				WHERE empresa_id=$1 AND positivados > 0 AND %s <> ''
-				GROUP BY %s`, leaf.group, leaf.leaf, leaf.group, leaf.group),
-				empresaID)
-		}()
+	posFluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
+	for _, fl := range posFluxos {
+		for _, v := range posViews {
+			wg.Add(1)
+			fl, v := fl, v
+			go func() {
+				defer wg.Done()
+				queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, nil)
+			}()
+		}
 	}
 	wg.Wait()
 	log.Printf("[farol:view] prewarmAggMes MVs empresa=%s em %v", empresaID, time.Since(t0))
