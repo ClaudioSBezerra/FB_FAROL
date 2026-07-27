@@ -343,6 +343,25 @@ type cardsResponse struct {
 	DrillPath      []drillStep `json:"drill_path"`
 	NextLevel      string      `json:"next_level"`
 	NextLevelLabel string      `json:"next_level_label"`
+	Diag           cardsDiag   `json:"diag"`
+}
+
+// cardsDiag — como o recorte foi servido. Existe porque uma lista vazia era
+// ambígua na tela: podia ser "recorte sem venda" ou "a consulta falhou". No
+// incidente de 27/07/2026 (memória compartilhada esgotada) o painel mostrou
+// 0 cards e isso se lê como "não vendeu nada" — decisão do gestor foi avisar
+// explicitamente em vez de criar mais tabelas agregadas para cada combinação.
+type cardsDiag struct {
+	// Lento — não havia agregação para esta combinação de filtros; a consulta
+	// varreu vendas_* (dezenas de segundos).
+	Lento bool `json:"lento"`
+	// Falhou — a consulta ERROU. Os números exibidos estão ausentes ou
+	// incompletos; NÃO interpretar como ausência de venda.
+	Falhou bool `json:"falhou"`
+	// Combinacao — filtros que levaram ao caminho lento (ex: "cod_supervisor,uf").
+	Combinacao string `json:"combinacao,omitempty"`
+	// MS — duração da montagem do recorte, para a UI dimensionar o aviso.
+	MS int64 `json:"ms"`
 }
 
 // ─── Parsing de datas/períodos a partir da URL ───────────────────────────────
@@ -586,7 +605,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" {
 			delete(filters, "tipo_venda")
 		}
-		cards := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
+		cards, diag := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		// Totalizador = distinct do recorte (drill+filtros) em todos os níveis com
 		// positivação (não em cliente/produto, onde é escondida). Garante que, ao
@@ -630,6 +649,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			DrillPath:      drillPath,
 			NextLevel:      currentLevel.Level,
 			NextLevelLabel: currentLevel.Label,
+			Diag:           diag,
 		})
 	}
 }
@@ -1329,6 +1349,11 @@ type vendasPeriodoOutcome struct {
 	result  map[string]aggResult
 	cached  bool
 	elapsed time.Duration
+	// err — a consulta FALHOU (ex: shm esgotado no incidente de 27/07/2026).
+	// Sem isso, o erro virava mapa vazio e a tela mostrava "0 cards", que o
+	// gestor lê como "não teve venda". Resultado vazio legítimo e falha
+	// PRECISAM chegar diferentes na UI.
+	err error
 }
 
 func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nameCol string,
@@ -1376,8 +1401,10 @@ GROUP BY v.%s`,
 		return nil
 	})
 	if err != nil {
+		// NÃO grava no cache: um erro cacheado transformaria uma falha pontual
+		// em "sem venda" por 20h.
 		log.Printf("[farol:vendas] queryAggregatedVendas período nível=%s ERRO: %v", groupCol, err)
-		return vendasPeriodoOutcome{result: result, cached: false, elapsed: time.Since(t1)}
+		return vendasPeriodoOutcome{result: result, cached: false, elapsed: time.Since(t1), err: err}
 	}
 
 	vendasPeriodoCacheMu.Lock()
@@ -1387,8 +1414,11 @@ GROUP BY v.%s`,
 	return vendasPeriodoOutcome{result: result, cached: false, elapsed: time.Since(t1)}
 }
 
+// queryAggregatedVendas devolve também o erro da consulta: um mapa vazio pode
+// significar "recorte sem venda" OU "a consulta falhou", e a UI precisa
+// distinguir os dois (incidente de shm em 27/07/2026 mostrava painel vazio).
 func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, nameCol string,
-	periodIni, periodFim time.Time, drillPath []drillStep, filters multiFilters) map[string]aggResult {
+	periodIni, periodFim time.Time, drillPath []drillStep, filters multiFilters) (map[string]aggResult, error) {
 
 	t0 := time.Now()
 
@@ -1397,6 +1427,7 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 	result := out.result
 	durQ1 := out.elapsed
 	q1Hit := out.cached
+	qErr := out.err
 
 	// Query 2 — base_cli = compradores distintos rolling-12M do recorte.
 	// OTIMIZAÇÃO: quando a folha (agg_<fluxo>_<view>_l<N>_mes) atende os
@@ -1450,7 +1481,13 @@ GROUP BY v.%s`,
 			return nil
 		})
 		if berr != nil {
+			// Falha parcial: valores do período seguem corretos, mas "clientes
+			// ativos" fica zerado. Também precisa chegar à UI — número errado
+			// silencioso é pior que aviso.
 			log.Printf("[farol:vendas] queryAggregatedVendas base12m nível=%s ERRO: %v", groupCol, berr)
+			if qErr == nil {
+				qErr = berr
+			}
 		}
 	}
 	durQ2 := time.Since(t2)
@@ -1470,16 +1507,17 @@ GROUP BY v.%s`,
 			}
 			return "via-vendas_*"
 		}())
-	return result
+	return result, qErr
 }
 
 // ─── fetchCards ───────────────────────────────────────────────────────────────
 
 func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	pr periodResolution, drillIdx int, level hierLevel, drillPath []drillStep,
-	filters multiFilters) []cardItem {
+	filters multiFilters) ([]cardItem, cardsDiag) {
 
 	t0 := time.Now()
+	var diag cardsDiag
 	groupCol := safeColName(level.Level)
 	nameCol := safeColName(level.NameField)
 
@@ -1501,6 +1539,11 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			aggName, hasAgg, aggOK = alt, true, true
 		} else {
 			log.Printf("[farol:agg] filtro cruzado (filtros=%s nível=%s) SEM agg alternativa → scan vendas_* (lento)", filters.names(), groupCol)
+			// Avisa a UI: esta combinação varre a base bruta (dezenas de
+			// segundos). O usuário precisa saber que a demora é da combinação
+			// escolhida, não de travamento do sistema.
+			diag.Lento = true
+			diag.Combinacao = filters.names()
 		}
 	}
 
@@ -1556,6 +1599,10 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 
 	var atualMap, antMap map[string]aggResult
+	// Erros do caminho vendas_*: cada goroutine escreve o seu (sem corrida) e
+	// viram diag.Falhou depois do Wait. Sem isso, uma consulta que morre vira
+	// mapa vazio indistinguível de "recorte sem venda".
+	var errAtual, errAnt error
 	hasComp := !pr.CompInicio.IsZero() && !pr.CompFim.IsZero()
 
 	// P1: mix_total agora vem materializado nas agg (MAX(mix_total) em
@@ -1574,7 +1621,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		// com view vazia.
 		go func() {
 			defer wg.Done()
-			atualMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
+			atualMap, errAtual = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.RefInicio, pr.RefFim, drillPath, filters)
 		}()
 	default:
 		go func() {
@@ -1597,7 +1644,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		case !useAggMes:
 			go func() {
 				defer wg.Done()
-				antMap = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
+				antMap, errAnt = queryAggregatedVendas(db, empresaID, fluxo, view, groupCol, nameCol, pr.CompInicio, pr.CompFim, drillPath, filters)
 			}()
 		default:
 			antArgsMes := []any{empresaID}
@@ -1750,9 +1797,21 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		})
 	}
 
-	log.Printf("[farol:view] fetchCards fluxo=%s nível=%s → %d cards (atual=%d ant-only=%d) total=%v",
-		fluxo.name, groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0))
-	return cards
+	diag.Falhou = errAtual != nil || errAnt != nil
+	diag.MS = time.Since(t0).Milliseconds()
+
+	log.Printf("[farol:view] fetchCards fluxo=%s nível=%s → %d cards (atual=%d ant-only=%d) total=%v%s",
+		fluxo.name, groupCol, len(cards), len(atualMap), len(cards)-len(atualMap), time.Since(t0),
+		func() string {
+			switch {
+			case diag.Falhou:
+				return " [FALHOU — resultado incompleto]"
+			case diag.Lento:
+				return " [caminho lento: scan vendas_*]"
+			}
+			return ""
+		}())
+	return cards, diag
 }
 
 // NOTA: o "de Y" (universo de SKUs) do Mix foi OMITIDO da tela a pedido do
@@ -3251,7 +3310,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" {
 			delete(filters, "tipo_venda")
 		}
-		cards := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
+		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
 			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
@@ -3286,6 +3345,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			DrillPath:      drillPath,
 			NextLevel:      currentLevel.Level,
 			NextLevelLabel: currentLevel.Label,
+			Diag:           diag,
 		})
 	}
 }

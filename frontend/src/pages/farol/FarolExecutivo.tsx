@@ -116,6 +116,15 @@ interface CardsResponse {
   drill_path: DrillStep[]
   next_level: string
   next_level_label: string
+  // diag — como o backend serviu este recorte. Sem isso, uma lista vazia é
+  // ambígua na tela: "não teve venda" ou "a consulta falhou"? (incidente
+  // 27/07/2026: consulta morria e o painel mostrava 0 cards em silêncio).
+  diag?: {
+    lento: boolean
+    falhou: boolean
+    combinacao?: string
+    ms: number
+  }
 }
 
 interface DimOption { key: string; label: string }
@@ -1196,6 +1205,44 @@ export default function FarolExecutivo() {
         </div>
       )}
 
+      {/* ── AVISOS de diagnóstico do recorte ──────────────────────────────────
+          O backend informa (campo `diag`) quando a consulta FALHOU ou quando
+          precisou varrer a base bruta. Sem isso a tela era ambígua: consulta
+          morta e "não teve venda" apareciam idênticas — 0 cards silenciosos
+          (incidente 27/07/2026). Ver cardsDiag em farol_v2_api.go. */}
+      {data?.diag?.falhou && (
+        <div className="border border-red-300 bg-red-50 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+          <span className="text-red-600 text-lg leading-none mt-0.5" aria-hidden>⚠</span>
+          <div className="text-sm text-red-800">
+            <strong className="font-semibold">Não foi possível calcular este recorte.</strong>{' '}
+            Os números abaixo estão incompletos ou ausentes —{' '}
+            <strong className="font-semibold">não</strong> interprete como ausência de venda.
+            Tente de novo em alguns instantes; se continuar, avise o suporte.
+          </div>
+        </div>
+      )}
+      {data?.diag?.lento && !data?.diag?.falhou && (
+        <div className="border border-amber-300 bg-amber-50 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+          <span className="text-amber-600 text-lg leading-none mt-0.5" aria-hidden>⏱</span>
+          <div className="text-sm text-amber-900">
+            <strong className="font-semibold">Esta combinação de filtros é lenta.</strong>{' '}
+            {(() => {
+              const cols = (data.diag?.combinacao ?? '').split(',').filter(Boolean)
+              const nomes = cols.map(c => FILTER_DIMS.find(d => d.col === c)?.label ?? c)
+              const seg = Math.round((data.diag?.ms ?? 0) / 1000)
+              return (
+                <>
+                  Cruzar {nomes.length > 1 ? <strong>{nomes.join(' + ')}</strong> : <strong>{nomes[0]}</strong>}{' '}
+                  não tem atalho pré-calculado, então a consulta precisa varrer toda a base
+                  {seg > 0 && <> — levou {seg}s</>}. Os números estão corretos. Para resposta
+                  imediata, use um filtro de cada vez.
+                </>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* ── LISTA de fornecedores/GGV/equipe ─────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
         {/* Cabeçalho da lista — interativo: setinhas pra ordenar + busca embutida */}
@@ -1218,8 +1265,19 @@ export default function FarolExecutivo() {
           </div>
         )}
         {!isLoading && refInicio && error == null && visibleCards.length === 0 && (
-          <div className="text-center text-sm text-slate-500 py-8">
-            {search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
+          <div className="text-center text-sm py-8">
+            {/* Lista vazia por FALHA nunca pode ler como "não vendeu nada". */}
+            {data?.diag?.falhou ? (
+              <span className="text-red-700">
+                A consulta falhou — este recorte não pôde ser calculado.
+                <br />
+                <span className="text-slate-500">Isto não significa que não houve venda.</span>
+              </span>
+            ) : (
+              <span className="text-slate-500">
+                {search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
+              </span>
+            )}
           </div>
         )}
         {visibleCards.map(c => (

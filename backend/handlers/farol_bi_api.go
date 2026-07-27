@@ -266,7 +266,10 @@ func biFetchL0(db *sql.DB, empresaID string, fluxo fluxoCtx, view string, pr per
 	if !ok || len(hier) == 0 {
 		return nil
 	}
-	return fetchCards(db, empresaID, fluxo, view, pr, 0, hier[0], nil, nil)
+	// O BI é sempre a empresa inteira, sem filtro cruzado: nunca cai no caminho
+	// lento nem depende do diagnóstico (que é para avisar o usuário do Executivo).
+	cards, _ := fetchCards(db, empresaID, fluxo, view, pr, 0, hier[0], nil, nil)
+	return cards
 }
 
 // biKPI monta o totalizador dos gauges a partir da V03, replicando o que o
@@ -278,7 +281,7 @@ func biKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) kp
 		return kpiSummary{}
 	}
 	level := hier[0]
-	cards := fetchCards(db, empresaID, fluxo, "V03", pr, 0, level, nil, nil)
+	cards, _ := fetchCards(db, empresaID, fluxo, "V03", pr, 0, level, nil, nil)
 	kpi := computeKPI(cards, fluxo.name, level.Level == "cod_fornec")
 	if level.Level != "cod_prod" && level.Level != "cod_cli" &&
 		leafServesPositivados(fluxo, "V03", level.Level, nil, nil) {
