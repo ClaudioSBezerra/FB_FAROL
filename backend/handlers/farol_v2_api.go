@@ -1309,6 +1309,20 @@ func queryWithHigherWorkMem(db *sql.DB, query string, args []any, scan func(*sql
 	return tx.Commit()
 }
 
+// scanLabelExpr — expressão do rótulo no caminho de scan (vendas_*). Quase
+// todo NameField é coluna real da base, mas nome_cliprinc (V06 "Por Rede") só
+// existe nas agg_*_v06_*: lá ela é DERIVADA na consolidação (mig 185) a partir
+// de fantasia/nome_cli. Sem esta tradução o scan referencia coluna inexistente
+// e QUALQUER filtro cruzado em Por Rede devolve zero cards em silêncio — visto
+// em produção 27/07/2026 ("column v.nome_cliprinc does not exist"), valia
+// também para o filtro de Tipo de Venda desde a mig 187.
+func scanLabelExpr(nameCol string) string {
+	if nameCol == "nome_cliprinc" {
+		return `COALESCE(NULLIF(MAX(v.fantasia), ''), MAX(v.nome_cli))`
+	}
+	return "MAX(v." + nameCol + ")"
+}
+
 // vendasPeriodoQ1 — executa Q1 (scan vendas_*) ou pega do cache por range.
 type vendasPeriodoOutcome struct {
 	result  map[string]aggResult
@@ -1339,7 +1353,7 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nam
 		cond += " " + fluxo.eventoFilter // fluxos CCD (cancdev/cortado)
 	}
 	q := fmt.Sprintf(`
-SELECT v.%s AS key, MAX(v.%s) AS label,
+SELECT v.%s AS key, %s AS label,
        SUM(v.pvenda) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
        COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0) AS positivados,
        COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
@@ -1348,7 +1362,7 @@ SELECT v.%s AS key, MAX(v.%s) AS label,
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
 GROUP BY v.%s`,
-		groupCol, nameCol, fluxo.tableName, groupCol, rangeCond, cond, groupCol)
+		groupCol, scanLabelExpr(nameCol), fluxo.tableName, groupCol, rangeCond, cond, groupCol)
 	err := queryWithHigherWorkMem(db, q, args, func(rows *sql.Rows) error {
 		for rows.Next() {
 			var key string

@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+// nome_cliprinc (V06 "Por Rede") não existe em vendas_*; é derivada na
+// consolidação. Sem a tradução, o filtro cruzado em Por Rede quebrava a query
+// e devolvia zero cards em silêncio (produção 27/07/2026).
+func TestScanLabelExpr(t *testing.T) {
+	if got := scanLabelExpr("nome_cliprinc"); got != `COALESCE(NULLIF(MAX(v.fantasia), ''), MAX(v.nome_cli))` {
+		t.Errorf("nome_cliprinc deve virar a expressão derivada, veio %q", got)
+	}
+	for _, col := range []string{"nome_fornec", "nome_rca", "nome_cli", "depto"} {
+		if got, want := scanLabelExpr(col), "MAX(v."+col+")"; got != want {
+			t.Errorf("scanLabelExpr(%q) = %q, esperado %q", col, got, want)
+		}
+	}
+}
+
 // Cobre o roteamento do filtro cruzado de UF para as aggs V08/V09 (mig 197):
 // com o gate aberto, cada agrupamento comum deve cair na tabela certa; sem
 // UF no filtro, nada muda; com o gate fechado, V08/V09 ficam invisíveis.
