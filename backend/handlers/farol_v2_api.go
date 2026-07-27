@@ -2629,15 +2629,24 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 // reais pagam do zero o custo do COUNT(DISTINCT cnpj) de positivação/base_cli
 // (25-33s por view, visto em produção logo após o deploy de 27/07/2026).
 //
+// Inclui prewarmPeriodKeys: sem ele, só a chave "histórico completo" ficava
+// quente e o 1º login após cada deploy ainda pagava ~24s nos períodos de
+// referência/comparação (medido em produção 27/07/2026, logins de 16:48 e
+// 17:37). Custo aferido no teste do aquecimento diário: 21s na empresa maior
+// — contra os ~80s da fase de presets diários. Vale pagar em background: hoje
+// esse tempo é cobrado do primeiro usuário de qualquer forma.
+//
 // NÃO chama prewarmDailyRanges (a fase 2 de prewarmAggMes): essa fase varre
 // vendas_faturadas/transmitidas BRUTAS para os presets diários e, com o
 // histórico atual (2025 completo + 2026), passou de "2-13s" para 20-59s por
 // combinação — rodar isso no boot competiu com tráfego real logo após o
 // deploy de 27/07/2026 (fetchCards de usuários reais subiu a 8-17s enquanto
-// o prewarm rodava). Essa fase continua rodando normalmente só depois de um
-// import de verdade (via prewarmAggMes, chamado por RefreshViewsHandler).
+// o prewarm rodava). FOI ESSA fase que causou a regressão, não a de períodos.
+// Ela continua rodando só depois de um import (via prewarmAggMes, chamado por
+// RefreshViewsHandler) e no aquecimento diário das 07:30 (PrewarmDiario).
 func PrewarmStartup(db *sql.DB, empresaID string) {
 	prewarmAggMesCore(db, empresaID)
+	prewarmPeriodKeys(db, empresaID)
 }
 
 func prewarmAggMes(db *sql.DB, empresaID string) {
