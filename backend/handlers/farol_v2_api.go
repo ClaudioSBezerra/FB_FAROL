@@ -1956,7 +1956,7 @@ func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []dr
 //   - base (ymStart=0, ymEnd=999912): idêntica entre views/requests/usuários
 //   - ref e comp: idêntica entre os 3 fetchCards do login (V01/V02/V03)
 //
-// TTL 30min (invalidateBaseCache é chamado após consolidação de import).
+// invalidateBaseCache é chamado após consolidação de import (ver TTL abaixo).
 type baseCacheEntry struct {
 	data map[string]int
 	at   time.Time
@@ -1967,14 +1967,18 @@ var (
 	baseCache   = map[string]baseCacheEntry{}
 )
 
-const baseCacheTTL = 30 * time.Minute
+// baseCacheTTL — o miss aqui custa 10-25s (COUNT(DISTINCT cnpj) na folha, visto
+// em produção 27/07/2026: Indústrias 25s, Por Equipe 10s). Era 30min, o que
+// anulava o PrewarmStartup: meia hora após o boot o cache já expirava e o
+// próximo usuário pagava tudo de novo (login das 14:19 com restart às 11:13).
+// 6h é seguro porque invalidateBaseCache roda nos 3 pontos onde o dado muda
+// (import, reconsolidação, refresh de views) — o TTL é só teto de segurança.
+const baseCacheTTL = 6 * time.Hour
 
-// vendasPeriodoCacheTTL — TTL dedicado (mais longo) do cache de Q1 do scan de
-// vendas_* (filtro cruzado UF etc., 13-40s por miss). Pode ser bem maior que
-// os 30min do baseCacheTTL porque este cache é invalidado explicitamente na
-// carga e na consolidação (invalidateVendasPeriodoCache) — dado não fica velho
-// por causa do TTL, que vira só um teto de segurança. Assim o primeiro usuário
-// do dia paga o scan e os demais aproveitam por horas.
+// vendasPeriodoCacheTTL — mesmo raciocínio para o cache de Q1 do scan de
+// vendas_* (filtro cruzado, 13-40s por miss): invalidado explicitamente na
+// carga e na consolidação (invalidateVendasPeriodoCache), então o TTL é teto
+// de segurança, não garantia de frescor.
 const vendasPeriodoCacheTTL = 6 * time.Hour
 
 // invalidateBaseCache limpa entradas de uma empresa (chamado após consolidação).
