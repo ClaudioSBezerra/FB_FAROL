@@ -908,7 +908,9 @@ export default function FarolExecutivo() {
     { col: 'cod_rca',        label: 'RCA',        from: 'rca' },
     { col: 'cod_cli',        label: 'Cliente',    from: 'cli' },
     { col: 'uf',             label: 'UF',         from: 'uf' },
-    { col: 'empresa',        label: 'Filial',     from: 'empresa' },
+    // "Filial" (coluna `empresa`) removido em 27/07/2026 — não era uma
+    // dimensão real de filial, só o texto livre `empresa` do CSV. Decisão do
+    // gestor foi manter apenas UF.
     // Tipo de Venda: só no fluxo faturado (filtro cruzado; a coluna não existe
     // no transmitido). Ver Spec Change Log 2026-07-21.
     ...(fluxo === 'faturado'
