@@ -110,6 +110,25 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_categoria", NameField: "categoria", Label: "Categoria"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
+	// V08/V09 (mig 197) — hierarquias SÓ DE ROTEAMENTO: nenhuma view da UI as
+	// usa; existem para o pickAggForCrossFilter servir filtro de UF por agg em
+	// vez do scan de vendas_* (13-40s). V08 cobre agrupar por gerente/sup/RCA
+	// com filtro UF (gerente/sup são ancestrais do RCA → orgAncestors valida);
+	// V09 cobre "Por Indústria" + filtro UF e seus drills. Só entram em jogo
+	// após o backfill (gate aggUFReady).
+	"V08": {
+		{Level: "uf", NameField: "nome_uf", Label: "UF"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+	},
+	"V09": {
+		{Level: "uf", NameField: "nome_uf", Label: "UF"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+	},
 }
 
 // Tabelas agg_*_mes (granularidade mensal, migration 162+165).
@@ -125,6 +144,10 @@ var aggTablesFat = map[string][]string{
 	// (cliprinc,fornec[,cnpj]) continuam populadas mas não são mais lidas.
 	"V06": {"agg_fat_v06_l0_mes"},
 	"V07": {"agg_fat_v07_l0_mes", "agg_fat_v07_l1_mes", "agg_fat_v07_l2_mes"},
+	// V08/V09 (mig 197): l0 (só UF) é o mesmo grão nas duas hierarquias →
+	// tabela física única (agg_*_v08_l0_mes) referenciada pelas duas.
+	"V08": {"agg_fat_v08_l0_mes", "agg_fat_v08_l1_mes", "agg_fat_v08_l2_mes", "agg_fat_v08_l3_mes"},
+	"V09": {"agg_fat_v08_l0_mes", "agg_fat_v09_l1_mes", "agg_fat_v09_l2_mes", "agg_fat_v09_l3_mes", "agg_fat_v09_l4_mes"},
 }
 
 var aggTablesTrans = map[string][]string{
@@ -135,6 +158,8 @@ var aggTablesTrans = map[string][]string{
 	"V05": {"agg_trans_v05_l0_mes", "agg_trans_v05_l1_mes", "agg_trans_v05_l2_mes", "agg_trans_v05_l3_mes"},
 	"V06": {"agg_trans_v06_l0_mes"},
 	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes", "agg_trans_v07_l2_mes"},
+	"V08": {"agg_trans_v08_l0_mes", "agg_trans_v08_l1_mes", "agg_trans_v08_l2_mes", "agg_trans_v08_l3_mes"},
+	"V09": {"agg_trans_v08_l0_mes", "agg_trans_v09_l1_mes", "agg_trans_v09_l2_mes", "agg_trans_v09_l3_mes", "agg_trans_v09_l4_mes"},
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -857,6 +882,14 @@ func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillC
 	baseCliExpr := "ROUND(AVG(v.base_cli))::int"
 	positivadosExpr := "ROUND(AVG(v.positivados))::int"
 	mixExpr := "AVG(v.mix)"
+	// V08/V09 (mig 197): com filtro multi-UF há N linhas por mês (uma por UF) e
+	// AVG dividiria por N — com BA+GO mostraria METADE dos positivados. Como
+	// cada cliente pertence a UMA UF, somar entre UFs é exato; divide-se só
+	// pelo nº de meses (média mensal, mesma semântica do AVG nas demais aggs).
+	// base_cli fica no AVG: é a carteira do escopo org, constante entre UFs.
+	if strings.Contains(shortName, "_v08_") || strings.Contains(shortName, "_v09_") {
+		positivadosExpr = "ROUND(SUM(v.positivados)::numeric / NULLIF(COUNT(DISTINCT v.ano*100+v.mes),0))::int"
+	}
 	if aggWithoutPositivacao(shortName) {
 		baseCliExpr = "0::int"
 		positivadosExpr = "0::int"
@@ -1062,6 +1095,45 @@ var aggHasMixTotal = map[string]bool{
 	"agg_trans_v02_l0_mes": true, "agg_trans_v02_l1_mes": true, "agg_trans_v02_l2_mes": true,
 	"agg_trans_v03_l0_mes": true, "agg_trans_v03_l1_mes": true, "agg_trans_v03_l2_mes": true,
 	"agg_trans_v05_l0_mes": true, "agg_trans_v05_l1_mes": true, "agg_trans_v05_l2_mes": true,
+	// V08/V09 (mig 197) já nascem com mix_total (calculado inline no upsert).
+	"agg_fat_v08_l0_mes": true, "agg_fat_v08_l1_mes": true, "agg_fat_v08_l2_mes": true, "agg_fat_v08_l3_mes": true,
+	"agg_fat_v09_l1_mes": true, "agg_fat_v09_l2_mes": true, "agg_fat_v09_l3_mes": true, "agg_fat_v09_l4_mes": true,
+	"agg_trans_v08_l0_mes": true, "agg_trans_v08_l1_mes": true, "agg_trans_v08_l2_mes": true, "agg_trans_v08_l3_mes": true,
+	"agg_trans_v09_l1_mes": true, "agg_trans_v09_l2_mes": true, "agg_trans_v09_l3_mes": true, "agg_trans_v09_l4_mes": true,
+}
+
+// aggUFReady — as tabelas V08/V09 (mig 197) nascem VAZIAS até o backfill
+// manual rodar (ver comentário da migration). Roteá-las vazias mostraria os
+// cards zerados; até lá o filtro de UF segue no scan de vendas_* (comporta-
+// mento anterior). O resultado positivo é definitivo (nunca reconsulta);
+// enquanto negativo, reconsulta no máximo a cada 5min — assim o backfill é
+// detectado sem reiniciar o backend.
+var (
+	aggUFReadyMu        sync.Mutex
+	aggUFReadyVal       bool
+	aggUFReadyCheckedAt time.Time
+)
+
+func aggUFReady(db *sql.DB) bool {
+	aggUFReadyMu.Lock()
+	defer aggUFReadyMu.Unlock()
+	if aggUFReadyVal {
+		return true
+	}
+	if time.Since(aggUFReadyCheckedAt) < 5*time.Minute {
+		return false
+	}
+	aggUFReadyCheckedAt = time.Now()
+	var ok bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM farol.agg_fat_v09_l1_mes)`).Scan(&ok); err != nil {
+		log.Printf("[farol:agg] aggUFReady: probe falhou: %v", err)
+		return false
+	}
+	if ok {
+		log.Printf("[farol:agg] aggUFReady: V08/V09 populadas → filtro de UF passa a usar agg")
+	}
+	aggUFReadyVal = ok
+	return ok
 }
 
 // pickAggForCrossFilter — quando a tabela agg da view atual NÃO serve os filtros
@@ -1073,7 +1145,10 @@ var aggHasMixTotal = map[string]bool{
 // específica e rápida). Isso troca o scan lento de vendas_* (2+ min) por uma
 // query agg (ms) no caso comum de filtrar por fornecedor. Só falha (e cai para
 // vendas_*) quando nenhuma agg tem a coluna (ex: filtro por UF/Filial).
-func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
+func pickAggForCrossFilter(db *sql.DB, fluxo fluxoCtx, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
+	// V08/V09 só depois do backfill (tabelas vazias = cards zerados).
+	ufReady := aggUFReady(db)
+
 	required := map[string]bool{groupCol: true}
 	for col := range filters {
 		required[col] = true
@@ -1104,6 +1179,9 @@ func pickAggForCrossFilter(fluxo fluxoCtx, groupCol string, drillPath []drillSte
 	best := ""
 	bestCols := 1 << 30
 	for view, levels := range tables {
+		if (view == "V08" || view == "V09") && !ufReady {
+			continue
+		}
 		hier := hierarquias[view]
 		for drillIdx := range levels {
 			// groupCol PRECISA ser o nível mais profundo da tabela: só o nível
@@ -1243,7 +1321,7 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nam
 
 	key := vendasPeriodoCacheKey(empresaID, fluxo.name, groupCol, periodIni, periodFim, drillPath, filters)
 	vendasPeriodoCacheMu.RLock()
-	if e, ok := vendasPeriodoCache[key]; ok && time.Since(e.at) < baseCacheTTL {
+	if e, ok := vendasPeriodoCache[key]; ok && time.Since(e.at) < vendasPeriodoCacheTTL {
 		vendasPeriodoCacheMu.RUnlock()
 		return vendasPeriodoOutcome{result: e.data, cached: true, elapsed: 0}
 	}
@@ -1403,7 +1481,7 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// agg de OUTRA view, no mesmo grão, que contenha groupCol + os filtros → segue
 	// rápido. Só cai para vendas_* se nenhuma agg servir (ex: filtro por UF/Filial).
 	if !aggOK && groupCol != "cod_prod" && !fluxo.isCCD {
-		if alt, ok := pickAggForCrossFilter(fluxo, groupCol, drillPath, filters); ok {
+		if alt, ok := pickAggForCrossFilter(db, fluxo, groupCol, drillPath, filters); ok {
 			log.Printf("[farol:agg] filtro cruzado (filtros=%s) → tabela agg alternativa %s (em vez de scan vendas_*)", filters.names(), alt)
 			aggName, hasAgg, aggOK = alt, true, true
 		} else {
@@ -1891,6 +1969,14 @@ var (
 
 const baseCacheTTL = 30 * time.Minute
 
+// vendasPeriodoCacheTTL — TTL dedicado (mais longo) do cache de Q1 do scan de
+// vendas_* (filtro cruzado UF etc., 13-40s por miss). Pode ser bem maior que
+// os 30min do baseCacheTTL porque este cache é invalidado explicitamente na
+// carga e na consolidação (invalidateVendasPeriodoCache) — dado não fica velho
+// por causa do TTL, que vira só um teto de segurança. Assim o primeiro usuário
+// do dia paga o scan e os demais aproveitam por horas.
+const vendasPeriodoCacheTTL = 6 * time.Hour
+
 // invalidateBaseCache limpa entradas de uma empresa (chamado após consolidação).
 func invalidateBaseCache(empresaID string) {
 	baseCacheMu.Lock()
@@ -2145,6 +2231,12 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				}
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v07($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V07 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				// V08/V09 (mig 197) — aggs com UF no grão (filtro cruzado de UF).
+				// Antes de upsert_venda_liquida_cols, que preenche liquido/pv_*
+				// também nos níveis novos.
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v08_v09($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V08/V09 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
 				// tipo_venda (mig 188) — popula dim='tipo_venda' do fluxo faturado
 				// para o dropdown do filtro cruzado. Barato (agrega poucos códigos).
