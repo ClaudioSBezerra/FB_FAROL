@@ -2199,8 +2199,14 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		if len(meses) > 0 {
 			incremental = true
 			log.Printf("[farol:view] RefreshViews INCREMENTAL — %d mês(es) pendente(s): %v", len(meses), meses)
-		} else {
-			// Fallback: nenhum pendente → consolida todos os meses dos dados.
+		} else if r.URL.Query().Get("full") == "1" {
+			// Reconstrução COMPLETA — só roda se pedida explicitamente via
+			// ?full=1. Incidente 25/07/2026: nada na UI chama isso de propósito
+			// hoje (só o fim da fila de import, sem essa flag); um clique
+			// duplo/retry achou a fila pendente vazia e caiu aqui por acidente,
+			// reconsolidando os 17 meses (~1h40) e competindo com a consolidação
+			// real que já estava rodando. Sem a flag, "sem pendentes" agora é
+			// no-op — ver ramo abaixo.
 			rows, err := db.Query(`
 				SELECT DISTINCT ano, mes FROM (
 					SELECT EXTRACT(YEAR  FROM data_faturamento)::int AS ano,
@@ -2220,7 +2226,9 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 				}
 				rows.Close()
 			}
-			log.Printf("[farol:view] RefreshViews COMPLETA (sem pendentes) — %d mês(es)", len(meses))
+			log.Printf("[farol:view] RefreshViews COMPLETA (?full=1, sem pendentes) — %d mês(es)", len(meses))
+		} else {
+			log.Printf("[farol:view] RefreshViews sem pendências — nada a consolidar (nenhum mês tocado desde o último refresh)")
 		}
 
 		if len(meses) > 0 {
