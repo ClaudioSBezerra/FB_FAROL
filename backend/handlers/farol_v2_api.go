@@ -2294,17 +2294,40 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 // nos períodos YTD atual e anterior. Aquece o cache do PostgreSQL para que o
 // primeiro fetchCards de um login seja tão rápido quanto os subsequentes.
 // Roda em background — não bloqueia a response HTTP nem atrapalha a transação.
-// PrewarmStartup expõe prewarmAggMes para ser chamado no boot do processo
-// (main.go), não só depois de um import. baseCache é só mapa em memória —
-// TODO restart do backend (deploy nosso, crash, redeploy do Coolify) zera
-// o cache, e sem isto os primeiros usuários reais pagam do zero o custo do
-// COUNT(DISTINCT cnpj) de positivação/base_cli (25-33s por view, visto em
-// produção logo após o deploy de 27/07/2026).
+// PrewarmStartup expõe só a parte RÁPIDA do prewarm (MVs + positivados) para
+// ser chamada no boot do processo (main.go), não só depois de um import.
+// baseCache é só mapa em memória — todo restart do backend (deploy nosso,
+// crash, redeploy do Coolify) zera o cache, e sem isto os primeiros usuários
+// reais pagam do zero o custo do COUNT(DISTINCT cnpj) de positivação/base_cli
+// (25-33s por view, visto em produção logo após o deploy de 27/07/2026).
+//
+// NÃO chama prewarmDailyRanges (a fase 2 de prewarmAggMes): essa fase varre
+// vendas_faturadas/transmitidas BRUTAS para os presets diários e, com o
+// histórico atual (2025 completo + 2026), passou de "2-13s" para 20-59s por
+// combinação — rodar isso no boot competiu com tráfego real logo após o
+// deploy de 27/07/2026 (fetchCards de usuários reais subiu a 8-17s enquanto
+// o prewarm rodava). Essa fase continua rodando normalmente só depois de um
+// import de verdade (via prewarmAggMes, chamado por RefreshViewsHandler).
 func PrewarmStartup(db *sql.DB, empresaID string) {
-	prewarmAggMes(db, empresaID)
+	prewarmAggMesCore(db, empresaID)
 }
 
 func prewarmAggMes(db *sql.DB, empresaID string) {
+	t0 := prewarmAggMesCore(db, empresaID)
+
+	// Fase 2 — pré-aquece Q1 (vendasPeriodoCache) dos presets diários comuns.
+	// Sem isso, o 1º clique em "Dia Anterior" / "7 dias" / "30 dias" leva
+	// alguns segundos. Roda em background após import; usuário não vê.
+	t1 := time.Now()
+	prewarmDailyRanges(db, empresaID)
+	log.Printf("[farol:view] prewarmAggMes diários empresa=%s em %v (total %v)",
+		empresaID, time.Since(t1), time.Since(t0))
+}
+
+// prewarmAggMesCore aquece as MVs (COUNT(*) pequeno) e o baseCache de
+// positivação/base_cli (o COUNT(DISTINCT cnpj) caro). Retorna o t0 para quem
+// chama medir o tempo total combinado com fases seguintes.
+func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 	t0 := time.Now()
 
 	anoAtual := time.Now().Year()
@@ -2369,14 +2392,7 @@ func prewarmAggMes(db *sql.DB, empresaID string) {
 	}
 	wg.Wait()
 	log.Printf("[farol:view] prewarmAggMes MVs empresa=%s em %v", empresaID, time.Since(t0))
-
-	// Fase 2 — pré-aquece Q1 (vendasPeriodoCache) dos presets diários comuns.
-	// Sem isso, o 1º clique em "Dia Anterior" / "7 dias" / "30 dias" leva 2-13s.
-	// Roda em background após import; usuário não vê.
-	t1 := time.Now()
-	prewarmDailyRanges(db, empresaID)
-	log.Printf("[farol:view] prewarmAggMes diários empresa=%s em %v (total %v)",
-		empresaID, time.Since(t1), time.Since(t0))
+	return t0
 }
 
 // prewarmDailyRanges chama queryAggregatedVendas para os presets diários comuns
