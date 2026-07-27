@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1983,19 +1984,24 @@ var (
 
 // baseCacheTTL — o miss aqui custa 10-25s (COUNT(DISTINCT cnpj) na folha, visto
 // em produção 27/07/2026: Indústrias 25s, Por Equipe 10s). Era 30min, o que
-// anulava o PrewarmStartup: meia hora após o boot o cache já expirava e o
-// próximo usuário pagava tudo de novo (login das 14:19 com restart às 11:13).
-// 6h é seguro porque invalidateBaseCache roda nos 3 pontos onde o dado muda
-// (import, reconsolidação, refresh de views) — o TTL é só teto de segurança.
-const baseCacheTTL = 6 * time.Hour
+// anulava o prewarm: meia hora após o boot o cache já expirava e o próximo
+// usuário pagava tudo de novo (login das 14:19 com restart às 11:13).
+//
+// 20h porque o aquecimento é DIÁRIO (StartDailyPrewarm, 07:30): o que foi
+// aquecido de manhã precisa sobreviver ao expediente inteiro, senão a partir
+// do meio da tarde os usuários voltam a pagar o recálculo. Não é risco de dado
+// velho — invalidateBaseCache* roda nos pontos onde o dado muda; o TTL é teto
+// de segurança, não garantia de frescor.
+const baseCacheTTL = 20 * time.Hour
 
 // vendasPeriodoCacheTTL — mesmo raciocínio para o cache de Q1 do scan de
-// vendas_* (filtro cruzado, 13-40s por miss): invalidado explicitamente na
-// carga e na consolidação (invalidateVendasPeriodoCache), então o TTL é teto
-// de segurança, não garantia de frescor.
-const vendasPeriodoCacheTTL = 6 * time.Hour
+// vendas_* (filtro cruzado, 13-40s por miss).
+const vendasPeriodoCacheTTL = 20 * time.Hour
 
-// invalidateBaseCache limpa entradas de uma empresa (chamado após consolidação).
+// invalidateBaseCache limpa TODAS as entradas de uma empresa. Use apenas quando
+// o conjunto de meses afetados é desconhecido ou os dados foram apagados em
+// bloco; para carga/consolidação de meses específicos prefira
+// invalidateBaseCacheMeses, que preserva o histórico já aquecido.
 func invalidateBaseCache(empresaID string) {
 	baseCacheMu.Lock()
 	for k := range baseCache {
@@ -2004,6 +2010,122 @@ func invalidateBaseCache(empresaID string) {
 		}
 	}
 	baseCacheMu.Unlock()
+}
+
+// ymOverlapsKeyRange — decide se a entrada de cache cujo período é [aIni,aFim]
+// (em ym = ano*100+mes) é afetada por uma carga que tocou [bIni,bFim].
+func ymOverlapsKeyRange(aIni, aFim, bIni, bFim int) bool {
+	return aIni <= bFim && bIni <= aFim
+}
+
+// parseYMRangeField converte "202601-202607" nos dois ym. ok=false força o
+// chamador a invalidar por precaução (melhor perder cache que servir dado velho).
+func parseYMRangeField(f string) (ini, fim int, ok bool) {
+	d := strings.IndexByte(f, '-')
+	if d <= 0 {
+		return 0, 0, false
+	}
+	ini, err1 := strconv.Atoi(f[:d])
+	fim, err2 := strconv.Atoi(f[d+1:])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return ini, fim, true
+}
+
+// invalidateBaseCacheMeses limpa só as entradas cujo período TOCA os meses
+// recém-carregados. A carga diária (e, em breve, horária) mexe apenas no mês
+// corrente: derrubar junto o cache de 2025 e de jan-mai/2026 — dado que não
+// mudou — obrigaria a reconstruir 10-25s por view no próximo acesso, todo dia.
+// Chaves com período fora do intervalo carregado sobrevivem intactas.
+func invalidateBaseCacheMeses(empresaID string, ymIni, ymFim int) {
+	pref := empresaID + "|"
+	kept, dropped := 0, 0
+	baseCacheMu.Lock()
+	for k := range baseCache {
+		if !strings.HasPrefix(k, pref) {
+			continue
+		}
+		// baseCacheKey: empresa|fluxo|view|groupCol|ymStart-ymEnd|drill|filters
+		parts := strings.Split(k, "|")
+		if len(parts) < 5 {
+			delete(baseCache, k)
+			dropped++
+			continue
+		}
+		ini, fim, ok := parseYMRangeField(parts[4])
+		if !ok || ymOverlapsKeyRange(ini, fim, ymIni, ymFim) {
+			delete(baseCache, k)
+			dropped++
+			continue
+		}
+		kept++
+	}
+	baseCacheMu.Unlock()
+	log.Printf("[farol:cache] baseCache invalidado p/ meses %d..%d — %d entradas removidas, %d preservadas (histórico)",
+		ymIni, ymFim, dropped, kept)
+}
+
+// invalidateVendasPeriodoCacheMeses — equivalente para o cache de Q1. A chave
+// guarda datas (YYYY-MM-DD) em vez de ym; converte antes de comparar.
+func invalidateVendasPeriodoCacheMeses(empresaID string, ymIni, ymFim int) {
+	pref := empresaID + "|"
+	kept, dropped := 0, 0
+	vendasPeriodoCacheMu.Lock()
+	for k := range vendasPeriodoCache {
+		if !strings.HasPrefix(k, pref) {
+			continue
+		}
+		// vendasPeriodoCacheKey: empresa|fluxo|groupCol|dataIni|dataFim|drill|filters
+		parts := strings.Split(k, "|")
+		if len(parts) < 5 {
+			delete(vendasPeriodoCache, k)
+			dropped++
+			continue
+		}
+		ini, ok1 := ymFromISODate(parts[3])
+		fim, ok2 := ymFromISODate(parts[4])
+		if !ok1 || !ok2 || ymOverlapsKeyRange(ini, fim, ymIni, ymFim) {
+			delete(vendasPeriodoCache, k)
+			dropped++
+			continue
+		}
+		kept++
+	}
+	vendasPeriodoCacheMu.Unlock()
+	log.Printf("[farol:cache] vendasPeriodoCache invalidado p/ meses %d..%d — %d removidas, %d preservadas",
+		ymIni, ymFim, dropped, kept)
+}
+
+// ymFromISODate converte "2026-07-01" em 202607.
+func ymFromISODate(s string) (int, bool) {
+	if len(s) < 7 || s[4] != '-' {
+		return 0, false
+	}
+	ano, err1 := strconv.Atoi(s[:4])
+	mes, err2 := strconv.Atoi(s[5:7])
+	if err1 != nil || err2 != nil {
+		return 0, false
+	}
+	return ano*100 + mes, true
+}
+
+// mesesRangeYM devolve o menor e o maior ym de uma lista de meses tocados.
+func mesesRangeYM(meses []aggMesYM) (ymIni, ymFim int, ok bool) {
+	if len(meses) == 0 {
+		return 0, 0, false
+	}
+	ymIni, ymFim = 999912, 0
+	for _, m := range meses {
+		ym := m.Ano*100 + m.Mes
+		if ym < ymIni {
+			ymIni = ym
+		}
+		if ym > ymFim {
+			ymFim = ym
+		}
+	}
+	return ymIni, ymFim, true
 }
 
 func baseCacheKey(empresaID, fluxoName, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) string {
@@ -2404,9 +2526,17 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 			marcaConsolidacao(db, spCtx.EmpresaID)
 		}
 
-		// Dados mudaram → invalida o cache da base de clientes ativos.
-		invalidateBaseCache(spCtx.EmpresaID)
-		invalidateVendasPeriodoCache(spCtx.EmpresaID)
+		// Dados mudaram → invalida o cache da base de clientes ativos. Só os
+		// períodos consolidados: a carga diária toca o mês corrente e não deve
+		// derrubar o histórico já aquecido (2025, 2026 antigo). Sem meses
+		// conhecidos (reconstrução total) cai no invalidate completo.
+		if ymIni, ymFim, ok := mesesRangeYM(meses); ok {
+			invalidateBaseCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+			invalidateVendasPeriodoCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+		} else {
+			invalidateBaseCache(spCtx.EmpresaID)
+			invalidateVendasPeriodoCache(spCtx.EmpresaID)
+		}
 		// Painel BI serve resposta pronta do cache; sem isto a TV continuaria
 		// mostrando o número de antes do import até o TTL vencer.
 		invalidateBICache(spCtx.EmpresaID)
@@ -2532,6 +2662,156 @@ func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 	wg.Wait()
 	log.Printf("[farol:view] prewarmAggMes MVs empresa=%s em %v", empresaID, time.Since(t0))
 	return t0
+}
+
+// ymRange — período de cache em ym (ano*100+mes), inclusivo nas duas pontas.
+type ymRange struct{ ini, fim int }
+
+// periodosComuns — os intervalos que o painel efetivamente pede ao abrir.
+// prewarmAggMesCore só aquece a chave "histórico completo" (ymStart=0), mas
+// fetchCards consulta TAMBÉM o período de referência e o de comparação
+// (cachedDistinctPositivados com ym reais). Eram justamente essas chaves que
+// ficavam frias: no log de 27/07/2026 o login pagou 5,7s/6,6s/10,1s em
+// Indústrias mesmo com o prewarm de boot já concluído.
+func periodosComuns(agora time.Time) []ymRange {
+	ano, mes := agora.Year(), int(agora.Month())
+	ymAtual := ano*100 + mes
+	ymMesAnt := ymAtual - 1
+	if mes == 1 {
+		ymMesAnt = (ano-1)*100 + 12
+	}
+	return []ymRange{
+		{ano*100 + 1, ymAtual},              // YTD do ano corrente
+		{(ano-1)*100 + 1, (ano-1)*100 + 12}, // ano anterior completo (comparativo do YTD)
+		{ymAtual, ymAtual},                  // mês corrente
+		{ymAtual - 100, ymAtual - 100},      // mesmo mês do ano anterior
+		{ymMesAnt, ymMesAnt},                // mês anterior (fechado)
+		{ymMesAnt - 100, ymMesAnt - 100},    // mês anterior do ano anterior
+	}
+}
+
+// prewarmPeriodKeys aquece o baseCache dos períodos de referência/comparação.
+// Complementa prewarmAggMesCore (que cobre só o "histórico completo").
+func prewarmPeriodKeys(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+	posViews := []struct{ view, group string }{
+		{"V01", "cod_fornec"},
+		{"V02", "cod_supervisor"},
+		{"V03", "cod_gerente"},
+	}
+	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
+	periodos := periodosComuns(time.Now())
+
+	const maxParallel = 4
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	for _, fl := range fluxos {
+		for _, v := range posViews {
+			for _, p := range periodos {
+				wg.Add(1)
+				fl, v, p := fl, v, p
+				go func() {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, nil)
+				}()
+			}
+		}
+	}
+	wg.Wait()
+	log.Printf("[farol:view] prewarmPeriodKeys empresa=%s (%d períodos × %d views × %d fluxos) em %v",
+		empresaID, len(periodos), len(posViews), len(fluxos), time.Since(t0))
+}
+
+// PrewarmDiario — aquecimento COMPLETO, pensado para rodar de madrugada/início
+// da manhã (StartDailyPrewarm), quando não há usuários. Diferente do
+// PrewarmStartup, que é deliberadamente enxuto para não competir com tráfego
+// real no boot, aqui vale pagar o custo inteiro: base + períodos + presets
+// diários. Com o TTL de 20h, o que é aquecido às 07:30 cobre o expediente todo.
+func PrewarmDiario(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+	prewarmAggMesCore(db, empresaID)
+	prewarmPeriodKeys(db, empresaID)
+	prewarmDailyRanges(db, empresaID)
+	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
+}
+
+// prewarmHoraDiaria devolve a hora/minuto do aquecimento diário. Default 07:30
+// (antes do expediente e depois da janela de carga automática, 00:01-06:00).
+// Ajustável por FAROL_PREWARM_HORA no formato "HH:MM".
+func prewarmHoraDiaria() (hora, minuto int) {
+	hora, minuto = 7, 30
+	v := strings.TrimSpace(os.Getenv("FAROL_PREWARM_HORA"))
+	if v == "" {
+		return hora, minuto
+	}
+	var h, m int
+	if _, err := fmt.Sscanf(v, "%d:%d", &h, &m); err != nil ||
+		h < 0 || h > 23 || m < 0 || m > 59 {
+		log.Printf("[farol:view] FAROL_PREWARM_HORA=%q inválido, usando %02d:%02d", v, hora, minuto)
+		return hora, minuto
+	}
+	return h, m
+}
+
+// StartDailyPrewarm roda PrewarmDiario todo dia no horário configurado, para
+// TODAS as empresas. Motivação (27/07/2026): com a carga automática diária
+// entrando em produção, toda madrugada o import invalida o cache dos meses que
+// tocou; sem um aquecimento agendado, o primeiro gestor a abrir o painel de
+// manhã pagaria 10-25s por view. O horário local do container é America/
+// Sao_Paulo (definido no Dockerfile), mas a localização é resolvida explicita-
+// mente para não depender disso.
+//
+// Chamar com `go handlers.StartDailyPrewarm(db)` — bloqueia para sempre.
+func StartDailyPrewarm(db *sql.DB) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		loc = time.Local
+		log.Printf("[farol:view] prewarm diário: tz America/Sao_Paulo indisponível (%v), usando hora local", err)
+	}
+	hora, minuto := prewarmHoraDiaria()
+	log.Printf("[farol:view] prewarm diário agendado para %02d:%02d (%s)", hora, minuto, loc)
+
+	for {
+		agora := time.Now().In(loc)
+		prox := time.Date(agora.Year(), agora.Month(), agora.Day(), hora, minuto, 0, 0, loc)
+		if !prox.After(agora) {
+			prox = prox.AddDate(0, 0, 1)
+		}
+		espera := time.Until(prox)
+		log.Printf("[farol:view] prewarm diário: próxima execução %s (em %s)",
+			prox.Format("2006-01-02 15:04"), espera.Truncate(time.Minute))
+		time.Sleep(espera)
+
+		empresas, err := listCompanyIDs(db)
+		if err != nil {
+			log.Printf("[farol:view] prewarm diário: falha ao listar empresas: %v", err)
+			continue
+		}
+		t0 := time.Now()
+		for _, id := range empresas {
+			PrewarmDiario(db, id)
+		}
+		log.Printf("[farol:view] prewarm diário CONCLUÍDO: %d empresa(s) em %v", len(empresas), time.Since(t0))
+	}
+}
+
+// listCompanyIDs — empresas ativas, para os jobs que varrem todas.
+func listCompanyIDs(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT id::text FROM companies`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
 }
 
 // prewarmDailyRanges chama queryAggregatedVendas para os presets diários comuns

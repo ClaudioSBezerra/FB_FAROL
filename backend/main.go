@@ -282,6 +282,13 @@ func onDBConnected() {
 			handlers.PrewarmStartup(database, id)
 		}
 	}()
+
+	// Aquecimento DIÁRIO (default 07:30, FAROL_PREWARM_HORA ajusta). O prewarm
+	// de boot acima é enxuto de propósito; este roda antes do expediente, com o
+	// banco ocioso, e cobre também os períodos de referência/comparação e os
+	// presets diários. Com a carga automática noturna (00:01-06:00) invalidando
+	// o cache dos meses tocados, é ele que garante painel quente às 08:00.
+	go handlers.StartDailyPrewarm(database)
 }
 
 func main() {
