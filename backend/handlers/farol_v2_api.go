@@ -1204,6 +1204,33 @@ func invalidateVendasPeriodoCache(empresaID string) {
 	vendasPeriodoCacheMu.Unlock()
 }
 
+// queryWithHigherWorkMem roda query dentro de uma transação com work_mem
+// elevado, via scan(rows) — usado nos scans pesados do filtro cruzado
+// (UF/Filial), cujo GROUP BY sobre milhões de linhas estourava pro disco
+// com o work_mem padrão (EXPLAIN ANALYZE em produção 27/07/2026 mostrou
+// "Sort Method: external merge" gastando ~120MB de disco por worker).
+// SET LOCAL confina o aumento a esta transação — não afeta o resto do
+// pool de conexões. Mesma técnica já usada em upsert_aggs_mes (SQL).
+func queryWithHigherWorkMem(db *sql.DB, query string, args []any, scan func(*sql.Rows) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SET LOCAL work_mem = '256MB'`); err != nil {
+		log.Printf("[farol:vendas] SET LOCAL work_mem falhou (seguindo sem): %v", err)
+	}
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if err := scan(rows); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // vendasPeriodoQ1 — executa Q1 (scan vendas_*) ou pega do cache por range.
 type vendasPeriodoOutcome struct {
 	result  map[string]aggResult
@@ -1244,20 +1271,21 @@ FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
 GROUP BY v.%s`,
 		groupCol, nameCol, fluxo.tableName, groupCol, rangeCond, cond, groupCol)
-	rows, err := db.Query(q, args...)
+	err := queryWithHigherWorkMem(db, q, args, func(rows *sql.Rows) error {
+		for rows.Next() {
+			var key string
+			var r aggResult
+			if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix, &r.mixTotal) == nil {
+				r.liquido = r.valor // scan da base (filtro cruzado) sem composição → líquido = bruto
+				result[key] = r
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		log.Printf("[farol:vendas] queryAggregatedVendas período nível=%s ERRO: %v", groupCol, err)
 		return vendasPeriodoOutcome{result: result, cached: false, elapsed: time.Since(t1)}
 	}
-	for rows.Next() {
-		var key string
-		var r aggResult
-		if rows.Scan(&key, &r.label, &r.valor, &r.plucro, &r.positivados, &r.mix, &r.mixTotal) == nil {
-			r.liquido = r.valor // scan da base (filtro cruzado) sem composição → líquido = bruto
-			result[key] = r
-		}
-	}
-	rows.Close()
 
 	vendasPeriodoCacheMu.Lock()
 	vendasPeriodoCache[key] = vendasPeriodoCacheEntry{data: result, at: time.Now()}
@@ -1315,7 +1343,7 @@ FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND v.qt > 0 AND %s %s
 GROUP BY v.%s`,
 			groupCol, fluxo.tableName, groupCol, brange, bcond, groupCol)
-		if brows, berr := db.Query(bq, bargs...); berr == nil {
+		berr := queryWithHigherWorkMem(db, bq, bargs, func(brows *sql.Rows) error {
 			for brows.Next() {
 				var key string
 				var base int
@@ -1326,8 +1354,9 @@ GROUP BY v.%s`,
 					}
 				}
 			}
-			brows.Close()
-		} else {
+			return nil
+		})
+		if berr != nil {
 			log.Printf("[farol:vendas] queryAggregatedVendas base12m nível=%s ERRO: %v", groupCol, berr)
 		}
 	}
