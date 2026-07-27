@@ -86,6 +86,16 @@ services:
     # docker-compose.prod.yml, que o Coolify NÃO usa — nunca chegou a valer.
     # Orçamento de ~4GB pro Postgres do FAROL (maior tenant do host, 44GB de
     # dado vs ~9GB do 2º maior) deixando o resto pros outros ~6 projetos.
+    # /dev/shm — o Docker dá 64MB por default, e é ali que o Postgres aloca a
+    # memória compartilhada dinâmica das consultas PARALELAS (fila de tuplas
+    # entre workers, hash compartilhado). Com 18M linhas em vendas_*, os scans
+    # do filtro cruzado rodam em paralelo e estouraram esse teto em 27/07/2026:
+    #   ERRO: could not resize shared memory segment ... No space left on device
+    # A consulta MORRE e o painel mostra 0 cards — falha silenciosa para o
+    # usuário. Agravado pelo SET LOCAL work_mem=256MB (queryWithHigherWorkMem),
+    # que aumenta o tamanho dos segmentos pedidos por worker.
+    # tmpfs: consome RAM só conforme aloca de fato, não reserva 1GB.
+    shm_size: 1gb
     command: >
       postgres
       -c shared_buffers=1GB
