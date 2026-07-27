@@ -258,6 +258,30 @@ func onDBConnected() {
 			}
 		}
 	}
+
+	// Aquece o baseCache (positivados/base_cli) logo após conectar — sem isto,
+	// todo restart do backend (deploy nosso, crash, redeploy do Coolify) zera
+	// o cache em memória e os primeiros usuários reais pagam do zero o custo
+	// do COUNT(DISTINCT cnpj) por view (25-33s, visto em produção 27/07/2026).
+	// Em background: não atrasa o boot nem bloqueia as migrations acima.
+	go func() {
+		rows, err := database.Query(`SELECT id::text FROM companies`)
+		if err != nil {
+			log.Printf("[startup] prewarm: falha ao listar empresas: %v", err)
+			return
+		}
+		defer rows.Close()
+		var empresaIDs []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				empresaIDs = append(empresaIDs, id)
+			}
+		}
+		for _, id := range empresaIDs {
+			handlers.PrewarmStartup(database, id)
+		}
+	}()
 }
 
 func main() {

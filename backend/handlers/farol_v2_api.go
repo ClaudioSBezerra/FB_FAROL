@@ -2294,6 +2294,16 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 // nos períodos YTD atual e anterior. Aquece o cache do PostgreSQL para que o
 // primeiro fetchCards de um login seja tão rápido quanto os subsequentes.
 // Roda em background — não bloqueia a response HTTP nem atrapalha a transação.
+// PrewarmStartup expõe prewarmAggMes para ser chamado no boot do processo
+// (main.go), não só depois de um import. baseCache é só mapa em memória —
+// TODO restart do backend (deploy nosso, crash, redeploy do Coolify) zera
+// o cache, e sem isto os primeiros usuários reais pagam do zero o custo do
+// COUNT(DISTINCT cnpj) de positivação/base_cli (25-33s por view, visto em
+// produção logo após o deploy de 27/07/2026).
+func PrewarmStartup(db *sql.DB, empresaID string) {
+	prewarmAggMes(db, empresaID)
+}
+
 func prewarmAggMes(db *sql.DB, empresaID string) {
 	t0 := time.Now()
 
