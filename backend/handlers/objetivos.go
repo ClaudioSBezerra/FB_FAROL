@@ -277,7 +277,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			seen := make(map[string]int, len(buf))
 			deduped := make([]batchRow, 0, len(buf))
 			for _, row := range buf {
-				key := fmt.Sprintf("%d|%d|%s|%s|%s|%s|%s",
+				key := fmt.Sprintf("%d|%d|%s|%s|%s|%s|%d",
 					row.codSup, row.codRCA, row.codDepto, row.codSec, row.codFornec, row.codProd, row.codCli)
 				if idx, ok := seen[key]; ok {
 					deduped[idx] = row // última ocorrência sobrescreve
@@ -1067,7 +1067,7 @@ func ObjetivosLimparHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		log.Printf("[ObjetivosLimpar] empresa_id=%d deletados=%d", spCtx.EmpresaID, deleted)
+		log.Printf("[ObjetivosLimpar] empresa_id=%s deletados=%d", spCtx.EmpresaID, deleted)
 		json.NewEncoder(w).Encode(map[string]int64{"deleted": deleted})
 	}
 }
