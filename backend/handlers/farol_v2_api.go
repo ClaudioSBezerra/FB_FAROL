@@ -251,18 +251,32 @@ func ym(t time.Time) int { return t.Year()*100 + int(t.Month()) }
 // `mes BETWEEN ymStart%100 AND ymEnd%100` é EXATO e libera o prefixo. Quando
 // cruza o ano não há range simples equivalente — aí omitimos, e a expressão
 // segue sozinha (correto, só não otimizado).
+// ESTIMATIVA (28/07/2026, terceira rodada): emitir ano + mes + a expressão
+// juntos fazia o planner multiplicar seletividades de predicados correlacionados.
+// As duas inequações sobre a EXPRESSÃO recebem estimativa-padrão (~1/3 cada) e
+// entram no produto, então ele previa 1.701 linhas onde havia ~335.000 (EXPLAIN
+// em produção). Subestimar assim leva a escolhas ruins de plano — sort que
+// estoura para disco, nested loop onde caberia hash.
+//
+// Quando o range cabe num ano, `ano = Y AND mes BETWEEN m1..m2` é EXATAMENTE
+// equivalente à expressão (prova: com mes ∈ 1..12, nenhum ano vizinho satisfaz
+// o ym), então a expressão vira ruído puro para o estimador — omitimos.
+// Cruzando o ano ela é insubstituível e continua sendo a única forma.
 func buildMesCond(ymStart, ymEnd int, args *[]any) string {
 	anoIni, anoFim := ymStart/100, ymEnd/100
-	*args = append(*args, anoIni, anoFim, ymStart, ymEnd)
+	*args = append(*args, anoIni, anoFim)
 	n := len(*args)
-	cond := fmt.Sprintf("v.ano BETWEEN $%d AND $%d AND (v.ano * 100 + v.mes) BETWEEN $%d AND $%d",
-		n-3, n-2, n-1, n)
+	cond := fmt.Sprintf("v.ano BETWEEN $%d AND $%d", n-1, n)
+
 	if anoIni == anoFim {
 		*args = append(*args, ymStart%100, ymEnd%100)
 		m := len(*args)
-		cond += fmt.Sprintf(" AND v.mes BETWEEN $%d AND $%d", m-1, m)
+		return cond + fmt.Sprintf(" AND v.mes BETWEEN $%d AND $%d", m-1, m)
 	}
-	return cond
+
+	*args = append(*args, ymStart, ymEnd)
+	m := len(*args)
+	return cond + fmt.Sprintf(" AND (v.ano * 100 + v.mes) BETWEEN $%d AND $%d", m-1, m)
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────

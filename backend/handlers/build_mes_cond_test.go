@@ -15,16 +15,34 @@ func TestBuildMesCondArgsEIndices(t *testing.T) {
 	args := []any{"empresa-uuid"} // $1 já ocupado, como nos call sites reais
 	got := buildMesCond(202601, 202607, &args)
 
-	want := "v.ano BETWEEN $2 AND $3 AND (v.ano * 100 + v.mes) BETWEEN $4 AND $5" +
-		" AND v.mes BETWEEN $6 AND $7"
+	// Mesmo ano → ano + mes, SEM a expressão (ela pioraria a estimativa).
+	want := "v.ano BETWEEN $2 AND $3 AND v.mes BETWEEN $4 AND $5"
 	if got != want {
 		t.Errorf("SQL\n got: %s\nwant: %s", got, want)
 	}
 
-	wantArgs := []any{"empresa-uuid", 2026, 2026, 202601, 202607, 1, 7}
+	wantArgs := []any{"empresa-uuid", 2026, 2026, 1, 7}
 	if len(args) != len(wantArgs) {
 		t.Fatalf("len(args) = %d, want %d (%v)", len(args), len(wantArgs), args)
 	}
+	for i := range wantArgs {
+		if args[i] != wantArgs[i] {
+			t.Errorf("args[%d] = %v, want %v", i, args[i], wantArgs[i])
+		}
+	}
+}
+
+// TestBuildMesCondCruzandoAnoUsaExpressao — cruzando o ano não há range simples
+// equivalente, então a expressão é insubstituível e PRECISA aparecer.
+func TestBuildMesCondCruzandoAnoUsaExpressao(t *testing.T) {
+	args := []any{"e"}
+	got := buildMesCond(202511, 202602, &args)
+
+	want := "v.ano BETWEEN $2 AND $3 AND (v.ano * 100 + v.mes) BETWEEN $4 AND $5"
+	if got != want {
+		t.Errorf("SQL\n got: %s\nwant: %s", got, want)
+	}
+	wantArgs := []any{"e", 2025, 2026, 202511, 202602}
 	for i := range wantArgs {
 		if args[i] != wantArgs[i] {
 			t.Errorf("args[%d] = %v, want %v", i, args[i], wantArgs[i])
@@ -111,41 +129,43 @@ func TestBuildMesCondPredicadoDeMes(t *testing.T) {
 			if temMes != c.querMes {
 				t.Fatalf("emitiu mes=%t, queria %t — SQL: %s", temMes, c.querMes, got)
 			}
+			// Layout dos args: [$1 pré-existente, anoIni, anoFim, X, Y]
+			// onde X,Y = mesIni,mesFim (mesmo ano) ou ymIni,ymFim (cruzando).
+			if len(args) != 5 {
+				t.Fatalf("esperava 5 args, tem %d: %v", len(args), args)
+			}
 			if !c.querMes {
-				if len(args) != 5 {
-					t.Errorf("sem predicado de mes deve haver 5 args, tem %d: %v", len(args), args)
-				}
 				return
 			}
-			if args[5] != c.mesIni || args[6] != c.mesFim {
-				t.Errorf("mes = [%v..%v], want [%d..%d]", args[5], args[6], c.mesIni, c.mesFim)
+			if args[3] != c.mesIni || args[4] != c.mesFim {
+				t.Errorf("mes = [%v..%v], want [%d..%d]", args[3], args[4], c.mesIni, c.mesFim)
 			}
 		})
 	}
 }
 
-// TestBuildMesCondMesNaoAlteraResultado — prova exaustiva de que o predicado de
-// mês, quando emitido, aceita exatamente as mesmas linhas que a expressão. Se
-// divergisse, o painel mostraria número ERRADO — não só plano diferente.
+// TestBuildMesCondMesNaoAlteraResultado — a prova que sustenta a REMOÇÃO da
+// expressão no caso de mesmo ano. `ano BETWEEN Y AND Y AND mes BETWEEN m1..m2`
+// tem que aceitar EXATAMENTE as mesmas linhas que `(ano*100+mes) BETWEEN ym1
+// AND ym2`. Se divergisse, o painel mostraria número ERRADO — não é questão de
+// plano, é de resultado. Varre todos os meses de 2024..2028.
 func TestBuildMesCondMesNaoAlteraResultado(t *testing.T) {
-	// Só ranges dentro de um mesmo ano: são os únicos que emitem o predicado.
+	// Só ranges dentro de um mesmo ano: são os únicos que trocam a expressão.
 	ranges := [][2]int{
 		{202601, 202607}, {202606, 202606}, {202501, 202512}, {202503, 202509},
 	}
 	for _, r := range ranges {
 		ymIni, ymFim := r[0], r[1]
-		mesIni, mesFim := ymIni%100, ymFim%100
 		anoIni, anoFim := ymIni/100, ymFim/100
+		mesIni, mesFim := ymIni%100, ymFim%100
 		for ano := 2024; ano <= 2028; ano++ {
 			for mes := 1; mes <= 12; mes++ {
 				ymLinha := ano*100 + mes
-				peloWhereCompleto := ano >= anoIni && ano <= anoFim &&
-					ymLinha >= ymIni && ymLinha <= ymFim &&
-					mes >= mesIni && mes <= mesFim
-				soPelaExpressao := ymLinha >= ymIni && ymLinha <= ymFim
-				if peloWhereCompleto != soPelaExpressao {
-					t.Errorf("range [%d..%d]: ano=%d mes=%d divergiu (completo=%t expressão=%t)",
-						ymIni, ymFim, ano, mes, peloWhereCompleto, soPelaExpressao)
+				novo := ano >= anoIni && ano <= anoFim && mes >= mesIni && mes <= mesFim
+				antigo := ymLinha >= ymIni && ymLinha <= ymFim
+				if novo != antigo {
+					t.Errorf("range [%d..%d]: ano=%d mes=%d divergiu (novo=%t antigo=%t)",
+						ymIni, ymFim, ano, mes, novo, antigo)
 				}
 			}
 		}
