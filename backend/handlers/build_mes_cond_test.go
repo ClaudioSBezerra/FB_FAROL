@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,12 +15,13 @@ func TestBuildMesCondArgsEIndices(t *testing.T) {
 	args := []any{"empresa-uuid"} // $1 já ocupado, como nos call sites reais
 	got := buildMesCond(202601, 202607, &args)
 
-	want := "v.ano BETWEEN $2 AND $3 AND (v.ano * 100 + v.mes) BETWEEN $4 AND $5"
+	want := "v.ano BETWEEN $2 AND $3 AND (v.ano * 100 + v.mes) BETWEEN $4 AND $5" +
+		" AND v.mes BETWEEN $6 AND $7"
 	if got != want {
 		t.Errorf("SQL\n got: %s\nwant: %s", got, want)
 	}
 
-	wantArgs := []any{"empresa-uuid", 2026, 2026, 202601, 202607}
+	wantArgs := []any{"empresa-uuid", 2026, 2026, 202601, 202607, 1, 7}
 	if len(args) != len(wantArgs) {
 		t.Fatalf("len(args) = %d, want %d (%v)", len(args), len(wantArgs), args)
 	}
@@ -79,6 +81,71 @@ func TestBuildMesCondImplicadoPelaExpressao(t *testing.T) {
 				if incluidaPelaExpressao && !aceitaPeloAno {
 					t.Errorf("range [%d..%d]: linha ano=%d mes=%d passa na expressão mas o predicado de ano a exclui",
 						ymIni, ymFim, ano, mes)
+				}
+			}
+		}
+	}
+}
+
+// TestBuildMesCondPredicadoDeMes — o `mes BETWEEN` só é emitido quando o range
+// cabe num único ano; cruzando o ano não há range simples equivalente e ele
+// PRECISA ser omitido (senão [2025-11..2026-02] viraria mes 11..2, vazio).
+func TestBuildMesCondPredicadoDeMes(t *testing.T) {
+	casos := []struct {
+		nome           string
+		ymIni, ymFim   int
+		querMes        bool
+		mesIni, mesFim int
+	}{
+		{"mes unico", 202606, 202606, true, 6, 6},
+		{"ytd mesmo ano", 202601, 202607, true, 1, 7},
+		{"ano cheio", 202501, 202512, true, 1, 12},
+		{"cruza o ano", 202511, 202602, false, 0, 0},
+		{"historico completo", 0, 999912, false, 0, 0},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			args := []any{"e"}
+			got := buildMesCond(c.ymIni, c.ymFim, &args)
+			temMes := strings.Contains(got, "v.mes BETWEEN")
+			if temMes != c.querMes {
+				t.Fatalf("emitiu mes=%t, queria %t — SQL: %s", temMes, c.querMes, got)
+			}
+			if !c.querMes {
+				if len(args) != 5 {
+					t.Errorf("sem predicado de mes deve haver 5 args, tem %d: %v", len(args), args)
+				}
+				return
+			}
+			if args[5] != c.mesIni || args[6] != c.mesFim {
+				t.Errorf("mes = [%v..%v], want [%d..%d]", args[5], args[6], c.mesIni, c.mesFim)
+			}
+		})
+	}
+}
+
+// TestBuildMesCondMesNaoAlteraResultado — prova exaustiva de que o predicado de
+// mês, quando emitido, aceita exatamente as mesmas linhas que a expressão. Se
+// divergisse, o painel mostraria número ERRADO — não só plano diferente.
+func TestBuildMesCondMesNaoAlteraResultado(t *testing.T) {
+	// Só ranges dentro de um mesmo ano: são os únicos que emitem o predicado.
+	ranges := [][2]int{
+		{202601, 202607}, {202606, 202606}, {202501, 202512}, {202503, 202509},
+	}
+	for _, r := range ranges {
+		ymIni, ymFim := r[0], r[1]
+		mesIni, mesFim := ymIni%100, ymFim%100
+		anoIni, anoFim := ymIni/100, ymFim/100
+		for ano := 2024; ano <= 2028; ano++ {
+			for mes := 1; mes <= 12; mes++ {
+				ymLinha := ano*100 + mes
+				peloWhereCompleto := ano >= anoIni && ano <= anoFim &&
+					ymLinha >= ymIni && ymLinha <= ymFim &&
+					mes >= mesIni && mes <= mesFim
+				soPelaExpressao := ymLinha >= ymIni && ymLinha <= ymFim
+				if peloWhereCompleto != soPelaExpressao {
+					t.Errorf("range [%d..%d]: ano=%d mes=%d divergiu (completo=%t expressão=%t)",
+						ymIni, ymFim, ano, mes, peloWhereCompleto, soPelaExpressao)
 				}
 			}
 		}

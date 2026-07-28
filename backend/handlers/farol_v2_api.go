@@ -241,11 +241,28 @@ func ym(t time.Time) int { return t.Year()*100 + int(t.Month()) }
 //
 // O redundante é implicado pela expressão (com mes ∈ 1..12, nunca exclui linha
 // que a expressão incluiria), então não altera resultado — só o plano.
+// PREDICADO DE MÊS (28/07/2026, segunda rodada): o mesmo defeito existia um
+// nível abaixo. A PK das folhas é (ano, empresa_id, mes, cod_fornec, ..., cnpj)
+// — dentro de uma partição o `ano` é constante e `empresa_id` é igualdade, então
+// faltava só um `mes` direto para fechar um prefixo apertado. Com a expressão
+// sozinha, `mes` só dava para filtrar tupla a tupla.
+//
+// Quando o range cabe num único ano (o caso comum: mês corrente, YoY, YTD),
+// `mes BETWEEN ymStart%100 AND ymEnd%100` é EXATO e libera o prefixo. Quando
+// cruza o ano não há range simples equivalente — aí omitimos, e a expressão
+// segue sozinha (correto, só não otimizado).
 func buildMesCond(ymStart, ymEnd int, args *[]any) string {
-	*args = append(*args, ymStart/100, ymEnd/100, ymStart, ymEnd)
+	anoIni, anoFim := ymStart/100, ymEnd/100
+	*args = append(*args, anoIni, anoFim, ymStart, ymEnd)
 	n := len(*args)
-	return fmt.Sprintf("v.ano BETWEEN $%d AND $%d AND (v.ano * 100 + v.mes) BETWEEN $%d AND $%d",
+	cond := fmt.Sprintf("v.ano BETWEEN $%d AND $%d AND (v.ano * 100 + v.mes) BETWEEN $%d AND $%d",
 		n-3, n-2, n-1, n)
+	if anoIni == anoFim {
+		*args = append(*args, ymStart%100, ymEnd%100)
+		m := len(*args)
+		cond += fmt.Sprintf(" AND v.mes BETWEEN $%d AND $%d", m-1, m)
+	}
+	return cond
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
