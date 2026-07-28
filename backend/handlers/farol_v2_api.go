@@ -224,11 +224,28 @@ func isCompleteMonthRange(start, end time.Time) bool {
 // ym converte uma data no inteiro ano*100+mes usado nas cláusulas WHERE das agg_*_mes.
 func ym(t time.Time) int { return t.Year()*100 + int(t.Month()) }
 
-// buildMesCond monta `(v.ano * 100 + v.mes) BETWEEN $N AND $M` para tabelas agg_*_mes.
+// buildMesCond monta a cláusula de período das tabelas agg_*_mes.
+//
+// PARTITION PRUNING (28/07/2026): as agg_* são PARTITION BY RANGE (ano) desde a
+// mig 162, com partições 2025/2026/2027. Mas a condição era só a expressão
+// `(v.ano * 100 + v.mes) BETWEEN ...`, e o planner NÃO consegue derivar dali um
+// predicado sobre a coluna de partição — resultado: toda consulta lia as três
+// partições, mesmo pedindo um único mês. O particionamento estava pago e sem uso.
+// O mesmo valia para o índice (empresa_id, groupCol, ano, mes, cnpj) da mig 179,
+// onde `ano` virava filtro por tupla em vez de range de índice.
+//
+// Agora emitimos TAMBÉM `v.ano BETWEEN` — redundante do ponto de vista lógico,
+// mas é ele que habilita o pruning. A expressão continua garantindo a exatidão
+// nas bordas (ex: [2025-11..2026-02] pruna para {2025,2026} e a expressão
+// exclui 2025-01..10 e 2026-03..12 dentro dessas partições).
+//
+// O redundante é implicado pela expressão (com mes ∈ 1..12, nunca exclui linha
+// que a expressão incluiria), então não altera resultado — só o plano.
 func buildMesCond(ymStart, ymEnd int, args *[]any) string {
-	*args = append(*args, ymStart, ymEnd)
+	*args = append(*args, ymStart/100, ymEnd/100, ymStart, ymEnd)
 	n := len(*args)
-	return fmt.Sprintf("(v.ano * 100 + v.mes) BETWEEN $%d AND $%d", n-1, n)
+	return fmt.Sprintf("v.ano BETWEEN $%d AND $%d AND (v.ano * 100 + v.mes) BETWEEN $%d AND $%d",
+		n-3, n-2, n-1, n)
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -2899,12 +2916,26 @@ func listCompanyIDs(db *sql.DB) ([]string, error) {
 	return ids, rows.Err()
 }
 
-// prewarmDailyRanges chama queryAggregatedVendas para os presets diários comuns
-// (dia anterior, 7d, 30d) em todas as views L0 × 2 fluxos. Popula o cache de Q1
-// para que o primeiro clique do usuário seja instantâneo (Q1 hit <100µs).
+// prewarmDailyRanges chama queryAggregatedVendas para os presets deslizantes
+// curtos, populando o cache de Q1 (hit <100µs no clique do usuário).
 //
-// Concorrência limitada via semaphore (semaphoreChan) para não saturar o pool
-// de conexões. 6 em paralelo = mesmo padrão dos dims.
+// ESCOPO REDUZIDO (28/07/2026). Antes: 3 views × 3 ranges × 2 fluxos ×
+// (atual+comp) = 36 scans em vendas_* (18M linhas) com maxParallel=6. Cada scan
+// roda TRÊS COUNT(DISTINCT) — incluindo o composto (cnpj, cod_prod) — que o
+// Postgres resolve por ordenação, uma passada cada. Medido em produção em
+// 28/07: Q1 de até 50,9s e PrewarmDiario de 1m7s, seis scans concorrentes
+// saturando I/O e arrastando até as queries que deveriam ser baratas.
+//
+// O trade não se pagava: o preset PADRÃO do login é YTD/mês corrente, servido
+// pelas agg_*_mes em ~20-90ms — não depende deste prewarm. Estes presets são
+// cliques opcionais. Pior: o TTL é 20h mas as chaves são datas ABSOLUTAS, então
+// "últimos 7 dias" de amanhã é chave nova — a martelada se repetiria todo dia,
+// permanentemente, para acelerar um botão secundário.
+//
+// Agora: só V01 (view que o painel abre por padrão) e só as janelas baratas
+// (1 e 7 dias). O "30 dias" — de longe o mais caro, ~950k linhas — passa a ser
+// calculado sob demanda e cacheado no primeiro clique. maxParallel=2 para não
+// repetir a contenção. Total: 8 scans leves em vez de 36 pesados.
 func prewarmDailyRanges(db *sql.DB, empresaID string) {
 	today := time.Now().UTC()
 	yesterday := today.AddDate(0, 0, -1)
@@ -2916,18 +2947,15 @@ func prewarmDailyRanges(db *sql.DB, empresaID string) {
 	}{
 		{"dia_anterior", yesterday, yesterday, yesterday.AddDate(0, 0, -7), yesterday.AddDate(0, 0, -7)},
 		{"7d", today.AddDate(0, 0, -6), today, today.AddDate(0, 0, -13), today.AddDate(0, 0, -7)},
-		{"30d", today.AddDate(0, 0, -29), today, today.AddDate(0, 0, -59), today.AddDate(0, 0, -30)},
 	}
 
 	type vc struct{ view, group, name string }
 	views := []vc{
 		{"V01", "cod_fornec", "nome_fornec"},
-		{"V02", "cod_supervisor", "nome_supervisor"},
-		{"V03", "cod_gerente", "nome_gerente"},
 	}
 	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
 
-	const maxParallel = 6
+	const maxParallel = 2
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
