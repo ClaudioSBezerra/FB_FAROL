@@ -1445,7 +1445,7 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 		// (evita scan caro; a positivação é escondida na UI nesses casos).
 	} else if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
 		// Caminho rápido: folha com cache.
-		baseMap := cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
+		baseMap, _ := cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
 		for k, v := range baseMap {
 			if r, ok := result[k]; ok {
 				r.baseCli = v
@@ -1667,26 +1667,40 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	// a carteira do Keslley — que segue no banco, só não é exibida). Ambos lidos
 	// da folha (grão cnpj). vendas_* (filtro cruzado) e produto já contam distinto.
 	if useAggMes && leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
+		tPos := time.Now()
 		var base, refPos, antPos map[string]int
+		var baseHit, refHit, antHit bool
+		var baseDur, refDur, antDur time.Duration
 		var wgPos sync.WaitGroup
 		wgPos.Add(1)
 		go func() {
 			defer wgPos.Done()
-			base = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters)
+			t := time.Now()
+			base, baseHit = queryBasePositivados(db, empresaID, fluxo, view, groupCol, drillPath, filters)
+			baseDur = time.Since(t)
 		}()
 		wgPos.Add(1)
 		go func() {
 			defer wgPos.Done()
-			refPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+			t := time.Now()
+			refPos, refHit = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+			refDur = time.Since(t)
 		}()
 		if hasComp {
 			wgPos.Add(1)
 			go func() {
 				defer wgPos.Done()
-				antPos = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+				t := time.Now()
+				antPos, antHit = cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+				antDur = time.Since(t)
 			}()
 		}
 		wgPos.Wait()
+		// Instrumentação do bloco que ficava invisível no log: cada COUNT(DISTINCT
+		// cnpj) na folha (base=0..999912 é o mais caro, sem índice pro BETWEEN
+		// calculado ano*100+mes). hit=cache válido (TTL 20h); miss=query real.
+		log.Printf("[farol:posit] fetchCards fluxo=%s nível=%s base=%v(hit=%t) ref=%v(hit=%t) ant=%v(hit=%t) total=%v",
+			fluxo.name, groupCol, baseDur, baseHit, refDur, refHit, antDur, antHit, time.Since(tPos))
 
 		for k, r := range atualMap {
 			r.positivados = refPos[k]
@@ -2213,18 +2227,21 @@ func baseCacheKey(empresaID, fluxoName, view, groupCol string, ymStart, ymEnd in
 }
 
 // queryBasePositivados retorna a base (período inteiro) com cache em memória.
-func queryBasePositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) map[string]int {
+func queryBasePositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) (map[string]int, bool) {
 	return cachedDistinctPositivados(db, empresaID, fluxo, view, groupCol, 0, 999912, drillPath, filters)
 }
 
 // cachedDistinctPositivados envolve queryDistinctPositivados com cache em memória.
 // Ref/ant do fetchCards compartilham o cache entre views no mesmo login.
-func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) map[string]int {
+// O bool devolvido (hit) existe só para instrumentação (ver fetchCards) — sem
+// ele, um cache MISS caro no "base" (histórico todo, sem índice para o BETWEEN
+// calculado) é indistinguível de contenção externa no log de fetchCards.
+func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) (map[string]int, bool) {
 	key := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymStart, ymEnd, drillPath, filters)
 	baseCacheMu.RLock()
 	if e, ok := baseCache[key]; ok && time.Since(e.at) < baseCacheTTL {
 		baseCacheMu.RUnlock()
-		return e.data
+		return e.data, true
 	}
 	baseCacheMu.RUnlock()
 
@@ -2232,7 +2249,7 @@ func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, vie
 	baseCacheMu.Lock()
 	baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
 	baseCacheMu.Unlock()
-	return data
+	return data, false
 }
 
 // queryDistinctPositivados — CONCEITO OFICIAL do gestor: clientes positivados =
