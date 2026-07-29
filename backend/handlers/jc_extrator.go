@@ -29,6 +29,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -59,6 +60,24 @@ var colunasJC = []string{
 	"QTUNIT", "QTUNITCX", "QT",
 	"PVENDA", "PVENDA_TOTAL", "PLUCRO",
 	"CONDVENDA", "DESC_CONDVENDA",
+}
+
+// delimitadorCSVJC — PONTO-E-VÍRGULA, não vírgula.
+//
+// O importador lê com `csvReader.Comma = ';'` (farol_v2_import.go:297), padrão
+// brasileiro que o ION VENDAS gera. Na 1ª versão usei o default do
+// encoding/csv (vírgula) e o resultado foi silencioso e total: cada linha virou
+// um campo único, o mapeamento de cabeçalho não achou coluna nenhuma, e as
+// 152.599 linhas extraídas foram rejeitadas com "nenhuma linha válida
+// encontrada no arquivo". A extração parecia perfeita nos logs.
+const delimitadorCSVJC = ';'
+
+// novoEscritorCSVJC centraliza a configuração do CSV para que ela seja testável
+// sem precisar do Oracle — é o que faltava para pegar o erro acima no build.
+func novoEscritorCSVJC(w io.Writer) *csv.Writer {
+	c := csv.NewWriter(w)
+	c.Comma = delimitadorCSVJC
+	return c
 }
 
 // ResultadoExtracao — tudo que o e-mail de resumo precisa relatar.
@@ -189,7 +208,7 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 	}
 
 	gz := gzip.NewWriter(f)
-	w := csv.NewWriter(gz)
+	w := novoEscritorCSVJC(gz)
 
 	// Fecha na ordem inversa e propaga erro — CSV truncado por falha de escrita
 	// seria importado como "dia com menos venda", que é pior que erro explícito.

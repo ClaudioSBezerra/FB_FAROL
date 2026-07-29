@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"strings"
 	"testing"
 	"time"
@@ -153,6 +155,143 @@ func TestCorpoResumoDenunciaEstadoDesconhecido(t *testing.T) {
 	_, corpo := corpoResumoJC(res)
 	if !strings.Contains(corpo, "BONIFICADO") || !strings.Contains(corpo, "não previsto") {
 		t.Errorf("estado desconhecido deveria ser destacado, corpo:\n%s", corpo)
+	}
+}
+
+// TestCSVIdaEVoltaPeloParserDoImportador — o teste que faltava.
+//
+// Em 29/07 a extração leu 152.599 linhas do Oracle, gerou o CSV, e o importador
+// rejeitou TUDO com "nenhuma linha válida": eu escrevi com vírgula e ele lê com
+// `;` (farol_v2_import.go:297). Nada no build acusava, e os logs da extração
+// pareciam perfeitos — o erro só apareceu na coluna `importados` do job.
+//
+// Este teste escreve com o nosso escritor e lê com EXATAMENTE a configuração do
+// importador, depois refaz o mapeamento de cabeçalho dele. Se o delimitador
+// divergir de novo, quebra aqui.
+func TestCSVIdaEVoltaPeloParserDoImportador(t *testing.T) {
+	linha := []string{
+		"2026-07-28", "202607", "FATURADO",
+		"1", "GERENTE UM", "10", "SUPERVISOR X", "5",
+		"100", "RCA CEM", "250",
+		"F01", "NESTLE BRASIL",
+		"1", "MERCEARIA", "2", "BISCOITOS", "3", "RECHEADO",
+		"9", "1234", "CLIENTE TESTE", "FANTASIA TESTE",
+		"7", "SUPERMERCADO", "12345678000199", "SP", "EMPRESA 1",
+		"555", "BISCOITO REC 140G", "7891000100103", "CX",
+		"1", "24", "10",
+		"5.50", "55.00", "12.30",
+		"1", "VENDA PADRAO",
+	}
+	if len(linha) != len(colunasJC) {
+		t.Fatalf("linha de teste com %d campos, colunasJC tem %d", len(linha), len(colunasJC))
+	}
+
+	var buf bytes.Buffer
+	w := novoEscritorCSVJC(&buf)
+	if err := w.Write(colunasJC); err != nil {
+		t.Fatalf("cabeçalho: %v", err)
+	}
+	if err := w.Write(linha); err != nil {
+		t.Fatalf("linha: %v", err)
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	// ── Daqui pra baixo, EXATAMENTE como o importador lê ────────────────────
+	r := csv.NewReader(bytes.NewReader(buf.Bytes()))
+	r.Comma = ';'
+	r.LazyQuotes = true
+	r.TrimLeadingSpace = true
+	r.FieldsPerRecord = -1
+
+	header, err := r.Read()
+	if err != nil {
+		t.Fatalf("importador não leu o cabeçalho: %v", err)
+	}
+	if len(header) != len(colunasJC) {
+		t.Fatalf("importador viu %d colunas, deveria ver %d — delimitador divergente?",
+			len(header), len(colunasJC))
+	}
+
+	// Mesma normalização do importador (minúsculo, sem espaço, sem underscore).
+	norm := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = strings.ReplaceAll(s, " ", "")
+		s = strings.ReplaceAll(s, "_", "")
+		return s
+	}
+	colMap := map[string]int{}
+	for i, h := range header {
+		colMap[norm(h)] = i
+	}
+
+	dados, err := r.Read()
+	if err != nil {
+		t.Fatalf("importador não leu a linha de dados: %v", err)
+	}
+
+	// As colunas que o importador procura, com o nome que ele usa na busca.
+	esperado := map[string]string{
+		"data":            "2026-07-28",
+		"estado":          "FATURADO",
+		"codepto":         "1",
+		"qtrcasupervisor": "5",
+		"qtclirca":        "250",
+		"codusur":         "100",
+		"codfornec":       "F01",
+		"cnpj":            "12345678000199",
+		"pvenda":          "5.50",
+		"pvendatotal":     "55.00",
+		"plucro":          "12.30",
+		"condvenda":       "1",
+		"desccondvenda":   "VENDA PADRAO",
+	}
+	for chave, quero := range esperado {
+		idx, ok := colMap[chave]
+		if !ok {
+			t.Errorf("importador NÃO encontraria a coluna %q", chave)
+			continue
+		}
+		if got := dados[idx]; got != quero {
+			t.Errorf("coluna %q = %q, queria %q", chave, got, quero)
+		}
+	}
+}
+
+// TestDelimitadorBateComOImportador — trava o valor. Se alguém mudar o
+// delimitador de um lado sem o outro, quebra aqui em vez de em produção.
+func TestDelimitadorBateComOImportador(t *testing.T) {
+	if delimitadorCSVJC != ';' {
+		t.Errorf("delimitador = %q, mas o importador lê com ';' (farol_v2_import.go:297)",
+			delimitadorCSVJC)
+	}
+}
+
+// TestCSVEscapaCampoComDelimitador — nome de cliente com `;` no meio (acontece)
+// não pode partir a linha em duas colunas.
+func TestCSVEscapaCampoComDelimitador(t *testing.T) {
+	var buf bytes.Buffer
+	w := novoEscritorCSVJC(&buf)
+	w.Write([]string{"A", "B", "C"})
+	w.Write([]string{"x", "COMERCIO; INDUSTRIA LTDA", "z"})
+	w.Flush()
+
+	r := csv.NewReader(bytes.NewReader(buf.Bytes()))
+	r.Comma = ';'
+	r.LazyQuotes = true
+	r.FieldsPerRecord = -1
+	r.Read() // cabeçalho
+	linha, err := r.Read()
+	if err != nil {
+		t.Fatalf("leitura: %v", err)
+	}
+	if len(linha) != 3 {
+		t.Fatalf("campo com ';' partiu a linha em %d colunas: %v", len(linha), linha)
+	}
+	if linha[1] != "COMERCIO; INDUSTRIA LTDA" {
+		t.Errorf("campo = %q, queria %q", linha[1], "COMERCIO; INDUSTRIA LTDA")
 	}
 }
 
