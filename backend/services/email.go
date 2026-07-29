@@ -2,6 +2,7 @@ package services
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"log"
@@ -127,6 +128,34 @@ func sendMailSSL(config *EmailConfig, to []string, msg []byte) error {
 	}
 
 	return writer.Close()
+}
+
+// SendPlainReport envia um e-mail de texto simples para vários destinatários.
+// Existe para relatórios operacionais (ex.: resumo da carga automática do JC),
+// onde o conteúdo é curto e precisa ser legível em qualquer cliente de e-mail —
+// inclusive notificação de celular, que costuma mostrar só o começo do corpo.
+//
+// Devolve erro se o SMTP não estiver configurado, em vez de falhar em silêncio:
+// um relatório que não chega é indistinguível de um job que não rodou.
+func SendPlainReport(to []string, subject, body string) error {
+	if len(to) == 0 {
+		return fmt.Errorf("nenhum destinatário informado")
+	}
+	config := GetEmailConfig()
+	if config.Username == "" || config.Password == "" {
+		return fmt.Errorf("SMTP não configurado (SMTP_USER/SMTP_PASSWORD ausentes)")
+	}
+
+	// Assunto em UTF-8 codificado (RFC 2047) — sem isso, acentos viram lixo em
+	// vários clientes.
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: =?UTF-8?B?%s?=\r\n"+
+		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		config.From,
+		strings.Join(to, ", "),
+		base64.StdEncoding.EncodeToString([]byte(subject)),
+		body,
+	)
+	return sendMailSSL(config, to, []byte(msg))
 }
 
 // SendPasswordResetEmail sends a password reset email to the user

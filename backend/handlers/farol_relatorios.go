@@ -15,25 +15,25 @@ import (
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
 type VendaExtrato struct {
-	Ano             int64   `json:"ano"`
-	Mes             int64   `json:"mes"`
-	Periodo         string  `json:"periodo"`
-	NomeProd        string  `json:"nome_prod"`
-	NomeCli         string  `json:"nome_cli"`
-	CNPJ            string  `json:"cnpj"`
-	CodFornec       string  `json:"cod_fornec"`
-	NomeFornec      string  `json:"nome_fornec"`
-	QtNFs           int64   `json:"qt_nfs"`
-	QtTotal         float64 `json:"qt_total"`
-	ValorVenda      float64 `json:"valor_venda"`
-	ValorLucro      float64 `json:"valor_lucro"`
-	TicketMedioNF   float64 `json:"ticket_medio_nf"`
-	PrecoMedioUnit  float64 `json:"preco_medio_unit"`
+	Ano            int64   `json:"ano"`
+	Mes            int64   `json:"mes"`
+	Periodo        string  `json:"periodo"`
+	NomeProd       string  `json:"nome_prod"`
+	NomeCli        string  `json:"nome_cli"`
+	CNPJ           string  `json:"cnpj"`
+	CodFornec      string  `json:"cod_fornec"`
+	NomeFornec     string  `json:"nome_fornec"`
+	QtNFs          int64   `json:"qt_nfs"`
+	QtTotal        float64 `json:"qt_total"`
+	ValorVenda     float64 `json:"valor_venda"`
+	ValorLucro     float64 `json:"valor_lucro"`
+	TicketMedioNF  float64 `json:"ticket_medio_nf"`
+	PrecoMedioUnit float64 `json:"preco_medio_unit"`
 }
 
 type RelatorioExtratoResponse struct {
-	Dados    []VendaExtrato `json:"dados"`
-	Produto  struct {
+	Dados   []VendaExtrato `json:"dados"`
+	Produto struct {
 		Cod  string `json:"cod"`
 		Nome string `json:"nome"`
 	} `json:"produto"`
@@ -190,4 +190,3 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(resp)
 	}
 }
-

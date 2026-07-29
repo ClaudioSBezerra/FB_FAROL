@@ -147,14 +147,14 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			r.URL.Query().Get("periodo_seq"))
 
 		type rcaItem struct {
-			CodRCA       int     `json:"cod_rca"`
-			NomeRCA      string  `json:"nome_rca"`
-			Pct          float64 `json:"pct"`
-			Cor          string  `json:"cor"`
-			VlAnterior   float64 `json:"vl_anterior"`
-			VlCorrente   float64 `json:"vl_corrente"`
-			QtdFornec    int     `json:"qtd_fornec"`
-			QtdAbaixo    int     `json:"qtd_abaixo"`
+			CodRCA     int     `json:"cod_rca"`
+			NomeRCA    string  `json:"nome_rca"`
+			Pct        float64 `json:"pct"`
+			Cor        string  `json:"cor"`
+			VlAnterior float64 `json:"vl_anterior"`
+			VlCorrente float64 `json:"vl_corrente"`
+			QtdFornec  int     `json:"qtd_fornec"`
+			QtdAbaixo  int     `json:"qtd_abaixo"`
 		}
 		type periodoOut struct {
 			Tipo  string `json:"tipo"`
@@ -169,12 +169,12 @@ func FarolSupervisorHandler(db *sql.DB) http.HandlerFunc {
 			VlCorrente float64 `json:"vl_corrente"`
 		}
 		type resp struct {
-			CodSupervisor int          `json:"cod_supervisor"`
-			Nome          string       `json:"nome"`
-			EmpresaID     string       `json:"empresa_id"`
-			Periodo       *periodoOut  `json:"periodo"`
-			FarolGeral    farolGeral   `json:"farol_geral"`
-			Rcas          []rcaItem    `json:"rcas"`
+			CodSupervisor int         `json:"cod_supervisor"`
+			Nome          string      `json:"nome"`
+			EmpresaID     string      `json:"empresa_id"`
+			Periodo       *periodoOut `json:"periodo"`
+			FarolGeral    farolGeral  `json:"farol_geral"`
+			Rcas          []rcaItem   `json:"rcas"`
 		}
 
 		out := resp{
@@ -316,12 +316,12 @@ func FarolRcaDetailHandler(db *sql.DB) http.HandlerFunc {
 			VlCorrente float64 `json:"vl_corrente"`
 		}
 		type fornec struct {
-			CodFornec      string         `json:"cod_fornec"`
-			Fornecedor     string         `json:"fornecedor"`
-			Pct            float64        `json:"pct"`
-			Cor            string         `json:"cor"`
-			VlAnterior     float64        `json:"vl_anterior"`
-			VlCorrente     float64        `json:"vl_corrente"`
+			CodFornec      string          `json:"cod_fornec"`
+			Fornecedor     string          `json:"fornecedor"`
+			Pct            float64         `json:"pct"`
+			Cor            string          `json:"cor"`
+			VlAnterior     float64         `json:"vl_anterior"`
+			VlCorrente     float64         `json:"vl_corrente"`
 			ProdutosAbaixo []produtoAbaixo `json:"produtos_abaixo"`
 		}
 		type periodoOut struct {

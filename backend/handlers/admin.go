@@ -312,12 +312,12 @@ func DiagnoseV01BaseCliHandler(db *sql.DB) http.HandlerFunc {
 
 		// 2. Amostra de base_cli atual no agg_fat_v01_l0_mes (últimos 2 meses)
 		type aggRow struct {
-			Empresa    string `json:"empresa_id"`
-			Ano        int    `json:"ano"`
-			Mes        int    `json:"mes"`
-			CodFornec  string `json:"cod_fornec"`
-			BaseCli    int    `json:"base_cli"`
-			Positivados int   `json:"positivados"`
+			Empresa     string `json:"empresa_id"`
+			Ano         int    `json:"ano"`
+			Mes         int    `json:"mes"`
+			CodFornec   string `json:"cod_fornec"`
+			BaseCli     int    `json:"base_cli"`
+			Positivados int    `json:"positivados"`
 		}
 		aggRows := []aggRow{}
 		rs, err := db.Query(`
@@ -344,8 +344,8 @@ func DiagnoseV01BaseCliHandler(db *sql.DB) http.HandlerFunc {
 
 		// 3. Rolling 12M real por fornecedor (top 20 por compradores)
 		type roll12Row struct {
-			CodFornec  string `json:"cod_fornec"`
-			Compradores int   `json:"compradores_12m"`
+			CodFornec   string `json:"cod_fornec"`
+			Compradores int    `json:"compradores_12m"`
 		}
 		roll12 := []roll12Row{}
 		rs2, err2 := db.Query(`
@@ -465,10 +465,10 @@ func DiagnoseBIHandler(db *sql.DB) http.HandlerFunc {
 
 		// 1b. Companies + CNPJ — pra debugar rota pública /m/CNPJ/sup/cod
 		type empInfo struct {
-			ID    string `json:"id"`
-			Name  string `json:"name"`
-			CNPJ  string `json:"cnpj"`
-			CNPJOK bool  `json:"cnpj_normalized_match,omitempty"`
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			CNPJ   string `json:"cnpj"`
+			CNPJOK bool   `json:"cnpj_normalized_match,omitempty"`
 		}
 		emps := []empInfo{}
 		erows, _ := db.Query(`

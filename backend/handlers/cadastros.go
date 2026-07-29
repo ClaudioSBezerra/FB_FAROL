@@ -123,15 +123,15 @@ func nullableString(s string) *string {
 // ─── Structs ─────────────────────────────────────────────────────────────────
 
 type GestorRow struct {
-	CodSupervisor int        `json:"cod_supervisor"`
-	Nome          string     `json:"nome"`
-	UF            *string    `json:"uf"`
-	Regiao        *string    `json:"regiao"`
-	Atuacao       *string    `json:"atuacao"`
-	Ativo         bool       `json:"ativo"`
-	QtdRCAs       int        `json:"qtd_rcas"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	CodSupervisor int       `json:"cod_supervisor"`
+	Nome          string    `json:"nome"`
+	UF            *string   `json:"uf"`
+	Regiao        *string   `json:"regiao"`
+	Atuacao       *string   `json:"atuacao"`
+	Ativo         bool      `json:"ativo"`
+	QtdRCAs       int       `json:"qtd_rcas"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type RCARow struct {
@@ -769,7 +769,7 @@ func UploadCadastrosCSVHandler(db *sql.DB) http.HandlerFunc {
 			if rowOk {
 				// Upsert vínculo
 				tx.Exec(`INSERT INTO gestor_rca (empresa_id, cod_supervisor, cod_rca) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, spCtx.EmpresaID, codSup, codRCA) //nolint
-				tx.Exec("RELEASE SAVEPOINT sp_row")                                                                                                                  //nolint
+				tx.Exec("RELEASE SAVEPOINT sp_row")                                                                                                                 //nolint
 				if wasNew {
 					imported++
 				} else {

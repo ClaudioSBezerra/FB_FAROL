@@ -49,16 +49,16 @@ type enderecoDB struct {
 	Predio          *int
 	Apto            *int
 	ClasseVenda     string
-	ClasseVendaDias *int     // CLASSEVENDA_DIAS do CSV — usado diretamente na fórmula
+	ClasseVendaDias *int // CLASSEVENDA_DIAS do CSV — usado diretamente na fórmula
 	Capacidade      *int
-	NormaPalete     *int     // NORMA_PALETE — arredonda sugestão para múltiplo de palete
+	NormaPalete     *int // NORMA_PALETE — arredonda sugestão para múltiplo de palete
 	MedVendaCx      *float64
 	MedVendaDias    *float64
 	MedDiasEstoque  *float64
 	MedVendaCxAA    *float64
 	UnidadeMaster   *int
-	QtAcesso90      *int     // QTACESSO_PICKING_PERIODO_90 — acessos ao picking em 90 dias
-	QtDias          *int     // QT_DIAS — dias do período de análise
+	QtAcesso90      *int // QTACESSO_PICKING_PERIODO_90 — acessos ao picking em 90 dias
+	QtDias          *int // QT_DIAS — dias do período de análise
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -332,14 +332,15 @@ func carregarIgnorados(db *sql.DB, empresaID string, cdID int) map[string]bool {
 // calcularSugestao aplica a fórmula WMS de calibragem e retorna (sugestão, justificativa).
 //
 // Giro (prioridade):
-//   1. QTACESSO_PICKING_PERIODO_90 / QT_DIAS  ← Curva ABC de Acesso ao Picking (JC)
-//   2. MED_VENDA_DIAS                          ← média de vendas diária em unidades
-//   3. MED_VENDA_DIAS_CX × unidadeMaster       ← fallback caixas
-//   4. MED_VENDA_DIAS_CX_ANOANT_MESSEG × master ← fallback ano anterior
+//  1. QTACESSO_PICKING_PERIODO_90 / QT_DIAS  ← Curva ABC de Acesso ao Picking (JC)
+//  2. MED_VENDA_DIAS                          ← média de vendas diária em unidades
+//  3. MED_VENDA_DIAS_CX × unidadeMaster       ← fallback caixas
+//  4. MED_VENDA_DIAS_CX_ANOANT_MESSEG × master ← fallback ano anterior
 //
 // Fórmula: sugestão = ceil( ceil(giro / master) × diasClasse × fator )
-//   depois: arredonda para múltiplo de norma_palete (se norma_palete > 1)
-//   depois: aplica mínimo absoluto e regra Curva A nunca reduz
+//
+//	depois: arredonda para múltiplo de norma_palete (se norma_palete > 1)
+//	depois: aplica mínimo absoluto e regra Curva A nunca reduz
 func calcularSugestao(e enderecoDB, p *motorParams) (int, string) {
 	curva := strings.ToUpper(e.ClasseVenda)
 

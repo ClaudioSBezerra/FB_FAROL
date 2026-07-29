@@ -32,7 +32,7 @@ const SpContextKey spCtxKey = "sp_context"
 // FarolContext é injetado no request context por FarolAuthMiddleware.
 type FarolContext struct {
 	UserID        string
-	SpRole        string   // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	SpRole        string // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
 	EmpresaID     string
 	FilialIDs     []int    // IDs de filiais acessíveis; vazio quando AllFiliais = true
 	AllFiliais    bool     // true para admin_fbtax e gestor_geral

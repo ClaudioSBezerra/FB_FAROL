@@ -19,15 +19,15 @@ import (
 // CicloKPI — métricas de um job/ciclo
 type CicloKPI struct {
 	JobID             string  `json:"job_id"`
-	CicloNum          int     `json:"ciclo_num"`          // 1=mais recente, 4=mais antigo
+	CicloNum          int     `json:"ciclo_num"` // 1=mais recente, 4=mais antigo
 	CriadoEm          string  `json:"criado_em"`
 	TotalEnderecos    int     `json:"total_enderecos"`
 	CalibradosOk      int     `json:"calibrados_ok"`
-	PctCalibrados     float64 `json:"pct_calibrados"`     // calculado em Go
+	PctCalibrados     float64 `json:"pct_calibrados"` // calculado em Go
 	OfensoresFaltaAB  int     `json:"ofensores_falta_ab"`
 	CaixasOciosas     int     `json:"caixas_ociosas"`
 	CaixasAprovadas   int     `json:"caixas_aprovadas"`
-	PctRealocado      float64 `json:"pct_realocado"`      // calculado em Go
+	PctRealocado      float64 `json:"pct_realocado"` // calculado em Go
 	AcessosEmergencia int     `json:"acessos_emergencia"`
 	AcessosTotal      int     `json:"acessos_total"`
 }
@@ -177,11 +177,11 @@ func SpResultadosHandler(db *sql.DB) http.HandlerFunc {
 
 		for rows.Next() {
 			var (
-				cdID, cicloNum                                          int
-				cdNome, filialNome, jobID, criadoEm                    string
-				totalEnderecos, calibradosOk, ofensoresFaltaAB         int
-				caixasOciosas, caixasAprovadas                         int
-				acessosEmergencia, acessosTotal                        int
+				cdID, cicloNum                                 int
+				cdNome, filialNome, jobID, criadoEm            string
+				totalEnderecos, calibradosOk, ofensoresFaltaAB int
+				caixasOciosas, caixasAprovadas                 int
+				acessosEmergencia, acessosTotal                int
 			)
 			if err := rows.Scan(
 				&cdID, &cdNome, &filialNome, &jobID, &criadoEm, &cicloNum,
@@ -237,18 +237,18 @@ func SpResultadosHandler(db *sql.DB) http.HandlerFunc {
 					continue
 				}
 				c := cd.Ciclos[0] // ciclo mais recente
-				emp.TotalEnderecos    += c.TotalEnderecos
-				emp.CalibradosOk      += c.CalibradosOk
-				emp.OfensoresFaltaAB  += c.OfensoresFaltaAB
-				emp.CaixasOciosas     += c.CaixasOciosas
-				emp.CaixasAprovadas   += c.CaixasAprovadas
+				emp.TotalEnderecos += c.TotalEnderecos
+				emp.CalibradosOk += c.CalibradosOk
+				emp.OfensoresFaltaAB += c.OfensoresFaltaAB
+				emp.CaixasOciosas += c.CaixasOciosas
+				emp.CaixasAprovadas += c.CaixasAprovadas
 				emp.AcessosEmergencia += c.AcessosEmergencia
-				emp.AcessosTotal      += c.AcessosTotal
+				emp.AcessosTotal += c.AcessosTotal
 			}
 			if emp.TotalEnderecos > 0 {
 				// Percentuais: derivados dos absolutos já somados (equivale à média ponderada por total_enderecos)
 				emp.PctCalibrados = safeDiv(float64(emp.CalibradosOk), float64(emp.TotalEnderecos)) * 100
-				emp.PctRealocado  = safeDiv(float64(emp.CaixasAprovadas), float64(emp.CaixasOciosas)) * 100
+				emp.PctRealocado = safeDiv(float64(emp.CaixasAprovadas), float64(emp.CaixasOciosas)) * 100
 				empresa = &emp
 			}
 		}
@@ -281,8 +281,8 @@ type HistoricoKPI struct {
 	TotalEnderecos  int     `json:"total_enderecos"`
 	CalibradosOk    int     `json:"calibrados_ok"`
 	PctCalibrados   float64 `json:"pct_calibrados"`
-	OfensoresFalta  int     `json:"ofensores_falta"`   // Curva A/B delta > 0
-	OfensoresEspaco int     `json:"ofensores_espaco"`  // COUNT delta < 0
+	OfensoresFalta  int     `json:"ofensores_falta"`  // Curva A/B delta > 0
+	OfensoresEspaco int     `json:"ofensores_espaco"` // COUNT delta < 0
 }
 
 // SpHistoricoResponse — série histórica de um CD
@@ -379,8 +379,8 @@ func SpResultadosHistoricoHandler(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var (
 				cdNome, filialNome, jobID, criadoEm string
-				totalEnderecos, calibradosOk         int
-				ofensoresFalta, ofensoresEspaco      int
+				totalEnderecos, calibradosOk        int
+				ofensoresFalta, ofensoresEspaco     int
 			)
 			if err := rows.Scan(
 				&cdNome, &filialNome, &jobID, &criadoEm,

@@ -280,8 +280,8 @@ func buildExcel(pergunta, sqlUsado string, cols []string, rows []map[string]inte
 	})
 
 	infos := [][]string{
-		{"Pergunta",      pergunta},
-		{"Gerado em",     time.Now().Format("02/01/2006 15:04:05")},
+		{"Pergunta", pergunta},
+		{"Gerado em", time.Now().Format("02/01/2006 15:04:05")},
 		{"Total de linhas", fmt.Sprintf("%d", len(rows))},
 		{"SQL utilizado", sqlUsado},
 	}

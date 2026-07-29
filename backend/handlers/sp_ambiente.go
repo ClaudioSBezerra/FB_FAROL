@@ -48,50 +48,50 @@ type SpCDRequest struct {
 }
 
 type SpCDResponse struct {
-	ID         int     `json:"id"`
-	FilialID   int     `json:"filial_id"`
-	Nome       string  `json:"nome"`
-	Descricao  string  `json:"descricao"`
-	Ativo      bool    `json:"ativo"`
-	FonteCDID  *int    `json:"fonte_cd_id,omitempty"`
-	CreatedAt  string  `json:"created_at"`
+	ID        int    `json:"id"`
+	FilialID  int    `json:"filial_id"`
+	Nome      string `json:"nome"`
+	Descricao string `json:"descricao"`
+	Ativo     bool   `json:"ativo"`
+	FonteCDID *int   `json:"fonte_cd_id,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 type SpMotorParamsRequest struct {
-	DiasAnalise        int     `json:"dias_analise"`
-	CurvaAMaxEst       int     `json:"curva_a_max_est"`
-	CurvaBMaxEst       int     `json:"curva_b_max_est"`
-	CurvaCMaxEst       int     `json:"curva_c_max_est"`
-	FatorSeguranca     float64 `json:"fator_seguranca"`
-	CurvaANuncaReduz   bool    `json:"curva_a_nunca_reduz"`
-	MinCapacidade      int     `json:"min_capacidade"`
-	RetencaoCsvMeses   int     `json:"retencao_csv_meses"`
+	DiasAnalise      int     `json:"dias_analise"`
+	CurvaAMaxEst     int     `json:"curva_a_max_est"`
+	CurvaBMaxEst     int     `json:"curva_b_max_est"`
+	CurvaCMaxEst     int     `json:"curva_c_max_est"`
+	FatorSeguranca   float64 `json:"fator_seguranca"`
+	CurvaANuncaReduz bool    `json:"curva_a_nunca_reduz"`
+	MinCapacidade    int     `json:"min_capacidade"`
+	RetencaoCsvMeses int     `json:"retencao_csv_meses"`
 }
 
 type SpMotorParamsResponse struct {
-	ID                 int     `json:"id"`
-	CDID               int     `json:"cd_id"`
-	DiasAnalise        int     `json:"dias_analise"`
-	CurvaAMaxEst       int     `json:"curva_a_max_est"`
-	CurvaBMaxEst       int     `json:"curva_b_max_est"`
-	CurvaCMaxEst       int     `json:"curva_c_max_est"`
-	FatorSeguranca     float64 `json:"fator_seguranca"`
-	CurvaANuncaReduz   bool    `json:"curva_a_nunca_reduz"`
-	MinCapacidade      int     `json:"min_capacidade"`
-	RetencaoCsvMeses   int     `json:"retencao_csv_meses"`
-	UpdatedAt          string  `json:"updated_at"`
+	ID               int     `json:"id"`
+	CDID             int     `json:"cd_id"`
+	DiasAnalise      int     `json:"dias_analise"`
+	CurvaAMaxEst     int     `json:"curva_a_max_est"`
+	CurvaBMaxEst     int     `json:"curva_b_max_est"`
+	CurvaCMaxEst     int     `json:"curva_c_max_est"`
+	FatorSeguranca   float64 `json:"fator_seguranca"`
+	CurvaANuncaReduz bool    `json:"curva_a_nunca_reduz"`
+	MinCapacidade    int     `json:"min_capacidade"`
+	RetencaoCsvMeses int     `json:"retencao_csv_meses"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 type SpPlanoResponse struct {
-	Plano        string  `json:"plano"`
-	MaxFiliais   int     `json:"max_filiais"`
-	MaxCDs       int     `json:"max_cds"`
-	MaxUsuarios  int     `json:"max_usuarios"`
-	Ativo        bool    `json:"ativo"`
-	ValidoAte    *string `json:"valido_ate"`
+	Plano       string  `json:"plano"`
+	MaxFiliais  int     `json:"max_filiais"`
+	MaxCDs      int     `json:"max_cds"`
+	MaxUsuarios int     `json:"max_usuarios"`
+	Ativo       bool    `json:"ativo"`
+	ValidoAte   *string `json:"valido_ate"`
 	// Uso atual
-	UsadoFiliais int `json:"usado_filiais"`
-	UsadoCDs     int `json:"usado_cds"`
+	UsadoFiliais  int `json:"usado_filiais"`
+	UsadoCDs      int `json:"usado_cds"`
 	UsadoUsuarios int `json:"usado_usuarios"`
 }
 

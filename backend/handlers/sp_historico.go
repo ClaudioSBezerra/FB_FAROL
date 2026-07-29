@@ -41,27 +41,27 @@ type HistoricoResponse struct {
 }
 
 type ComplianceCD struct {
-	CdID              int     `json:"cd_id"`
-	CdNome            string  `json:"cd_nome"`
-	FilialNome        string  `json:"filial_nome"`
-	CodFilial         int     `json:"cod_filial"`
+	CdID       int    `json:"cd_id"`
+	CdNome     string `json:"cd_nome"`
+	FilialNome string `json:"filial_nome"`
+	CodFilial  int    `json:"cod_filial"`
 	// Calibragem
-	UltimaCalibragem  *string `json:"ultima_calibragem"`
-	DiasDesdeUltima   *int    `json:"dias_desde_ultima"`
-	UltimoStatus      *string `json:"ultimo_status"`
-	TotalCiclos       int     `json:"total_ciclos"`
+	UltimaCalibragem *string `json:"ultima_calibragem"`
+	DiasDesdeUltima  *int    `json:"dias_desde_ultima"`
+	UltimoStatus     *string `json:"ultimo_status"`
+	TotalCiclos      int     `json:"total_ciclos"`
 	// Importações
-	UltimoImportEm    *string `json:"ultimo_import_em"`
-	DiasDesdeImport   *int    `json:"dias_desde_import"`
-	TotalImports      int     `json:"total_imports"`
+	UltimoImportEm  *string `json:"ultimo_import_em"`
+	DiasDesdeImport *int    `json:"dias_desde_import"`
+	TotalImports    int     `json:"total_imports"`
 	// Propostas pendentes
-	PropostasPendentes  int  `json:"propostas_pendentes"`
-	DiasOldestPendente  *int `json:"dias_oldest_pendente"`
+	PropostasPendentes int  `json:"propostas_pendentes"`
+	DiasOldestPendente *int `json:"dias_oldest_pendente"`
 	// Gestor responsável
-	UltimoGestorNome  *string `json:"ultimo_gestor_nome"`
+	UltimoGestorNome *string `json:"ultimo_gestor_nome"`
 	// Status calculado
-	StatusCompliance  string  `json:"status_compliance"` // ok|atencao|critico|aguardando_motor|nunca_iniciado
-	Alerta            bool    `json:"alerta"`
+	StatusCompliance string `json:"status_compliance"` // ok|atencao|critico|aguardando_motor|nunca_iniciado
+	Alerta           bool   `json:"alerta"`
 }
 
 // ─── Criar histórico (chamado pelo motor) ─────────────────────────────────────
@@ -130,7 +130,7 @@ func SpHistoricoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		cdIDFilter := r.URL.Query().Get("cd_id")
-		limitStr   := r.URL.Query().Get("limit")
+		limitStr := r.URL.Query().Get("limit")
 		limit := 50
 		if limitStr != "" {
 			fmt.Sscan(limitStr, &limit)
@@ -207,7 +207,7 @@ func SpHistoricoFecharHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		idStr := strings.TrimPrefix(r.URL.Path, "/api/sp/historico/")
-		idStr  = strings.TrimSuffix(idStr, "/fechar")
+		idStr = strings.TrimSuffix(idStr, "/fechar")
 		var historicoID int64
 		fmt.Sscan(idStr, &historicoID)
 		if historicoID == 0 {

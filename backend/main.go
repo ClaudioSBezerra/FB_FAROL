@@ -289,6 +289,12 @@ func onDBConnected() {
 	// presets diários. Com a carga automática noturna (00:01-06:00) invalidando
 	// o cache dos meses tocados, é ele que garante painel quente às 08:00.
 	go handlers.StartDailyPrewarm(database)
+
+	// Carga automática diária do Oracle do grupo JC (modelo PULL — nós puxamos
+	// da view consolidada deles). Default 06:30, depois da janela 00:01-06:00 em
+	// que o JOB do lado deles popula as tabelas base. Fica inerte se
+	// JC_ORACLE_USER/JC_ORACLE_PASS/JC_EMPRESA_ID não estiverem no ambiente.
+	go handlers.StartCargaJCDiaria(database)
 }
 
 func main() {
@@ -515,6 +521,9 @@ func main() {
 	http.HandleFunc("/api/v2/vendas/job/",      withSP(handlers.VendasJobHandler,        "gestor_filial")) // GET status + POST cancel
 	http.HandleFunc("/api/v2/vendas/periodos",  withSP(handlers.VendasPeriodosHandler,  "gestor_filial"))
 	http.HandleFunc("/api/v2/vendas/clear",     withSP(handlers.VendasClearHandler,     "gestor_filial"))
+	// Carga JC sob demanda — testar antes do 1º disparo, reprocessar dia que
+	// falhou, ou cobrir atraso do JOB da origem. ?data=AAAA-MM-DD (default D-1).
+	http.HandleFunc("/api/v2/jc/carga",         withSP(handlers.CargaJCManualHandler,   "gestor_filial"))
 	http.HandleFunc("/api/v2/industrias",       withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/cards",         gz(withSP(handlers.FarolV2CardsHandler,   "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos",      withSP(handlers.FarolV2PeriodosHandler,   "gestor_filial"))

@@ -200,8 +200,8 @@ func CleanupExecuteHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var body struct {
-			Tables         []string `json:"tables"`
-			AdminTruncate  bool     `json:"admin_truncate,omitempty"`
+			Tables        []string `json:"tables"`
+			AdminTruncate bool     `json:"admin_truncate,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Tables) == 0 {
 			http.Error(w, `{"error":"informe as tabelas a limpar"}`, http.StatusBadRequest)

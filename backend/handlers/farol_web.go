@@ -145,11 +145,11 @@ func FarolWebSupHandler(db *sql.DB) http.HandlerFunc {
 			VlCorrente float64 `json:"vl_corrente"`
 		}
 		type resp struct {
-			CodSupervisor int        `json:"cod_supervisor"`
-			Nome          string     `json:"nome"`
+			CodSupervisor int         `json:"cod_supervisor"`
+			Nome          string      `json:"nome"`
 			Periodo       *periodoOut `json:"periodo"`
 			FarolGeral    farolGeral  `json:"farol_geral"`
-			Rcas          []rcaItem  `json:"rcas"`
+			Rcas          []rcaItem   `json:"rcas"`
 		}
 
 		nomeSup := nomeSupervisorPorEmpresa(db, spCtx.EmpresaID, codSup)

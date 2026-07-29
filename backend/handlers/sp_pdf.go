@@ -32,15 +32,15 @@ import (
 // ─── DTO interno ──────────────────────────────────────────────────────────────
 
 type pdfProposta struct {
-	Codprod         int
-	Produto         string
+	Codprod           int
+	Produto           string
 	Rua, Predio, Apto *int
-	ClasseVenda     string
-	CapacidadeAtual *int
-	NovaCapacidade  int
-	Delta           int
-	Justificativa   string
-	AprovadoEm      string
+	ClasseVenda       string
+	CapacidadeAtual   *int
+	NovaCapacidade    int
+	Delta             int
+	Justificativa     string
+	AprovadoEm        string
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ func SpPDFCalibracaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		jobIDStr := r.URL.Query().Get("job_id")
-		cdIDStr  := r.URL.Query().Get("cd_id")
+		cdIDStr := r.URL.Query().Get("cd_id")
 		if jobIDStr == "" && cdIDStr == "" {
 			http.Error(w, "job_id ou cd_id obrigatório", http.StatusBadRequest)
 			return
@@ -93,8 +93,8 @@ func SpPDFCalibracaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		filter := "WHERE p.empresa_id = $1 AND p.status = 'aprovada'"
-		args   := []any{spCtx.EmpresaID}
-		idx    := 2
+		args := []any{spCtx.EmpresaID}
+		idx := 2
 
 		if jobIDStr != "" {
 			filter += fmt.Sprintf(" AND p.job_id = $%d", idx)
@@ -347,14 +347,14 @@ func buildPDF(cdNome, filialNome, jobFilename string, propostas []pdfProposta) (
 func tableHeaderRow() core.Row {
 	h := props.Text{Size: 7, Style: fontstyle.Bold, Align: align.Center}
 	return row.New(6).Add(
-		col.New(1).Add(text.New("Curva",    h)),
-		col.New(1).Add(text.New("Cód.",     h)),
-		col.New(4).Add(text.New("Produto",  h)),
-		col.New(1).Add(text.New("Prédio",   h)),
-		col.New(1).Add(text.New("Apto",     h)),
-		col.New(1).Add(text.New("Cap.At.",  h)),
+		col.New(1).Add(text.New("Curva", h)),
+		col.New(1).Add(text.New("Cód.", h)),
+		col.New(4).Add(text.New("Produto", h)),
+		col.New(1).Add(text.New("Prédio", h)),
+		col.New(1).Add(text.New("Apto", h)),
+		col.New(1).Add(text.New("Cap.At.", h)),
 		col.New(1).Add(text.New("Nova Cap", h)),
-		col.New(2).Add(text.New("Ação",     h)),
+		col.New(2).Add(text.New("Ação", h)),
 	)
 }
 
@@ -391,14 +391,14 @@ func tableDataRow(p pdfProposta) []core.Row {
 	}
 
 	dataRow := row.New(5).Add(
-		col.New(1).Add(text.New(p.ClasseVenda,                         d)),
-		col.New(1).Add(text.New(fmt.Sprintf("%d", p.Codprod),          d)),
-		col.New(4).Add(text.New(produto,                               l)),
-		col.New(1).Add(text.New(predioStr,                             d)),
-		col.New(1).Add(text.New(aptoStr,                               d)),
-		col.New(1).Add(text.New(capAtual,                              d)),
+		col.New(1).Add(text.New(p.ClasseVenda, d)),
+		col.New(1).Add(text.New(fmt.Sprintf("%d", p.Codprod), d)),
+		col.New(4).Add(text.New(produto, l)),
+		col.New(1).Add(text.New(predioStr, d)),
+		col.New(1).Add(text.New(aptoStr, d)),
+		col.New(1).Add(text.New(capAtual, d)),
 		col.New(1).Add(text.New(fmt.Sprintf("%d cx", p.NovaCapacidade), d)),
-		col.New(2).Add(text.New(acaoStr,                               d)),
+		col.New(2).Add(text.New(acaoStr, d)),
 	)
 
 	noteRow := row.New(5).Add(
@@ -420,9 +420,15 @@ func tableDataRow(p pdfProposta) []core.Row {
 
 func formatEndereco(rua, predio, apto *int) string {
 	parts := []string{}
-	if rua    != nil { parts = append(parts, fmt.Sprintf("%d", *rua)) }
-	if predio != nil { parts = append(parts, fmt.Sprintf("%d", *predio)) }
-	if apto   != nil { parts = append(parts, fmt.Sprintf("%d", *apto)) }
+	if rua != nil {
+		parts = append(parts, fmt.Sprintf("%d", *rua))
+	}
+	if predio != nil {
+		parts = append(parts, fmt.Sprintf("%d", *predio))
+	}
+	if apto != nil {
+		parts = append(parts, fmt.Sprintf("%d", *apto))
+	}
 	if len(parts) == 0 {
 		return "—"
 	}

@@ -15,16 +15,16 @@ import (
 // ── Destinatários do resumo ──────────────────────────────────────────────────
 
 type destinatarioResp struct {
-	ID            int    `json:"id"`
-	CdID          int    `json:"cd_id"`
-	CdNome        string `json:"cd_nome,omitempty"`
-	FilialNome    string `json:"filial_nome,omitempty"`
-	NomeCompleto  string `json:"nome_completo"`
-	Cargo         string `json:"cargo"`
-	Email         string `json:"email"`
-	Ativo         bool   `json:"ativo"`
-	CriadoEm      string `json:"criado_em"`
-	AtualizadoEm  string `json:"atualizado_em"`
+	ID           int    `json:"id"`
+	CdID         int    `json:"cd_id"`
+	CdNome       string `json:"cd_nome,omitempty"`
+	FilialNome   string `json:"filial_nome,omitempty"`
+	NomeCompleto string `json:"nome_completo"`
+	Cargo        string `json:"cargo"`
+	Email        string `json:"email"`
+	Ativo        bool   `json:"ativo"`
+	CriadoEm     string `json:"criado_em"`
+	AtualizadoEm string `json:"atualizado_em"`
 }
 
 // SpDestinatariosHandler — CRUD de destinatários do resumo executivo (admin_fbtax)
@@ -184,13 +184,13 @@ func SpDestinatariosHandler(db *sql.DB) http.HandlerFunc {
 // ── Listagem e geração de resumos ─────────────────────────────────────────────
 
 type resumoListItem struct {
-	ID             int    `json:"id"`
-	CdID           int    `json:"cd_id"`
-	PeriodoInicio  string `json:"periodo_inicio"`
-	PeriodoFim     string `json:"periodo_fim"`
-	CriadoEm       string `json:"criado_em"`
-	EnviadoEm      string `json:"enviado_em,omitempty"`
-	EnviadoPara    int    `json:"enviado_para_count"`
+	ID            int    `json:"id"`
+	CdID          int    `json:"cd_id"`
+	PeriodoInicio string `json:"periodo_inicio"`
+	PeriodoFim    string `json:"periodo_fim"`
+	CriadoEm      string `json:"criado_em"`
+	EnviadoEm     string `json:"enviado_em,omitempty"`
+	EnviadoPara   int    `json:"enviado_para_count"`
 }
 
 // SpResumosHandler — GET /api/sp/relatorios?cd_id=X → lista resumos
@@ -250,11 +250,11 @@ func SpResumoItemHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var (
-			cdID                       int
-			periodoIni, periodoFim     string
-			dadosJSON, narrativa       string
-			criadoEm                   string
-			enviadoEm, erroEnvio       sql.NullString
+			cdID                   int
+			periodoIni, periodoFim string
+			dadosJSON, narrativa   string
+			criadoEm               string
+			enviadoEm, erroEnvio   sql.NullString
 		)
 		err := db.QueryRow(`
 			SELECT cd_id,
@@ -289,7 +289,8 @@ func SpResumoItemHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // SpResumoGerarHandler — POST /api/sp/relatorios/gerar?cd_id=X (master)
-//   gera o resumo executivo da última semana e retorna o id criado
+//
+//	gera o resumo executivo da última semana e retorna o id criado
 func SpResumoGerarHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[resumo-handler] %s %s", r.Method, r.URL.String())
@@ -330,7 +331,8 @@ func SpResumoGerarHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // SpResumoEnviarHandler — POST /api/sp/relatorios/{id}/enviar (master)
-//   envia o resumo por email aos destinatários ativos do CD
+//
+//	envia o resumo por email aos destinatários ativos do CD
 func SpResumoEnviarHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

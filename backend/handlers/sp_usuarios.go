@@ -24,15 +24,15 @@ import (
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 type SpUsuarioResponse struct {
-	ID              string    `json:"id"`
-	Email           string    `json:"email"`
-	FullName        string    `json:"full_name"`
-	SpRole          string    `json:"sp_role"`
-	TipoPersona     string    `json:"tipo_persona"`
-	CodReferencia   string    `json:"cod_referencia"`
-	IsVerified      bool      `json:"is_verified"`
-	TrialEndsAt     time.Time `json:"trial_ends_at"`
-	CreatedAt       string    `json:"created_at"`
+	ID            string    `json:"id"`
+	Email         string    `json:"email"`
+	FullName      string    `json:"full_name"`
+	SpRole        string    `json:"sp_role"`
+	TipoPersona   string    `json:"tipo_persona"`
+	CodReferencia string    `json:"cod_referencia"`
+	IsVerified    bool      `json:"is_verified"`
+	TrialEndsAt   time.Time `json:"trial_ends_at"`
+	CreatedAt     string    `json:"created_at"`
 	// Hierarquia (user_environments)
 	EnvironmentID   string `json:"environment_id"`
 	EnvironmentName string `json:"environment_name"`
@@ -48,15 +48,15 @@ type SpUsuarioResponse struct {
 }
 
 type SpUpdateRoleRequest struct {
-	SpRole        string   `json:"sp_role"`         // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
-	TipoPersona   string   `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
-	CodReferencia string   `json:"cod_referencia"`  // código operacional do gerente/supervisor/etc.
-	FullName      string   `json:"full_name"`       // opcional — atualiza nome se informado
-	EnvironmentID string   `json:"environment_id"`  // opcional — reatribui hierarquia
-	GroupID       string   `json:"group_id"`        // ignorado (derivado da empresa)
-	CompanyID     string   `json:"company_id"`      // define preferred_company_id
-	TrialEndsAt   string   `json:"trial_ends_at"`   // opcional — "YYYY-MM-DD"; renova licença
-	Modulos       []string `json:"modulos"`         // módulos habilitados: vendas | marketing | bi
+	SpRole        string   `json:"sp_role"`        // admin_fbtax | gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string   `json:"tipo_persona"`   // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string   `json:"cod_referencia"` // código operacional do gerente/supervisor/etc.
+	FullName      string   `json:"full_name"`      // opcional — atualiza nome se informado
+	EnvironmentID string   `json:"environment_id"` // opcional — reatribui hierarquia
+	GroupID       string   `json:"group_id"`       // ignorado (derivado da empresa)
+	CompanyID     string   `json:"company_id"`     // define preferred_company_id
+	TrialEndsAt   string   `json:"trial_ends_at"`  // opcional — "YYYY-MM-DD"; renova licença
+	Modulos       []string `json:"modulos"`        // módulos habilitados: vendas | marketing | bi
 }
 
 type SpVincularFiliaisRequest struct {
@@ -338,17 +338,17 @@ type SpCriarUsuarioRequest struct {
 	FullName      string   `json:"full_name"`
 	Email         string   `json:"email"`
 	Password      string   `json:"password"`
-	SpRole        string   `json:"sp_role"`         // gestor_geral | gestor_filial | somente_leitura
-	TipoPersona   string   `json:"tipo_persona"`    // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
-	CodReferencia string   `json:"cod_referencia"`  // código operacional
-	TrialDias     int      `json:"trial_dias"`      // fallback: 0 = 365 dias
-	TrialEndsAt   string   `json:"trial_ends_at"`   // "2006-01-02" — tem prioridade sobre trial_dias
+	SpRole        string   `json:"sp_role"`        // gestor_geral | gestor_filial | somente_leitura
+	TipoPersona   string   `json:"tipo_persona"`   // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia string   `json:"cod_referencia"` // código operacional
+	TrialDias     int      `json:"trial_dias"`     // fallback: 0 = 365 dias
+	TrialEndsAt   string   `json:"trial_ends_at"`  // "2006-01-02" — tem prioridade sobre trial_dias
 	AllFiliais    bool     `json:"all_filiais"`
 	FilialIDs     []int    `json:"filial_ids"`
-	EnvironmentID string   `json:"environment_id"`  // opcional — override do auto-detect
-	GroupID       string   `json:"group_id"`        // opcional
-	CompanyID     string   `json:"company_id"`      // opcional — override da empresa ativa para filiais
-	Modulos       []string `json:"modulos"`         // módulos habilitados (default: ['vendas'])
+	EnvironmentID string   `json:"environment_id"` // opcional — override do auto-detect
+	GroupID       string   `json:"group_id"`       // opcional
+	CompanyID     string   `json:"company_id"`     // opcional — override da empresa ativa para filiais
+	Modulos       []string `json:"modulos"`        // módulos habilitados (default: ['vendas'])
 }
 
 // SpCriarUsuarioHandler cria um novo usuário vinculado à empresa ativa.

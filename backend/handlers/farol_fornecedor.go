@@ -163,11 +163,11 @@ func FarolSupFornecedoresHandler(db *sql.DB) http.HandlerFunc {
 			r.URL.Query().Get("periodo_seq"))
 
 		type resp struct {
-			CodSupervisor int               `json:"cod_supervisor"`
-			Nome          string            `json:"nome"`
-			Periodo       *periodoFarolOut  `json:"periodo"`
-			FarolGeral    resumoFarolOut    `json:"farol_geral"`
-			Fornecedores  []fornecAggItem   `json:"fornecedores"`
+			CodSupervisor int              `json:"cod_supervisor"`
+			Nome          string           `json:"nome"`
+			Periodo       *periodoFarolOut `json:"periodo"`
+			FarolGeral    resumoFarolOut   `json:"farol_geral"`
+			Fornecedores  []fornecAggItem  `json:"fornecedores"`
 		}
 		out := resp{CodSupervisor: codSup, Nome: nomeSup, Fornecedores: []fornecAggItem{}}
 		if !hasPeriodo {
@@ -372,12 +372,12 @@ func FarolWebFornecSupervisoresHandler(db *sql.DB) http.HandlerFunc {
 			r.URL.Query().Get("periodo_seq"))
 
 		type supItem struct {
-			CodSupervisor int     `json:"cod_supervisor"`
-			NomeSupervisor string `json:"nome_supervisor"`
-			Pct           float64 `json:"pct"`
-			Cor           string  `json:"cor"`
-			VlAnterior    float64 `json:"vl_anterior"`
-			VlCorrente    float64 `json:"vl_corrente"`
+			CodSupervisor  int     `json:"cod_supervisor"`
+			NomeSupervisor string  `json:"nome_supervisor"`
+			Pct            float64 `json:"pct"`
+			Cor            string  `json:"cor"`
+			VlAnterior     float64 `json:"vl_anterior"`
+			VlCorrente     float64 `json:"vl_corrente"`
 		}
 		type resp struct {
 			CodFornec    string           `json:"cod_fornec"`

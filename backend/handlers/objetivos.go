@@ -202,16 +202,16 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Layout canônico: CODSUPERVISOR;CODUSUR;CODEPTO;DEPARTAMENTO;CODSEC;SECAO;CODFORNEC;FORNECEDOR;CODPROD;CODCLI;VLVENDA_PROD_AAAA;VLVENDA_PROD_AAAA
-		iSup   := col(0,  "codsupervisor", "codger",  "codgerente", "codsup")
-		iRCA   := col(1,  "codusur",       "codcrv",  "codrcv",     "codrca", "codrepresentante")
-		iDep   := col(2,  "codepto",       "coddep",  "coddepto",   "coddepart")
-		iNDep  := col(3,  "departamento",  "descdep", "nomdep",     "nomedep", "nomedepto")
-		iSec   := col(4,  "codsec",        "codgr",   "codgru",     "codsetor")
-		iNSec  := col(5,  "secao",         "descgr",  "nomgr",      "nomsec",  "nomesec", "nomsetor")
-		iFornC := col(6,  "codfornec",     "codforn", "codfor",     "codfornecedor")
-		iFornN := col(7,  "fornecedor",    "nomforn", "nomeforn",   "descforn", "nomefornec", "nomefornecedor")
-		iProd  := col(8,  "codprod",       "codproduto")
-		iCli   := col(9,  "codcli",        "codcliente")
+		iSup := col(0, "codsupervisor", "codger", "codgerente", "codsup")
+		iRCA := col(1, "codusur", "codcrv", "codrcv", "codrca", "codrepresentante")
+		iDep := col(2, "codepto", "coddep", "coddepto", "coddepart")
+		iNDep := col(3, "departamento", "descdep", "nomdep", "nomedep", "nomedepto")
+		iSec := col(4, "codsec", "codgr", "codgru", "codsetor")
+		iNSec := col(5, "secao", "descgr", "nomgr", "nomsec", "nomesec", "nomsetor")
+		iFornC := col(6, "codfornec", "codforn", "codfor", "codfornecedor")
+		iFornN := col(7, "fornecedor", "nomforn", "nomeforn", "descforn", "nomefornec", "nomefornecedor")
+		iProd := col(8, "codprod", "codproduto")
+		iCli := col(9, "codcli", "codcliente")
 
 		// Detecta VLVENDA_PROD_AAAA pelo prefixo — pega as duas primeiras colunas
 		// em ordem de posição: menor índice = ano anterior, maior = ano corrente.
@@ -249,7 +249,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			codFornec    string
 			fornecedor   string
 			codProd      string
-			codCli       int64  // CODCLI do CSV — código do cliente (numérico)
+			codCli       int64 // CODCLI do CSV — código do cliente (numérico)
 			vlAnt        float64
 			vlCor        float64
 		}
@@ -288,31 +288,31 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 			}
 
 			n := len(deduped)
-			codSups      := make([]int64,   n)
-			codRCAs      := make([]int64,   n)
-			codDeptos    := make([]string,  n)
-			deptos       := make([]string,  n)
-			codSecs      := make([]string,  n)
-			secoes       := make([]string,  n)
-			codFornecs   := make([]string,  n)
-			fornecedores := make([]string,  n)
-			codProds     := make([]string,  n)
-			codClis      := make([]int64,   n)
-			vlAnts       := make([]float64, n)
-			vlCors       := make([]float64, n)
+			codSups := make([]int64, n)
+			codRCAs := make([]int64, n)
+			codDeptos := make([]string, n)
+			deptos := make([]string, n)
+			codSecs := make([]string, n)
+			secoes := make([]string, n)
+			codFornecs := make([]string, n)
+			fornecedores := make([]string, n)
+			codProds := make([]string, n)
+			codClis := make([]int64, n)
+			vlAnts := make([]float64, n)
+			vlCors := make([]float64, n)
 			for i, row := range deduped {
-				codSups[i]      = row.codSup
-				codRCAs[i]      = row.codRCA
-				codDeptos[i]    = row.codDepto
-				deptos[i]       = row.departamento
-				codSecs[i]      = row.codSec
-				secoes[i]       = row.secao
-				codFornecs[i]   = row.codFornec
+				codSups[i] = row.codSup
+				codRCAs[i] = row.codRCA
+				codDeptos[i] = row.codDepto
+				deptos[i] = row.departamento
+				codSecs[i] = row.codSec
+				secoes[i] = row.secao
+				codFornecs[i] = row.codFornec
 				fornecedores[i] = row.fornecedor
-				codProds[i]     = row.codProd
-				codClis[i]      = row.codCli
-				vlAnts[i]       = row.vlAnt
-				vlCors[i]       = row.vlCor
+				codProds[i] = row.codProd
+				codClis[i] = row.codCli
+				vlAnts[i] = row.vlAnt
+				vlCors[i] = row.vlCor
 			}
 
 			// SAVEPOINT por batch: evita que um erro aborte a transação inteira
@@ -412,7 +412,7 @@ func ObjetivosImportHandler(db *sql.DB) http.HandlerFunc {
 
 			codRCA, errRCA := strconv.ParseInt(strings.TrimSpace(record[iRCA]), 10, 64)
 			codFornec := strings.TrimSpace(record[iFornC])
-			codProd   := strings.TrimSpace(record[iProd])
+			codProd := strings.TrimSpace(record[iProd])
 			if errRCA != nil || codFornec == "" || codProd == "" {
 				skipped++
 				processed++
@@ -554,7 +554,7 @@ func ObjetivosRCAHandler(db *sql.DB) http.HandlerFunc {
 		result := make([]row, 0)
 		for rows.Next() {
 			var rw row
-			var supNull          sql.NullInt64
+			var supNull sql.NullInt64
 			var nomeSup, nomeRCA, fornec sql.NullString
 			if err := rows.Scan(&supNull, &nomeSup, &rw.CodRCA, &nomeRCA,
 				&rw.CodFornec, &fornec, &rw.QtdProdutos,
@@ -647,7 +647,7 @@ func ObjetivosSupervisorHandler(db *sql.DB) http.HandlerFunc {
 		result := make([]row, 0)
 		for rows.Next() {
 			var rw row
-			var supNull     sql.NullInt64
+			var supNull sql.NullInt64
 			var nomeSup, fornec sql.NullString
 			if err := rows.Scan(&supNull, &nomeSup, &rw.CodFornec, &fornec,
 				&rw.QtdRCAs, &rw.QtdProdutos,
@@ -683,7 +683,7 @@ func ObjetivosClientesHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		tipo   := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_periodo")))
+		tipo := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo_periodo")))
 		anoStr := strings.TrimSpace(r.URL.Query().Get("ano"))
 		seqStr := strings.TrimSpace(r.URL.Query().Get("periodo_seq"))
 
@@ -738,7 +738,10 @@ func ObjetivosClientesHandler(db *sql.DB) http.HandlerFunc {
 				var supNull sql.NullInt64
 				var nomeNull sql.NullString
 				if supRows.Scan(&supNull, &nomeNull, &e.Qtd) == nil {
-					if supNull.Valid { v := int(supNull.Int64); e.Cod = &v }
+					if supNull.Valid {
+						v := int(supNull.Int64)
+						e.Cod = &v
+					}
 					e.Nome = nomeNull.String
 					porSup = append(porSup, e)
 				}
@@ -906,9 +909,9 @@ func ObjetivosPainelRCAHandler(db *sql.DB) http.HandlerFunc {
 			VlCorrente     float64 `json:"vl_corrente"`
 		}
 		type resp struct {
-			Periodos    []map[string]any `json:"periodos"`
-			PeriodoSel  *periodoOut      `json:"periodo_sel"`
-			Rows        []rowOut         `json:"rows"`
+			Periodos   []map[string]any `json:"periodos"`
+			PeriodoSel *periodoOut      `json:"periodo_sel"`
+			Rows       []rowOut         `json:"rows"`
 		}
 		out := resp{Periodos: periodos, Rows: []rowOut{}}
 		if !hasPeriodo {
@@ -939,7 +942,10 @@ func ObjetivosPainelRCAHandler(db *sql.DB) http.HandlerFunc {
 				&rw.CodFornec, &fornec, &rw.QtdProdutos,
 				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
-				if supNull.Valid { v := int(supNull.Int64); rw.CodSupervisor = &v }
+				if supNull.Valid {
+					v := int(supNull.Int64)
+					rw.CodSupervisor = &v
+				}
 				rw.NomeSupervisor = nomeSup.String
 				rw.NomeRCA = nomeRCA.String
 				rw.Fornecedor = fornec.String
@@ -1026,7 +1032,10 @@ func ObjetivosPainelSupervisorHandler(db *sql.DB) http.HandlerFunc {
 				&rw.QtdRCAs, &rw.QtdProdutos,
 				&rw.ClAtivos, &rw.PositMed, &rw.TtalItens,
 				&rw.VlAnterior, &rw.VlCorrente); err == nil {
-				if supNull.Valid { v := int(supNull.Int64); rw.CodSupervisor = &v }
+				if supNull.Valid {
+					v := int(supNull.Int64)
+					rw.CodSupervisor = &v
+				}
 				rw.NomeSupervisor = nomeSup.String
 				rw.Fornecedor = fornec.String
 				out.Rows = append(out.Rows, rw)

@@ -179,8 +179,8 @@ func SpPurgarCsvAntigosHandler(db *sql.DB) http.HandlerFunc {
 		defer rows.Close()
 
 		type cdRetencao struct {
-			cdID   int
-			meses  int
+			cdID  int
+			meses int
 		}
 		var cds []cdRetencao
 		for rows.Next() {

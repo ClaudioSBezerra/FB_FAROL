@@ -15,19 +15,19 @@ import (
 )
 
 type IgnoradoResponse struct {
-	ID           int64   `json:"id"`
-	CdID         int     `json:"cd_id"`
-	CodProd      int     `json:"codprod"`
-	CodFilial    int     `json:"cod_filial"`
-	Produto      *string `json:"produto"`
+	ID            int64   `json:"id"`
+	CdID          int     `json:"cd_id"`
+	CodProd       int     `json:"codprod"`
+	CodFilial     int     `json:"cod_filial"`
+	Produto       *string `json:"produto"`
 	TipoDescricao *string `json:"tipo_descricao"`
-	IgnoradoPor  *string `json:"ignorado_por,omitempty"`
-	CreatedAt    string  `json:"created_at"`
+	IgnoradoPor   *string `json:"ignorado_por,omitempty"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 type TipoIgnoradoResponse struct {
-	ID       int    `json:"id"`
-	Codigo   int    `json:"codigo"`
+	ID        int    `json:"id"`
+	Codigo    int    `json:"codigo"`
 	Descricao string `json:"descricao"`
 }
 

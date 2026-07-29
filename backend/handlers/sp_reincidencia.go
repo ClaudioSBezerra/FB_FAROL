@@ -59,7 +59,7 @@ func SpReincidenciaHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		cdIDFilter   := r.URL.Query().Get("cd_id")
+		cdIDFilter := r.URL.Query().Get("cd_id")
 		minCiclosStr := r.URL.Query().Get("min_ciclos")
 		minCiclos := 2
 		if minCiclosStr != "" {

@@ -63,7 +63,7 @@ func SpCSVUploadHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		cdIDStr   := r.FormValue("cd_id")
+		cdIDStr := r.FormValue("cd_id")
 		filialIDStr := r.FormValue("filial_id")
 		if cdIDStr == "" || filialIDStr == "" {
 			http.Error(w, "cd_id e filial_id são obrigatórios", http.StatusBadRequest)

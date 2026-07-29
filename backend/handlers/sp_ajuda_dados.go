@@ -15,12 +15,12 @@ import (
 // Resposta: { reply, sql, columns, rows, truncado }
 //
 // Pipeline:
-//   1. Valida usuário e empresa
-//   2. Z.AI gera SQL (system prompt com schema das views)
-//   3. Validador rejeita SQL inseguro
-//   4. Filtra por empresa_id automaticamente
-//   5. Executa em transação READ ONLY com statement_timeout=5s, LIMIT 100
-//   6. Z.AI gera narrativa curta sobre o resultado
+//  1. Valida usuário e empresa
+//  2. Z.AI gera SQL (system prompt com schema das views)
+//  3. Validador rejeita SQL inseguro
+//  4. Filtra por empresa_id automaticamente
+//  5. Executa em transação READ ONLY com statement_timeout=5s, LIMIT 100
+//  6. Z.AI gera narrativa curta sobre o resultado
 func SpAjudaDadosHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -37,7 +37,7 @@ func SpAjudaDadosHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var body struct {
-			Pergunta  string                   `json:"pergunta"`
+			Pergunta  string                  `json:"pergunta"`
 			Historico []services.HistoricoMsg `json:"historico,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Pergunta == "" {
