@@ -27,8 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	go_ora "github.com/sijms/go-ora/v3"
 )
 
 // candidatos — o Keslley ainda não informou o nome. Ordem: defaults do 23ai,
@@ -69,9 +67,9 @@ func dsn(host, port, nome, user, pass string, m modo) string {
 	p, _ := strconv.Atoi(port)
 	if m == porSID {
 		// serviço vazio + SID nas opções → go-ora monta (SID=...) no descriptor
-		return go_ora.BuildUrl(host, p, "", user, pass, map[string]string{"SID": nome})
+		return buildURL(host, p, "", user, pass, map[string]string{"SID": nome})
 	}
-	return go_ora.BuildUrl(host, p, nome, user, pass, nil)
+	return buildURL(host, p, nome, user, pass, nil)
 }
 
 // nomeDesconhecido — o listener respondeu que não conhece este serviço/SID.
@@ -98,6 +96,15 @@ func explicaErro(err error) string {
 		return "conectou e autenticou, mas sem permissão/objeto. Falta GRANT do Keslley — a parte de rede está OK."
 	case strings.Contains(s, "ORA-12541"):
 		return "sem listener na porta. Serviço parado do lado deles."
+	case strings.Contains(s, "ORA-01033"), strings.Contains(s, "ORA-12528"):
+		return "o banco existe mas NÃO aceita conexão ainda — PDB apenas montado (não OPEN) ou em modo restrito. É um `ALTER PLUGGABLE DATABASE ... OPEN;` do lado do Keslley."
+	case strings.Contains(s, "expected code is 1"):
+		return "falhou na NEGOCIAÇÃO DE PROTOCOLO, antes da autenticação — logo não é credencial. " +
+			"O servidor respondeu código 4 (mensagem de erro TTC) onde o driver esperava a negociação. " +
+			"Duas causas prováveis: (a) o PDB está montado mas não OPEN, e o erro real seria ORA-01033; " +
+			"(b) incompatibilidade do go-ora v3 com este 23ai. Para separar as duas, rodar o binário " +
+			"jc-probe-v2 (mesma sonda com go-ora v2.9.0): se ele devolver um ORA- legível, é (a) e a " +
+			"mensagem diz o que pedir ao Keslley; se repetir o erro cru, é (b) e trocamos de driver."
 	case strings.Contains(s, "i/o timeout"), strings.Contains(s, "connection refused"):
 		return "não chegou no host. Allowlist não aplicada ao nosso IP, ou firewall. Conferir o IP de saída."
 	}
@@ -131,7 +138,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Printf("═══ sonda Oracle JC ═══\nhost=%s:%s schema=%s user=%s\n\n", host, port, schema, user)
+	fmt.Printf("═══ sonda Oracle JC ═══\nhost=%s:%s schema=%s user=%s\ndriver=%s\n\n",
+		host, port, schema, user, driverVersao)
 
 	// ── 1. Descobrir o nome do banco ────────────────────────────────────────
 	//
