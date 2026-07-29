@@ -27,9 +27,11 @@ func tzBrasil() *time.Location {
 	return time.FixedZone("BRT", -3*3600)
 }
 
-// ExecutarCargaJC roda o ciclo de UM dia e manda o e-mail do dia.
+// ExecutarCargaJC roda o ciclo de UM dia e manda o e-mail do dia. Consolida os
+// agregados no mesmo passo (skipRefresh=false): na carga diária é um dia só, o
+// custo é aceitável e o painel precisa estar atualizado logo em seguida.
 func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
-	res := executarCargaJCSemEmail(db, dataRef)
+	res := executarCargaJCSemEmail(db, dataRef, false)
 	enviarResumoJC(res)
 	return res
 }
@@ -40,7 +42,7 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 // Nunca entra em pânico: qualquer falha vira res.Erro e chega ao relatório —
 // silêncio é o pior desfecho possível numa carga automática, porque ninguém
 // descobre que o painel parou de atualizar até alguém estranhar um número.
-func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
+func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bool) *ResultadoExtracao {
 	res := &ResultadoExtracao{DataRef: dataRef, Inicio: time.Now()}
 	defer func() {
 		res.Fim = time.Now()
@@ -100,7 +102,7 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 	importJobs.Store(jobID, impCancel)
 	spCtx := &FarolContext{EmpresaID: empresaID, AllFiliais: true}
 	processImportJob(impCtx, db, jobID, arquivo, true, spCtx,
-		dataRef.Year(), int(dataRef.Month()), false)
+		dataRef.Year(), int(dataRef.Month()), pularConsolidacao)
 	res.DuracaoImport = time.Since(tImp)
 
 	// Status final vem do banco, não do que achamos que aconteceu.
@@ -190,6 +192,7 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 
 	var resultados []*ResultadoExtracao
 	var pulados []time.Time
+	meses := map[aggMesYM]struct{}{}
 
 	for dia := de; !dia.After(ate); dia = dia.AddDate(0, 0, 1) {
 		if pularExistentes && empresaID != "" && diaJaTemDados(db, empresaID, dia) {
@@ -197,8 +200,50 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 			pulados = append(pulados, dia)
 			continue
 		}
-		res := executarCargaJCSemEmail(db, dia)
+		// skipRefresh=true: a reconsolidação sai do laço e roda UMA vez no fim.
+		// Sem isso o backfill é quadrático — `upsert_aggs_mes` recalcula o MÊS
+		// INTEIRO a cada dia importado, então o custo sobe conforme os dias se
+		// acumulam. Medido em 29/07: 2m23 no dia 01, 3m06 no 02, 3m59 no 03, e
+		// o total do dia já em 7m43 no 04. Extrapolando daria mais de 4h para o
+		// mês; pulando, cada dia fica nos ~2,5min da extração+import.
+		//
+		// É seguro porque upsert_aggs_mes recomputa o mês inteiro de qualquer
+		// forma — fazer 29 vezes o mesmo trabalho não produz resultado melhor
+		// que fazer uma vez no fim.
+		res := executarCargaJCSemEmail(db, dia, true)
 		resultados = append(resultados, res)
+		if res.Erro == nil && res.StatusImport == "done" {
+			meses[aggMesYM{Ano: dia.Year(), Mes: int(dia.Month())}] = struct{}{}
+		}
+	}
+
+	// ── Consolidação única ──────────────────────────────────────────────────
+	if len(meses) > 0 && empresaID != "" {
+		lista := make([]aggMesYM, 0, len(meses))
+		for m := range meses {
+			lista = append(lista, m)
+		}
+		t0 := time.Now()
+		log.Printf("[jc:carga] consolidando %d mês(es) ao final do intervalo", len(lista))
+
+		for _, mv := range []string{"farol.mv_fat_carteira_rca", "farol.mv_trans_carteira_rca"} {
+			if _, err := db.Exec(`REFRESH MATERIALIZED VIEW CONCURRENTLY ` + mv); err != nil {
+				if _, err2 := db.Exec(`REFRESH MATERIALIZED VIEW ` + mv); err2 != nil {
+					log.Printf("[jc:carga] REFRESH %s ERRO: %v", mv, err2)
+				}
+			}
+			db.Exec(`ANALYZE ` + mv)
+		}
+		upsertAggsMesParallel(db, empresaID, lista, 4)
+
+		// Invalida o cache DEPOIS da consolidação: invalidar antes deixaria a
+		// janela em que uma request repovoaria o cache com agregado velho.
+		for _, m := range lista {
+			ym := m.Ano*100 + m.Mes
+			invalidateBaseCacheMeses(empresaID, ym, ym)
+			invalidateVendasPeriodoCacheMeses(empresaID, ym, ym)
+		}
+		log.Printf("[jc:carga] consolidação final concluída em %v", time.Since(t0).Round(time.Second))
 	}
 
 	enviarResumoIntervaloJC(de, ate, inicio, resultados, pulados)
