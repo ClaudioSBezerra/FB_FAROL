@@ -23,18 +23,25 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	_ "github.com/sijms/go-ora/v3"
+	go_ora "github.com/sijms/go-ora/v3"
 )
 
-// servicesComuns — o Keslley ainda não informou o service name. Estes são os
-// defaults de instalação mais prováveis num 23ai; a sonda reporta qual pegou.
-var servicesComuns = []string{"FREEPDB1", "FREE", "ORCLPDB1", "ORCL", "ORCLCDB", "XEPDB1", "XE"}
+// candidatos — o Keslley ainda não informou o nome. Ordem: defaults do 23ai,
+// depois nomes clássicos, depois os plausíveis para este cliente. WINT/WINTHOR
+// entram porque a JC roda WinThor/PC Sistemas, cujas instalações Oracle
+// tradicionalmente usam SID (não service name) — daí a sonda testar os dois modos.
+var candidatos = []string{
+	"FREEPDB1", "FREE", // Oracle 23ai Free
+	"ORCLPDB1", "ORCL", "ORCLCDB", "ORCLPDB", "PDB1", "PDB", // instalação padrão
+	"XEPDB1", "XE", // Express
+	"WINT", "WINTHOR", "WINT1", // WinThor / PC Sistemas
+	"JC", "JCDB", "IA", "IADB", "PROD", "FAROL", // específicos do cliente
+}
 
 func env(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -43,14 +50,37 @@ func env(k, def string) string {
 	return def
 }
 
-func dsn(host, port, service, user, pass string) string {
-	u := &url.URL{
-		Scheme: "oracle",
-		User:   url.UserPassword(user, pass), // escapa senha com caractere especial
-		Host:   net.JoinHostPort(host, port),
-		Path:   "/" + service,
+// modo de resolução do banco no connect descriptor.
+type modo int
+
+const (
+	porServico modo = iota // (SERVICE_NAME=...)
+	porSID                 // (SID=...) — o que instalações WinThor costumam usar
+)
+
+func (m modo) String() string {
+	if m == porSID {
+		return "SID"
 	}
-	return u.String()
+	return "SERVICE"
+}
+
+func dsn(host, port, nome, user, pass string, m modo) string {
+	p, _ := strconv.Atoi(port)
+	if m == porSID {
+		// serviço vazio + SID nas opções → go-ora monta (SID=...) no descriptor
+		return go_ora.BuildUrl(host, p, "", user, pass, map[string]string{"SID": nome})
+	}
+	return go_ora.BuildUrl(host, p, nome, user, pass, nil)
+}
+
+// nomeDesconhecido — o listener respondeu que não conhece este serviço/SID.
+// É o ÚNICO erro que justifica tentar o próximo candidato: o Oracle só valida
+// credencial DEPOIS de resolver o destino, então qualquer outro erro (inclusive
+// senha errada) significa que o nome está CERTO.
+func nomeDesconhecido(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "ORA-12514") || strings.Contains(s, "ORA-12505")
 }
 
 // explicaErro traduz os ORA- que importam aqui. O valor da sonda está em dizer
@@ -74,8 +104,8 @@ func explicaErro(err error) string {
 	return "erro não mapeado — vale colar inteiro para análise."
 }
 
-func tentaConectar(host, port, service, user, pass string) (*sql.DB, error) {
-	db, err := sql.Open("oracle", dsn(host, port, service, user, pass))
+func tentaConectar(host, port, nome, user, pass string, m modo) (*sql.DB, error) {
+	db, err := sql.Open("oracle", dsn(host, port, nome, user, pass, m))
 	if err != nil {
 		return nil, err
 	}
@@ -103,44 +133,64 @@ func main() {
 
 	fmt.Printf("═══ sonda Oracle JC ═══\nhost=%s:%s schema=%s user=%s\n\n", host, port, schema, user)
 
-	// ── 1. Conexão ──────────────────────────────────────────────────────────
+	// ── 1. Descobrir o nome do banco ────────────────────────────────────────
+	//
+	// O Oracle resolve o destino ANTES de checar credencial. Logo, só
+	// ORA-12514/12505 ("não conheço esse nome") justifica tentar o próximo —
+	// qualquer outro erro prova que o nome está certo e o problema é outro.
 	var db *sql.DB
 	var usado string
+	var usadoModo modo
 	var ultimoErr error
 
-	candidatos := servicesComuns
+	lista := candidatos
+	modos := []modo{porServico, porSID}
 	if service != "" {
-		candidatos = []string{service}
+		lista = []string{service}
+		fmt.Printf("JC_SERVICE=%s informado — testando só ele.\n\n", service)
 	} else {
-		fmt.Println("JC_SERVICE não informado — testando os defaults comuns do 23ai:")
+		fmt.Printf("JC_SERVICE não informado — varrendo %d nomes × 2 modos.\n", len(lista))
+		fmt.Print("(o listener responde na hora; erro ≠ 12514/12505 já indica acerto)\n\n")
 	}
 
-	for _, s := range candidatos {
-		t0 := time.Now()
-		conn, err := tentaConectar(host, port, s, user, pass)
-		if err != nil {
-			if service == "" {
-				fmt.Printf("  %-10s ✗ %s\n", s, primeiraLinha(err))
+varredura:
+	for _, m := range modos {
+		for _, nome := range lista {
+			t0 := time.Now()
+			conn, err := tentaConectar(host, port, nome, user, pass, m)
+			if err == nil {
+				db, usado, usadoModo = conn, nome, m
+				fmt.Printf("  %-8s %-10s ✓ CONECTOU em %v\n", m, nome, time.Since(t0).Round(time.Millisecond))
+				break varredura
 			}
 			ultimoErr = err
-			// Credencial ou protocolo errado não melhora trocando de service.
-			e := err.Error()
-			if strings.Contains(e, "ORA-01017") || strings.Contains(e, "ORA-28040") {
-				break
+			if nomeDesconhecido(err) {
+				continue // nome errado — único caso que vale seguir
 			}
-			continue
+			// Nome CERTO, outro problema (credencial, protocolo, permissão).
+			fmt.Printf("  %-8s %-10s ◆ NOME ACEITO — parou aqui\n", m, nome)
+			usado, usadoModo = nome, m
+			break varredura
 		}
-		db, usado = conn, s
-		fmt.Printf("  %-10s ✓ CONECTOU em %v\n", s, time.Since(t0).Round(time.Millisecond))
-		break
+		if service == "" {
+			fmt.Printf("  — nenhum nome respondeu no modo %s\n", m)
+		}
 	}
 
 	if db == nil {
-		fmt.Printf("\n✗ FALHOU\n  erro: %v\n  → %s\n", ultimoErr, explicaErro(ultimoErr))
+		fmt.Printf("\n✗ NÃO CONECTOU\n  último erro: %v\n  → %s\n", ultimoErr, explicaErro(ultimoErr))
+		if usado != "" {
+			fmt.Printf("\n  ATENÇÃO: '%s' (modo %s) foi ACEITO pelo listener — o nome do banco\n", usado, usadoModo)
+			fmt.Println("  está resolvido; o que falta é o item acima.")
+		} else {
+			fmt.Println("\n  Nenhum candidato foi reconhecido. É pergunta direta ao Keslley:")
+			fmt.Println("  \"qual o SERVICE_NAME (ou SID) da instância?\" — no servidor dele,")
+			fmt.Println("  `lsnrctl services` lista em uma linha.")
+		}
 		os.Exit(1)
 	}
 	defer db.Close()
-	fmt.Printf("\n✓ service name = %s  (anotar — é o que faltava)\n\n", usado)
+	fmt.Printf("\n✓ %s = %s  (anotar — era o parâmetro que faltava)\n\n", usadoModo, usado)
 
 	// ── 2. Sessão viva ──────────────────────────────────────────────────────
 	var um int
@@ -187,6 +237,7 @@ func main() {
 
 	// ── 5. Nomes — confere se as 4 views esperadas apareceram ───────────────
 	fmt.Println("\n─── nomes ───")
+	var legiveis []string
 	rows2, err := db.Query(`
 		SELECT object_name, object_type
 		FROM all_objects WHERE owner = :1
@@ -197,11 +248,93 @@ func main() {
 			var nome, tipo string
 			if rows2.Scan(&nome, &tipo) == nil {
 				fmt.Printf("  %-14s %s\n", tipo, nome)
+				legiveis = append(legiveis, nome)
 			}
 		}
 		rows2.Close()
 	}
 	fmt.Println("\nEsperado (reunião 16/07): FATURADAS, TRANSMITIDAS, CANCELADAS, DEVOLVIDAS.")
+
+	// ── 6. SELECT de verdade — listar não prova leitura ─────────────────────
+	//
+	// all_objects mostra o que EXISTE; o GRANT de SELECT é outra coisa. Só um
+	// SELECT real prova que a extração vai funcionar. Fazemos ROWNUM<=1 (barato
+	// em qualquer tamanho de tabela) para colher as colunas, e COUNT(*) com
+	// timeout curto — se estourar, a tabela é grande, o que é informação útil
+	// para dimensionar a janela de carga, não um erro.
+	if len(legiveis) == 0 {
+		return
+	}
+	fmt.Printf("\n─── SELECT real (%d objetos) ───\n", len(legiveis))
+	for _, nome := range legiveis {
+		if !identificadorSeguro(nome) {
+			fmt.Printf("  %-24s · nome fora do padrão, pulado\n", nome)
+			continue
+		}
+		alvo := schema + "." + nome
+
+		cols, err := colunasDe(db, alvo)
+		if err != nil {
+			fmt.Printf("  %-24s ✗ %s\n", nome, primeiraLinha(err))
+			if strings.Contains(err.Error(), "ORA-01031") || strings.Contains(err.Error(), "ORA-00942") {
+				fmt.Println("       └ existe mas sem GRANT de SELECT — pedir ao Keslley")
+			}
+			continue
+		}
+		fmt.Printf("  %-24s ✓ %d colunas\n", nome, len(cols))
+		fmt.Printf("       colunas: %s\n", resumoColunas(cols))
+
+		if n, dur, err := contaLinhas(db, alvo); err != nil {
+			fmt.Printf("       linhas: (COUNT não concluiu em 30s — tabela grande)\n")
+		} else {
+			fmt.Printf("       linhas: %d  (COUNT em %v)\n", n, dur.Round(time.Millisecond))
+		}
+	}
+}
+
+// identificadorSeguro — os nomes vêm do próprio dicionário do Oracle, mas eles
+// entram em SQL por concatenação (bind não vale para identificador), então
+// validamos antes de interpolar.
+func identificadorSeguro(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		ok := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '$' || r == '#'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func colunasDe(db *sql.DB, alvo string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, "SELECT * FROM "+alvo+" WHERE ROWNUM <= 1")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return rows.Columns()
+}
+
+func contaLinhas(db *sql.DB, alvo string) (int64, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	t0 := time.Now()
+	var n int64
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+alvo).Scan(&n)
+	return n, time.Since(t0), err
+}
+
+func resumoColunas(cols []string) string {
+	const max = 12
+	if len(cols) <= max {
+		return strings.Join(cols, ", ")
+	}
+	return strings.Join(cols[:max], ", ") + fmt.Sprintf(", … (+%d)", len(cols)-max)
 }
 
 func primeiraLinha(err error) string {
