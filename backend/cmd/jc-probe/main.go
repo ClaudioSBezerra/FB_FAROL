@@ -135,6 +135,12 @@ func main() {
 	user := env("JC_USER", "")
 	pass := env("JC_PASS", "")
 	schema := strings.ToUpper(env("JC_SCHEMA", "IAUSER"))
+	// Janela do teste de leitura. 5 dias = a mesma que o Keslley usou no SqlDbx,
+	// então os números são comparáveis com o print dele.
+	dias, err := strconv.Atoi(env("JC_DIAS", "5"))
+	if err != nil || dias < 1 {
+		dias = 5
+	}
 
 	if user == "" || pass == "" {
 		fmt.Println("ERRO: defina JC_USER e JC_PASS no ambiente (a sonda não guarda credencial).")
@@ -330,21 +336,27 @@ varredura:
 		}
 		nome := alvo
 
-		cols, err := colunasDe(db, alvo)
+		t0 := time.Now()
+		cols, err := colunasDe(db, alvo, dias)
 		if err != nil {
 			fmt.Printf("  %-24s ✗ %s\n", nome, primeiraLinha(err))
-			if strings.Contains(err.Error(), "ORA-01031") || strings.Contains(err.Error(), "ORA-00942") {
+			switch {
+			case strings.Contains(err.Error(), "ORA-01031"), strings.Contains(err.Error(), "ORA-00942"):
 				fmt.Println("       └ existe mas sem GRANT de SELECT — pedir ao Keslley")
+			case strings.Contains(err.Error(), "ORA-01013"):
+				fmt.Println("       └ timeout da sonda. View pesada mesmo com filtro de data —")
+				fmt.Println("         aumentar JC_DIAS não ajuda; é sinal de que a MV não existe.")
 			}
 			continue
 		}
-		fmt.Printf("  %-24s ✓ %d colunas\n", nome, len(cols))
+		fmt.Printf("  %-24s ✓ %d colunas em %v\n", nome, len(cols), time.Since(t0).Round(time.Millisecond))
 		fmt.Printf("       colunas: %s\n", resumoColunas(cols))
 
-		if n, dur, err := contaLinhas(db, alvo); err != nil {
-			fmt.Printf("       linhas: (COUNT não concluiu em 30s — tabela grande)\n")
+		fmt.Printf("       ── volume dos últimos %d dias ──\n", dias)
+		if dur, err := contaPorEstado(db, alvo, dias); err != nil {
+			fmt.Printf("       ✗ contagem falhou: %s\n", primeiraLinha(err))
 		} else {
-			fmt.Printf("       linhas: %d  (COUNT em %v)\n", n, dur.Round(time.Millisecond))
+			fmt.Printf("       (agregação em %v)\n", dur.Round(time.Millisecond))
 		}
 	}
 }
@@ -397,24 +409,60 @@ func identificadorSeguro(s string) bool {
 	return true
 }
 
-func colunasDe(db *sql.DB, alvo string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+// colunasDe — SEMPRE com filtro de data. COMPRAS_FAROL_VW é view COMUM sobre
+// tabelas de 28M+20M linhas: sem predicado de data, nem `ROWNUM <= 1` retorna,
+// porque o otimizador monta o join inteiro antes da primeira linha (medido em
+// 29/07: estourou 20s). Com filtro, responde em segundos. É a mesma forma que o
+// extrator vai usar (D-1), então o teste espelha o uso real.
+func colunasDe(db *sql.DB, alvo string, dias int) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	rows, err := db.QueryContext(ctx, "SELECT * FROM "+alvo+" WHERE ROWNUM <= 1")
+	q := fmt.Sprintf(
+		"SELECT * FROM %s WHERE DATA >= TRUNC(SYSDATE) - %d AND ROWNUM <= 1", alvo, dias)
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
+		// Sem coluna DATA (ou nome diferente): tenta sem filtro, avisando.
+		if strings.Contains(err.Error(), "ORA-00904") {
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel2()
+			rows, err = db.QueryContext(ctx2, "SELECT * FROM "+alvo+" WHERE ROWNUM <= 1")
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			return rows.Columns()
+		}
 		return nil, err
 	}
 	defer rows.Close()
 	return rows.Columns()
 }
 
-func contaLinhas(db *sql.DB, alvo string) (int64, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// contaPorEstado — replica a consulta que o Keslley rodou no SqlDbx: volume por
+// fluxo nos últimos N dias. Escopado por data pelo mesmo motivo acima, e é o
+// número que dimensiona a janela de carga.
+func contaPorEstado(db *sql.DB, alvo string, dias int) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	t0 := time.Now()
-	var n int64
-	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+alvo).Scan(&n)
-	return n, time.Since(t0), err
+	q := fmt.Sprintf(`SELECT ESTADO, COUNT(*) FROM %s
+		WHERE DATA >= TRUNC(SYSDATE) - %d GROUP BY ESTADO ORDER BY 2 DESC`, alvo, dias)
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return time.Since(t0), err
+	}
+	defer rows.Close()
+	var total int64
+	for rows.Next() {
+		var estado string
+		var n int64
+		if rows.Scan(&estado, &n) == nil {
+			fmt.Printf("       %-14s %10d\n", estado, n)
+			total += n
+		}
+	}
+	fmt.Printf("       %-14s %10d  (~%d/dia)\n", "TOTAL", total, total/int64(max(dias, 1)))
+	return time.Since(t0), nil
 }
 
 func resumoColunas(cols []string) string {
