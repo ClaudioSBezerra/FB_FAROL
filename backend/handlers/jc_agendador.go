@@ -73,12 +73,20 @@ func StartCargaJCDiaria(db *sql.DB) {
 	}
 }
 
-// CargaJCManualHandler — POST /api/v2/jc/carga?data=2026-07-28
+// CargaJCManualHandler — carga sob demanda, um dia ou um intervalo.
 //
-// Existe para três coisas: testar antes do primeiro disparo automático,
-// reprocessar um dia que falhou, e cobrir buraco quando o JOB da origem atrasar.
-// Sem `data`, assume D-1. Roda em background e devolve na hora, porque a carga
-// leva minutos e o proxy cortaria a conexão.
+//	POST /api/v2/jc/carga?data=2026-07-28                     um dia
+//	POST /api/v2/jc/carga?de=2026-07-01&ate=2026-07-29        intervalo
+//	POST /api/v2/jc/carga?de=...&ate=...&pular_existentes=1   backfill
+//
+// Sem parâmetro, assume D-1. Existe para testar antes do primeiro disparo
+// automático, reprocessar dia que falhou, e cobrir buraco quando o JOB da origem
+// atrasar. Roda em background e devolve na hora, porque a carga leva minutos e o
+// proxy cortaria a conexão.
+//
+// No intervalo os dias são processados em SEQUÊNCIA e sai UM e-mail no fim —
+// paralelizar competiria com o JOB de replicação do lado deles, e 29 e-mails
+// separados escondem o que importa.
 func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -100,8 +108,58 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		loc := tzBrasil()
+		q := r.URL.Query()
+		soData := func(t time.Time) time.Time {
+			return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		}
+
+		// ── Modo intervalo ──────────────────────────────────────────────────
+		deStr := strings.TrimSpace(q.Get("de"))
+		ateStr := strings.TrimSpace(q.Get("ate"))
+		if deStr != "" || ateStr != "" {
+			if deStr == "" || ateStr == "" {
+				http.Error(w, `{"error":"informe 'de' E 'ate' (AAAA-MM-DD)"}`, http.StatusBadRequest)
+				return
+			}
+			de, errDe := time.Parse("2006-01-02", deStr)
+			ate, errAte := time.Parse("2006-01-02", ateStr)
+			if errDe != nil || errAte != nil {
+				http.Error(w, `{"error":"datas inválidas — use AAAA-MM-DD"}`, http.StatusBadRequest)
+				return
+			}
+			de, ate = soData(de), soData(ate)
+			if ate.Before(de) {
+				http.Error(w, `{"error":"'ate' anterior a 'de'"}`, http.StatusBadRequest)
+				return
+			}
+			dias := int(ate.Sub(de).Hours()/24) + 1
+			if dias > jcMaxDiasIntervalo {
+				http.Error(w, fmt.Sprintf(
+					`{"error":"intervalo de %d dias excede o limite de %d — cada dia custa ~5min"}`,
+					dias, jcMaxDiasIntervalo), http.StatusBadRequest)
+				return
+			}
+			pular := q.Get("pular_existentes") == "1" || strings.EqualFold(q.Get("pular_existentes"), "true")
+
+			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias, pular_existentes=%t) por user=%s",
+				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, pular, spCtx.UserID)
+			go ExecutarCargaJCIntervalo(db, de, ate, pular)
+
+			json.NewEncoder(w).Encode(map[string]any{
+				"iniciado":         true,
+				"de":               de.Format("2006-01-02"),
+				"ate":              ate.Format("2006-01-02"),
+				"dias":             dias,
+				"pular_existentes": pular,
+				"estimativa":       fmt.Sprintf("~%d min", dias*5),
+				"aviso":            "roda em background, um dia por vez; UM e-mail com o consolidado no fim",
+			})
+			return
+		}
+
+		// ── Modo um dia ─────────────────────────────────────────────────────
 		data := time.Now().In(loc).AddDate(0, 0, -1)
-		if s := strings.TrimSpace(r.URL.Query().Get("data")); s != "" {
+		if s := strings.TrimSpace(q.Get("data")); s != "" {
 			t, err := time.Parse("2006-01-02", s)
 			if err != nil {
 				http.Error(w, `{"error":"data inválida — use AAAA-MM-DD"}`, http.StatusBadRequest)
@@ -109,7 +167,7 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 			}
 			data = t
 		}
-		dia := time.Date(data.Year(), data.Month(), data.Day(), 0, 0, 0, 0, time.UTC)
+		dia := soData(data)
 
 		log.Printf("[jc:carga] disparo MANUAL para %s por user=%s", dia.Format("2006-01-02"), spCtx.UserID)
 		go ExecutarCargaJC(db, dia)

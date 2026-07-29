@@ -27,18 +27,26 @@ func tzBrasil() *time.Location {
 	return time.FixedZone("BRT", -3*3600)
 }
 
-// ExecutarCargaJC roda o ciclo completo para uma data e devolve o resultado.
-// Nunca entra em pânico: qualquer falha vira res.Erro e VAI para o e-mail —
+// ExecutarCargaJC roda o ciclo de UM dia e manda o e-mail do dia.
+func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
+	res := executarCargaJCSemEmail(db, dataRef)
+	enviarResumoJC(res)
+	return res
+}
+
+// executarCargaJCSemEmail faz o trabalho e NÃO notifica — é o que o backfill de
+// intervalo usa, para mandar um e-mail consolidado no fim em vez de um por dia.
+//
+// Nunca entra em pânico: qualquer falha vira res.Erro e chega ao relatório —
 // silêncio é o pior desfecho possível numa carga automática, porque ninguém
 // descobre que o painel parou de atualizar até alguém estranhar um número.
-func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
+func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 	res := &ResultadoExtracao{DataRef: dataRef, Inicio: time.Now()}
 	defer func() {
 		res.Fim = time.Now()
 		if r := recover(); r != nil {
 			res.Erro = fmt.Errorf("pânico durante a carga: %v", r)
 		}
-		enviarResumoJC(res)
 	}()
 
 	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
@@ -135,6 +143,152 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 // `501 Bad recipient address syntax` porque a lista inteira virou UM endereço.
 // Separador é detalhe de digitação, não decisão — aceitar todos evita um erro
 // que só aparece quando o e-mail deixa de chegar.
+// jcMaxDiasIntervalo — teto de segurança. Cada dia custa ~5min (1min de
+// consulta no Oracle + import + reconsolidação dos agregados), então 92 dias já
+// são ~8h de carga contínua. O limite existe para transformar um erro de
+// digitação de ano em erro imediato, não em 3 dias de martelada no Oracle deles.
+const jcMaxDiasIntervalo = 92
+
+// diaJaTemDados — usado pelo modo "pular existentes" do backfill. Olha as três
+// tabelas de destino: basta uma ter linha para o dia contar como carregado.
+func diaJaTemDados(db *sql.DB, empresaID string, dia time.Time) bool {
+	var existe bool
+	err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM vendas_faturadas
+			 WHERE empresa_id=$1 AND data_faturamento=$2
+			UNION ALL
+			SELECT 1 FROM vendas_transmitidas
+			 WHERE empresa_id=$1 AND data_transmissao=$2
+			UNION ALL
+			SELECT 1 FROM vendas_ccd
+			 WHERE empresa_id=$1 AND data_evento=$2
+		)`, empresaID, dia).Scan(&existe)
+	if err != nil {
+		// Na dúvida, NÃO pula: recarregar um dia é barato e idempotente;
+		// deixar buraco no histórico não é.
+		log.Printf("[jc:carga] checagem de dia existente falhou (%v) — vai recarregar %s",
+			err, dia.Format("2006-01-02"))
+		return false
+	}
+	return existe
+}
+
+// ExecutarCargaJCIntervalo roda a carga dia a dia, em SEQUÊNCIA, e manda UM
+// e-mail com o consolidado.
+//
+// Sequencial de propósito: em paralelo, várias consultas de 1min no Oracle deles
+// competiriam entre si e com o JOB de replicação, e do nosso lado cada import
+// dispara reconsolidação de agregados. É a mesma lição do prewarmDailyRanges,
+// que saturava o banco rodando 6 scans concorrentes.
+//
+// Falha de um dia NÃO aborta o resto — num backfill, perder os 20 dias
+// seguintes porque um deu erro é pior que ter um buraco conhecido e relatado.
+func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes bool) {
+	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
+	inicio := time.Now()
+
+	var resultados []*ResultadoExtracao
+	var pulados []time.Time
+
+	for dia := de; !dia.After(ate); dia = dia.AddDate(0, 0, 1) {
+		if pularExistentes && empresaID != "" && diaJaTemDados(db, empresaID, dia) {
+			log.Printf("[jc:carga] %s já tem dados — pulado", dia.Format("2006-01-02"))
+			pulados = append(pulados, dia)
+			continue
+		}
+		res := executarCargaJCSemEmail(db, dia)
+		resultados = append(resultados, res)
+	}
+
+	enviarResumoIntervaloJC(de, ate, inicio, resultados, pulados)
+}
+
+// corpoResumoIntervaloJC — uma tabela dia a dia. O veredito consolidado vem na
+// primeira linha pelo mesmo motivo do resumo diário: notificação de celular
+// mostra só o começo.
+func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time) (string, string) {
+	loc := tzBrasil()
+	fim := time.Now()
+
+	var okN, falhaN, vazioN, totalLinhas int
+	for _, r := range res {
+		switch {
+		case r.Erro != nil:
+			falhaN++
+		case r.StatusImport == "sem_dados":
+			vazioN++
+		default:
+			okN++
+			totalLinhas += r.LinhasImportad
+		}
+	}
+
+	veredito := fmt.Sprintf("%d OK", okN)
+	if falhaN > 0 {
+		veredito += fmt.Sprintf(", %d FALHARAM", falhaN)
+	}
+	if vazioN > 0 {
+		veredito += fmt.Sprintf(", %d sem dados", vazioN)
+	}
+
+	assunto := fmt.Sprintf("[FAROL] Carga JC %s a %s — %s",
+		de.Format("02/01"), ate.Format("02/01/2006"), veredito)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Carga automática do Farol (intervalo) — %s\n\n", veredito)
+	fmt.Fprintf(&b, "Período   : %s a %s\n", de.Format("02/01/2006"), ate.Format("02/01/2006"))
+	fmt.Fprintf(&b, "Início    : %s\n", inicio.In(loc).Format("02/01/2006 15:04:05"))
+	fmt.Fprintf(&b, "Conclusão : %s\n", fim.In(loc).Format("02/01/2006 15:04:05"))
+	fmt.Fprintf(&b, "Duração   : %s\n", fim.Sub(inicio).Round(time.Second))
+	fmt.Fprintf(&b, "Importado : %s linhas\n\n", milhar(totalLinhas))
+
+	if len(pulados) > 0 {
+		fmt.Fprintf(&b, "%d dia(s) pulado(s) por já terem dados.\n\n", len(pulados))
+	}
+
+	b.WriteString("Dia         Situação      Linhas       Tempo\n")
+	b.WriteString("----------  ------------  -----------  --------\n")
+	for _, r := range res {
+		situacao := "OK"
+		switch {
+		case r.Erro != nil:
+			situacao = "FALHOU"
+		case r.StatusImport == "sem_dados":
+			situacao = "sem dados"
+		}
+		fmt.Fprintf(&b, "%-10s  %-12s  %11s  %8s\n",
+			r.DataRef.Format("02/01/2026"), situacao,
+			milhar(r.LinhasImportad), r.Duracao().Round(time.Second))
+	}
+
+	// Erros detalhados no fim: quem só quer saber se deu certo lê o topo; quem
+	// precisa agir lê aqui.
+	if falhaN > 0 {
+		b.WriteString("\n--- erros ---\n")
+		for _, r := range res {
+			if r.Erro != nil {
+				fmt.Fprintf(&b, "%s: %s\n", r.DataRef.Format("02/01/2026"), r.Erro.Error())
+			}
+		}
+		b.WriteString("\nDias com falha podem ser reprocessados individualmente:\n")
+		b.WriteString("POST /api/v2/jc/carga?data=AAAA-MM-DD\n")
+	}
+
+	b.WriteString("\nMensagem automática do FB_FAROL.\n")
+	return assunto, b.String()
+}
+
+func enviarResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time) {
+	assunto, corpo := corpoResumoIntervaloJC(de, ate, inicio, res, pulados)
+	para := destinatariosJC()
+	if err := services.SendPlainReport(para, assunto, corpo); err != nil {
+		log.Printf("[jc:carga] FALHA ao enviar resumo do intervalo para %v: %v", para, err)
+		return
+	}
+	log.Printf("[jc:carga] resumo do intervalo enviado para %s", strings.Join(para, ", "))
+}
+
 func destinatariosJC() []string {
 	raw := strings.TrimSpace(os.Getenv("JC_EXTRACAO_EMAILS"))
 	if raw == "" {
