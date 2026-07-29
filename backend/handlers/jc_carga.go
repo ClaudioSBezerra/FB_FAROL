@@ -119,8 +119,13 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 		res.Erro = fmt.Errorf("import terminou como %q: %s", status, msg)
 	}
 
+	// time.Since(res.Inicio), NÃO res.Duracao(): o `Fim` só é preenchido no
+	// defer, que roda DEPOIS deste log. Usar Duracao() aqui lê um Fim zerado e
+	// estoura o time.Duration — em produção saiu "-2562047h47m16s". O e-mail
+	// não tinha o problema (o defer preenche o Fim antes de enviar).
 	log.Printf("[jc:carga] dia=%s CONCLUÍDO status=%s lidas=%d importadas=%d em %v",
-		dataRef.Format("2006-01-02"), status, res.LinhasLidas, res.LinhasImportad, res.Duracao())
+		dataRef.Format("2006-01-02"), status, res.LinhasLidas, res.LinhasImportad,
+		time.Since(res.Inicio).Round(time.Second))
 	return res
 }
 

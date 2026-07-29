@@ -334,6 +334,26 @@ func TestDestinatariosPadrao(t *testing.T) {
 	}
 }
 
+// TestDuracaoAntesDoFim — chamar Duracao() com o Fim ainda zerado subtraía de
+// um time.Time zero e estourava o int64: o log da 1ª carga bem-sucedida saiu
+// "em -2562047h47m16.854775808s". Duração negativa num relatório operacional
+// destrói a confiança no resto dos números.
+func TestDuracaoAntesDoFim(t *testing.T) {
+	res := &ResultadoExtracao{Inicio: time.Now().Add(-90 * time.Second)}
+	d := res.Duracao()
+	if d < 0 {
+		t.Errorf("Duracao() com Fim zerado = %v — negativa", d)
+	}
+	if d < 80*time.Second || d > 120*time.Second {
+		t.Errorf("Duracao() = %v, esperava ~90s", d)
+	}
+
+	res.Fim = res.Inicio.Add(2 * time.Minute)
+	if got := res.Duracao(); got != 2*time.Minute {
+		t.Errorf("com Fim preenchido = %v, queria 2m", got)
+	}
+}
+
 func TestMilhar(t *testing.T) {
 	casos := map[int]string{0: "0", 7: "7", 999: "999", 1000: "1.000",
 		88067: "88.067", 1234567: "1.234.567"}

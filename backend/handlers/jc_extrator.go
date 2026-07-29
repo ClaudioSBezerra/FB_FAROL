@@ -96,7 +96,16 @@ type ResultadoExtracao struct {
 	Erro           error
 }
 
-func (r *ResultadoExtracao) Duracao() time.Duration { return r.Fim.Sub(r.Inicio) }
+// Duracao só é válida depois que o Fim foi preenchido (no defer de
+// ExecutarCargaJC). Chamada antes disso, subtrairia de um time.Time zerado e
+// estouraria o int64 — foi o que produziu "-2562047h47m16s" no log da 1ª carga
+// bem-sucedida. O fallback protege quem chamar cedo demais.
+func (r *ResultadoExtracao) Duracao() time.Duration {
+	if r.Fim.IsZero() {
+		return time.Since(r.Inicio)
+	}
+	return r.Fim.Sub(r.Inicio)
+}
 
 func envJC(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
