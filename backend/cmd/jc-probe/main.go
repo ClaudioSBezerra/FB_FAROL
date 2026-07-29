@@ -128,7 +128,10 @@ func tentaConectar(host, port, nome, user, pass string, m modo) (*sql.DB, error)
 func main() {
 	host := env("JC_HOST", "201.48.119.197")
 	port := env("JC_PORT", "1521")
-	service := env("JC_SERVICE", "")
+	// cdb1 confirmado em 29/07/2026 pelo alias ORA_POWERBI que o Keslley enviou
+	// (o mesmo que o Power BI deles já usa). A varredura tinha achado PDB1, que o
+	// listener aceita mas onde o IAUSER não existe — daí o ORA-01017.
+	service := env("JC_SERVICE", "cdb1")
 	user := env("JC_USER", "")
 	pass := env("JC_PASS", "")
 	schema := strings.ToUpper(env("JC_SCHEMA", "IAUSER"))
@@ -216,47 +219,62 @@ varredura:
 		fmt.Printf("✓ versão: %s\n", banner)
 	}
 
-	// ── 4. O que o Keslley já criou ─────────────────────────────────────────
-	fmt.Printf("\n─── objetos visíveis no schema %s ───\n", schema)
-	rows, err := db.Query(`
+	// ── 4. O que já existe ──────────────────────────────────────────────────
+	//
+	// Duas perguntas DIFERENTES, e olhar só a primeira já nos enganou uma vez:
+	//   (a) o que IAUSER é DONO  → all_objects WHERE owner = IAUSER
+	//   (b) o que IAUSER ALCANÇA → all_objects (só mostra o acessível) em
+	//       schemas não-Oracle
+	// O caminho provável é o Keslley criar as views em outro schema e conceder
+	// SELECT, ou criar sinônimos. Nesse caso (a) fica vazio e (b) mostra tudo.
+	fmt.Printf("\n─── (a) objetos de que %s é DONO ───\n", schema)
+	total := contaPorTipo(db, `
 		SELECT object_type, COUNT(*)
 		FROM all_objects WHERE owner = :1
 		GROUP BY object_type ORDER BY object_type`, schema)
-	if err != nil {
-		fmt.Printf("✗ não listou: %v\n  → %s\n", err, explicaErro(err))
-		os.Exit(1)
-	}
-	total := 0
-	for rows.Next() {
-		var tipo string
-		var n int
-		if rows.Scan(&tipo, &n) == nil {
-			fmt.Printf("  %-20s %d\n", tipo, n)
-			total += n
-		}
-	}
-	rows.Close()
-
 	if total == 0 {
-		fmt.Println("  (nenhum) — Keslley ainda não criou views/sinônimos, ou faltam GRANTs.")
-		fmt.Println("\n✓ Rede, service name e credencial OK. Falta só o lado dele.")
+		fmt.Println("  (nenhum)")
+	}
+
+	fmt.Println("\n─── (b) objetos ACESSÍVEIS em schemas de aplicação ───")
+	fmt.Println("    (exclui schemas internos do Oracle via oracle_maintained)")
+	acessiveis := contaPorTipo(db, `
+		SELECT o.owner || '.' || o.object_type, COUNT(*)
+		FROM all_objects o
+		JOIN all_users u ON u.username = o.owner
+		WHERE u.oracle_maintained = 'N'
+		  AND o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
+		GROUP BY o.owner || '.' || o.object_type
+		ORDER BY 1`)
+	if acessiveis == 0 {
+		fmt.Println("  (nenhum)")
+	}
+
+	if total == 0 && acessiveis == 0 {
+		fmt.Println("\n✓ Rede, service name, credencial e driver OK.")
+		fmt.Println("  Falta o Keslley criar as views/sinônimos e conceder SELECT.")
 		return
 	}
 
 	// ── 5. Nomes — confere se as 4 views esperadas apareceram ───────────────
-	fmt.Println("\n─── nomes ───")
+	//
+	// Qualifica com o owner: as views podem não estar em IAUSER, e o SELECT do
+	// passo 6 precisa do nome completo para funcionar.
+	fmt.Println("\n─── nomes (owner.objeto) ───")
 	var legiveis []string
 	rows2, err := db.Query(`
-		SELECT object_name, object_type
-		FROM all_objects WHERE owner = :1
-		  AND object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
-		ORDER BY object_type, object_name`, schema)
+		SELECT o.owner, o.object_name, o.object_type
+		FROM all_objects o
+		JOIN all_users u ON u.username = o.owner
+		WHERE u.oracle_maintained = 'N'
+		  AND o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
+		ORDER BY o.owner, o.object_type, o.object_name`)
 	if err == nil {
 		for rows2.Next() {
-			var nome, tipo string
-			if rows2.Scan(&nome, &tipo) == nil {
-				fmt.Printf("  %-14s %s\n", tipo, nome)
-				legiveis = append(legiveis, nome)
+			var owner, nome, tipo string
+			if rows2.Scan(&owner, &nome, &tipo) == nil {
+				fmt.Printf("  %-14s %s.%s\n", tipo, owner, nome)
+				legiveis = append(legiveis, owner+"."+nome)
 			}
 		}
 		rows2.Close()
@@ -274,12 +292,12 @@ varredura:
 		return
 	}
 	fmt.Printf("\n─── SELECT real (%d objetos) ───\n", len(legiveis))
-	for _, nome := range legiveis {
-		if !identificadorSeguro(nome) {
-			fmt.Printf("  %-24s · nome fora do padrão, pulado\n", nome)
+	for _, alvo := range legiveis {
+		if !qualificadoSeguro(alvo) {
+			fmt.Printf("  %-30s · nome fora do padrão, pulado\n", alvo)
 			continue
 		}
-		alvo := schema + "." + nome
+		nome := alvo
 
 		cols, err := colunasDe(db, alvo)
 		if err != nil {
@@ -298,6 +316,37 @@ varredura:
 			fmt.Printf("       linhas: %d  (COUNT em %v)\n", n, dur.Round(time.Millisecond))
 		}
 	}
+}
+
+// contaPorTipo roda uma query de duas colunas (rótulo, contagem) e imprime.
+// Devolve o total para o chamador decidir se vale seguir.
+func contaPorTipo(db *sql.DB, query string, args ...any) int {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		fmt.Printf("  ✗ não listou: %s\n", primeiraLinha(err))
+		return 0
+	}
+	defer rows.Close()
+	total := 0
+	for rows.Next() {
+		var rotulo string
+		var n int
+		if rows.Scan(&rotulo, &n) == nil {
+			fmt.Printf("  %-34s %d\n", rotulo, n)
+			total += n
+		}
+	}
+	return total
+}
+
+// qualificadoSeguro valida "OWNER.OBJETO" antes de interpolar em SQL (bind não
+// vale para identificador).
+func qualificadoSeguro(s string) bool {
+	partes := strings.Split(s, ".")
+	if len(partes) != 2 {
+		return false
+	}
+	return identificadorSeguro(partes[0]) && identificadorSeguro(partes[1])
 }
 
 // identificadorSeguro — os nomes vêm do próprio dicionário do Oracle, mas eles
