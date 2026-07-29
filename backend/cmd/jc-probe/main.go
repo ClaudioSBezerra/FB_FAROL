@@ -236,18 +236,47 @@ varredura:
 		fmt.Println("  (nenhum)")
 	}
 
-	fmt.Println("\n─── (b) objetos ACESSÍVEIS em schemas de aplicação ───")
-	fmt.Println("    (exclui schemas internos do Oracle via oracle_maintained)")
+	// Sinônimos são o caminho combinado com o Keslley: ele aponta um sinônimo no
+	// IAUSER para a MV que vive em outro schema. Resolver o alvo é o que diz se
+	// o GRANT chegou — um sinônimo pode existir apontando para objeto inacessível.
+	fmt.Println("\n─── sinônimos e seus alvos ───")
+	sinRows, err := db.Query(`
+		SELECT synonym_name, table_owner, table_name
+		FROM all_synonyms WHERE owner = :1 ORDER BY synonym_name`, schema)
+	if err == nil {
+		n := 0
+		for sinRows.Next() {
+			var s, o, t string
+			if sinRows.Scan(&s, &o, &t) == nil {
+				fmt.Printf("  %-24s → %s.%s\n", s, o, t)
+				n++
+			}
+		}
+		sinRows.Close()
+		if n == 0 {
+			fmt.Println("  (nenhum)")
+		}
+	}
+
+	fmt.Println("\n─── (b) objetos ACESSÍVEIS em OUTROS schemas ───")
+	// NÃO filtra por oracle_maintained: um usuário criado no CDB root com
+	// _ORACLE_SCRIPT=true (o jeito de não precisar do prefixo C##) fica marcado
+	// como ORACLE_MAINTAINED='Y'. Filtrar por isso escondia o próprio IAUSER e
+	// qualquer schema criado do mesmo jeito — foi o que mascarou o sinônimo na
+	// primeira rodada. Exclui-se por NOME os schemas notoriamente internos.
 	acessiveis := contaPorTipo(db, `
 		SELECT o.owner || '.' || o.object_type, COUNT(*)
 		FROM all_objects o
-		JOIN all_users u ON u.username = o.owner
-		WHERE u.oracle_maintained = 'N'
-		  AND o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
+		WHERE o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
+		  AND o.owner <> :1
+		  AND o.owner NOT IN ('SYS','SYSTEM','XDB','MDSYS','CTXSYS','DBSNMP',
+		                      'OUTLN','APPQOSSYS','AUDSYS','WMSYS','LBACSYS',
+		                      'OJVMSYS','ORDSYS','ORDDATA','OLAPSYS','DVSYS',
+		                      'GSMADMIN_INTERNAL','PUBLIC','DBSFWUSER','REMOTE_SCHEDULER_AGENT')
 		GROUP BY o.owner || '.' || o.object_type
-		ORDER BY 1`)
+		ORDER BY 1`, schema)
 	if acessiveis == 0 {
-		fmt.Println("  (nenhum)")
+		fmt.Println("  (nenhum — normal se tudo vier por sinônimo)")
 	}
 
 	if total == 0 && acessiveis == 0 {
@@ -265,10 +294,12 @@ varredura:
 	rows2, err := db.Query(`
 		SELECT o.owner, o.object_name, o.object_type
 		FROM all_objects o
-		JOIN all_users u ON u.username = o.owner
-		WHERE u.oracle_maintained = 'N'
-		  AND o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
-		ORDER BY o.owner, o.object_type, o.object_name`)
+		WHERE o.object_type IN ('VIEW','TABLE','SYNONYM','MATERIALIZED VIEW')
+		  AND (o.owner = :1 OR o.owner NOT IN
+		       ('SYS','SYSTEM','XDB','MDSYS','CTXSYS','DBSNMP','OUTLN','APPQOSSYS',
+		        'AUDSYS','WMSYS','LBACSYS','OJVMSYS','ORDSYS','ORDDATA','OLAPSYS',
+		        'DVSYS','GSMADMIN_INTERNAL','PUBLIC','DBSFWUSER','REMOTE_SCHEDULER_AGENT'))
+		ORDER BY o.owner, o.object_type, o.object_name`, schema)
 	if err == nil {
 		for rows2.Next() {
 			var owner, nome, tipo string
