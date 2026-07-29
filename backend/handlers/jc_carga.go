@@ -96,11 +96,14 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 	res.DuracaoImport = time.Since(tImp)
 
 	// Status final vem do banco, não do que achamos que aconteceu.
+	// Colunas conforme migration 140: `importados` e `message` (não
+	// processed_lines/error_message — errei isso na 1ª versão e o erro só
+	// apareceu em produção, porque a consulta falha em runtime, não no build).
 	var status string
 	var processadas sql.NullInt64
 	var erroMsg sql.NullString
 	if err := db.QueryRow(`
-		SELECT status, processed_lines, error_message
+		SELECT status, importados, message
 		FROM vendas_import_jobs WHERE id = $1`, jobID,
 	).Scan(&status, &processadas, &erroMsg); err != nil {
 		res.Erro = fmt.Errorf("ler status do job %s: %w", jobID, err)
@@ -121,13 +124,22 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 	return res
 }
 
+// destinatariosJC aceita vírgula, ponto-e-vírgula, espaço ou quebra de linha
+// como separador. O `;` é o padrão do Outlook e foi o que veio configurado na
+// primeira tentativa (29/07): o SMTP recusou com
+// `501 Bad recipient address syntax` porque a lista inteira virou UM endereço.
+// Separador é detalhe de digitação, não decisão — aceitar todos evita um erro
+// que só aparece quando o e-mail deixa de chegar.
 func destinatariosJC() []string {
 	raw := strings.TrimSpace(os.Getenv("JC_EXTRACAO_EMAILS"))
 	if raw == "" {
 		raw = jcDestinatariosPadrao
 	}
+	campos := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\r' || r == '\t'
+	})
 	var out []string
-	for _, e := range strings.Split(raw, ",") {
+	for _, e := range campos {
 		if e = strings.TrimSpace(e); e != "" {
 			out = append(out, e)
 		}

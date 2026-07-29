@@ -156,6 +156,45 @@ func TestCorpoResumoDenunciaEstadoDesconhecido(t *testing.T) {
 	}
 }
 
+// TestDestinatariosSeparadores — o `;` do Outlook fez o SMTP recusar tudo com
+// "501 Bad recipient address syntax" em 29/07, porque a lista virou UM endereço.
+// Separador é detalhe de digitação; o código tem que aceitar os plausíveis.
+func TestDestinatariosSeparadores(t *testing.T) {
+	casos := map[string]int{
+		"a@x.com,b@y.com":    2,
+		"a@x.com;b@y.com":    2, // Outlook — o que quebrou em produção
+		"a@x.com; b@y.com":   2,
+		"a@x.com , b@y.com ": 2,
+		"a@x.com b@y.com":    2,
+		"a@x.com":            1,
+		"a@x.com;":           1,
+		" ; ,a@x.com, ":      1,
+	}
+	for entrada, querN := range casos {
+		t.Run(entrada, func(t *testing.T) {
+			t.Setenv("JC_EXTRACAO_EMAILS", entrada)
+			got := destinatariosJC()
+			if len(got) != querN {
+				t.Errorf("destinatariosJC(%q) = %v (%d), queria %d", entrada, got, len(got), querN)
+			}
+			for _, e := range got {
+				if strings.ContainsAny(e, ",; ") {
+					t.Errorf("endereço %q ainda contém separador — o SMTP recusaria", e)
+				}
+			}
+		})
+	}
+}
+
+// TestDestinatariosPadrao — sem env configurado, os dois destinos combinados.
+func TestDestinatariosPadrao(t *testing.T) {
+	t.Setenv("JC_EXTRACAO_EMAILS", "")
+	got := destinatariosJC()
+	if len(got) != 2 {
+		t.Fatalf("esperava 2 destinatários padrão, veio %v", got)
+	}
+}
+
 func TestMilhar(t *testing.T) {
 	casos := map[int]string{0: "0", 7: "7", 999: "999", 1000: "1.000",
 		88067: "88.067", 1234567: "1.234.567"}
