@@ -43,7 +43,13 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 // silêncio é o pior desfecho possível numa carga automática, porque ninguém
 // descobre que o painel parou de atualizar até alguém estranhar um número.
 func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bool) *ResultadoExtracao {
-	res := &ResultadoExtracao{DataRef: dataRef, Inicio: time.Now()}
+	return executarCargaJCPeriodo(db, dataRef, dataRef, pularConsolidacao)
+}
+
+// executarCargaJCPeriodo processa o intervalo [de..ate] como UM arquivo. Com
+// de==ate é a carga de um dia; com um mês é a fatia do backfill.
+func executarCargaJCPeriodo(db *sql.DB, de, ate time.Time, pularConsolidacao bool) *ResultadoExtracao {
+	res := &ResultadoExtracao{DataRef: de, DataFim: ate, Inicio: time.Now()}
 	defer func() {
 		res.Fim = time.Now()
 		if r := recover(); r != nil {
@@ -57,26 +63,28 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bo
 		return res
 	}
 
-	log.Printf("[jc:carga] iniciando dia=%s empresa=%s", dataRef.Format("2006-01-02"), empresaID)
+	log.Printf("[jc:carga] iniciando %s empresa=%s", res.Rotulo(), empresaID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	// Timeout generoso: um mês inteiro chega a ~2,7M linhas, e o import de 6M
+	// linhas já levou dezenas de minutos no histórico de jobs.
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
-	arquivo, err := ExtrairDiaJC(ctx, dataRef, res)
+	arquivo, err := ExtrairPeriodoJC(ctx, de, ate, res)
 	if err != nil {
 		res.Erro = err
 		log.Printf("[jc:carga] extração FALHOU: %v", err)
 		return res
 	}
 
-	// Zero linhas NÃO é sucesso silencioso. Pode ser dia sem movimento
+	// Zero linhas NÃO é sucesso silencioso. Pode ser período sem movimento
 	// (domingo/feriado) ou pode ser o JOB deles não ter rodado ainda — e as duas
 	// situações precisam chegar diferentes de "importei tudo certo". Não
-	// chamamos o import (não faz sentido apagar o dia e recarregar vazio).
+	// chamamos o import (não faz sentido apagar o período e recarregar vazio).
 	if res.LinhasLidas == 0 {
 		os.Remove(arquivo)
 		res.StatusImport = "sem_dados"
-		log.Printf("[jc:carga] dia=%s veio VAZIO — import não executado", dataRef.Format("2006-01-02"))
+		log.Printf("[jc:carga] %s veio VAZIO — import não executado", res.Rotulo())
 		return res
 	}
 
@@ -86,7 +94,7 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bo
 	if err := db.QueryRow(`
 		INSERT INTO vendas_import_jobs (empresa_id, ano, mes, status, total_lines)
 		VALUES ($1, $2, $3, 'pending', $4) RETURNING id`,
-		empresaID, dataRef.Year(), int(dataRef.Month()), res.LinhasLidas,
+		empresaID, de.Year(), int(de.Month()), res.LinhasLidas,
 	).Scan(&jobID); err != nil {
 		os.Remove(arquivo)
 		res.Erro = fmt.Errorf("criar job de import: %w", err)
@@ -101,8 +109,10 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bo
 	impCtx, impCancel := context.WithCancel(ctx)
 	importJobs.Store(jobID, impCancel)
 	spCtx := &FarolContext{EmpresaID: empresaID, AllFiliais: true}
+	// ano/mes aqui são só FALLBACK para linha sem data válida no CSV — a fonte
+	// da verdade é a coluna DATA de cada linha. Passar o início da fatia basta.
 	processImportJob(impCtx, db, jobID, arquivo, true, spCtx,
-		dataRef.Year(), int(dataRef.Month()), pularConsolidacao)
+		de.Year(), int(de.Month()), pularConsolidacao)
 	res.DuracaoImport = time.Since(tImp)
 
 	// Status final vem do banco, não do que achamos que aconteceu.
@@ -133,8 +143,8 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bo
 	// defer, que roda DEPOIS deste log. Usar Duracao() aqui lê um Fim zerado e
 	// estoura o time.Duration — em produção saiu "-2562047h47m16s". O e-mail
 	// não tinha o problema (o defer preenche o Fim antes de enviar).
-	log.Printf("[jc:carga] dia=%s CONCLUÍDO status=%s lidas=%d importadas=%d em %v",
-		dataRef.Format("2006-01-02"), status, res.LinhasLidas, res.LinhasImportad,
+	log.Printf("[jc:carga] %s CONCLUÍDO status=%s lidas=%d importadas=%d em %v",
+		res.Rotulo(), status, res.LinhasLidas, res.LinhasImportad,
 		time.Since(res.Inicio).Round(time.Second))
 	return res
 }
@@ -151,26 +161,70 @@ func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bo
 // digitação de ano em erro imediato, não em 3 dias de martelada no Oracle deles.
 const jcMaxDiasIntervalo = 92
 
-// diaJaTemDados — usado pelo modo "pular existentes" do backfill. Olha as três
-// tabelas de destino: basta uma ter linha para o dia contar como carregado.
-func diaJaTemDados(db *sql.DB, empresaID string, dia time.Time) bool {
+// jcMaxMesesIntervalo — teto do modo mensal. 24 meses cobrem a recarga de 2025
+// até hoje com folga; cada mês custa ~10min, então 24 são ~4h.
+const jcMaxMesesIntervalo = 24
+
+// fatiaPeriodo — um pedaço do backfill, processado como UM arquivo.
+type fatiaPeriodo struct{ de, ate time.Time }
+
+func primeiroDoMes(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// fatiarPeriodo divide [de..ate] em pedaços de um dia ou de um mês.
+//
+// O modo mensal existe porque a consulta ao Oracle custa ~1 MINUTO FIXO,
+// independente do volume (medido em 29/07: 694 linhas levaram os mesmos 59s que
+// 154 mil). Puxar mês a mês paga esse minuto 19 vezes em vez de 576 num
+// backfill de 2025 até hoje — ~3h contra ~29h.
+//
+// As pontas são respeitadas: um mês parcial na borda vira fatia parcial, nunca
+// puxa dado fora do intervalo pedido.
+func fatiarPeriodo(de, ate time.Time, porMes bool) []fatiaPeriodo {
+	var out []fatiaPeriodo
+	if !porMes {
+		for d := de; !d.After(ate); d = d.AddDate(0, 0, 1) {
+			out = append(out, fatiaPeriodo{d, d})
+		}
+		return out
+	}
+	for ini := de; !ini.After(ate); {
+		fimMes := primeiroDoMes(ini).AddDate(0, 1, -1) // último dia do mês de `ini`
+		if fimMes.After(ate) {
+			fimMes = ate
+		}
+		out = append(out, fatiaPeriodo{ini, fimMes})
+		ini = fimMes.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+// fatiaJaTemDados — usado pelo modo "pular existentes". Olha as três tabelas de
+// destino: basta uma ter linha no intervalo para a fatia contar como carregada.
+//
+// ⚠ Numa fatia MENSAL isso é grosseiro de propósito: um único dia carregado faz
+// o mês inteiro ser pulado. É o comportamento certo para retomar um backfill
+// interrompido (não refaz o que já passou), mas NÃO serve para tapar buraco no
+// meio de um mês — nesse caso, rodar sem `pular_existentes` ou com `passo=dia`.
+func fatiaJaTemDados(db *sql.DB, empresaID string, de, ate time.Time) bool {
 	var existe bool
 	err := db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM vendas_faturadas
-			 WHERE empresa_id=$1 AND data_faturamento=$2
+			 WHERE empresa_id=$1 AND data_faturamento BETWEEN $2 AND $3
 			UNION ALL
 			SELECT 1 FROM vendas_transmitidas
-			 WHERE empresa_id=$1 AND data_transmissao=$2
+			 WHERE empresa_id=$1 AND data_transmissao BETWEEN $2 AND $3
 			UNION ALL
 			SELECT 1 FROM vendas_ccd
-			 WHERE empresa_id=$1 AND data_evento=$2
-		)`, empresaID, dia).Scan(&existe)
+			 WHERE empresa_id=$1 AND data_evento BETWEEN $2 AND $3
+		)`, empresaID, de, ate).Scan(&existe)
 	if err != nil {
-		// Na dúvida, NÃO pula: recarregar um dia é barato e idempotente;
-		// deixar buraco no histórico não é.
-		log.Printf("[jc:carga] checagem de dia existente falhou (%v) — vai recarregar %s",
-			err, dia.Format("2006-01-02"))
+		// Na dúvida, NÃO pula: recarregar é barato e idempotente; deixar buraco
+		// no histórico não é.
+		log.Printf("[jc:carga] checagem de período existente falhou (%v) — vai recarregar %s..%s",
+			err, de.Format("2006-01-02"), ate.Format("2006-01-02"))
 		return false
 	}
 	return existe
@@ -186,7 +240,7 @@ func diaJaTemDados(db *sql.DB, empresaID string, dia time.Time) bool {
 //
 // Falha de um dia NÃO aborta o resto — num backfill, perder os 20 dias
 // seguintes porque um deu erro é pior que ter um buraco conhecido e relatado.
-func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes bool) {
+func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes bool, porMes bool) {
 	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
 	inicio := time.Now()
 
@@ -194,26 +248,30 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 	var pulados []time.Time
 	meses := map[aggMesYM]struct{}{}
 
-	for dia := de; !dia.After(ate); dia = dia.AddDate(0, 0, 1) {
-		if pularExistentes && empresaID != "" && diaJaTemDados(db, empresaID, dia) {
-			log.Printf("[jc:carga] %s já tem dados — pulado", dia.Format("2006-01-02"))
-			pulados = append(pulados, dia)
+	for _, fatia := range fatiarPeriodo(de, ate, porMes) {
+		if pularExistentes && empresaID != "" && fatiaJaTemDados(db, empresaID, fatia.de, fatia.ate) {
+			log.Printf("[jc:carga] %s já tem dados — pulado",
+				(&ResultadoExtracao{DataRef: fatia.de, DataFim: fatia.ate}).Rotulo())
+			pulados = append(pulados, fatia.de)
 			continue
 		}
 		// skipRefresh=true: a reconsolidação sai do laço e roda UMA vez no fim.
 		// Sem isso o backfill é quadrático — `upsert_aggs_mes` recalcula o MÊS
-		// INTEIRO a cada dia importado, então o custo sobe conforme os dias se
-		// acumulam. Medido em 29/07: 2m23 no dia 01, 3m06 no 02, 3m59 no 03, e
-		// o total do dia já em 7m43 no 04. Extrapolando daria mais de 4h para o
-		// mês; pulando, cada dia fica nos ~2,5min da extração+import.
+		// INTEIRO a cada import, então o custo sobe conforme os dias se acumulam.
+		// Medido em 29/07: 2m23 no dia 01, 3m06 no 02, 3m59 no 03, e o total do
+		// dia já em 7m43 no 04. Extrapolando daria mais de 4h para o mês.
 		//
 		// É seguro porque upsert_aggs_mes recomputa o mês inteiro de qualquer
-		// forma — fazer 29 vezes o mesmo trabalho não produz resultado melhor
-		// que fazer uma vez no fim.
-		res := executarCargaJCSemEmail(db, dia, true)
+		// forma — repetir o mesmo trabalho a cada fatia não produz resultado
+		// melhor que fazer uma vez no fim.
+		res := executarCargaJCPeriodo(db, fatia.de, fatia.ate, true)
 		resultados = append(resultados, res)
 		if res.Erro == nil && res.StatusImport == "done" {
-			meses[aggMesYM{Ano: dia.Year(), Mes: int(dia.Month())}] = struct{}{}
+			// Uma fatia mensal cai num mês só, mas o range livre pode cruzar —
+			// marca todos os meses que ela toca.
+			for m := primeiroDoMes(fatia.de); !m.After(fatia.ate); m = m.AddDate(0, 1, 0) {
+				meses[aggMesYM{Ano: m.Year(), Mes: int(m.Month())}] = struct{}{}
+			}
 		}
 	}
 
@@ -292,8 +350,10 @@ func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao,
 		fmt.Fprintf(&b, "%d dia(s) pulado(s) por já terem dados.\n\n", len(pulados))
 	}
 
-	b.WriteString("Dia         Situação      Linhas       Tempo\n")
-	b.WriteString("----------  ------------  -----------  --------\n")
+	// Rotulo() em vez de Format: numa fatia mensal a linha precisa mostrar as
+	// duas pontas, senão "01/07" daria a entender que só um dia foi importado.
+	b.WriteString("Período                  Situação      Linhas       Tempo\n")
+	b.WriteString("-----------------------  ------------  -----------  --------\n")
 	for _, r := range res {
 		situacao := "OK"
 		switch {
@@ -302,8 +362,8 @@ func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao,
 		case r.StatusImport == "sem_dados":
 			situacao = "sem dados"
 		}
-		fmt.Fprintf(&b, "%-10s  %-12s  %11s  %8s\n",
-			r.DataRef.Format("02/01/2026"), situacao,
+		fmt.Fprintf(&b, "%-23s  %-12s  %11s  %8s\n",
+			r.Rotulo(), situacao,
 			milhar(r.LinhasImportad), r.Duracao().Round(time.Second))
 	}
 
@@ -313,11 +373,11 @@ func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao,
 		b.WriteString("\n--- erros ---\n")
 		for _, r := range res {
 			if r.Erro != nil {
-				fmt.Fprintf(&b, "%s: %s\n", r.DataRef.Format("02/01/2026"), r.Erro.Error())
+				fmt.Fprintf(&b, "%s: %s\n", r.Rotulo(), r.Erro.Error())
 			}
 		}
-		b.WriteString("\nDias com falha podem ser reprocessados individualmente:\n")
-		b.WriteString("POST /api/v2/jc/carga?data=AAAA-MM-DD\n")
+		b.WriteString("\nPeríodos com falha podem ser reprocessados:\n")
+		b.WriteString("POST /api/v2/jc/carga?de=AAAA-MM-DD&ate=AAAA-MM-DD\n")
 	}
 
 	b.WriteString("\nMensagem automática do FB_FAROL.\n")

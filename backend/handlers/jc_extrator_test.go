@@ -354,6 +354,128 @@ func TestDuracaoAntesDoFim(t *testing.T) {
 	}
 }
 
+// TestFatiarPeriodo — o fatiamento mensal precisa cobrir o intervalo inteiro,
+// sem furo, sem sobreposição, e SEM passar das bordas pedidas.
+func TestFatiarPeriodo(t *testing.T) {
+	d := func(s string) time.Time {
+		t.Helper()
+		v, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			t.Fatalf("data de teste inválida %q: %v", s, err)
+		}
+		return v
+	}
+
+	casos := []struct {
+		nome       string
+		de, ate    string
+		porMes     bool
+		querFatias int
+		primeira   [2]string
+		ultima     [2]string
+	}{
+		{"um dia", "2026-07-15", "2026-07-15", false, 1,
+			[2]string{"2026-07-15", "2026-07-15"}, [2]string{"2026-07-15", "2026-07-15"}},
+		{"cinco dias", "2026-07-01", "2026-07-05", false, 5,
+			[2]string{"2026-07-01", "2026-07-01"}, [2]string{"2026-07-05", "2026-07-05"}},
+		{"mes cheio", "2026-07-01", "2026-07-31", true, 1,
+			[2]string{"2026-07-01", "2026-07-31"}, [2]string{"2026-07-01", "2026-07-31"}},
+		{"mes parcial nao vaza", "2026-07-10", "2026-07-20", true, 1,
+			[2]string{"2026-07-10", "2026-07-20"}, [2]string{"2026-07-10", "2026-07-20"}},
+		{"cruza meses", "2026-06-15", "2026-08-10", true, 3,
+			[2]string{"2026-06-15", "2026-06-30"}, [2]string{"2026-08-01", "2026-08-10"}},
+		{"ano inteiro", "2025-01-01", "2025-12-31", true, 12,
+			[2]string{"2025-01-01", "2025-01-31"}, [2]string{"2025-12-01", "2025-12-31"}},
+		{"fevereiro bissexto", "2024-02-01", "2024-02-29", true, 1,
+			[2]string{"2024-02-01", "2024-02-29"}, [2]string{"2024-02-01", "2024-02-29"}},
+		{"2025 ate hoje", "2025-01-01", "2026-07-30", true, 19,
+			[2]string{"2025-01-01", "2025-01-31"}, [2]string{"2026-07-01", "2026-07-30"}},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			de, ate := d(c.de), d(c.ate)
+			fs := fatiarPeriodo(de, ate, c.porMes)
+
+			if len(fs) != c.querFatias {
+				t.Fatalf("%d fatias, queria %d: %v", len(fs), c.querFatias, fs)
+			}
+			if got := fs[0].de.Format("2006-01-02"); got != c.primeira[0] {
+				t.Errorf("primeira.de = %s, queria %s", got, c.primeira[0])
+			}
+			if got := fs[0].ate.Format("2006-01-02"); got != c.primeira[1] {
+				t.Errorf("primeira.ate = %s, queria %s", got, c.primeira[1])
+			}
+			u := fs[len(fs)-1]
+			if got := u.de.Format("2006-01-02"); got != c.ultima[0] {
+				t.Errorf("ultima.de = %s, queria %s", got, c.ultima[0])
+			}
+			if got := u.ate.Format("2006-01-02"); got != c.ultima[1] {
+				t.Errorf("ultima.ate = %s, queria %s", got, c.ultima[1])
+			}
+
+			// Cobertura sem furo nem sobreposição, e dentro das bordas.
+			if !fs[0].de.Equal(de) {
+				t.Errorf("primeira fatia começa em %v, deveria ser %v", fs[0].de, de)
+			}
+			if !u.ate.Equal(ate) {
+				t.Errorf("última fatia termina em %v, deveria ser %v", u.ate, ate)
+			}
+			for i := range fs {
+				if fs[i].ate.Before(fs[i].de) {
+					t.Errorf("fatia %d invertida: %v..%v", i, fs[i].de, fs[i].ate)
+				}
+				if i > 0 {
+					esperado := fs[i-1].ate.AddDate(0, 0, 1)
+					if !fs[i].de.Equal(esperado) {
+						t.Errorf("fatia %d começa em %v; após %v deveria ser %v (furo ou sobreposição)",
+							i, fs[i].de, fs[i-1].ate, esperado)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRotuloPeriodo — um dia mostra a data; intervalo mostra as duas pontas.
+// Sem isso, uma fatia mensal apareceria no e-mail como se fosse um dia só.
+func TestRotuloPeriodo(t *testing.T) {
+	dia := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	fim := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC)
+
+	casos := []struct {
+		nome string
+		res  ResultadoExtracao
+		quer string
+	}{
+		{"sem DataFim", ResultadoExtracao{DataRef: dia}, "15/07/2026"},
+		{"DataFim igual", ResultadoExtracao{DataRef: dia, DataFim: dia}, "15/07/2026"},
+		{"intervalo", ResultadoExtracao{DataRef: dia, DataFim: fim}, "15/07/2026 a 31/07/2026"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			if got := c.res.Rotulo(); got != c.quer {
+				t.Errorf("Rotulo() = %q, queria %q", got, c.quer)
+			}
+		})
+	}
+}
+
+// TestRotuloNaoUsaAnoLiteral — em Go o ano no layout é "2006" (a data de
+// referência). Escrever "2026" faz o parser ler os dígitos como campos soltos:
+// 15/07/2026 vira "15/07/15156". Cometi exatamente isso no e-mail do intervalo,
+// e o teste existe para o formato nunca mais regredir.
+func TestRotuloNaoUsaAnoLiteral(t *testing.T) {
+	r := ResultadoExtracao{DataRef: time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)}
+	got := r.Rotulo()
+	if strings.Contains(got, "15156") || len(got) != len("15/07/2026") {
+		t.Errorf("Rotulo() = %q — layout de data corrompido (ano deve ser \"2006\")", got)
+	}
+	if !strings.HasSuffix(got, "/2026") {
+		t.Errorf("Rotulo() = %q, deveria terminar em /2026", got)
+	}
+}
+
 func TestMilhar(t *testing.T) {
 	casos := map[int]string{0: "0", 7: "7", 999: "999", 1000: "1.000",
 		88067: "88.067", 1234567: "1.234.567"}

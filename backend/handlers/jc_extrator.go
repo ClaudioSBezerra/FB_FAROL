@@ -82,7 +82,10 @@ func novoEscritorCSVJC(w io.Writer) *csv.Writer {
 
 // ResultadoExtracao — tudo que o e-mail de resumo precisa relatar.
 type ResultadoExtracao struct {
-	DataRef        time.Time
+	DataRef time.Time
+	// DataFim — última data do intervalo (inclusiva). Igual a DataRef na carga
+	// diária; no backfill mensal marca o fim da fatia.
+	DataFim        time.Time
 	Inicio         time.Time
 	Fim            time.Time
 	LinhasLidas    int
@@ -94,6 +97,16 @@ type ResultadoExtracao struct {
 	StatusImport   string
 	LinhasImportad int
 	Erro           error
+}
+
+// Rotulo — como o período aparece em log e e-mail. Um dia mostra a data; um
+// intervalo mostra as duas pontas, para não dar a impressão de que a fatia
+// inteira é de um dia só.
+func (r *ResultadoExtracao) Rotulo() string {
+	if r.DataFim.IsZero() || r.DataFim.Equal(r.DataRef) {
+		return r.DataRef.Format("02/01/2006")
+	}
+	return r.DataRef.Format("02/01/2006") + " a " + r.DataFim.Format("02/01/2006")
 }
 
 // Duracao só é válida depois que o Fim foi preenchido (no defer de
@@ -163,13 +176,27 @@ func valorCSV(v any) string {
 	}
 }
 
-// ExtrairDiaJC lê um dia da view e grava o CSV gzip em disco. Devolve o caminho.
+// ExtrairDiaJC — atalho para um dia só (carga diária).
+func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao) (string, error) {
+	return ExtrairPeriodoJC(ctx, dataRef, dataRef, res)
+}
+
+// ExtrairPeriodoJC lê o intervalo [de..ate] (INCLUSIVO nas duas pontas) numa
+// ÚNICA consulta e grava o CSV gzip em disco. Devolve o caminho.
 //
 // SEMPRE filtra por DATA. Sem o predicado a view não responde — ela é view
 // COMUM sobre tabelas de 28M+20M linhas, e o otimizador monta o join inteiro
-// antes da primeira linha (medido: estourou 20s até para ROWNUM<=1). Com filtro
-// de dia responde em segundos.
-func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao) (string, error) {
+// antes da primeira linha (medido: estourou 20s até para ROWNUM<=1).
+//
+// POR QUE ACEITAR INTERVALO: a consulta custa ~1 MINUTO FIXO, independente do
+// volume — medido em 29/07, o dia 19/07 com 694 linhas levou os mesmos 59s que
+// o dia 14 com 154 mil. Esse minuto é o join se montando, não transferência de
+// dado. Puxar um mês de uma vez paga o minuto UMA vez em lugar de 30. Num
+// backfill de 2025 até hoje (576 dias) a diferença é ~29h contra ~3h.
+//
+// O importador aceita arquivo com vários dias: agrupa as datas presentes e faz
+// o DELETE prévio de cada uma, então a idempotência continua valendo.
+func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, res *ResultadoExtracao) (string, error) {
 	dsn, err := dsnJC()
 	if err != nil {
 		return "", err
@@ -188,8 +215,10 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 		return "", fmt.Errorf("conectar no Oracle da JC: %w", err)
 	}
 
-	ini := time.Date(dataRef.Year(), dataRef.Month(), dataRef.Day(), 0, 0, 0, 0, time.UTC)
-	fim := ini.AddDate(0, 0, 1)
+	ini := time.Date(de.Year(), de.Month(), de.Day(), 0, 0, 0, 0, time.UTC)
+	// `ate` é inclusivo para quem chama; no SQL vira `< ate+1dia` para não
+	// depender de a coluna DATA ter ou não componente de hora.
+	fim := time.Date(ate.Year(), ate.Month(), ate.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
 
 	q := fmt.Sprintf("SELECT %s FROM %s WHERE DATA >= :1 AND DATA < :2",
 		strings.Join(colunasJC, ", "), objeto)
@@ -209,8 +238,14 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", fmt.Errorf("criar dir de uploads: %w", err)
 	}
-	arquivo := filepath.Join(uploadsDir,
-		fmt.Sprintf("jc-%s.csv.gz", ini.Format("2006-01-02")))
+	// Nome carrega o intervalo: num backfill vários arquivos coexistem no
+	// diretório enquanto são processados, e "jc-2026-07-01.csv.gz" para um mês
+	// inteiro seria enganoso se alguém for investigar um import.
+	rotulo := ini.Format("2006-01-02")
+	if !fim.AddDate(0, 0, -1).Equal(ini) {
+		rotulo += "_a_" + fim.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	arquivo := filepath.Join(uploadsDir, fmt.Sprintf("jc-%s.csv.gz", rotulo))
 	f, err := os.Create(arquivo)
 	if err != nil {
 		return "", fmt.Errorf("criar CSV: %w", err)
@@ -286,8 +321,8 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 	if st, err := os.Stat(arquivo); err == nil {
 		res.BytesCSV = st.Size()
 	}
-	log.Printf("[jc:extrator] dia=%s → %d linhas, %s gzip, query em %v",
-		ini.Format("2006-01-02"), res.LinhasLidas, tamanhoLegivel(res.BytesCSV), res.DuracaoQuery)
+	log.Printf("[jc:extrator] %s → %d linhas, %s gzip, query em %v",
+		rotulo, res.LinhasLidas, tamanhoLegivel(res.BytesCSV), res.DuracaoQuery)
 	return arquivo, nil
 }
 

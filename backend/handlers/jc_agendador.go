@@ -133,26 +133,54 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			dias := int(ate.Sub(de).Hours()/24) + 1
-			if dias > jcMaxDiasIntervalo {
+
+			// passo=mes puxa um MÊS por consulta em vez de um dia. Vale para
+			// recarga histórica: a consulta ao Oracle custa ~1min fixo
+			// independente do volume, então 19 meses pagam 19 minutos de join
+			// em vez de 576. Default continua `dia` — é o que a carga diária e
+			// o conserto de buraco pontual querem.
+			passo := strings.ToLower(strings.TrimSpace(q.Get("passo")))
+			porMes := passo == "mes" || passo == "mês" || passo == "mensal"
+			if passo != "" && !porMes && passo != "dia" && passo != "diario" {
+				http.Error(w, `{"error":"passo inválido — use 'dia' (padrão) ou 'mes'"}`, http.StatusBadRequest)
+				return
+			}
+
+			fatias := len(fatiarPeriodo(de, ate, porMes))
+			if porMes {
+				if fatias > jcMaxMesesIntervalo {
+					http.Error(w, fmt.Sprintf(
+						`{"error":"%d meses excedem o limite de %d — cada mês custa ~10min"}`,
+						fatias, jcMaxMesesIntervalo), http.StatusBadRequest)
+					return
+				}
+			} else if dias > jcMaxDiasIntervalo {
 				http.Error(w, fmt.Sprintf(
-					`{"error":"intervalo de %d dias excede o limite de %d — cada dia custa ~5min"}`,
+					`{"error":"intervalo de %d dias excede o limite de %d — use passo=mes para recarga histórica"}`,
 					dias, jcMaxDiasIntervalo), http.StatusBadRequest)
 				return
 			}
 			pular := q.Get("pular_existentes") == "1" || strings.EqualFold(q.Get("pular_existentes"), "true")
 
-			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias, pular_existentes=%t) por user=%s",
-				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, pular, spCtx.UserID)
-			go ExecutarCargaJCIntervalo(db, de, ate, pular)
+			unidade, minPorFatia := "dia", 5
+			if porMes {
+				unidade, minPorFatia = "mês", 10
+			}
+
+			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias em %d fatia(s) de %s, pular_existentes=%t) por user=%s",
+				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, fatias, unidade, pular, spCtx.UserID)
+			go ExecutarCargaJCIntervalo(db, de, ate, pular, porMes)
 
 			json.NewEncoder(w).Encode(map[string]any{
 				"iniciado":         true,
 				"de":               de.Format("2006-01-02"),
 				"ate":              ate.Format("2006-01-02"),
 				"dias":             dias,
+				"passo":            map[bool]string{true: "mes", false: "dia"}[porMes],
+				"fatias":           fatias,
 				"pular_existentes": pular,
-				"estimativa":       fmt.Sprintf("~%d min", dias*5),
-				"aviso":            "roda em background, um dia por vez; UM e-mail com o consolidado no fim",
+				"estimativa":       fmt.Sprintf("~%d min", fatias*minPorFatia),
+				"aviso":            "roda em background, uma fatia por vez; UM e-mail com o consolidado no fim",
 			})
 			return
 		}
