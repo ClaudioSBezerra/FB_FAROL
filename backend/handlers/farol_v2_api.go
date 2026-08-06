@@ -130,6 +130,26 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
 	},
+	// V10/V11 (mig 199) — mesmas hierarquias SÓ DE ROTEAMENTO, agora com FILIAL
+	// no grão. Filial é a coluna `empresa` (nome herdado do layout do ION
+	// VENDAS; só o rótulo da UI vira "Filial"). Gate: aggFilialReady.
+	//
+	// ⚠ Ao contrário de UF, filial NÃO particiona os clientes: 23% compram de
+	// 2+ filiais, então somar positivados entre filiais duplica CNPJ. Por isso
+	// pickAggForCrossFilter só roteia para cá com UMA filial selecionada.
+	"V10": {
+		{Level: "empresa", NameField: "nome_empresa", Label: "Filial"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+	},
+	"V11": {
+		{Level: "empresa", NameField: "nome_empresa", Label: "Filial"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
+		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
+		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+	},
 }
 
 // Tabelas agg_*_mes (granularidade mensal, migration 162+165).
@@ -149,6 +169,9 @@ var aggTablesFat = map[string][]string{
 	// tabela física única (agg_*_v08_l0_mes) referenciada pelas duas.
 	"V08": {"agg_fat_v08_l0_mes", "agg_fat_v08_l1_mes", "agg_fat_v08_l2_mes", "agg_fat_v08_l3_mes"},
 	"V09": {"agg_fat_v08_l0_mes", "agg_fat_v09_l1_mes", "agg_fat_v09_l2_mes", "agg_fat_v09_l3_mes", "agg_fat_v09_l4_mes"},
+	// V10/V11 (mig 199): mesmo arranjo com FILIAL — l0 (só filial) compartilhada.
+	"V10": {"agg_fat_v10_l0_mes", "agg_fat_v10_l1_mes", "agg_fat_v10_l2_mes", "agg_fat_v10_l3_mes"},
+	"V11": {"agg_fat_v10_l0_mes", "agg_fat_v11_l1_mes", "agg_fat_v11_l2_mes", "agg_fat_v11_l3_mes", "agg_fat_v11_l4_mes"},
 }
 
 var aggTablesTrans = map[string][]string{
@@ -161,6 +184,8 @@ var aggTablesTrans = map[string][]string{
 	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes", "agg_trans_v07_l2_mes"},
 	"V08": {"agg_trans_v08_l0_mes", "agg_trans_v08_l1_mes", "agg_trans_v08_l2_mes", "agg_trans_v08_l3_mes"},
 	"V09": {"agg_trans_v08_l0_mes", "agg_trans_v09_l1_mes", "agg_trans_v09_l2_mes", "agg_trans_v09_l3_mes", "agg_trans_v09_l4_mes"},
+	"V10": {"agg_trans_v10_l0_mes", "agg_trans_v10_l1_mes", "agg_trans_v10_l2_mes", "agg_trans_v10_l3_mes"},
+	"V11": {"agg_trans_v10_l0_mes", "agg_trans_v11_l1_mes", "agg_trans_v11_l2_mes", "agg_trans_v11_l3_mes", "agg_trans_v11_l4_mes"},
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -956,7 +981,12 @@ func queryAggregatedMes(db *sql.DB, viewName, groupCol, nameCol, mesCond, drillC
 	// cada cliente pertence a UMA UF, somar entre UFs é exato; divide-se só
 	// pelo nº de meses (média mensal, mesma semântica do AVG nas demais aggs).
 	// base_cli fica no AVG: é a carteira do escopo org, constante entre UFs.
-	if strings.Contains(shortName, "_v08_") || strings.Contains(shortName, "_v09_") {
+	// V10/V11 (mig 199) entram na MESMA expressão, mas por outro motivo: lá o
+	// pickAggForCrossFilter só roteia com UMA filial selecionada, então o SUM é
+	// sobre uma linha por mês e o resultado é exato. Com 2+ filiais o cliente
+	// que compra em duas seria contado duas vezes — por isso o guard.
+	if strings.Contains(shortName, "_v08_") || strings.Contains(shortName, "_v09_") ||
+		strings.Contains(shortName, "_v10_") || strings.Contains(shortName, "_v11_") {
 		positivadosExpr = "ROUND(SUM(v.positivados)::numeric / NULLIF(COUNT(DISTINCT v.ano*100+v.mes),0))::int"
 	}
 	if aggWithoutPositivacao(shortName) {
@@ -1169,6 +1199,11 @@ var aggHasMixTotal = map[string]bool{
 	"agg_fat_v09_l1_mes": true, "agg_fat_v09_l2_mes": true, "agg_fat_v09_l3_mes": true, "agg_fat_v09_l4_mes": true,
 	"agg_trans_v08_l0_mes": true, "agg_trans_v08_l1_mes": true, "agg_trans_v08_l2_mes": true, "agg_trans_v08_l3_mes": true,
 	"agg_trans_v09_l1_mes": true, "agg_trans_v09_l2_mes": true, "agg_trans_v09_l3_mes": true, "agg_trans_v09_l4_mes": true,
+	// V10/V11 (mig 199) — grão com filial; mix_total também inline no upsert.
+	"agg_fat_v10_l0_mes": true, "agg_fat_v10_l1_mes": true, "agg_fat_v10_l2_mes": true, "agg_fat_v10_l3_mes": true,
+	"agg_fat_v11_l1_mes": true, "agg_fat_v11_l2_mes": true, "agg_fat_v11_l3_mes": true, "agg_fat_v11_l4_mes": true,
+	"agg_trans_v10_l0_mes": true, "agg_trans_v10_l1_mes": true, "agg_trans_v10_l2_mes": true, "agg_trans_v10_l3_mes": true,
+	"agg_trans_v11_l1_mes": true, "agg_trans_v11_l2_mes": true, "agg_trans_v11_l3_mes": true, "agg_trans_v11_l4_mes": true,
 }
 
 // aggUFReady — as tabelas V08/V09 (mig 197) nascem VAZIAS até o backfill
@@ -1205,6 +1240,37 @@ func aggUFReady(db *sql.DB) bool {
 	return ok
 }
 
+// aggFilialReady — idem para V10/V11 (mig 199, grão com filial). Gate separado
+// do de UF porque os backfills são independentes: quem rodar só um dos dois não
+// pode destravar o outro.
+var (
+	aggFilialReadyMu        sync.Mutex
+	aggFilialReadyVal       bool
+	aggFilialReadyCheckedAt time.Time
+)
+
+func aggFilialReady(db *sql.DB) bool {
+	aggFilialReadyMu.Lock()
+	defer aggFilialReadyMu.Unlock()
+	if aggFilialReadyVal {
+		return true
+	}
+	if time.Since(aggFilialReadyCheckedAt) < 5*time.Minute {
+		return false
+	}
+	aggFilialReadyCheckedAt = time.Now()
+	var ok bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM farol.agg_fat_v11_l1_mes)`).Scan(&ok); err != nil {
+		log.Printf("[farol:agg] aggFilialReady: probe falhou: %v", err)
+		return false
+	}
+	if ok {
+		log.Printf("[farol:agg] aggFilialReady: V10/V11 populadas → filtro de filial passa a usar agg")
+	}
+	aggFilialReadyVal = ok
+	return ok
+}
+
 // pickAggForCrossFilter — quando a tabela agg da view atual NÃO serve os filtros
 // (filtro cruzado, ex: filtrar por indústria em "Por Equipe"/"Por Gerência"),
 // procura uma tabela agg de QUALQUER view, no MESMO grão de groupCol, que
@@ -1217,6 +1283,13 @@ func aggUFReady(db *sql.DB) bool {
 func pickAggForCrossFilter(db *sql.DB, fluxo fluxoCtx, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
 	// V08/V09 só depois do backfill (tabelas vazias = cards zerados).
 	ufReady := aggUFReady(db)
+
+	// V10/V11 (mig 199, grão filial): além do backfill, exigem UMA ÚNICA filial
+	// selecionada. queryAggregatedMes SOMA positivados entre as linhas do grão —
+	// exato para UF (cada cliente tem uma) e ERRADO para filial, onde 23% dos
+	// clientes compram de 2+ e seriam contados uma vez por filial. Com 2+
+	// selecionadas seguimos no scan de vendas_*: mais lento, porém correto.
+	filialReady := aggFilialReady(db) && len(filters["empresa"]) == 1
 
 	required := map[string]bool{groupCol: true}
 	for col := range filters {
@@ -1249,6 +1322,9 @@ func pickAggForCrossFilter(db *sql.DB, fluxo fluxoCtx, groupCol string, drillPat
 	bestCols := 1 << 30
 	for view, levels := range tables {
 		if (view == "V08" || view == "V09") && !ufReady {
+			continue
+		}
+		if (view == "V10" || view == "V11") && !filialReady {
 			continue
 		}
 		hier := hierarquias[view]
@@ -2501,6 +2577,10 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				// também nos níveis novos.
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v08_v09($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V08/V09 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				// V10/V11 (mig 199) — idem com FILIAL (coluna `empresa`) no grão.
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v10_v11($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V10/V11 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
 				// tipo_venda (mig 188) — popula dim='tipo_venda' do fluxo faturado
 				// para o dropdown do filtro cruzado. Barato (agrega poucos códigos).

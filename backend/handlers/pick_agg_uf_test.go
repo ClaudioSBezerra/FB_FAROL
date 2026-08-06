@@ -35,6 +35,7 @@ func TestPickAggForCrossFilterUF(t *testing.T) {
 	}
 	setGate(true)
 	defer setGate(false)
+	fecharGateFilial(t) // V10/V11 fora do caminho: este teste é só de UF
 
 	uf := multiFilters{"uf": {"BA", "GO"}}
 

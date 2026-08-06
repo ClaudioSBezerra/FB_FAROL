@@ -917,9 +917,13 @@ export default function FarolExecutivo() {
     { col: 'cod_rca',        label: 'RCA',        from: 'rca' },
     { col: 'cod_cli',        label: 'Cliente',    from: 'cli' },
     { col: 'uf',             label: 'UF',         from: 'uf' },
-    // "Filial" (coluna `empresa`) removido em 27/07/2026 — não era uma
-    // dimensão real de filial, só o texto livre `empresa` do CSV. Decisão do
-    // gestor foi manter apenas UF.
+    // Filial — RESTAURADO em 06/08/2026. Foi removido em 27/07 sob a premissa
+    // de que `empresa` era "texto livre do CSV"; a premissa estava errada. Os
+    // valores são os códigos de filial do WinThor (1, 11, 12, 13, 15, 18, 20,
+    // 28, 32, 33), os mesmos que a Rotina 1464 filtra. O nome da coluna vem do
+    // layout do ION VENDAS e é infeliz — por isso só o RÓTULO vira "Filial";
+    // a coluna e o query param seguem `empresa` (compatibilidade de dados).
+    { col: 'empresa',        label: 'Filial',     from: 'empresa' },
     // Tipo de Venda: só no fluxo faturado (filtro cruzado; a coluna não existe
     // no transmitido). Ver Spec Change Log 2026-07-21.
     ...(fluxo === 'faturado'
