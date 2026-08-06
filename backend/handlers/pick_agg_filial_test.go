@@ -80,6 +80,53 @@ func TestPickAggForCrossFilterFilial(t *testing.T) {
 	}
 }
 
+// leafForPositivados (mig 200) — QUAL folha conta CNPJ distinto.
+//
+// O bug que motivou isto: com filtro de filial nenhuma folha de V01-V07 tem
+// `empresa`, a resolução falhava, o override de "Clientes Ativos" não rodava e
+// a tela mostrava a CARTEIRA SOMADA — 166.572 numa base de 37.719 clientes,
+// com positivação 0% em tudo.
+func TestLeafForPositivadosComFiltroDeFilial(t *testing.T) {
+	fat := fluxoCtx{name: "faturado"}
+	tr := fluxoCtx{name: "transmitido"}
+	filial := multiFilters{"empresa": {"11"}}
+
+	casos := []struct {
+		nome     string
+		fluxo    fluxoCtx
+		view     string
+		groupCol string
+		filters  multiFilters
+		want     string
+		wantOK   bool
+	}{
+		// Sem filtro de filial nada muda: continua na folha da própria view.
+		{"V01 sem filtro", fat, "V01", "cod_fornec", nil, "farol.agg_fat_v01_l4_mes", true},
+		// Com filial, cai na folha da V11 — que tem `empresa` E `cnpj`.
+		{"V01 + filial", fat, "V01", "cod_fornec", filial, "farol.agg_fat_v11_l5_mes", true},
+		{"Por Gerência + filial", fat, "V03", "cod_gerente", filial, "farol.agg_fat_v11_l5_mes", true},
+		{"Por Equipe + filial", fat, "V02", "cod_supervisor", filial, "farol.agg_fat_v11_l5_mes", true},
+		{"nível Cliente + filial", fat, "V01", "cod_cli", filial, "farol.agg_fat_v11_l5_mes", true},
+		{"transmitido + filial", tr, "V01", "cod_fornec", filial, "farol.agg_trans_v11_l5_mes", true},
+		// DUAS filiais também servem: COUNT(DISTINCT cnpj) deduplica sozinho.
+		// (o guard de uma-filial-só é do pickAgg, que SOMA linhas do grão.)
+		{"duas filiais ainda contam certo", fat, "V01", "cod_fornec",
+			multiFilters{"empresa": {"11", "20"}}, "farol.agg_fat_v11_l5_mes", true},
+		// A V11 não tem `uf`: filtro combinado não tem folha que sirva.
+		{"filial + UF → nenhuma folha", fat, "V01", "cod_fornec",
+			multiFilters{"empresa": {"11"}, "uf": {"BA"}}, "", false},
+		// V06/V07 não têm positivação.
+		{"V06 não tem positivação", fat, "V06", "cod_cliprinc", filial, "", false},
+	}
+
+	for _, c := range casos {
+		got, ok := leafForPositivados(c.fluxo, c.view, c.groupCol, nil, c.filters)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("%s: leafForPositivados = (%q, %v), esperado (%q, %v)", c.nome, got, ok, c.want, c.wantOK)
+		}
+	}
+}
+
 // A expressão de positivados precisa SOMAR entre as linhas do grão nas V10/V11,
 // como já faz nas V08/V09 — o AVG dividiria pelo número de filiais. É o que
 // torna o guard de uma-filial-só obrigatório: sem ele, a soma infla.

@@ -149,6 +149,9 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_gerente", NameField: "nome_gerente", Label: "Gerente"},
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
 		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
+		// Cliente (mig 200) — é esta folha que devolve o COUNT(DISTINCT cnpj)
+		// quando há filtro de filial. Ver leafForPositivados.
+		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 	},
 }
 
@@ -171,7 +174,7 @@ var aggTablesFat = map[string][]string{
 	"V09": {"agg_fat_v08_l0_mes", "agg_fat_v09_l1_mes", "agg_fat_v09_l2_mes", "agg_fat_v09_l3_mes", "agg_fat_v09_l4_mes"},
 	// V10/V11 (mig 199): mesmo arranjo com FILIAL — l0 (só filial) compartilhada.
 	"V10": {"agg_fat_v10_l0_mes", "agg_fat_v10_l1_mes", "agg_fat_v10_l2_mes", "agg_fat_v10_l3_mes"},
-	"V11": {"agg_fat_v10_l0_mes", "agg_fat_v11_l1_mes", "agg_fat_v11_l2_mes", "agg_fat_v11_l3_mes", "agg_fat_v11_l4_mes"},
+	"V11": {"agg_fat_v10_l0_mes", "agg_fat_v11_l1_mes", "agg_fat_v11_l2_mes", "agg_fat_v11_l3_mes", "agg_fat_v11_l4_mes", "agg_fat_v11_l5_mes"},
 }
 
 var aggTablesTrans = map[string][]string{
@@ -185,7 +188,7 @@ var aggTablesTrans = map[string][]string{
 	"V08": {"agg_trans_v08_l0_mes", "agg_trans_v08_l1_mes", "agg_trans_v08_l2_mes", "agg_trans_v08_l3_mes"},
 	"V09": {"agg_trans_v08_l0_mes", "agg_trans_v09_l1_mes", "agg_trans_v09_l2_mes", "agg_trans_v09_l3_mes", "agg_trans_v09_l4_mes"},
 	"V10": {"agg_trans_v10_l0_mes", "agg_trans_v10_l1_mes", "agg_trans_v10_l2_mes", "agg_trans_v10_l3_mes"},
-	"V11": {"agg_trans_v10_l0_mes", "agg_trans_v11_l1_mes", "agg_trans_v11_l2_mes", "agg_trans_v11_l3_mes", "agg_trans_v11_l4_mes"},
+	"V11": {"agg_trans_v10_l0_mes", "agg_trans_v11_l1_mes", "agg_trans_v11_l2_mes", "agg_trans_v11_l3_mes", "agg_trans_v11_l4_mes", "agg_trans_v11_l5_mes"},
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -1204,6 +1207,9 @@ var aggHasMixTotal = map[string]bool{
 	"agg_fat_v11_l1_mes": true, "agg_fat_v11_l2_mes": true, "agg_fat_v11_l3_mes": true, "agg_fat_v11_l4_mes": true,
 	"agg_trans_v10_l0_mes": true, "agg_trans_v10_l1_mes": true, "agg_trans_v10_l2_mes": true, "agg_trans_v10_l3_mes": true,
 	"agg_trans_v11_l1_mes": true, "agg_trans_v11_l2_mes": true, "agg_trans_v11_l3_mes": true, "agg_trans_v11_l4_mes": true,
+	// l5 (mig 200) — grão CNPJ; ao contrário da v01_l4, nasce com mix_total
+	// inline, justamente para o pickAggForCrossFilter poder escolhê-la.
+	"agg_fat_v11_l5_mes": true, "agg_trans_v11_l5_mes": true,
 }
 
 // aggUFReady — as tabelas V08/V09 (mig 197) nascem VAZIAS até o backfill
@@ -2138,28 +2144,55 @@ func leafTableFor(fluxo fluxoCtx, view string) (string, int, bool) {
 // pra evitar que queryDistinctPositivados/queryDistinctCliPositivados sejam
 // chamadas em tabelas onde v.positivados/v.cnpj não existem.
 func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) bool {
+	_, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
+	return ok
+}
+
+// leafForPositivados — QUAL folha sabe contar CNPJ distinto para este recorte.
+//
+// Normalmente é a folha da própria view. O caso que obriga a existir esta
+// função é o FILTRO DE FILIAL: `empresa` não existe em nenhuma folha de
+// V01-V07, então a folha própria recusava e o override de "Clientes Ativos" em
+// fetchCards não rodava — o número caía para o base_cli do agregado, que é a
+// CARTEIRA SOMADA (SUM qtcli_rca). Em produção isso apareceu como 166.572
+// clientes ativos numa base de 37.719 (o mesmo cliente contado uma vez por RCA
+// que o atende), com positivação exibindo 0% em todos os fornecedores.
+//
+// A folha da V11 (agg_*_v11_l5_mes, mig 200) tem `empresa` E `cnpj`, então
+// serve o recorte com filial. Diferente de pickAggForCrossFilter, aqui NÃO há
+// guard de uma-filial-só: `COUNT(DISTINCT cnpj)` deduplica sozinho, então
+// somar filiais é exato — é a agregação de positivados no read (que SOMA
+// linhas do grão) que precisa do guard, não esta contagem.
+func leafForPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
 	if fluxo.isCCD || view == "V06" || view == "V07" {
-		return false // CCD não tem agg/positivação
+		return "", false // CCD e V06/V07 não têm métricas de positivação
 	}
-	_, leafIdx, ok := leafTableFor(fluxo, view)
-	if !ok {
-		return false
-	}
-	cols := colsInAggTable(view, leafIdx)
-	if !cols[groupCol] {
-		return false
-	}
-	for _, d := range drillPath {
-		if !cols[d.Level] {
+	cobre := func(v string, idx int) bool {
+		cols := colsInAggTable(v, idx)
+		if !cols[groupCol] {
 			return false
 		}
+		for _, d := range drillPath {
+			if !cols[d.Level] {
+				return false
+			}
+		}
+		for c := range filters {
+			if !cols[c] {
+				return false
+			}
+		}
+		return true
 	}
-	for c := range filters {
-		if !cols[c] {
-			return false
+	if leaf, idx, ok := leafTableFor(fluxo, view); ok && cobre(view, idx) {
+		return leaf, true
+	}
+	if len(filters["empresa"]) > 0 {
+		if leaf, idx, ok := leafTableFor(fluxo, "V11"); ok && cobre("V11", idx) {
+			return leaf, true
 		}
 	}
-	return true
+	return "", false
 }
 
 // ─── Cache da "base" de clientes ativos ──────────────────────────────────────
@@ -2381,7 +2414,11 @@ func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, vie
 // Lê da tabela folha (grão cnpj×mês); um cliente que comprou em qualquer mês do
 // período conta 1. Substitui o AVG(positivados) do queryAggregatedMes.
 func queryDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) map[string]int {
-	leaf, _, ok := leafTableFor(fluxo, view)
+	// Mesma resolução usada por leafServesPositivados: com filtro de filial a
+	// folha da view não serve e caímos na da V11 (mig 200). Se as duas
+	// divergissem, o card diria que dá para contar e a query contaria na tabela
+	// errada.
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
 	if !ok {
 		return nil
 	}
@@ -2581,6 +2618,11 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				// V10/V11 (mig 199) — idem com FILIAL (coluna `empresa`) no grão.
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v10_v11($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V10/V11 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				// l5 da V11 (mig 200) — grão FILIAL x CNPJ. Depois da v10_v11 e
+				// antes da venda_liquida, que preenche liquido/pv_* nela também.
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v11_l5($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V11_l5 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
 				// tipo_venda (mig 188) — popula dim='tipo_venda' do fluxo faturado
 				// para o dropdown do filtro cruzado. Barato (agrega poucos códigos).
