@@ -294,6 +294,13 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		}
 		upsertAggsMesParallel(db, empresaID, lista, 4)
 
+		// mv_fat_uf_mes — alimenta o filtro de UF. No import normal ela é
+		// refeita pelo processImportJob; com skipRefresh=true isso NÃO acontece,
+		// e eu havia esquecido de chamá-la aqui. Resultado do backfill de 06/08:
+		// 19 meses de agregado prontos e a MV de UF vazia, deixando o filtro de
+		// UF sem opção nenhuma no painel.
+		refreshUFMV(db)
+
 		// Invalida o cache DEPOIS da consolidação: invalidar antes deixaria a
 		// janela em que uma request repovoaria o cache com agregado velho.
 		for _, m := range lista {
