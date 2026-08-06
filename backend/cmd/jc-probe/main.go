@@ -150,6 +150,23 @@ func main() {
 	fmt.Printf("═══ sonda Oracle JC ═══\nhost=%s:%s schema=%s user=%s\ndriver=%s\n\n",
 		host, port, schema, user, driverVersao)
 
+	// JC_SQL — roda uma consulta arbitrária e sai. Existe para auditoria: comparar
+	// o que a ORIGEM tem contra o que importamos. O IAUSER só tem SELECT, então
+	// não há caminho de escrita aqui.
+	if consulta := strings.TrimSpace(os.Getenv("JC_SQL")); consulta != "" {
+		conn, err := tentaConectar(host, port, service, user, pass, porServico)
+		if err != nil {
+			fmt.Printf("✗ conexão falhou: %v\n  → %s\n", err, explicaErro(err))
+			os.Exit(1)
+		}
+		defer conn.Close()
+		if err := rodarConsulta(conn, consulta); err != nil {
+			fmt.Printf("✗ consulta falhou: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// ── 1. Descobrir o nome do banco ────────────────────────────────────────
 	//
 	// O Oracle resolve o destino ANTES de checar credencial. Logo, só
@@ -359,6 +376,70 @@ varredura:
 			fmt.Printf("       (agregação em %v)\n", dur.Round(time.Millisecond))
 		}
 	}
+}
+
+// formatarValor — texto legível para a tabela de saída. 'f' em vez de 'g' para
+// que soma de dinheiro não vire notação científica na hora de conferir número.
+func formatarValor(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return "(null)"
+	case time.Time:
+		return t.Format("2006-01-02")
+	case []byte:
+		return string(t)
+	case float64:
+		return strconv.FormatFloat(t, 'f', 2, 64)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	default:
+		return fmt.Sprint(t)
+	}
+}
+
+// rodarConsulta executa SQL arbitrário e imprime em tabela. Usado para auditar
+// a origem contra o que importamos — comparar somas de fornecedor, contar
+// linhas com valor zerado, etc.
+func rodarConsulta(db *sql.DB, q string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	t0 := time.Now()
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	fmt.Println(strings.Join(cols, " | "))
+	fmt.Println(strings.Repeat("-", 70))
+
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	n := 0
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return err
+		}
+		campos := make([]string, len(cols))
+		for i, v := range vals {
+			campos[i] = formatarValor(v)
+		}
+		fmt.Println(strings.Join(campos, " | "))
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	fmt.Printf("\n(%d linhas em %v)\n", n, time.Since(t0).Round(time.Millisecond))
+	return nil
 }
 
 // contaPorTipo roda uma query de duas colunas (rótulo, contagem) e imprime.
