@@ -707,67 +707,38 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		log.Printf("[ImportJob:%s] falha ao remover %s após parse: %v (defer tentará novamente)", jobID, uploadedPath, rmErr)
 	}
 
-	// Dedup defensivo: o ION VENDAS exporta a mesma NF múltiplas vezes (uma por
-	// RCA cuja carteira inclui o cliente). Sem chave de NF para deduplicar
-	// semanticamente, usamos a tupla de negócio (data, cnpj|cli, prod, qt, pvenda)
-	// — colisão real é patológica (1 cliente comprando idêntico, mesmo dia, 2x+
-	// é raríssimo). Mantém a PRIMEIRA ocorrência (ordem do CSV); descarta o resto.
-	// `evento` faz parte da chave: sem ele, um CANCELADO e um DEVOLVIDO do
-	// mesmo item, mesmo cliente e mesmo dia colidiam e um dos dois sumia —
-	// justamente o par mais provável de coincidir em todos os outros campos.
-	// Em fat/trans o campo é sempre "" e a chave fica idêntica à anterior.
-	type dedupKey struct {
-		data    string
-		cliCnpj string
-		codProd string
-		qt      float64
-		pvenda  float64
-		evento  string
-	}
-	dedupSlice := func(in []vendaRaw, label string) []vendaRaw {
-		if len(in) == 0 {
-			return in
-		}
-		seen := make(map[dedupKey]struct{}, len(in))
-		out := make([]vendaRaw, 0, len(in))
-		descartadas := 0
-		for _, r := range in {
-			cnpj, _ := r.vals[22].(string)
-			cli, _ := r.vals[12].(string)
-			key := dedupKey{
-				data:    r.vals[1].(time.Time).Format("2006-01-02"),
-				cliCnpj: cnpj + "|" + cli, // cnpj é primário, cli é fallback se cnpj vazio
-				codProd: r.vals[16].(string),
-				qt:      r.vals[19].(float64),
-				pvenda:  r.vals[20].(float64),
-				evento:  r.evento, // "" em fat/trans; CORTADO/CANCELADO/DEVOLVIDO no CCD
-			}
-			if _, dup := seen[key]; dup {
-				descartadas++
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, r)
-		}
-		if descartadas > 0 {
-			log.Printf("[import:dedup] %s — %d brutas → %d únicas (descartadas %d duplicatas inter-RCA, fator %.2fx)",
-				label, len(in), len(out), descartadas, float64(len(in))/float64(len(out)))
-		} else {
-			log.Printf("[import:dedup] %s — %d linhas, sem duplicatas", label, len(in))
-		}
-		return out
-	}
-	// Total bruto ANTES do dedup — é o que o campo "importados" do job vai
-	// mostrar na UI. Reflete quantas linhas do CSV o parser efetivamente
-	// entendeu, sem deduzir as duplicatas inter-RCA que o ION VENDAS gera
-	// (mesma NF replicada por cada RCA cuja carteira inclui o cliente).
-	// Se mostrássemos só o pós-dedup, o gestor pensaria que o arquivo teve
-	// perda — mas foi o próprio ION que replicou.
-	brutoImportadas := len(allFat) + len(allTrans) + len(allCCD)
-
-	allFat = dedupSlice(allFat, "vendas_faturadas")
-	allTrans = dedupSlice(allTrans, "vendas_transmitidas")
-	allCCD = dedupSlice(allCCD, "vendas_ccd")
+	// ── DEDUP REMOVIDO em 07/08/2026 — toda linha do arquivo é gravada ────────
+	//
+	// Existia um dedup pela tupla (data, cnpj|cli, cod_prod, qt, pvenda), criado
+	// quando a origem era o ION VENDAS, que exportava a mesma NF uma vez por RCA
+	// cuja carteira incluía o cliente. Com a origem no Oracle da JC essa
+	// replicação não existe mais — **o Keslley corrigiu a duplicação na própria
+	// view** — e o que sobrava de repetido passou a ser venda legítima: dois
+	// pedidos do mesmo item, para o mesmo cliente, no mesmo dia, ao mesmo preço,
+	// que numa distribuidora acontece.
+	//
+	// A medição que fechou a decisão (ALPARGATAS, cod_fornec 19263, 2025):
+	//
+	//   origem bruta      1.986.380 linhas   R$ 137.842.047,45
+	//   origem distintas  1.975.917 linhas
+	//   nosso (com dedup) 1.975.917 linhas   R$ 137.133.246,31
+	//
+	// R$ 137.842.047,45 é, ao centavo, o total da Rotina 1464 do WinThor — o
+	// relatório oficial que o gestor usa. O dedup descartava R$ 708.801,14 de
+	// venda que o relatório dele conta. Não há `NUMNOTA` no layout de 40 colunas
+	// e a JC não pode acrescentá-lo, então não existe chave que separe duplicata
+	// real de venda repetida legítima. Decisão do gestor: **somar tudo**.
+	//
+	// Efeitos: valores e quantidades SOBEM; `positivados` e `mix` não mudam, por
+	// serem COUNT(DISTINCT); e o import gasta MENOS memória, porque some o mapa
+	// de milhões de chaves (o pico era ~6,5 GB por fatia mensal).
+	//
+	// Para vigiar uma eventual regressão da origem, contar duplicatas em SQL
+	// depois da carga sai mais barato do que carregar o mapa no caminho do
+	// import — ver a consulta no docs/ ou o histórico deste commit.
+	linhasImportadas := len(allFat) + len(allTrans) + len(allCCD)
+	log.Printf("[import] sem dedup — %d linhas serão gravadas (fat=%d trans=%d ccd=%d)",
+		linhasImportadas, len(allFat), len(allTrans), len(allCCD))
 
 	if len(allFat) == 0 && len(allTrans) == 0 && len(allCCD) == 0 {
 		markStatus("error", "nenhuma linha válida encontrada no arquivo")
@@ -973,7 +944,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// gestor compara com wc -l do arquivo.
 	// `processed.Load()` reflete só o que foi efetivamente COPIADO pós-dedup
 	// — útil pro log de auditoria, não pra UI.
-	importados := brutoImportadas
+	importados := linhasImportadas
 	copiadas := int(processed.Load())
 	log.Printf("[ImportJob:%s] concluído: %d linhas brutas do CSV (%d após dedup via COPY)",
 		jobID, importados, copiadas)
