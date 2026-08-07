@@ -96,12 +96,30 @@ services:
     # que aumenta o tamanho dos segmentos pedidos por worker.
     # tmpfs: consome RAM só conforme aloca de fato, não reserva 1GB.
     shm_size: 1gb
+    # random_page_cost / effective_io_concurrency — os dois defaults de fábrica
+    # descrevem um HD com prato girando, e o host é SSD.
+    #
+    # O planejador fixa a leitura sequencial em 1,0 e usa random_page_cost para
+    # precificar a aleatória; o default 4,0 diz "aleatória custa 4x". Como
+    # varrer índice é feito de leituras aleatórias, ele superfatura o índice e
+    # prefere varrer a tabela inteira. Medido nesta base durante a investigação
+    # de particionamento (jul/2026): com 1,1 o custo de uma das consultas lentas
+    # caiu 45% e o plano trocou de Seq Scan para Index Only Scan.
+    #
+    # effective_io_concurrency é o par: quantas leituras o disco atende em
+    # paralelo, usado para prefetch em bitmap heap scan. O default é 1 — um
+    # spindle. SSD atende centenas.
+    #
+    # ⚠ Mexer neste bloco faz o Coolify RECRIAR o container do Postgres. Nunca
+    #   com import rodando.
     command: >
       postgres
       -c shared_buffers=1GB
       -c effective_cache_size=4GB
       -c maintenance_work_mem=512MB
       -c work_mem=32MB
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
     environment:
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}

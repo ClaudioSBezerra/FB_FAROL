@@ -295,6 +295,10 @@ func onDBConnected() {
 	// que o JOB do lado deles popula as tabelas base. Fica inerte se
 	// JC_ORACLE_USER/JC_ORACLE_PASS/JC_EMPRESA_ID não estiverem no ambiente.
 	go handlers.StartCargaJCDiaria(database)
+	// Reextração da janela móvel — alcança devolução/cancelamento que entram na
+	// origem com data retroativa e que a carga D-1 nunca vê. Desligada até
+	// JC_REEXTRACAO_MESES ser definida.
+	go handlers.StartReextracaoJC(database)
 }
 
 func main() {

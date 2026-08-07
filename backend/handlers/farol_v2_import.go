@@ -712,12 +712,17 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	// semanticamente, usamos a tupla de negócio (data, cnpj|cli, prod, qt, pvenda)
 	// — colisão real é patológica (1 cliente comprando idêntico, mesmo dia, 2x+
 	// é raríssimo). Mantém a PRIMEIRA ocorrência (ordem do CSV); descarta o resto.
+	// `evento` faz parte da chave: sem ele, um CANCELADO e um DEVOLVIDO do
+	// mesmo item, mesmo cliente e mesmo dia colidiam e um dos dois sumia —
+	// justamente o par mais provável de coincidir em todos os outros campos.
+	// Em fat/trans o campo é sempre "" e a chave fica idêntica à anterior.
 	type dedupKey struct {
 		data    string
 		cliCnpj string
 		codProd string
 		qt      float64
 		pvenda  float64
+		evento  string
 	}
 	dedupSlice := func(in []vendaRaw, label string) []vendaRaw {
 		if len(in) == 0 {
@@ -735,6 +740,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 				codProd: r.vals[16].(string),
 				qt:      r.vals[19].(float64),
 				pvenda:  r.vals[20].(float64),
+				evento:  r.evento, // "" em fat/trans; CORTADO/CANCELADO/DEVOLVIDO no CCD
 			}
 			if _, dup := seen[key]; dup {
 				descartadas++
