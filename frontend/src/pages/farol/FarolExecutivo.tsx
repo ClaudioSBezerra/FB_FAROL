@@ -396,8 +396,16 @@ function ColumnsHeader({
           Mix Médio
         </div>
       </div>
-      {/* Linha clara: subtítulos. "Período Atual" e "%" são clicáveis pra ordenar. */}
-      <div className={cn('grid', GC, 'bg-slate-50 border-y border-slate-200')}>
+      {/* Linha clara: subtítulos. "Período Atual" e "%" são clicáveis pra ordenar.
+          items-start: sem isso, o grid (align-items:stretch por padrão) esticava
+          os 4 blocos (Nome/Venda/Positivação/Realizado) até a altura do mais alto
+          — "% POSIT. ATUAL X ANTERIOR" quebra em 2 linhas e é o mais alto. "Período
+          Anterior" é <div> simples (texto fica no topo da célula esticada mesmo
+          assim), mas "Período Atual" e "%" são inline-flex items-center (têm a
+          setinha de ordenação do lado) — dentro de uma célula esticada mais alta
+          que o próprio conteúdo, o items-center centraliza o texto NO MEIO dessa
+          altura extra, descendo em relação ao "Período Anterior" ao lado. */}
+      <div className={cn('grid items-start', GC, 'bg-slate-50 border-y border-slate-200')}>
         <div className="px-3 py-1.5 text-sm uppercase tracking-wide text-slate-400 font-medium">
           {/* vazio */}
         </div>
