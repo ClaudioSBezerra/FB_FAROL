@@ -326,7 +326,14 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
 
 // ─── Cabeçalho colorido + subtítulos (reutilizado em Total e Lista) ─────────
 
-const GRID_COLS        = 'grid-cols-[minmax(180px,2fr)_3fr_5fr_1fr]'
+// Venda em 5fr (era 3fr) — igualado à Positivação: Positivação tem mais
+// colunas (5) mas cada uma é curta (inteiro/percentual); Venda tem só 3, mas
+// R$ 1.851.348.206,03 (TOTAL, empresa inteira) não cabe no espaço que sobrava
+// de 3fr ÷ 3 colunas. Visto em produção 10/08/2026 com zoom reduzido: mesmo
+// com break-words + <wbr/> corretos (sem sobrepor nem cortar centavo), o
+// valor ainda quebrava em 2 linhas por falta de largura, não por falta de
+// ponto de quebra decente.
+const GRID_COLS        = 'grid-cols-[minmax(180px,2fr)_5fr_5fr_1fr]'
 const GRID_COLS_NOPOS  = 'grid-cols-[minmax(180px,2fr)_3fr_1.4fr]'
 // Positivação não faz sentido no nível Cliente/Produto → coluna some.
 const gridCols = (hidePosit?: boolean) => (hidePosit ? GRID_COLS_NOPOS : GRID_COLS)
@@ -394,7 +401,7 @@ function ColumnsHeader({
         <div className="px-3 py-1.5 text-sm uppercase tracking-wide text-slate-400 font-medium">
           {/* vazio */}
         </div>
-        <div className="grid grid-cols-3 gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
+        <div className="grid grid-cols-[2fr_2fr_1fr] gap-1 px-2 py-1.5 text-sm uppercase tracking-wide text-slate-500 font-semibold text-center">
           <div>Período Anterior</div>
           <div className="inline-flex items-center justify-center">
             <span>Período Atual</span>
@@ -479,7 +486,7 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
           (grid-cols-3, só 4px de gap) e cola no valor vizinho — foi o que
           apareceu em produção 10/08/2026 (R$ 1.851.348.206,08 grudado em
           R$ 1.137.776.288,06, sem espaço nenhum entre os dois). */}
-      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center min-w-0">
+      <div className="grid grid-cols-[2fr_2fr_1fr] gap-1 px-2 py-2.5 items-center min-w-0">
         <div className={cn(valueNum, 'text-center min-w-0 break-words')}><BRLValue v={card.valor_ant} /></div>
         <div className={cn(valueNum, 'text-center min-w-0 break-words')}><BRLValue v={card.valor_atual} /></div>
         <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.cor] : COR_TXT[card.cor])}>
