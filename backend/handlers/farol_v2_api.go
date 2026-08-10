@@ -688,7 +688,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		// abrir um fornecedor, o totalizador = o nº que aparecia no card dele.
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
 			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
-			fixOverlappingBaseKPI(db, &kpi, fluxo, view, spCtx.EmpresaID, pr, drillPath, filters)
+			fixOverlappingBaseKPI(db, &kpi, fluxo, view, currentLevel.Level, spCtx.EmpresaID, pr, drillPath, filters)
 		}
 		// O "de Y" (mix_total) do totalizador foi omitido na tela a pedido do gestor;
 		// por isso NÃO recalculamos o universo aqui (queries COUNT(DISTINCT) caras).
@@ -2224,16 +2224,19 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 // na tabela folha (grain cnpj) para o intervalo mensal dado.
 // Corrige o KPI totalizador quando overlappingBase=true: a média de percentuais
 // por fornecedor subestima o total real quando há muitos fornecedores de baixo volume.
-func queryDistinctCliPositivados(db *sql.DB, fluxo fluxoCtx, view string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) int {
-	tables := aggTablesFat
-	if fluxo.name == "transmitido" {
-		tables = aggTablesTrans
-	}
-	tbl, ok := tables[view]
-	if !ok || len(tbl) == 0 {
+//
+// groupCol resolve a folha via leafForPositivados — igual queryDistinctPositivados
+// já faz (ver comentário lá). ANTES esta função usava direto tables[view][leaf],
+// a folha da PRÓPRIA view; com filtro de Filial ("empresa") a folha certa é a da
+// V11 (tem a coluna, V01-V07 não têm), então toda vez que o filtro de Filial
+// era combinado com um drill (visto em produção 08/08/2026, ~07:46-07:49) a
+// query batia em "column v.empresa does not exist" e devolvia 0 — zerando o
+// totalizador de clientes ativos/positivados na tela, sem nenhum sinal visível.
+func queryDistinctCliPositivados(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) int {
+	leafTable, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
+	if !ok {
 		return 0
 	}
-	leafTable := "farol." + tbl[len(tbl)-1]
 
 	args := []any{empresaID}
 	mesCond := buildMesCond(ymStart, ymEnd, &args)
@@ -2250,7 +2253,7 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 
 	var count int
 	if err := db.QueryRow(q, args...).Scan(&count); err != nil {
-		log.Printf("[farol:posit] queryDistinctCliPositivados view=%s ERRO: %v", view, err)
+		log.Printf("[farol:posit] queryDistinctCliPositivados view=%s nível=%s folha=%s ERRO: %v", view, groupCol, leafTable, err)
 		return 0
 	}
 	return count
@@ -2604,23 +2607,23 @@ func queryCompanyBaseCli(db *sql.DB, fluxo fluxoCtx, empresaID string) int {
 // da média de percentuais, que subestima quando muitos fornecedores têm pouco volume.
 // Quando drillPath está vazio (V01 L0), base_cli agora é rolling-12M por fornecedor,
 // então o MAX das linhas daria a base do maior fornecedor — corrigimos com o total real.
-func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view string, empresaID string, pr periodResolution, drillPath []drillStep, filters multiFilters) {
+func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view, groupCol string, empresaID string, pr periodResolution, drillPath []drillStep, filters multiFilters) {
 	// Totalizador = COUNT(DISTINCT cnpj) do RECORTE atual (drill+filtros), em
 	// qualquer nível. Assim, ao abrir um fornecedor, o nº de clientes ativos do
 	// totalizador é exatamente o que aparecia no card daquele fornecedor na tela
 	// anterior. Clientes Ativos (PROVISÓRIO Heverton) = distinct no período todo;
 	// positivados = distinct no período. Carteira Rotina 302 (Keslley) segue no
 	// banco, só não exibida.
-	base := queryDistinctCliPositivados(db, fluxo, view, empresaID, 0, 999912, drillPath, filters)
+	base := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, 0, 999912, drillPath, filters)
 	kpi.TotalBaseCli = base
 	kpi.TotalBaseCliAnt = base
-	ref := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+	ref := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
 	kpi.TotalPositivados = ref
 	if kpi.TotalBaseCli > 0 {
 		kpi.TotalPositPct = float64(ref) / float64(kpi.TotalBaseCli) * 100
 	}
 	if !pr.CompInicio.IsZero() {
-		ant := queryDistinctCliPositivados(db, fluxo, view, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+		ant := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
 		kpi.TotalPositivadosAnt = ant
 		if kpi.TotalBaseCliAnt > 0 {
 			kpi.TotalPositPctAnt = float64(ant) / float64(kpi.TotalBaseCliAnt) * 100
@@ -3656,7 +3659,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
 			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
-			fixOverlappingBaseKPI(db, &kpi, fluxo, view, empresaID, pr, drillPath, filters)
+			fixOverlappingBaseKPI(db, &kpi, fluxo, view, currentLevel.Level, empresaID, pr, drillPath, filters)
 		}
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
