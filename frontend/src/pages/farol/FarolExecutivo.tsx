@@ -477,28 +477,36 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
         </span>
       </div>
 
-      {/* VENDA */}
-      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center">
-        <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_ant)}</div>
-        <div className={cn(valueNum, 'text-center')}>{fmtBRL(card.valor_atual)}</div>
+      {/* VENDA — min-w-0 nas células + break-words no valor: sem isso, o TOTAL
+          (a soma da empresa inteira, o maior número da tabela) passa de
+          R$ 1 bi, vira uma "palavra" mais larga que o terço da coluna
+          (grid-cols-3, só 4px de gap) e cola no valor vizinho — foi o que
+          apareceu em produção 10/08/2026 (R$ 1.851.348.206,08 grudado em
+          R$ 1.137.776.288,06, sem espaço nenhum entre os dois). */}
+      <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center min-w-0">
+        <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtBRL(card.valor_ant)}</div>
+        <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtBRL(card.valor_atual)}</div>
         <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.cor] : COR_TXT[card.cor])}>
           {fmtPct(card.pct)}
         </div>
       </div>
 
       {/* POSITIVAÇÃO — Clientes Ativos (carteira) + positivados Anterior × Atual + % penetração.
-          Escondida no nível Cliente/Produto (não faz sentido). */}
+          Escondida no nível Cliente/Produto (não faz sentido). min-w-0 aqui
+          também: base_cli/positivados são inteiros, bem mais curtos que os
+          valores em R$, mas a carteira somada da empresa inteira ainda pode
+          passar de 6 dígitos e vale a mesma proteção. */}
       {!hidePosit && (
-        <div className="grid grid-cols-5 gap-1 px-2 py-2.5 items-center">
-          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.base_cli)}</div>
+        <div className="grid grid-cols-5 gap-1 px-2 py-2.5 items-center min-w-0">
+          <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtInt(card.base_cli)}</div>
           {/* % Posit. Atual (colorido — destaque) */}
           <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
             {fmtPct(card.positpct)}
           </div>
           {/* Posit. Anterior (cinza) */}
-          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados_ant)}</div>
+          <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtInt(card.positivados_ant)}</div>
           {/* Posit. Atual */}
-          <div className={cn(valueNum, 'text-center')}>{fmtInt(card.positivados)}</div>
+          <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtInt(card.positivados)}</div>
           {/* % Posit. Atual X Anterior (mesmo dado, apenas label diferente) */}
           <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
             {fmtPct(card.positpct)}
