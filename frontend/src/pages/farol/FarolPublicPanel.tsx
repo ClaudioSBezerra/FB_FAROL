@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   Breadcrumb,
-  parsePeriodo, fmtBRL, fmtPct, fmtNum, fmtInt,
+  parsePeriodo, BRLValue, fmtPct, fmtNum, fmtInt,
   type CardsResponse, type CardItem, type DrillStep, type KPI,
 } from './FarolV2Dashboard'
 import { presetRange, PRESET_LABEL_MOBILE, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
@@ -166,7 +166,7 @@ function HeaderResumo({
                   faz o texto vazar por cima do % ao lado. break-words deixa
                   quebrar em 2 linhas quando precisa, sem cortar dígito. */}
               <p className="text-[clamp(1.25rem,7vw,2.25rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
-                {fmtBRL(kpi.total_atual)}
+                <BRLValue v={kpi.total_atual} />
               </p>
             </div>
             <div className="text-right shrink-0">
@@ -180,7 +180,7 @@ function HeaderResumo({
           {/* CONTEXTO — período anterior, discreto mas legível */}
           <div className="text-base text-slate-600 tabular-nums break-words">
             <span className="font-semibold uppercase tracking-wide text-slate-500">{antLabel}:</span>{' '}
-            <span className="font-bold text-slate-700">{fmtBRL(kpi.total_ant)}</span>
+            <span className="font-bold text-slate-700"><BRLValue v={kpi.total_ant} /></span>
           </div>
         </div>
 
@@ -249,7 +249,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">Atual</p>
               <p className="text-[clamp(1.1rem,6vw,1.875rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
-                {fmtBRL(card.valor_atual)}
+                <BRLValue v={card.valor_atual} />
               </p>
             </div>
             <div className="text-right shrink-0">
@@ -263,7 +263,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           {/* Anterior como contexto discreto (mas legível) */}
           <div className="text-base text-slate-600 tabular-nums break-words">
             <span className="font-semibold uppercase tracking-wide text-slate-500">Anterior:</span>{' '}
-            <span className="font-bold text-slate-700">{fmtBRL(card.valor_ant)}</span>
+            <span className="font-bold text-slate-700"><BRLValue v={card.valor_ant} /></span>
           </div>
         </div>
 

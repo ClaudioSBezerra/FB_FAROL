@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { BRLValue } from '@/lib/farolMoney'
 import { LoadingState } from '@/components/farol/LoadingState'
 import { SortIndicator, useSortedCards, type SortState } from '@/components/farol/SortToggle'
 
@@ -160,11 +161,6 @@ const COL_MIX_TXT         = 'text-fuchsia-400'
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
-function fmtBRL(v: number) {
-  if (v === 0) return '—'
-  // Valores ABSOLUTOS (sem abreviar K/M/B) — decisão do gestor. Ex.: R$ 2.500,35
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
 function fmtPct(v: number) {
   if (!isFinite(v) || v === 0) return '—'
   if (v >= 10000) return '>9999%'
@@ -484,8 +480,8 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
           apareceu em produção 10/08/2026 (R$ 1.851.348.206,08 grudado em
           R$ 1.137.776.288,06, sem espaço nenhum entre os dois). */}
       <div className="grid grid-cols-3 gap-1 px-2 py-2.5 items-center min-w-0">
-        <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtBRL(card.valor_ant)}</div>
-        <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtBRL(card.valor_atual)}</div>
+        <div className={cn(valueNum, 'text-center min-w-0 break-words')}><BRLValue v={card.valor_ant} /></div>
+        <div className={cn(valueNum, 'text-center min-w-0 break-words')}><BRLValue v={card.valor_atual} /></div>
         <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.cor] : COR_TXT[card.cor])}>
           {fmtPct(card.pct)}
         </div>

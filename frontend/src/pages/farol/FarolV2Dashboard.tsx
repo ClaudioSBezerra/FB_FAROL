@@ -71,11 +71,7 @@ export interface CardsResponse {
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
-export function fmtBRL(v: number) {
-  if (v === 0) return '—'
-  // Valores ABSOLUTOS (sem abreviar K/M/B) — decisão do gestor. Ex.: R$ 2.500,35
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+export { fmtBRL, BRLValue } from '@/lib/farolMoney'
 export function fmtPct(v: number) { return v.toFixed(1) + '%' }
 export function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
 export function fmtInt(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) }
@@ -312,12 +308,12 @@ export function KPIBar({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <div className="min-w-0">
           <p className="text-sm text-slate-500">Total Anterior</p>
-          <p className="text-sm font-bold font-bold text-slate-500 break-words">{fmtBRL(kpi.total_ant)}</p>
+          <p className="text-sm font-bold font-bold text-slate-500 break-words"><BRLValue v={kpi.total_ant} /></p>
           <p className="text-sm text-slate-400 truncate" title={antLabel}>{antLabel}</p>
         </div>
         <div className="min-w-0">
           <p className="text-sm text-slate-500">Total Atual</p>
-          <p className="text-sm font-bold font-bold text-slate-800 break-words">{fmtBRL(kpi.total_atual)}</p>
+          <p className="text-sm font-bold font-bold text-slate-800 break-words"><BRLValue v={kpi.total_atual} /></p>
           <p className="text-sm text-slate-400 truncate" title={curLabel}>{curLabel}</p>
         </div>
         <div className="min-w-0">
@@ -339,11 +335,11 @@ export function KPIBar({
         </div>
         <div className="min-w-0">
           <p className="text-sm text-slate-500">Faturado</p>
-          <p className="text-sm font-semibold text-slate-700 break-words">{fmtBRL(kpi.total_faturado)}</p>
+          <p className="text-sm font-semibold text-slate-700 break-words"><BRLValue v={kpi.total_faturado} /></p>
         </div>
         <div className="min-w-0">
           <p className="text-sm text-slate-500">Transmitido</p>
-          <p className="text-sm font-semibold text-slate-700 break-words">{fmtBRL(kpi.total_transmitido)}</p>
+          <p className="text-sm font-semibold text-slate-700 break-words"><BRLValue v={kpi.total_transmitido} /></p>
         </div>
         <div className="min-w-0">
           <p className="text-sm text-slate-500">Positivação</p>
@@ -421,11 +417,11 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Atual</p>
-            <p className="text-sm font-semibold text-slate-800 tabular-nums break-words">{fmtBRL(card.valor_atual)}</p>
+            <p className="text-sm font-semibold text-slate-800 tabular-nums break-words"><BRLValue v={card.valor_atual} /></p>
           </div>
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Anterior</p>
-            <p className="text-sm font-semibold text-slate-500 tabular-nums break-words">{fmtBRL(card.valor_ant)}</p>
+            <p className="text-sm font-semibold text-slate-500 tabular-nums break-words"><BRLValue v={card.valor_ant} /></p>
           </div>
         </div>
 
@@ -433,8 +429,8 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
             dois valores juntos não couberem numa linha, Trans desce pra
             próxima em vez de estourar a largura do card. */}
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500 tabular-nums">
-          <span className="break-words"><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600">{fmtBRL(card.faturado)}</span></span>
-          <span className="break-words"><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600">{fmtBRL(card.transmitido)}</span></span>
+          <span className="break-words"><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600"><BRLValue v={card.faturado} /></span></span>
+          <span className="break-words"><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600"><BRLValue v={card.transmitido} /></span></span>
         </div>
 
         {/* Rodapé — Positivação + Mix com ícones Lucide */}
