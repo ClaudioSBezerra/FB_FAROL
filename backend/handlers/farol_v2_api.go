@@ -3117,6 +3117,48 @@ func prewarmPeriodKeys(db *sql.DB, empresaID string) {
 		empresaID, len(periodos), len(posViews), len(fluxos), time.Since(t0))
 }
 
+// prewarmCliprincCache aquece o aggMesCache de "Por Cliente Principal" (V06
+// L0, cod_cliprinc) — o nível mais caro do painel (34-41 mil grupos no
+// ano-a-data, 1,2-1,6s por miss visto em produção 10/08/2026). Sem drill nem
+// filtro, então cai exatamente na mesma chave que o primeiro clique real do
+// dia bateria.
+//
+// Só entra no aquecimento DIÁRIO (PrewarmDiario), nunca no PrewarmStartup: um
+// scan de centenas de milhares de linhas competindo com tráfego real logo
+// após um deploy foi exatamente a regressão de 27/07/2026 documentada acima
+// em PrewarmStartup (prewarmDailyRanges também ficou de fora por isso).
+func prewarmCliprincCache(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+	type aggView struct{ aggName, fluxoName string }
+	views := []aggView{
+		{"farol.agg_fat_v06_l0_mes", "faturado"},
+		{"farol.agg_trans_v06_l0_mes", "transmitido"},
+	}
+	periodos := periodosComuns(time.Now())
+
+	const maxParallel = 4
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	for _, v := range views {
+		for _, p := range periodos {
+			wg.Add(1)
+			v, p := v, p
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				args := []any{empresaID}
+				mesCond := buildMesCond(p.ini, p.fim, &args)
+				cachedAggregatedMes(db, empresaID, v.fluxoName, v.aggName, "cod_cliprinc", "nome_cliprinc",
+					p.ini, p.fim, mesCond, "", args, nil, nil)
+			}()
+		}
+	}
+	wg.Wait()
+	log.Printf("[farol:view] prewarmCliprincCache empresa=%s (%d períodos × %d views) em %v",
+		empresaID, len(periodos), len(views), time.Since(t0))
+}
+
 // PrewarmDiario — aquecimento COMPLETO, pensado para rodar de madrugada/início
 // da manhã (StartDailyPrewarm), quando não há usuários. Diferente do
 // PrewarmStartup, que é deliberadamente enxuto para não competir com tráfego
@@ -3126,6 +3168,7 @@ func PrewarmDiario(db *sql.DB, empresaID string) {
 	t0 := time.Now()
 	prewarmAggMesCore(db, empresaID)
 	prewarmPeriodKeys(db, empresaID)
+	prewarmCliprincCache(db, empresaID)
 	prewarmDailyRanges(db, empresaID)
 	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
 }
