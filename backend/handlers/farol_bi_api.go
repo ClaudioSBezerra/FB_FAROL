@@ -285,7 +285,7 @@ func biKPI(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodResolution) kp
 	kpi := computeKPI(cards, fluxo.name, level.Level == "cod_fornec")
 	if level.Level != "cod_prod" && level.Level != "cod_cli" &&
 		leafServesPositivados(fluxo, "V03", level.Level, nil, nil) {
-		fixOverlappingBaseKPI(db, &kpi, fluxo, "V03", empresaID, pr, nil, nil)
+		fixOverlappingBaseKPI(db, &kpi, fluxo, "V03", level.Level, empresaID, pr, nil, nil)
 	}
 	return kpi
 }

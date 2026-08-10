@@ -51,6 +51,60 @@ func TestInvalidateBaseCacheMesesPreservaHistorico(t *testing.T) {
 	}
 }
 
+// Mesmo raciocínio de TestInvalidateBaseCacheMesesPreservaHistorico, mas para
+// o cache de queryAggregatedMes — a chave tem um campo a mais (aggName), mas
+// a posição do ymRange (índice 4) é a mesma.
+func TestInvalidateAggMesCacheMesesPreservaHistorico(t *testing.T) {
+	const emp = "11111111-1111-1111-1111-111111111111"
+	const outra = "22222222-2222-2222-2222-222222222222"
+
+	casos := []struct {
+		key       string
+		sobrevive bool
+		porque    string
+	}{
+		{emp + "|faturado|farol.agg_fat_v06_l0_mes|cod_cliprinc|202501-202512||", true, "2025 não é tocado por carga de jul/2026"},
+		{emp + "|faturado|farol.agg_fat_v06_l0_mes|cod_cliprinc|202601-202607||", false, "YTD inclui julho"},
+		{emp + "|faturado|farol.agg_fat_v06_l0_mes|cod_cliprinc|202607-202607||", false, "é o próprio mês carregado"},
+		{emp + "|faturado|farol.agg_fat_v06_l0_mes|cod_cliprinc|202608-202608||", true, "agosto não é afetado por carga de julho"},
+		// filtros com VALOR na chave (diferente de baseCacheKey) — a posição
+		// do ymRange não muda, então a invalidação segue funcionando igual.
+		{emp + "|faturado|farol.agg_fat_v01_l0_mes|cod_fornec|202501-202512||cod_fornec=F01;", true, "2025 não é tocado, com filtro aplicado"},
+		{emp + "|faturado|farol.agg_fat_v01_l0_mes|cod_fornec|202607-202607||cod_fornec=F01;", false, "mês carregado, com filtro aplicado"},
+		{outra + "|faturado|farol.agg_fat_v06_l0_mes|cod_cliprinc|202607-202607||", true, "outra empresa não é afetada"},
+	}
+
+	aggMesCacheMu.Lock()
+	aggMesCache = map[string]aggMesCacheEntry{}
+	for _, c := range casos {
+		aggMesCache[c.key] = aggMesCacheEntry{data: map[string]aggResult{}, at: time.Now()}
+	}
+	aggMesCacheMu.Unlock()
+
+	invalidateAggMesCacheMeses(emp, 202607, 202607)
+
+	aggMesCacheMu.RLock()
+	defer aggMesCacheMu.RUnlock()
+	for _, c := range casos {
+		_, existe := aggMesCache[c.key]
+		if existe != c.sobrevive {
+			t.Errorf("chave %q: sobreviveu=%v, esperado %v (%s)", c.key, existe, c.sobrevive, c.porque)
+		}
+	}
+}
+
+// Duas seleções de filtro diferentes não podem colidir na mesma chave —
+// diferente de baseCacheKey/vendasPeriodoCacheKey, que só logam nomes.
+func TestAggMesCacheKeyDistingueValorDoFiltro(t *testing.T) {
+	k1 := aggMesCacheKey("emp", "faturado", "farol.agg_fat_v01_l0_mes", "cod_gerente",
+		202601, 202608, nil, multiFilters{"cod_fornec": {"F01"}})
+	k2 := aggMesCacheKey("emp", "faturado", "farol.agg_fat_v01_l0_mes", "cod_gerente",
+		202601, 202608, nil, multiFilters{"cod_fornec": {"F02"}})
+	if k1 == k2 {
+		t.Errorf("chaves iguais para filtros diferentes: %q", k1)
+	}
+}
+
 // O cache de Q1 guarda datas em vez de ym; a conversão precisa bater igual.
 func TestInvalidateVendasPeriodoCacheMeses(t *testing.T) {
 	const emp = "11111111-1111-1111-1111-111111111111"

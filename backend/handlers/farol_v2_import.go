@@ -1002,9 +1002,11 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		if ymIni, ymFim, ok := mesesRangeYM(meses); ok {
 			invalidateBaseCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 			invalidateVendasPeriodoCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+			invalidateAggMesCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 		} else {
 			invalidateBaseCache(spCtx.EmpresaID)
 			invalidateVendasPeriodoCache(spCtx.EmpresaID)
+			invalidateAggMesCache(spCtx.EmpresaID)
 		}
 		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
 			jobID, len(mesesTocados), time.Since(tAgg))
@@ -1366,6 +1368,7 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		invalidateBICache(spCtx.EmpresaID)
 		invalidateBaseCache(spCtx.EmpresaID)
 		invalidateVendasPeriodoCache(spCtx.EmpresaID)
+		invalidateAggMesCache(spCtx.EmpresaID)
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n})
 	}
 }
