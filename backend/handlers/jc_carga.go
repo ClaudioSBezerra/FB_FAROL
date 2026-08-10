@@ -307,6 +307,7 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 			ym := m.Ano*100 + m.Mes
 			invalidateBaseCacheMeses(empresaID, ym, ym)
 			invalidateVendasPeriodoCacheMeses(empresaID, ym, ym)
+			invalidateAggMesCacheMeses(empresaID, ym, ym)
 		}
 		log.Printf("[jc:carga] consolidação final concluída em %v", time.Since(t0).Round(time.Second))
 	}

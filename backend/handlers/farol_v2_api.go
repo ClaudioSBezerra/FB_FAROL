@@ -1058,6 +1058,137 @@ GROUP BY v.%s`,
 	return result
 }
 
+// ─── Cache de queryAggregatedMes ─────────────────────────────────────────────
+// Diferente de queryDistinctPositivados/queryAggregatedVendas, esta query não
+// tinha cache — pagava o HashAggregate inteiro (300 mil+ linhas em cod_cliprinc
+// no ano-a-data, 1,2-1,6s vistos em produção 10/08/2026) a CADA clique, mesmo
+// quando o agregado não mudou desde a última consolidação. Mesmo raciocínio do
+// baseCache: agg_*_mes só muda após import/consolidação (ver
+// invalidateAggMesCache/invalidateAggMesCacheMeses).
+type aggMesCacheEntry struct {
+	data map[string]aggResult
+	at   time.Time
+}
+
+var (
+	aggMesCacheMu sync.RWMutex
+	aggMesCache   = map[string]aggMesCacheEntry{}
+)
+
+// aggMesCacheTTL — mesmo raciocínio do baseCacheTTL: o aquecimento é diário
+// (prewarm 05:30) e precisa sobreviver ao expediente inteiro.
+const aggMesCacheTTL = 20 * time.Hour
+
+// aggMesCacheKey — mesmo layout do baseCacheKey (posição 4 = ymStart-ymEnd, é
+// o que invalidateAggMesCacheMeses usa pra preservar histórico intacto), com
+// UMA diferença: os filtros entram com os VALORES selecionados, não só os
+// nomes. baseCacheKey/vendasPeriodoCacheKey usam filters.names() porque lá é
+// só diagnóstico; aqui o valor filtrado muda o resultado (fornecedor F01 e
+// F02 devolvem grupos diferentes), então duas seleções distintas não podem
+// colidir na mesma chave.
+func aggMesCacheKey(empresaID, fluxoName, aggName, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) string {
+	var sb strings.Builder
+	sb.WriteString(empresaID)
+	sb.WriteByte('|')
+	sb.WriteString(fluxoName)
+	sb.WriteByte('|')
+	sb.WriteString(aggName)
+	sb.WriteByte('|')
+	sb.WriteString(groupCol)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.Itoa(ymStart))
+	sb.WriteByte('-')
+	sb.WriteString(strconv.Itoa(ymEnd))
+	sb.WriteByte('|')
+	for _, d := range drillPath {
+		sb.WriteString(d.Level)
+		sb.WriteByte('=')
+		sb.WriteString(d.Value)
+		sb.WriteByte(';')
+	}
+	sb.WriteByte('|')
+	names := make([]string, 0, len(filters))
+	for c := range filters {
+		names = append(names, c)
+	}
+	sort.Strings(names)
+	for _, c := range names {
+		vals := append([]string(nil), filters[c]...)
+		sort.Strings(vals)
+		sb.WriteString(c)
+		sb.WriteByte('=')
+		sb.WriteString(strings.Join(vals, ","))
+		sb.WriteByte(';')
+	}
+	return sb.String()
+}
+
+// cachedAggregatedMes envolve queryAggregatedMes com cache em memória. ymStart/
+// ymEnd só entram na chave (invalidação por mês); a query em si continua
+// usando mesCond/drillCond/args, já resolvidos pelo chamador.
+func cachedAggregatedMes(db *sql.DB, empresaID, fluxoName, aggName, groupCol, nameCol string,
+	ymStart, ymEnd int, mesCond, drillCond string, args []any,
+	drillPath []drillStep, filters multiFilters) map[string]aggResult {
+
+	key := aggMesCacheKey(empresaID, fluxoName, aggName, groupCol, ymStart, ymEnd, drillPath, filters)
+	aggMesCacheMu.RLock()
+	if e, ok := aggMesCache[key]; ok && time.Since(e.at) < aggMesCacheTTL {
+		aggMesCacheMu.RUnlock()
+		return e.data
+	}
+	aggMesCacheMu.RUnlock()
+
+	data := queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCond, args)
+	aggMesCacheMu.Lock()
+	aggMesCache[key] = aggMesCacheEntry{data: data, at: time.Now()}
+	aggMesCacheMu.Unlock()
+	return data
+}
+
+// invalidateAggMesCache limpa TODAS as entradas de agg_mes de uma empresa.
+// Use quando os meses afetados são desconhecidos (reconstrução total); para
+// carga/consolidação de meses específicos prefira invalidateAggMesCacheMeses.
+func invalidateAggMesCache(empresaID string) {
+	aggMesCacheMu.Lock()
+	for k := range aggMesCache {
+		if strings.HasPrefix(k, empresaID+"|") {
+			delete(aggMesCache, k)
+		}
+	}
+	aggMesCacheMu.Unlock()
+}
+
+// invalidateAggMesCacheMeses limpa só as entradas cujo período TOCA os meses
+// recém-carregados — mesmo raciocínio de invalidateBaseCacheMeses (preserva o
+// histórico já aquecido; a carga diária mexe só no mês corrente).
+func invalidateAggMesCacheMeses(empresaID string, ymIni, ymFim int) {
+	pref := empresaID + "|"
+	kept, dropped := 0, 0
+	aggMesCacheMu.Lock()
+	for k := range aggMesCache {
+		if !strings.HasPrefix(k, pref) {
+			continue
+		}
+		// aggMesCacheKey: empresa|fluxo|aggName|groupCol|ymStart-ymEnd|drill|filters
+		parts := strings.Split(k, "|")
+		if len(parts) < 5 {
+			delete(aggMesCache, k)
+			dropped++
+			continue
+		}
+		ini, fim, ok := parseYMRangeField(parts[4])
+		if !ok || ymOverlapsKeyRange(ini, fim, ymIni, ymFim) {
+			delete(aggMesCache, k)
+			dropped++
+			continue
+		}
+		kept++
+	}
+	aggMesCacheMu.Unlock()
+	log.Printf("[farol:cache] aggMesCache invalidado p/ meses %d..%d — %d entradas removidas, %d preservadas (histórico)",
+		ymIni, ymFim, dropped, kept)
+}
+
 // queryProdutos / queryProdutosAnterior — nível folha (cod_prod), sem MV pré-agregada.
 // Lê direto da tabela base do fluxo, escopado por drill (volume pequeno).
 
@@ -1756,7 +1887,8 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	default:
 		go func() {
 			defer wg.Done()
-			atualMap = queryAggregatedMes(db, aggName, groupCol, nameCol, mesCond, drillCondMes, atualArgsMes)
+			atualMap = cachedAggregatedMes(db, empresaID, fluxo.name, aggName, groupCol, nameCol,
+				ym(pr.RefInicio), ym(pr.RefFim), mesCond, drillCondMes, atualArgsMes, drillPath, filters)
 		}()
 	}
 
@@ -1785,7 +1917,8 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 			}
 			go func() {
 				defer wg.Done()
-				antMap = queryAggregatedMes(db, aggName, groupCol, nameCol, antMesCond, antDrillMes, antArgsMes)
+				antMap = cachedAggregatedMes(db, empresaID, fluxo.name, aggName, groupCol, nameCol,
+					ym(pr.CompInicio), ym(pr.CompFim), antMesCond, antDrillMes, antArgsMes, drillPath, filters)
 			}()
 		}
 	}
@@ -2779,9 +2912,11 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		if ymIni, ymFim, ok := mesesRangeYM(meses); ok {
 			invalidateBaseCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 			invalidateVendasPeriodoCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+			invalidateAggMesCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 		} else {
 			invalidateBaseCache(spCtx.EmpresaID)
 			invalidateVendasPeriodoCache(spCtx.EmpresaID)
+			invalidateAggMesCache(spCtx.EmpresaID)
 		}
 		// Painel BI serve resposta pronta do cache; sem isto a TV continuaria
 		// mostrando o número de antes do import até o TTL vencer.
