@@ -304,18 +304,23 @@ export function KPIBar({
           </div>
         </div>
       )}
+      {/* min-w-0 em cada célula: sem isso, um total ≥ R$ 1 bi ("R$ 1.234.567.890,12",
+          uma só palavra pro CSS — Intl.NumberFormat não deixa quebrar no espaço)
+          usa a largura intrínseca do texto como piso do item de grid e empurra/
+          sobrepõe a coluna vizinha. break-words dá uma saída de quebra se, mesmo
+          encolhido até o piso da coluna, ainda não couber numa linha. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Total Anterior</p>
-          <p className="text-sm font-bold font-bold text-slate-500">{fmtBRL(kpi.total_ant)}</p>
+          <p className="text-sm font-bold font-bold text-slate-500 break-words">{fmtBRL(kpi.total_ant)}</p>
           <p className="text-sm text-slate-400 truncate" title={antLabel}>{antLabel}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Total Atual</p>
-          <p className="text-sm font-bold font-bold text-slate-800">{fmtBRL(kpi.total_atual)}</p>
+          <p className="text-sm font-bold font-bold text-slate-800 break-words">{fmtBRL(kpi.total_atual)}</p>
           <p className="text-sm text-slate-400 truncate" title={curLabel}>{curLabel}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Atingimento</p>
           <p className={`text-sm font-bold font-bold ${COR_TEXT[kpi.total_cor]}`}>{fmtPct(kpi.total_pct)}</p>
           <div className="flex gap-1.5 mt-1">
@@ -332,20 +337,20 @@ export function KPIBar({
             </span>
           </div>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Faturado</p>
-          <p className="text-sm font-semibold text-slate-700">{fmtBRL(kpi.total_faturado)}</p>
+          <p className="text-sm font-semibold text-slate-700 break-words">{fmtBRL(kpi.total_faturado)}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Transmitido</p>
-          <p className="text-sm font-semibold text-slate-700">{fmtBRL(kpi.total_transmitido)}</p>
+          <p className="text-sm font-semibold text-slate-700 break-words">{fmtBRL(kpi.total_transmitido)}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Positivação</p>
           <p className="text-sm font-semibold text-slate-700">{fmtPct(kpi.total_positpct)}</p>
           <p className="text-sm text-slate-400">{kpi.total_positivados}/{kpi.total_base_cli} clientes</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm text-slate-500">Mix médio</p>
           <p className="text-sm font-semibold text-slate-700">{fmtNum(kpi.avg_mix)} itens/cli</p>
         </div>
@@ -409,22 +414,27 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
           </div>
         </div>
 
-        {/* Métricas primárias — Atual + Anterior alinhados */}
+        {/* Métricas primárias — Atual + Anterior alinhados. min-w-0 nas células +
+            break-words no valor: mesmo motivo do totalizador acima — fornecedor/
+            gerência grande pode passar de R$ 1 bi e esse valor não tem espaço
+            que o CSS possa usar pra quebrar sozinho. */}
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          <div className="space-y-0.5">
+          <div className="min-w-0 space-y-0.5">
             <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Atual</p>
-            <p className="text-sm font-semibold text-slate-800 tabular-nums">{fmtBRL(card.valor_atual)}</p>
+            <p className="text-sm font-semibold text-slate-800 tabular-nums break-words">{fmtBRL(card.valor_atual)}</p>
           </div>
-          <div className="space-y-0.5">
+          <div className="min-w-0 space-y-0.5">
             <p className="text-sm uppercase tracking-wide text-slate-400 font-medium">Anterior</p>
-            <p className="text-sm font-semibold text-slate-500 tabular-nums">{fmtBRL(card.valor_ant)}</p>
+            <p className="text-sm font-semibold text-slate-500 tabular-nums break-words">{fmtBRL(card.valor_ant)}</p>
           </div>
         </div>
 
-        {/* Métricas secundárias — Fat + Trans em fonte menor */}
-        <div className="mt-2 flex gap-4 text-sm text-slate-500 tabular-nums">
-          <span><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600">{fmtBRL(card.faturado)}</span></span>
-          <span><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600">{fmtBRL(card.transmitido)}</span></span>
+        {/* Métricas secundárias — Fat + Trans em fonte menor. flex-wrap: se os
+            dois valores juntos não couberem numa linha, Trans desce pra
+            próxima em vez de estourar a largura do card. */}
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500 tabular-nums">
+          <span className="break-words"><span className="text-slate-400">Fat</span> <span className="font-medium text-slate-600">{fmtBRL(card.faturado)}</span></span>
+          <span className="break-words"><span className="text-slate-400">Trans</span> <span className="font-medium text-slate-600">{fmtBRL(card.transmitido)}</span></span>
         </div>
 
         {/* Rodapé — Positivação + Mix com ícones Lucide */}

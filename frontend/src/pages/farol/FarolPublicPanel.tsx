@@ -161,7 +161,11 @@ function HeaderResumo({
           <div className="flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">{curLabel}</p>
-              <p className="text-[clamp(1.25rem,7vw,2.25rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 whitespace-nowrap">
+              {/* Sem whitespace-nowrap: acima de ~R$ 1 bi o valor não cabe numa
+                  linha só no clamp máximo, e nowrap sem overflow-hidden só
+                  faz o texto vazar por cima do % ao lado. break-words deixa
+                  quebrar em 2 linhas quando precisa, sem cortar dígito. */}
+              <p className="text-[clamp(1.25rem,7vw,2.25rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
                 {fmtBRL(kpi.total_atual)}
               </p>
             </div>
@@ -174,7 +178,7 @@ function HeaderResumo({
           </div>
 
           {/* CONTEXTO — período anterior, discreto mas legível */}
-          <div className="text-base text-slate-600 tabular-nums">
+          <div className="text-base text-slate-600 tabular-nums break-words">
             <span className="font-semibold uppercase tracking-wide text-slate-500">{antLabel}:</span>{' '}
             <span className="font-bold text-slate-700">{fmtBRL(kpi.total_ant)}</span>
           </div>
@@ -244,7 +248,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">Atual</p>
-              <p className="text-[clamp(1.1rem,6vw,1.875rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 whitespace-nowrap">
+              <p className="text-[clamp(1.1rem,6vw,1.875rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
                 {fmtBRL(card.valor_atual)}
               </p>
             </div>
@@ -257,7 +261,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           </div>
 
           {/* Anterior como contexto discreto (mas legível) */}
-          <div className="text-base text-slate-600 tabular-nums">
+          <div className="text-base text-slate-600 tabular-nums break-words">
             <span className="font-semibold uppercase tracking-wide text-slate-500">Anterior:</span>{' '}
             <span className="font-bold text-slate-700">{fmtBRL(card.valor_ant)}</span>
           </div>
