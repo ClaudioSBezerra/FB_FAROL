@@ -804,6 +804,30 @@ func (mf multiFilters) names() string {
 	return strings.Join(cols, ",")
 }
 
+// valuesKey — coluna=valores ordenados e determinísticos, p/ CHAVE DE CACHE
+// (ex: "cod_fornec=F01,F02;uf=SP;"). Diferente de names(): aqui o VALOR
+// selecionado importa — filtrar Filial=11 e Filial=20 têm que cair em
+// entradas diferentes do cache, senão a segunda seleção lê o resultado da
+// primeira (poluição cruzada). Usada por aggMesCacheKey/baseCacheKey/
+// vendasPeriodoCacheKey.
+func (mf multiFilters) valuesKey() string {
+	names := make([]string, 0, len(mf))
+	for c := range mf {
+		names = append(names, c)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	for _, c := range names {
+		vals := append([]string(nil), mf[c]...)
+		sort.Strings(vals)
+		sb.WriteString(c)
+		sb.WriteByte('=')
+		sb.WriteString(strings.Join(vals, ","))
+		sb.WriteByte(';')
+	}
+	return sb.String()
+}
+
 // parseMultiFilters extrai dos URL params os filtros multi-select.
 // Aceita:
 //
@@ -1107,19 +1131,7 @@ func aggMesCacheKey(empresaID, fluxoName, aggName, groupCol string, ymStart, ymE
 		sb.WriteByte(';')
 	}
 	sb.WriteByte('|')
-	names := make([]string, 0, len(filters))
-	for c := range filters {
-		names = append(names, c)
-	}
-	sort.Strings(names)
-	for _, c := range names {
-		vals := append([]string(nil), filters[c]...)
-		sort.Strings(vals)
-		sb.WriteString(c)
-		sb.WriteByte('=')
-		sb.WriteString(strings.Join(vals, ","))
-		sb.WriteByte(';')
-	}
+	sb.WriteString(filters.valuesKey())
 	return sb.String()
 }
 
@@ -1549,7 +1561,11 @@ func vendasPeriodoCacheKey(empresaID, fluxoName, groupCol string, periodIni, per
 		sb.WriteByte(';')
 	}
 	sb.WriteByte('|')
-	sb.WriteString(filters.names())
+	// valuesKey(), não names(): duas seleções de Filial diferentes (ex: 11 e
+	// 20) não podem cair na mesma entrada — filters.names() só via a COLUNA
+	// "empresa" em ambas, então a segunda leitura devolvia o resultado da
+	// primeira. Ver comentário em multiFilters.valuesKey().
+	sb.WriteString(filters.valuesKey())
 	return sb.String()
 }
 
@@ -2515,7 +2531,9 @@ func baseCacheKey(empresaID, fluxoName, view, groupCol string, ymStart, ymEnd in
 		sb.WriteByte(';')
 	}
 	sb.WriteByte('|')
-	sb.WriteString(filters.names())
+	// valuesKey(), não names() — mesmo motivo de vendasPeriodoCacheKey acima:
+	// Filial=11 e Filial=20 não podem colidir na mesma entrada de baseCache.
+	sb.WriteString(filters.valuesKey())
 	return sb.String()
 }
 
@@ -3159,6 +3177,94 @@ func prewarmCliprincCache(db *sql.DB, empresaID string) {
 		empresaID, len(periodos), len(views), time.Since(t0))
 }
 
+// fetchFiliaisParaPrewarm lista os códigos de Filial ("empresa") já vistos
+// nos dados — mesma tabela/coluna que o dims usa pro dropdown de Filial
+// (farol.agg_<fluxo>_dims_mes, dim='empresa'). Sem isso, prewarmFilialCache
+// teria que adivinhar quais filiais existem.
+func fetchFiliaisParaPrewarm(db *sql.DB, empresaID string) []string {
+	rows, err := db.Query(`
+		SELECT DISTINCT key FROM farol.agg_fat_dims_mes
+		 WHERE empresa_id=$1 AND dim='empresa' AND key != ''
+		 ORDER BY key`, empresaID)
+	if err != nil {
+		log.Printf("[farol:view] fetchFiliaisParaPrewarm ERRO: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// prewarmFilialCache aquece o baseCache de positivação para o filtro de
+// Filial — o único caminho comum que ainda ficava de fora de todo prewarm
+// (PrewarmStartup/PrewarmDiario só cobriam sem filtro). Visto em produção
+// 12/08/2026: abrir Indústrias com Filial selecionada custou 10,97s
+// (queryDistinctPositivados sem cache, roteada pra folha da V11 — ver
+// leafForPositivados). Espelha prewarmAggMesCore (a entrada "base",
+// ymStart=0..999912) + prewarmPeriodKeys (as entradas por período), só que
+// PARA CADA FILIAL — diferente das duas, que não têm valor de filtro pra
+// variar.
+//
+// Só entra no PrewarmDiario: nº_filiais × 3 views × 2 fluxos × (1 base + 6
+// períodos) é grande demais pro boot enxuto do PrewarmStartup.
+func prewarmFilialCache(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+	filiais := fetchFiliaisParaPrewarm(db, empresaID)
+	if len(filiais) == 0 {
+		log.Printf("[farol:view] prewarmFilialCache empresa=%s: nenhuma filial encontrada, pulando", empresaID)
+		return
+	}
+
+	posViews := []struct{ view, group string }{
+		{"V01", "cod_fornec"},
+		{"V02", "cod_supervisor"},
+		{"V03", "cod_gerente"},
+	}
+	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
+	periodos := periodosComuns(time.Now())
+
+	const maxParallel = 4
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	for _, filial := range filiais {
+		filters := multiFilters{"empresa": {filial}}
+		for _, fl := range fluxos {
+			for _, v := range posViews {
+				// "base" (histórico inteiro) — mesma entrada que
+				// prewarmAggMesCore aquece pro caminho sem filtro.
+				wg.Add(1)
+				fl, v, filters := fl, v, filters
+				go func() {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, filters)
+				}()
+				// entradas por período — mesma cobertura de prewarmPeriodKeys.
+				for _, p := range periodos {
+					wg.Add(1)
+					fl, v, p, filters := fl, v, p, filters
+					go func() {
+						defer wg.Done()
+						sem <- struct{}{}
+						defer func() { <-sem }()
+						cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, filters)
+					}()
+				}
+			}
+		}
+	}
+	wg.Wait()
+	log.Printf("[farol:view] prewarmFilialCache empresa=%s (%d filiais × %d views × %d fluxos × %d períodos) em %v",
+		empresaID, len(filiais), len(posViews), len(fluxos), len(periodos), time.Since(t0))
+}
+
 // PrewarmDiario — aquecimento COMPLETO, pensado para rodar de madrugada/início
 // da manhã (StartDailyPrewarm), quando não há usuários. Diferente do
 // PrewarmStartup, que é deliberadamente enxuto para não competir com tráfego
@@ -3169,6 +3275,7 @@ func PrewarmDiario(db *sql.DB, empresaID string) {
 	prewarmAggMesCore(db, empresaID)
 	prewarmPeriodKeys(db, empresaID)
 	prewarmCliprincCache(db, empresaID)
+	prewarmFilialCache(db, empresaID)
 	prewarmDailyRanges(db, empresaID)
 	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
 }

@@ -105,6 +105,52 @@ func TestAggMesCacheKeyDistingueValorDoFiltro(t *testing.T) {
 	}
 }
 
+// baseCacheKey/vendasPeriodoCacheKey usavam filters.names() (só a coluna),
+// então Filial=11 e Filial=20 caíam na MESMA entrada — a segunda leitura
+// devolvia o resultado da primeira. Motivou prewarmFilialCache: aquecer com
+// uma filial só faria sentido se o cache diferenciasse por valor.
+func TestBaseCacheKeyDistingueValorDoFiltro(t *testing.T) {
+	k1 := baseCacheKey("emp", "faturado", "V01", "cod_fornec",
+		0, 999912, nil, multiFilters{"empresa": {"11"}})
+	k2 := baseCacheKey("emp", "faturado", "V01", "cod_fornec",
+		0, 999912, nil, multiFilters{"empresa": {"20"}})
+	if k1 == k2 {
+		t.Errorf("chaves iguais para filiais diferentes: %q", k1)
+	}
+}
+
+func TestVendasPeriodoCacheKeyDistingueValorDoFiltro(t *testing.T) {
+	ini := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fim := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	k1 := vendasPeriodoCacheKey("emp", "faturado", "cod_fornec", ini, fim, nil, multiFilters{"empresa": {"11"}})
+	k2 := vendasPeriodoCacheKey("emp", "faturado", "cod_fornec", ini, fim, nil, multiFilters{"empresa": {"20"}})
+	if k1 == k2 {
+		t.Errorf("chaves iguais para filiais diferentes: %q", k1)
+	}
+}
+
+// A posição do ymRange (índice 4, usada por invalidateBaseCacheMeses) não
+// pode mudar mesmo com filtro tendo valor agora — senão a invalidação por
+// mês quebra silenciosamente pra qualquer chave com filtro.
+func TestBaseCacheKeyComFiltroPreservaPosicaoDoYmRange(t *testing.T) {
+	const emp = "11111111-1111-1111-1111-111111111111"
+	key := baseCacheKey(emp, "faturado", "V01", "cod_fornec",
+		202607, 202607, nil, multiFilters{"empresa": {"11"}})
+
+	baseCacheMu.Lock()
+	baseCache = map[string]baseCacheEntry{key: {data: map[string]int{"x": 1}, at: time.Now()}}
+	baseCacheMu.Unlock()
+
+	invalidateBaseCacheMeses(emp, 202607, 202607)
+
+	baseCacheMu.RLock()
+	_, existe := baseCache[key]
+	baseCacheMu.RUnlock()
+	if existe {
+		t.Errorf("chave com filtro sobreviveu a uma invalidação que deveria pegá-la: %q", key)
+	}
+}
+
 // O cache de Q1 guarda datas em vez de ym; a conversão precisa bater igual.
 func TestInvalidateVendasPeriodoCacheMeses(t *testing.T) {
 	const emp = "11111111-1111-1111-1111-111111111111"
