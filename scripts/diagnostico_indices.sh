@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 # diagnostico_indices.sh — fotografia dos índices do FAROL em produção.
 #
-# SOMENTE LEITURA. Não cria, não dropa, não altera nada. Serve para decidir,
-# com dado real em vez de suposição, quais índices valem a pena manter.
+# SOMENTE LEITURA. Não cria, não dropa, não altera nada.
+#
+# ⚠ NÃO DROPE ÍNDICE COM BASE NESTE SCRIPT ENQUANTO O SISTEMA NÃO ESTIVER EM
+#   USO REAL. Rodado em 13/08/2026 ele apontou 166 índices com idx_scan=0 e
+#   4,7 GB "reclamáveis" — número sem valor naquele momento, porque o FAROL
+#   ainda não tinha entrado em produção: os RCAs em campo (/m/CNPJ/RCA/cod)
+#   nunca haviam acessado, ninguém tinha feito drill até Cliente/Produto, e
+#   os filtros combinados que os gestores realmente usam eram desconhecidos.
+#   idx_scan=0 ali significava "ninguém exercitou este caminho ainda", não
+#   "este índice é inútil".
+#
+#   O erro é assimétrico: dropar leva segundos, recriar é CREATE INDEX em
+#   24M linhas com o sistema no ar.
+#
+#   Para que o item 2 passe a valer:
+#     1. Espere o sistema estar em uso real (gestores + RCAs em campo).
+#     2. Zere o marco:  SELECT pg_stat_reset();
+#        (zera também n_dead_tup — faça logo após um VACUUM, quando ele já
+#         está perto de zero, para não atrasar o autovacuum.)
+#     3. Deixe rodar 2-4 semanas cobrindo fechamento de mês, que é quando
+#        aparecem as consultas mais pesadas.
+#     4. Só então rode este script de novo e considere drops.
 #
 # Uso:  bash scripts/diagnostico_indices.sh
 set -uo pipefail
