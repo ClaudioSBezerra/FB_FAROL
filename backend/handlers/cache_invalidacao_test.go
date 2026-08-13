@@ -129,6 +129,61 @@ func TestVendasPeriodoCacheKeyDistingueValorDoFiltro(t *testing.T) {
 	}
 }
 
+// O ponto frágil de prewarmFilialRecorte: ele grava no baseCache montando a
+// chave por conta própria (baseCacheKey), em vez de passar por
+// cachedDistinctPositivados como os outros prewarms. Se as duas chaves
+// divergirem, o aquecimento vira trabalho jogado fora — as entradas existem,
+// ninguém as encontra, e não há erro nenhum no log; só continua lento.
+//
+// db=nil de propósito: com cache HIT, cachedDistinctPositivados devolve antes
+// de tocar no banco. Se a chave não bater, ele tenta consultar o nil e o
+// recover abaixo transforma o panic numa falha legível.
+func TestPrewarmFilialGravaNaChaveQueARequestProcura(t *testing.T) {
+	const emp = "11111111-1111-1111-1111-111111111111"
+	fat := fluxoCtx{name: "faturado"}
+	const filial = "11"
+	esperado := map[string]int{"19263": 4200}
+
+	// Exatamente como prewarmFilialRecorte grava.
+	k := baseCacheKey(emp, fat.name, "V01", "cod_fornec", 202601, 202608, nil,
+		multiFilters{"empresa": {filial}})
+	baseCacheMu.Lock()
+	baseCache = map[string]baseCacheEntry{k: {data: esperado, at: time.Now()}}
+	baseCacheMu.Unlock()
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("a request não encontrou a entrada aquecida (foi ao banco e panicou): %v", rec)
+		}
+	}()
+
+	// Exatamente como fetchCards lê.
+	got, hit := cachedDistinctPositivados(nil, emp, fat, "V01", "cod_fornec", 202601, 202608, nil,
+		multiFilters{"empresa": {filial}})
+	if !hit {
+		t.Fatal("cache MISS numa entrada que o prewarm acabou de gravar")
+	}
+	if got["19263"] != 4200 {
+		t.Errorf("valor lido = %v, esperado 4200", got["19263"])
+	}
+
+	// E a filial vizinha não pode herdar o número desta (a colisão que
+	// filters.names() causava antes de valuesKey()). Verificado no mapa, não
+	// via cachedDistinctPositivados: aqui o esperado é MISS, e um miss com
+	// db=nil iria ao banco e panicaria.
+	kVizinha := baseCacheKey(emp, fat.name, "V01", "cod_fornec", 202601, 202608, nil,
+		multiFilters{"empresa": {"20"}})
+	if kVizinha == k {
+		t.Errorf("filial 20 gera a MESMA chave da filial 11: %q", k)
+	}
+	baseCacheMu.RLock()
+	_, existe := baseCache[kVizinha]
+	baseCacheMu.RUnlock()
+	if existe {
+		t.Error("filial 20 encontrou entrada aquecida só para a filial 11")
+	}
+}
+
 // A posição do ymRange (índice 4, usada por invalidateBaseCacheMeses) não
 // pode mudar mesmo com filtro tendo valor agora — senão a invalidação por
 // mês quebra silenciosamente pra qualquer chave com filtro.

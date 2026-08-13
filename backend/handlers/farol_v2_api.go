@@ -3201,18 +3201,100 @@ func fetchFiliaisParaPrewarm(db *sql.DB, empresaID string) []string {
 	return out
 }
 
+// prewarmFilialRecorte aquece, com UMA query, as entradas de baseCache de
+// TODAS as filiais para um único recorte (fluxo × view × período).
+//
+// A ingenuidade que isto evita: chamar cachedDistinctPositivados uma vez por
+// filial faria N queries quase idênticas, cada uma varrendo a MESMA folha da
+// V11 e descartando as linhas das outras filiais. Com 12 filiais × 3 views ×
+// 2 fluxos × 7 recortes seriam 504 queries (~8-10 min de Postgres pesado às
+// 05:30). Agrupando por `empresa`, o mesmo trabalho vira 42 queries — o custo
+// de cobrir 12 filiais passa a ser o de cobrir uma.
+//
+// A equivalência é exata, não aproximada: COUNT(DISTINCT cnpj) agrupado por
+// (empresa, groupCol) devolve, para cada filial, exatamente o mesmo número que
+// filtrar por aquela filial e agrupar só por groupCol. É a mesma partição das
+// linhas, apenas calculada de uma vez.
+//
+// Grava com baseCacheKey — a MESMA função que cachedDistinctPositivados usa
+// para ler. Ver TestPrewarmFilialGravaNaChaveQueARequestProcura: se as duas
+// divergirem, o prewarm aquece chaves que ninguém consulta e o ganho some sem
+// nenhum sinal de erro.
+func prewarmFilialRecorte(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string,
+	ymIni, ymFim int, filiais []string) {
+
+	// Resolve a folha exatamente como a request resolveria: com filtro de
+	// Filial presente, leafForPositivados desvia da folha da própria view
+	// (V01-V07 não têm a coluna `empresa`) para a da V11.
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, multiFilters{"empresa": filiais[:1]})
+	if !ok {
+		return
+	}
+
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymIni, ymFim, &args)
+	q := fmt.Sprintf(`
+SELECT v.empresa, v.%s AS key, COUNT(DISTINCT v.cnpj) AS positivados
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.empresa <> '' AND v.positivados > 0 AND %s
+GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, groupCol)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:view] prewarmFilialRecorte view=%s nível=%s %d..%d ERRO: %v",
+			view, groupCol, ymIni, ymFim, err)
+		return
+	}
+	defer rows.Close()
+
+	// Pré-inicializa TODAS as filiais: uma filial sem venda no recorte tem de
+	// virar entrada vazia no cache (o que queryDistinctPositivados devolveria),
+	// não ausência de entrada — senão ela seria a única a continuar pagando o
+	// miss, justamente por não ter dado.
+	porFilial := make(map[string]map[string]int, len(filiais))
+	for _, f := range filiais {
+		porFilial[f] = map[string]int{}
+	}
+	for rows.Next() {
+		var filial, key string
+		var n int
+		if rows.Scan(&filial, &key, &n) != nil {
+			continue
+		}
+		if _, conhecida := porFilial[filial]; !conhecida {
+			porFilial[filial] = map[string]int{} // filial nova, ainda fora do dims
+		}
+		porFilial[filial][key] = n
+	}
+	if err := rows.Err(); err != nil {
+		// Varredura truncada no meio: os mapas estão incompletos e gravá-los
+		// serviria número MENOR que o real por até 20h, sem erro visível.
+		log.Printf("[farol:view] prewarmFilialRecorte view=%s nível=%s %d..%d ERRO na leitura: %v — nada gravado",
+			view, groupCol, ymIni, ymFim, err)
+		return
+	}
+
+	agora := time.Now()
+	baseCacheMu.Lock()
+	for filial, data := range porFilial {
+		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil,
+			multiFilters{"empresa": {filial}})
+		baseCache[k] = baseCacheEntry{data: data, at: agora}
+	}
+	baseCacheMu.Unlock()
+}
+
 // prewarmFilialCache aquece o baseCache de positivação para o filtro de
 // Filial — o único caminho comum que ainda ficava de fora de todo prewarm
-// (PrewarmStartup/PrewarmDiario só cobriam sem filtro). Visto em produção
-// 12/08/2026: abrir Indústrias com Filial selecionada custou 10,97s
-// (queryDistinctPositivados sem cache, roteada pra folha da V11 — ver
-// leafForPositivados). Espelha prewarmAggMesCore (a entrada "base",
-// ymStart=0..999912) + prewarmPeriodKeys (as entradas por período), só que
-// PARA CADA FILIAL — diferente das duas, que não têm valor de filtro pra
-// variar.
+// (PrewarmStartup/PrewarmDiario só cobriam o caminho sem filtro). Visto em
+// produção 12/08/2026: abrir Indústrias com Filial selecionada custou 10,97s.
 //
-// Só entra no PrewarmDiario: nº_filiais × 3 views × 2 fluxos × (1 base + 6
-// períodos) é grande demais pro boot enxuto do PrewarmStartup.
+// Cobre os mesmos recortes que prewarmAggMesCore (a entrada "base",
+// 0..999912) e prewarmPeriodKeys (os períodos comuns) cobrem sem filtro.
+//
+// Só entra no PrewarmDiario, nunca no PrewarmStartup: mesmo agrupado, são
+// dezenas de COUNT(DISTINCT cnpj) sobre a folha da V11 (~2,8 GB) — competir
+// com tráfego real logo após um deploy foi a regressão de 27/07/2026.
 func prewarmFilialCache(db *sql.DB, empresaID string) {
 	t0 := time.Now()
 	filiais := fetchFiliaisParaPrewarm(db, empresaID)
@@ -3227,42 +3309,30 @@ func prewarmFilialCache(db *sql.DB, empresaID string) {
 		{"V03", "cod_gerente"},
 	}
 	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
-	periodos := periodosComuns(time.Now())
+	// base (histórico inteiro) + os mesmos períodos do prewarmPeriodKeys.
+	recortes := append([]ymRange{{0, 999912}}, periodosComuns(time.Now())...)
 
 	const maxParallel = 4
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
-	for _, filial := range filiais {
-		filters := multiFilters{"empresa": {filial}}
-		for _, fl := range fluxos {
-			for _, v := range posViews {
-				// "base" (histórico inteiro) — mesma entrada que
-				// prewarmAggMesCore aquece pro caminho sem filtro.
+	for _, fl := range fluxos {
+		for _, v := range posViews {
+			for _, p := range recortes {
 				wg.Add(1)
-				fl, v, filters := fl, v, filters
+				fl, v, p := fl, v, p
 				go func() {
 					defer wg.Done()
 					sem <- struct{}{}
 					defer func() { <-sem }()
-					queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, filters)
+					prewarmFilialRecorte(db, empresaID, fl, v.view, v.group, p.ini, p.fim, filiais)
 				}()
-				// entradas por período — mesma cobertura de prewarmPeriodKeys.
-				for _, p := range periodos {
-					wg.Add(1)
-					fl, v, p, filters := fl, v, p, filters
-					go func() {
-						defer wg.Done()
-						sem <- struct{}{}
-						defer func() { <-sem }()
-						cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, filters)
-					}()
-				}
 			}
 		}
 	}
 	wg.Wait()
-	log.Printf("[farol:view] prewarmFilialCache empresa=%s (%d filiais × %d views × %d fluxos × %d períodos) em %v",
-		empresaID, len(filiais), len(posViews), len(fluxos), len(periodos), time.Since(t0))
+	log.Printf("[farol:view] prewarmFilialCache empresa=%s (%d filiais em %d queries agrupadas: %d views × %d fluxos × %d recortes) em %v",
+		empresaID, len(filiais), len(posViews)*len(fluxos)*len(recortes),
+		len(posViews), len(fluxos), len(recortes), time.Since(t0))
 }
 
 // PrewarmDiario — aquecimento COMPLETO, pensado para rodar de madrugada/início
