@@ -183,6 +183,25 @@ const COR_TXT: Record<Cor, string> = {
 
 // Cores FORTES para a linha Total (fundo cinza): verde/vermelho mais saturados
 // e escuros + extrabold p/ máximo contraste sobre o gradiente slate.
+// Filtros de SELEÇÃO ÚNICA — selecionar outro valor TROCA o atual em vez de
+// somar. Hoje só Filial (`empresa`), por um motivo de desempenho que é
+// estrutural, não um detalhe de implementação a ser "consertado" depois:
+//
+// Com UMA filial, pickAggForCrossFilter roteia para as aggs V10/V11 e o card
+// sai em ~25 ms. Com DUAS OU MAIS ele é obrigado a recusar a agg — 23% dos
+// clientes compram de mais de uma filial e a soma das linhas do grão os
+// contaria uma vez por filial — e cai no scan de vendas_*: 97 s medidos em
+// produção 13/08/2026, com aviso de lentidão na tela.
+//
+// Índice não resolve: EXPLAIN do mesmo recorte mostrou Parallel Seq Scan
+// porque duas filiais já são ~7,8 M linhas (um terço da base), fração em que
+// varrer é legitimamente mais rápido que usar índice.
+//
+// A alternativa seria relaxar o guard e aceitar Mix Médio aproximado com 2+
+// filiais. O gestor preferiu analisar uma filial por vez e manter todos os
+// números exatos — decisão de 13/08/2026.
+const SINGLE_SELECT_COLS = new Set(['empresa'])
+
 const COR_TXT_TOTAL: Record<Cor, string> = {
   verde:    'text-emerald-800',
   amarelo:  'text-amber-700',
@@ -615,9 +634,13 @@ interface MultiSelectProps {
   onChange: (next: string[]) => void
   onOpen?: () => void   // disparado ao abrir (usado p/ lazy-load de Cliente)
   loading?: boolean     // exibe "Carregando..." no lugar da lista
+  // single: uma opção por vez (ver SINGLE_SELECT_COLS). Só muda a APRESENTAÇÃO
+  // — quem garante a regra é o setFilter. Sem isto o usuário veria caixas de
+  // marcar e a anterior "desmarcando sozinha" ao clicar na próxima.
+  single?: boolean
 }
 
-function MultiSelect({ label, options, selected, onChange, onOpen, loading }: MultiSelectProps) {
+function MultiSelect({ label, options, selected, onChange, onOpen, loading, single }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -685,7 +708,7 @@ function MultiSelect({ label, options, selected, onChange, onOpen, loading }: Mu
               return (
                 <label key={opt.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
                   <input
-                    type="checkbox"
+                    type={single ? 'radio' : 'checkbox'}
                     checked={checked}
                     onChange={() => toggle(opt.key)}
                     className="w-3.5 h-3.5 accent-slate-700"
@@ -695,6 +718,11 @@ function MultiSelect({ label, options, selected, onChange, onOpen, loading }: Mu
               )
             })}
           </div>
+          {single && (
+            <div className="border-t border-slate-100 px-3 py-1.5 text-sm text-slate-500 normal-case">
+              Uma por vez — escolher outra troca a atual.
+            </div>
+          )}
           {selected.length > 0 && (
             <div className="border-t border-slate-100 p-2 flex items-center justify-between">
               <span className="text-sm text-slate-500">{selected.length} selecionado(s)</span>
@@ -817,8 +845,18 @@ export default function FarolExecutivo() {
   const setFilter = (col: string, vals: string[]) => {
     setFilters(prev => {
       const next = { ...prev }
-      if (vals.length === 0) delete next[col]
-      else next[col] = vals
+      let v = vals
+      if (SINGLE_SELECT_COLS.has(col) && v.length > 1) {
+        // Troca em vez de acumular: fica só a que o usuário ACABOU de clicar
+        // (o toggle do MultiSelect anexa no fim, mas comparar com o estado
+        // anterior é imune à ordem). Comportamento de rádio, sem trocar o
+        // componente.
+        const anterior = prev[col] ?? []
+        const recemClicada = v.find(x => !anterior.includes(x))
+        v = [recemClicada ?? v[v.length - 1]]
+      }
+      if (v.length === 0) delete next[col]
+      else next[col] = v
       return next
     })
   }
@@ -1071,6 +1109,7 @@ export default function FarolExecutivo() {
             onChange={(vs) => setFilter(d.col, vs)}
             onOpen={d.from === 'cli' ? () => setCliEnabled(true) : undefined}
             loading={d.from === 'cli' && cliEnabled && dimsCliQ.isLoading}
+            single={SINGLE_SELECT_COLS.has(d.col)}
           />
         ))}
 
