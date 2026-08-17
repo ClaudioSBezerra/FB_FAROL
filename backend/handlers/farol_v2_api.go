@@ -3302,6 +3302,166 @@ GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, groupCol)
 	baseCacheMu.Unlock()
 }
 
+// prewarmEscopoPessoaRecorte — mesma ideia do prewarmFilialRecorte, mas para o
+// recorte por PESSOA (o escopo de GGV/supervisor, farol_escopo.go).
+//
+// Sem isto, todo GGV pagava o COUNT(DISTINCT cnpj) do próprio recorte no
+// primeiro acesso do dia: 4,4s + 1,8s medidos em produção 17/08/2026 no login
+// do GGV 347, logo após o escopo entrar no ar. O agregado da tela já vinha em
+// 122ms — o tempo era inteiro de positivação fria.
+//
+// Uma query agrupada por escopoCol alimenta a entrada de cache de TODAS as
+// pessoas daquele nível de uma vez.
+func prewarmEscopoPessoaRecorte(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, escopoCol string,
+	ymIni, ymFim int, codigos []string) {
+
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, nil)
+	if !ok {
+		return
+	}
+	// O escopo filtra por uma coluna que precisa existir na folha — cod_rca não
+	// está na folha de toda view, por exemplo.
+	if !colsInAggTableHasCol(fluxo, view, escopoCol) {
+		return
+	}
+
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymIni, ymFim, &args)
+	q := fmt.Sprintf(`
+SELECT v.%s AS escopo, v.%s AS key, COUNT(DISTINCT v.cnpj) AS positivados
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.%s <> '' AND v.positivados > 0 AND %s
+GROUP BY v.%s, v.%s`, escopoCol, groupCol, leaf, groupCol, escopoCol, mesCond, escopoCol, groupCol)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:view] prewarmEscopoPessoaRecorte view=%s nível=%s escopo=%s %d..%d ERRO: %v",
+			view, groupCol, escopoCol, ymIni, ymFim, err)
+		return
+	}
+	defer rows.Close()
+
+	// Pré-inicializa todos: quem não vendeu no recorte precisa virar entrada
+	// vazia (o que a request devolveria), não ausência de entrada — senão seria
+	// justamente ele a continuar pagando o miss.
+	porPessoa := make(map[string]map[string]int, len(codigos))
+	for _, c := range codigos {
+		porPessoa[c] = map[string]int{}
+	}
+	for rows.Next() {
+		var pessoa, key string
+		var n int
+		if rows.Scan(&pessoa, &key, &n) != nil {
+			continue
+		}
+		if _, conhecida := porPessoa[pessoa]; !conhecida {
+			porPessoa[pessoa] = map[string]int{}
+		}
+		porPessoa[pessoa][key] = n
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[farol:view] prewarmEscopoPessoaRecorte view=%s nível=%s %d..%d ERRO na leitura: %v — nada gravado",
+			view, groupCol, ymIni, ymFim, err)
+		return
+	}
+
+	agora := time.Now()
+	baseCacheMu.Lock()
+	for pessoa, data := range porPessoa {
+		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil,
+			multiFilters{escopoCol: {pessoa}})
+		baseCache[k] = baseCacheEntry{data: data, at: agora}
+	}
+	baseCacheMu.Unlock()
+}
+
+// colsInAggTableHasCol — a folha da view contém esta coluna?
+func colsInAggTableHasCol(fluxo fluxoCtx, view, col string) bool {
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+	lvls, ok := tables[view]
+	if !ok || len(lvls) == 0 {
+		return false
+	}
+	return colsInAggTable(view, len(lvls)-1)[col]
+}
+
+// prewarmEscopoPessoaCache aquece a positivação dos recortes de GGV e
+// supervisor — o escopo que cada um deles carrega em toda request desde
+// 17/08/2026 (farol_escopo.go).
+//
+// Só PrewarmDiario, pelo mesmo motivo do prewarmFilialCache: são COUNT(DISTINCT
+// cnpj) sobre a folha, pesados demais para competir com tráfego no boot.
+func prewarmEscopoPessoaCache(db *sql.DB, empresaID string) {
+	t0 := time.Now()
+
+	// Só os níveis que realmente têm usuário com escopo. RCA fica de fora: ele
+	// usa o link público do ION VENDAS, que não passa por baseCache de escopo.
+	escopos := []struct{ col, dim string }{
+		{"cod_gerente", "gerente"},
+		{"cod_supervisor", "supervisor"},
+	}
+	posViews := []struct{ view, group string }{
+		{"V01", "cod_fornec"},
+		{"V02", "cod_supervisor"},
+		{"V03", "cod_gerente"},
+	}
+	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
+	recortes := append([]ymRange{{0, 999912}}, periodosComuns(time.Now())...)
+
+	const maxParallel = 4
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	queries := 0
+	for _, e := range escopos {
+		codigos := fetchDimKeysParaPrewarm(db, empresaID, e.dim)
+		if len(codigos) == 0 {
+			continue
+		}
+		for _, fl := range fluxos {
+			for _, v := range posViews {
+				for _, p := range recortes {
+					wg.Add(1)
+					queries++
+					e, fl, v, p, codigos := e, fl, v, p, codigos
+					go func() {
+						defer wg.Done()
+						sem <- struct{}{}
+						defer func() { <-sem }()
+						prewarmEscopoPessoaRecorte(db, empresaID, fl, v.view, v.group, e.col, p.ini, p.fim, codigos)
+					}()
+				}
+			}
+		}
+	}
+	wg.Wait()
+	log.Printf("[farol:view] prewarmEscopoPessoaCache empresa=%s (%d queries agrupadas) em %v",
+		empresaID, queries, time.Since(t0))
+}
+
+// fetchDimKeysParaPrewarm — códigos de uma dim de pessoa (mesma fonte do
+// dropdown), para saber quem precisa ter cache aquecido.
+func fetchDimKeysParaPrewarm(db *sql.DB, empresaID, dim string) []string {
+	rows, err := db.Query(`
+		SELECT DISTINCT key FROM farol.agg_fat_dims_mes
+		 WHERE empresa_id=$1 AND dim=$2 AND key <> ''`, empresaID, dim)
+	if err != nil {
+		log.Printf("[farol:view] fetchDimKeysParaPrewarm dim=%s ERRO: %v", dim, err)
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // prewarmFilialCache aquece o baseCache de positivação para o filtro de
 // Filial — o único caminho comum que ainda ficava de fora de todo prewarm
 // (PrewarmStartup/PrewarmDiario só cobriam o caminho sem filtro). Visto em
@@ -3364,6 +3524,7 @@ func PrewarmDiario(db *sql.DB, empresaID string) {
 	prewarmPeriodKeys(db, empresaID)
 	prewarmCliprincCache(db, empresaID)
 	prewarmFilialCache(db, empresaID)
+	prewarmEscopoPessoaCache(db, empresaID)
 	prewarmDailyRanges(db, empresaID)
 	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
 }
