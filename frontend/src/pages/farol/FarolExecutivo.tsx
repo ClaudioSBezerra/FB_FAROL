@@ -1100,18 +1100,32 @@ export default function FarolExecutivo() {
           ))}
         </div>
 
-        {FILTER_DIMS.map(d => (
-          <MultiSelect
-            key={d.col}
-            label={d.label}
-            options={optionsFor(d.from)}
-            selected={filters[d.col] ?? []}
-            onChange={(vs) => setFilter(d.col, vs)}
-            onOpen={d.from === 'cli' ? () => setCliEnabled(true) : undefined}
-            loading={d.from === 'cli' && cliEnabled && dimsCliQ.isLoading}
-            single={SINGLE_SELECT_COLS.has(d.col)}
-          />
-        ))}
+        {FILTER_DIMS.map(d => {
+          const opts = optionsFor(d.from)
+          // Filtro com uma opção só não filtra nada — é o próprio escopo do
+          // usuário aparecendo como se fosse escolha. Para o GGV, "Gerente"
+          // listaria apenas ele mesmo (o servidor já recorta as dims). Some,
+          // em vez de ocupar espaço prometendo uma decisão que não existe.
+          //
+          // Exceção: a dim de Cliente carrega sob demanda (lazy) e começa
+          // vazia; escondê-la por estar "vazia" a tiraria da tela para todo
+          // mundo, para sempre.
+          if (d.from !== 'cli' && opts.length <= 1 && (filters[d.col] ?? []).length === 0) {
+            return null
+          }
+          return (
+            <MultiSelect
+              key={d.col}
+              label={d.label}
+              options={opts}
+              selected={filters[d.col] ?? []}
+              onChange={(vs) => setFilter(d.col, vs)}
+              onOpen={d.from === 'cli' ? () => setCliEnabled(true) : undefined}
+              loading={d.from === 'cli' && cliEnabled && dimsCliQ.isLoading}
+              single={SINGLE_SELECT_COLS.has(d.col)}
+            />
+          )
+        })}
 
         <DateRangeFilter
           label="Período Anterior"

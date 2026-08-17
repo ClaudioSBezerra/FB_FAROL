@@ -11,7 +11,17 @@ import {
 import FarolExecutivo from './FarolExecutivo'
 import { useSortedCards } from '@/components/farol/SortToggle'
 
-const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral'])
+// Personas que abrem o painel em TABELA (FarolExecutivo) — hoje o painel web
+// de fato. O layout em cards deste arquivo é o legado, mantido para o que não
+// se encaixa na tabela.
+//
+// GGV e supervisor entraram em 17/08/2026, quando o escopo por persona os
+// deixou usar o web pela primeira vez: eles caíram no layout de cards e a
+// diferença saltou aos olhos: a proposta nunca foi dar a eles uma tela
+// diferente, e sim a MESMA tela, com os números recortados na equipe deles.
+// O recorte é responsabilidade do servidor (farol_escopo.go), então a tabela
+// funciona igual — só chega menos dado.
+const PERSONAS_EXECUTIVO = new Set(['ceo', 'diretor', 'gerente_geral', 'ggv', 'supervisor'])
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
