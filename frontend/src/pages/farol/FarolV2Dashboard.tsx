@@ -71,7 +71,15 @@ export interface CardsResponse {
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
-export { fmtBRL, BRLValue } from '@/lib/farolMoney'
+// import + export, NÃO `export ... from`: a forma de re-export puro entrega os
+// símbolos a quem importa deste arquivo mas não cria binding LOCAL, e este
+// módulo usa <BRLValue> no KPIBar e no CardVenda. O resultado foi
+// "ReferenceError: BRLValue is not defined" derrubando a tela inteira —
+// visível só para quem cai no layout de cards (GGV/supervisor), porque as
+// personas executivas renderizam FarolExecutivo, que importa direto.
+import { fmtBRL, BRLValue } from '@/lib/farolMoney'
+
+export { fmtBRL, BRLValue }
 export function fmtPct(v: number) { return v.toFixed(1) + '%' }
 export function fmtNum(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) }
 export function fmtInt(v: number) { return v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) }
