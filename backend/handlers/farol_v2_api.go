@@ -675,10 +675,10 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		filters := parseMultiFilters(q)
-		// tipo_venda só existe no fluxo faturado. No transmitido, ignora
-		// silenciosamente (a coluna não existe em vendas_transmitidas → scan
-		// quebraria). Ver I/O matrix do spec: "Filtro no transmitido → ignorado".
-		if fluxo.name != "faturado" {
+		// tipo_venda existe no faturado (mig 187) e no transmitido (mig 203).
+		// Segue removido em cancdev/cortado: vendas_ccd tem a coluna, mas o
+		// recorte desses fluxos já é por evento, e o filtro só confundiria.
+		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
 		// Recorte da persona — SOBRESCREVE o que veio na URL (ver farol_escopo.go).
@@ -2801,6 +2801,12 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				if _, e := db.Exec(`SELECT farol.upsert_tipo_venda_dims($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT tipo_venda_dims %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
+				// idem para o transmitido (mig 203). Função separada porque a fonte
+				// é outra tabela e os códigos podem divergir entre os fluxos — em
+				// julho/2026 a transferência aparece 30× menos no transmitido.
+				if _, e := db.Exec(`SELECT farol.upsert_tipo_venda_dims_trans($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT tipo_venda_dims_trans %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
 				// venda líquida (mig 190) — popula liquido/pv_* nas agg_fat a partir
 				// de vendas_faturadas + vendas_ccd. Passada extra sobre o mês; roda
 				// depois de todas as agg estarem populadas (v01-v07).
@@ -3871,9 +3877,10 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			"uf":         uf,
 			"empresa":    empresa,
 		}
-		// tipo_venda (mig 187/188) — só no fluxo faturado. Poucos códigos, fetch
-		// síncrono barato; rótulo já vem de farol.tipo_venda_label no dims_mes.
-		if fluxo.name == "faturado" {
+		// tipo_venda — faturado (mig 187/188) e transmitido (mig 203). Poucos
+		// códigos, fetch síncrono barato; o rótulo já vem de
+		// farol.tipo_venda_label gravado no dims_mes do fluxo correspondente.
+		if fluxo.name == "faturado" || fluxo.name == "transmitido" {
 			resp["tipo_venda"] = fetchDim("tipo_venda", "tipo_venda")
 		}
 		json.NewEncoder(w).Encode(resp)
@@ -4063,8 +4070,8 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		filters := parseMultiFilters(q)
-		// tipo_venda só existe no fluxo faturado (ver handler principal).
-		if fluxo.name != "faturado" {
+		// tipo_venda: faturado (mig 187) e transmitido (mig 203). Ver handler principal.
+		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
 		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)

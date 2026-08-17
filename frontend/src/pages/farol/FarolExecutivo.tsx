@@ -137,7 +137,7 @@ interface DimsResponse {
   cli?: DimOption[]
   uf?: string[]
   empresa?: string[]
-  tipo_venda?: DimOption[] // mig 187/188 — só no fluxo faturado
+  tipo_venda?: DimOption[] // mig 187/188 (faturado) e 203 (transmitido)
 }
 
 // ─── Tons ────────────────────────────────────────────────────────────────────
@@ -981,9 +981,10 @@ export default function FarolExecutivo() {
     // layout do ION VENDAS e é infeliz — por isso só o RÓTULO vira "Filial";
     // a coluna e o query param seguem `empresa` (compatibilidade de dados).
     { col: 'empresa',        label: 'Filial',     from: 'empresa' },
-    // Tipo de Venda: só no fluxo faturado (filtro cruzado; a coluna não existe
-    // no transmitido). Ver Spec Change Log 2026-07-21.
-    ...(fluxo === 'faturado'
+    // Tipo de Venda: faturado (mig 187) e transmitido (mig 203, pedido em
+    // reunião 17/08/2026). Fica de fora de cancel./devol. e cortado, onde o
+    // próprio fluxo já é o recorte por evento.
+    ...(fluxo === 'faturado' || fluxo === 'transmitido'
       ? [{ col: 'tipo_venda', label: 'Tipo de Venda', from: 'tipo_venda' as const }]
       : []),
   ]
@@ -1015,7 +1016,13 @@ export default function FarolExecutivo() {
           ]).map(f => (
             <button
               key={f.id}
-              onClick={() => { setFluxo(f.id); setDrillPath([]); setIncluir(new Set()); if (f.id !== 'faturado') setFilter('tipo_venda', []) }}
+              onClick={() => {
+                setFluxo(f.id); setDrillPath([]); setIncluir(new Set())
+                // Limpa Tipo de Venda ao ir para um fluxo que não o suporta —
+                // senão o filtro ficaria ativo e invisível, com a tela mostrando
+                // um recorte que o usuário não vê mais na barra.
+                if (f.id !== 'faturado' && f.id !== 'transmitido') setFilter('tipo_venda', [])
+              }}
               className={cn(
                 'px-5 py-2 text-sm font-bold uppercase tracking-wide transition-colors',
                 fluxo === f.id ? cn(f.color, 'text-white') : 'text-slate-600 hover:bg-slate-50',

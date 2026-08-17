@@ -911,7 +911,12 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		}
 		return
 	}
-	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans, nil, nil); err != nil {
+	// tipo_venda/desc_condvenda também no transmitido (mig 203). O dado sempre
+	// veio no CSV — CONDVENDA está preenchida nas duas metades — mas era
+	// descartado aqui, e por isso o painel removia o filtro no transmitido.
+	if err = processFlow("vendas_transmitidas", "data_transmissao", uniqueTransDates, allTrans,
+		[]string{"tipo_venda", "desc_condvenda"},
+		func(r vendaRaw) []any { return []any{r.tipoVenda, r.tipoVendaDesc} }); err != nil {
 		tx.Rollback()
 		if ctx.Err() != nil {
 			markStatus("cancelled", "cancelado pelo usuário")
