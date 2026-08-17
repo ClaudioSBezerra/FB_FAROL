@@ -1201,6 +1201,22 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 
 		// bcrypt cost 10 (vs auth.go cost 14) — auto-generated accounts only.
 		// Runs sequentially for 200+ RCAs; cost 14 ≈ 2s each → 400s total.
+		//
+		// PENDÊNCIA DE SEGURANÇA (avaliada e adiada em 17/08/2026, decisão do
+		// gestor): a senha é o padrão "Farol@" + código, igual para todas as
+		// contas, e os códigos ficam visíveis na tela para qualquer usuário
+		// logado. Quem souber a regra entra na conta de qualquer GGV ou
+		// supervisor — o escopo por persona limita o que ele veria àquela
+		// equipe, mas segue sendo acesso indevido.
+		//
+		// Até 17/08 isso não valia nada na prática, porque essas contas eram
+		// barradas com 403 na porta (nasciam somente_leitura). Passou a valer
+		// no mesmo dia, quando GGV/supervisor ganharam acesso real ao painel.
+		//
+		// Aceitável enquanto é piloto com poucas pessoas. ANTES DE ABRIR PARA
+		// TODOS: forçar troca no primeiro acesso (não existe campo para isso
+		// ainda) ou gerar senha aleatória por conta. Mesma classe da pendência
+		// "senha 123456 do usuário de importação" no runbook.
 		hashBytes, herr := bcrypt.GenerateFromPassword([]byte("Farol@"+p.cod), 10)
 		if herr != nil {
 			continue
