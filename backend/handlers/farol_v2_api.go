@@ -681,6 +681,16 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" {
 			delete(filters, "tipo_venda")
 		}
+		// Recorte da persona — SOBRESCREVE o que veio na URL (ver farol_escopo.go).
+		// Vale para qualquer view: o GGV abre Indústrias e vê as indústrias todas,
+		// mas com os números apenas da equipe dele.
+		if !aplicarEscopo(filters, escopoDoUsuario(db, spCtx, q.Get("escopo"))) {
+			json.NewEncoder(w).Encode(cardsResponse{
+				Cards: []cardItem{}, View: view, DrillPath: drillPath,
+				Periodo: periodoInfo{Fluxo: fluxo.name},
+			})
+			return
+		}
 		cards, diag := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		// Totalizador = distinct do recorte (drill+filtros) em todos os níveis com
@@ -1813,6 +1823,14 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	if !aggOK && groupCol != "cod_prod" && !fluxo.isCCD {
 		if alt, ok := pickAggForCrossFilter(db, fluxo, groupCol, drillPath, filters); ok {
 			log.Printf("[farol:agg] filtro cruzado (filtros=%s) → tabela agg alternativa %s (em vez de scan vendas_*)", filters.names(), alt)
+			aggName, hasAgg, aggOK = alt, true, true
+		} else if novo, alt, ok := tentarReescritaGerente(db, empresaID, fluxo, groupCol, drillPath, filters); ok {
+			// Nenhuma agg serve para GERENTE neste grão, mas serve para os
+			// SUPERVISORES dele — mesmo conjunto de vendas. Ver
+			// reescreverGerenteParaSupervisores.
+			log.Printf("[farol:agg] filtro cruzado (filtros=%s nível=%s) → reescrito p/ %d supervisor(es) → agg %s (em vez de scan)",
+				filters.names(), groupCol, len(novo["cod_supervisor"]), alt)
+			filters = novo
 			aggName, hasAgg, aggOK = alt, true, true
 		} else {
 			log.Printf("[farol:agg] filtro cruzado (filtros=%s nível=%s) SEM agg alternativa → scan vendas_* (lento)", filters.names(), groupCol)
@@ -3556,6 +3574,14 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 		dimsTable := "farol.agg_" + fluxoPrefix + "_dims_mes"
 		t0 := time.Now()
 
+		// Recorte da persona (ver farol_escopo.go). Negado = dropdowns vazios,
+		// em vez de listar a empresa inteira.
+		escopo := escopoDoUsuario(db, spCtx, q.Get("escopo"))
+		if escopo.Negar {
+			json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+
 		// dimLevelSrc — tabela agg de nível (granularidade da própria dim) usada
 		// para filtrar do dropdown opções SEM movimento real. dims_mes lista todo
 		// código que apareceu em vendas_* (mesmo só com devolução/bonificação ou
@@ -3586,13 +3612,18 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			if dimName == "cli" {
 				orderClause = "" // clientes não precisam de ordenação alfabética
 			}
+			// Recorte da persona nas OPÇÕES: sem isto o GGV veria os 10 gerentes
+			// e os 1.190 RCAs da empresa no dropdown (organograma exposto, e
+			// opções que devolveriam tela vazia). Ver escopoDimCond.
+			dimArgs := []any{spCtx.EmpresaID, dimName}
+			escopoCond := escopoDimCond(escopo, dimName, fluxoPrefix, "d.key", &dimArgs)
 			rows, err := db.Query(fmt.Sprintf(`
 				SELECT d.key, MAX(d.label) AS label
 				  FROM %s d
-				 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != ''%s
+				 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != ''%s%s
 				 GROUP BY d.key
 				 %s
-			`, dimsTable, comSemMov, orderClause), spCtx.EmpresaID, dimName)
+			`, dimsTable, comSemMov, escopoCond, orderClause), dimArgs...)
 			if err != nil {
 				log.Printf("[dims] %s ERRO em %v: %v", codCol, time.Since(td), err)
 				return nil

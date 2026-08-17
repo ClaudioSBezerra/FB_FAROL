@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // farol_pulso.go — "Pulso de Ontem" (grão diário).
@@ -170,7 +172,18 @@ func FarolPulsoEmpresaHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		out := computePulso(db, spCtx.EmpresaID, "", nil)
+		// Recorte da persona — reaproveita o extraCond que o painel público já
+		// usa para escopar supervisor/RCA (placeholders a partir de $3).
+		cond, condArgs := "", []any(nil)
+		if e := escopoDoUsuario(db, spCtx, r.URL.Query().Get("escopo")); e.restrito() {
+			if e.Negar {
+				json.NewEncoder(w).Encode(pulsoResp{SemDado: true, Cor: "vermelho"})
+				return
+			}
+			cond = " AND " + e.Col + " = ANY($3)"
+			condArgs = []any{pq.Array(e.Vals)}
+		}
+		out := computePulso(db, spCtx.EmpresaID, cond, condArgs)
 		json.NewEncoder(w).Encode(out)
 	}
 }

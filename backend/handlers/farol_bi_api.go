@@ -140,6 +140,23 @@ func FarolV2BIHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Personas com escopo (GGV/supervisor/RCA) não acessam o BI. Este é o
+		// War Room consolidado da diretoria — a resposta é o retrato da empresa
+		// inteira, não de uma equipe.
+		//
+		// O motivo de NEGAR em vez de recortar é o cache: biCacheKey é
+		// (empresa|fluxo|comp_mode), sem o usuário. Uma resposta já recortada
+		// gravada por um GGV seria servida ao próximo que pedisse a mesma
+		// chave — inclusive ao CEO, que veria os números de uma equipe só.
+		// Recortar aqui exigiria o escopo na chave; enquanto não houver essa
+		// necessidade, negar é o que não tem como dar errado.
+		if escopoDoUsuario(db, spCtx, "").restrito() {
+			log.Printf("[farol:bi] acesso negado — persona=%s user=%s (BI é consolidado da diretoria)",
+				spCtx.TipoPersona, spCtx.UserID)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+
 		q := r.URL.Query()
 		// Só faturado/transmitido. resolveFluxo também aceita cancdev/cortado,
 		// que não têm agg: cairiam em scan da base 3× em janela YTD — qualquer

@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -70,6 +71,21 @@ func FarolAIQueryHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Personas com escopo (GGV/supervisor/RCA) não usam o text-to-SQL.
+		//
+		// Aqui a IA escreve o SQL: o recorte por gerente/supervisor teria de ser
+		// costurado dentro de uma consulta que ela montou livremente, e nenhum
+		// filtro colado por fora sobrevive a uma subquery, CTE ou UNION que o
+		// modelo resolva gerar. A pergunta "quanto vendeu o gerente 350?" viraria
+		// SQL sem restrição nenhuma. Enquanto o escopo não puder ser garantido
+		// dentro do próprio SQL, isto fica com quem já pode ver a empresa inteira.
+		if escopoDoUsuario(db, spCtx, "").restrito() {
+			log.Printf("[farol:ai] acesso negado — persona=%s user=%s (text-to-SQL não garante escopo)",
+				spCtx.TipoPersona, spCtx.UserID)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+
 		var req aiQueryReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Pergunta) == "" {
 			http.Error(w, `{"error":"pergunta inválida ou ausente"}`, http.StatusBadRequest)
@@ -106,6 +122,21 @@ func FarolAIExportHandler(db *sql.DB) http.HandlerFunc {
 		spCtx := GetSpContext(r)
 		if spCtx == nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		// Personas com escopo (GGV/supervisor/RCA) não usam o text-to-SQL.
+		//
+		// Aqui a IA escreve o SQL: o recorte por gerente/supervisor teria de ser
+		// costurado dentro de uma consulta que ela montou livremente, e nenhum
+		// filtro colado por fora sobrevive a uma subquery, CTE ou UNION que o
+		// modelo resolva gerar. A pergunta "quanto vendeu o gerente 350?" viraria
+		// SQL sem restrição nenhuma. Enquanto o escopo não puder ser garantido
+		// dentro do próprio SQL, isto fica com quem já pode ver a empresa inteira.
+		if escopoDoUsuario(db, spCtx, "").restrito() {
+			log.Printf("[farol:ai] acesso negado — persona=%s user=%s (text-to-SQL não garante escopo)",
+				spCtx.TipoPersona, spCtx.UserID)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}
 

@@ -8,8 +8,11 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/lib/pq"
 )
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
@@ -81,6 +84,19 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 			dataFim = "2030-12-31"
 		}
 
+		// Recorte da persona: o extrato mostra vendas de um cliente específico,
+		// então sem isto um GGV leria o histórico de clientes de outra equipe.
+		escopoCond := ""
+		queryArgs := []any{empresaID, codProduto, codCliente, dataInicio, dataFim}
+		if e := escopoDoUsuario(db, spCtx, ""); e.restrito() {
+			if e.Negar {
+				http.Error(w, "Sem escopo definido para este usuário", http.StatusForbidden)
+				return
+			}
+			queryArgs = append(queryArgs, pq.Array(e.Vals))
+			escopoCond = fmt.Sprintf(" AND vf.%s = ANY($%d)", e.Col, len(queryArgs))
+		}
+
 		// Query principal
 		query := `
 			SELECT
@@ -102,7 +118,7 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 			WHERE vf.empresa_id = $1
 				AND vf.cod_prod = $2
 				AND vf.cod_cli = $3
-				AND vf.data_faturamento BETWEEN $4 AND $5
+				AND vf.data_faturamento BETWEEN $4 AND $5` + escopoCond + `
 			GROUP BY
 				EXTRACT(YEAR FROM vf.data_faturamento),
 				EXTRACT(MONTH FROM vf.data_faturamento),
@@ -114,7 +130,7 @@ func ExtratoProdutoClienteHandler(db *sql.DB) http.HandlerFunc {
 			ORDER BY ano DESC, mes DESC
 		`
 
-		rows, err := db.Query(query, empresaID, codProduto, codCliente, dataInicio, dataFim)
+		rows, err := db.Query(query, queryArgs...)
 		if err != nil {
 			log.Printf("[relatorio] erro na query: %v", err)
 			http.Error(w, "Erro ao buscar dados", http.StatusInternalServerError)

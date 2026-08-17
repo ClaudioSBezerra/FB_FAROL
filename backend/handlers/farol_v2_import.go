@@ -1122,9 +1122,20 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 		nome string
 	}
 
-	empresaShort := spCtx.EmpresaID
-	if len(empresaShort) > 8 {
-		empresaShort = empresaShort[:8]
+	// Domínio dos e-mails auto-criados (mig 201). Antes era o hash do
+	// empresa_id — ggv.347@ac91bee4.farol.local, impossível de ditar por
+	// telefone para um gerente em campo. Agora sai ggv.347@jcdistribuicao.com.br.
+	// Empresa sem domínio configurado cai no formato antigo, que é o mesmo
+	// fallback que a migration grava — os dois lados combinam.
+	emailDominio := spCtx.EmpresaID
+	if len(emailDominio) > 8 {
+		emailDominio = emailDominio[:8]
+	}
+	emailDominio += ".farol.local"
+	var domCfg sql.NullString
+	if err := db.QueryRow(`SELECT farol_email_dominio FROM companies WHERE id=$1::uuid`,
+		spCtx.EmpresaID).Scan(&domCfg); err == nil && domCfg.Valid && domCfg.String != "" {
+		emailDominio = domCfg.String
 	}
 
 	var pessoas []entrada
@@ -1186,7 +1197,7 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 			}
 			return '-'
 		}, p.cod))
-		email := fmt.Sprintf("%s.%s@%s.farol.local", p.tipo, codSafe, empresaShort)
+		email := fmt.Sprintf("%s.%s@%s", p.tipo, codSafe, emailDominio)
 
 		// bcrypt cost 10 (vs auth.go cost 14) — auto-generated accounts only.
 		// Runs sequentially for 200+ RCAs; cost 14 ≈ 2s each → 400s total.
@@ -1196,13 +1207,27 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 		}
 		hash := string(hashBytes)
 
+		// sp_role por persona. GGV e supervisor entram como gestor_filial, que é
+		// o mínimo exigido pelas rotas do Farol — antes TODOS nasciam
+		// somente_leitura e eram barrados com 403 na porta, ou seja, o usuário
+		// era criado mas nunca conseguia abrir o painel.
+		//
+		// Isto NÃO os torna capazes de ver a empresa inteira: desde 14/08/2026 o
+		// recorte por persona (farol_escopo.go) limita cada um ao próprio
+		// cod_referencia. RCA segue somente_leitura de propósito — ele usa o link
+		// público do ION VENDAS, não o web (decisão de 14/08/2026).
+		spRolePessoa := "somente_leitura"
+		if p.tipo == "ggv" || p.tipo == "supervisor" {
+			spRolePessoa = "gestor_filial"
+		}
+
 		var userID string
 		err := db.QueryRow(`
 			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
-			VALUES ($1, $2, $3, $4, TRUE, 'user', 'somente_leitura', $5, $6)
+			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, $6, $7)
 			ON CONFLICT (email) DO NOTHING
 			RETURNING id`,
-			email, hash, p.nome, trialEndsAt, p.tipo, p.cod,
+			email, hash, p.nome, trialEndsAt, spRolePessoa, p.tipo, p.cod,
 		).Scan(&userID)
 		if err == sql.ErrNoRows {
 			continue // email já existia — OK, ignora
