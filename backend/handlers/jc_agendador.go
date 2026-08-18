@@ -162,14 +162,33 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 			}
 			pular := q.Get("pular_existentes") == "1" || strings.EqualFold(q.Get("pular_existentes"), "true")
 
+			// filial — restringe extração E apagamento a uma única filial. É o
+			// caminho para incorporar uma filial que só agora ficou completa na
+			// VM da JC: sem isto, trazer uma filial de <1% do volume custaria a
+			// recarga do histórico inteiro (13h medidas em 17/08/2026).
+			// Aceita só dígitos: o valor entra no SQL do Oracle e no DELETE.
+			filial := strings.TrimSpace(q.Get("filial"))
+			if filial != "" {
+				for _, c := range filial {
+					if c < '0' || c > '9' {
+						http.Error(w, `{"error":"filial inválida — use apenas dígitos (ex: 12)"}`, http.StatusBadRequest)
+						return
+					}
+				}
+			}
+
 			unidade, minPorFatia := "dia", 5
 			if porMes {
 				unidade, minPorFatia = "mês", 10
 			}
 
-			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias em %d fatia(s) de %s, pular_existentes=%t) por user=%s",
-				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, fatias, unidade, pular, spCtx.UserID)
-			go ExecutarCargaJCIntervalo(db, de, ate, pular, porMes)
+			escopoFilial := "todas as filiais"
+			if filial != "" {
+				escopoFilial = "SOMENTE filial " + filial
+			}
+			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias em %d fatia(s) de %s, %s, pular_existentes=%t) por user=%s",
+				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, fatias, unidade, escopoFilial, pular, spCtx.UserID)
+			go ExecutarCargaJCIntervalo(db, de, ate, pular, porMes, filial)
 
 			json.NewEncoder(w).Encode(map[string]any{
 				"iniciado":         true,
@@ -178,6 +197,7 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 				"dias":             dias,
 				"passo":            map[bool]string{true: "mes", false: "dia"}[porMes],
 				"fatias":           fatias,
+				"filial":           map[bool]string{true: filial, false: "todas"}[filial != ""],
 				"pular_existentes": pular,
 				"estimativa":       fmt.Sprintf("~%d min", fatias*minPorFatia),
 				"aviso":            "roda em background, uma fatia por vez; UM e-mail com o consolidado no fim",

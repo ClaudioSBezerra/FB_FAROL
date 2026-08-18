@@ -167,7 +167,7 @@ func VendasImportHandler(db *sql.DB) http.HandlerFunc {
 
 		// Worker recebe path + flag gzip. Ele é responsável por abrir, ler em
 		// stream, e apagar o arquivo do disco no fim (defer os.Remove).
-		go processImportJob(ctx, db, jobID, uploadedPath, isGzip, spCtx, fallbackAno, fallbackMes, skipRefresh)
+		go processImportJob(ctx, db, jobID, uploadedPath, isGzip, spCtx, fallbackAno, fallbackMes, skipRefresh, "")
 
 		// Retorna job_id imediatamente
 		w.Header().Set("Content-Type", "application/json")
@@ -198,9 +198,14 @@ func parseDateBR(s string) time.Time {
 	return time.Time{}
 }
 
+// filialFiltro vazio = carga normal (todas as filiais). Preenchido, indica que
+// a EXTRAÇÃO trouxe apenas aquela filial — e então o DELETE prévio precisa ser
+// igualmente restrito, senão apagaria o dia inteiro das outras filiais para
+// regravar só uma. Ver ExtrairPeriodoJC.
 func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 	uploadedPath string, isGzip bool,
-	spCtx *FarolContext, fallbackAno, fallbackMes int, skipRefresh bool) {
+	spCtx *FarolContext, fallbackAno, fallbackMes int, skipRefresh bool,
+	filialFiltro string) {
 
 	// Cleanup do arquivo em disco — sempre roda, sucesso ou falha.
 	defer func() {
@@ -793,16 +798,21 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			dateList = append(dateList, d)
 		}
 		if len(dateList) > 0 {
-			_, dErr := tx.ExecContext(ctx,
-				fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1 AND %s = ANY($2::date[])`,
-					tableName, dateColName),
-				spCtx.EmpresaID, pq.Array(dateList),
-			)
+			delSQL := fmt.Sprintf(`DELETE FROM %s WHERE empresa_id=$1 AND %s = ANY($2::date[])`,
+				tableName, dateColName)
+			delArgs := []any{spCtx.EmpresaID, pq.Array(dateList)}
+			escopo := "todas as filiais"
+			if f := strings.TrimSpace(filialFiltro); f != "" {
+				delSQL += " AND empresa = $3"
+				delArgs = append(delArgs, f)
+				escopo = "filial " + f
+			}
+			_, dErr := tx.ExecContext(ctx, delSQL, delArgs...)
 			if dErr != nil {
 				return fmt.Errorf("DELETE %s: %w", tableName, dErr)
 			}
-			log.Printf("[ImportJob:%s] %s — DELETE prévio cobriu %d dia(s): %v",
-				jobID, tableName, len(dateList), dateList)
+			log.Printf("[ImportJob:%s] %s — DELETE prévio cobriu %d dia(s) [%s]: %v",
+				jobID, tableName, len(dateList), escopo, dateList)
 		}
 
 		// COPY em chunks; cancelamento checado entre chunks.

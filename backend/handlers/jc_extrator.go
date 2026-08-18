@@ -178,7 +178,7 @@ func valorCSV(v any) string {
 
 // ExtrairDiaJC — atalho para um dia só (carga diária).
 func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao) (string, error) {
-	return ExtrairPeriodoJC(ctx, dataRef, dataRef, res)
+	return ExtrairPeriodoJC(ctx, dataRef, dataRef, "", res)
 }
 
 // ExtrairPeriodoJC lê o intervalo [de..ate] (INCLUSIVO nas duas pontas) numa
@@ -196,7 +196,13 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 //
 // O importador aceita arquivo com vários dias: agrupa as datas presentes e faz
 // o DELETE prévio de cada uma, então a idempotência continua valendo.
-func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, res *ResultadoExtracao) (string, error) {
+// `filial` vazio = todas (comportamento de sempre). Preenchido, restringe a
+// extração a uma única filial — usado para incorporar uma filial que só agora
+// ficou completa na VM da JC, sem recarregar as outras. Ver o DELETE prévio
+// correspondente em processImportJob: quando a extração é de uma filial só, o
+// apagamento também precisa ser, senão a carga de uma filial limparia o dia
+// inteiro das demais.
+func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, filial string, res *ResultadoExtracao) (string, error) {
 	dsn, err := dsnJC()
 	if err != nil {
 		return "", err
@@ -222,9 +228,15 @@ func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, res *ResultadoExtr
 
 	q := fmt.Sprintf("SELECT %s FROM %s WHERE DATA >= :1 AND DATA < :2",
 		strings.Join(colunasJC, ", "), objeto)
+	args := []any{ini, fim}
+	if f := strings.TrimSpace(filial); f != "" {
+		q += " AND EMPRESA = :3"
+		args = append(args, f)
+		log.Printf("[jc:extrator] restrito à filial %s", f)
+	}
 
 	t0 := time.Now()
-	rows, err := conn.QueryContext(ctx, q, ini, fim)
+	rows, err := conn.QueryContext(ctx, q, args...)
 	if err != nil {
 		return "", fmt.Errorf("consultar %s: %w", objeto, err)
 	}

@@ -31,7 +31,7 @@ func tzBrasil() *time.Location {
 // agregados no mesmo passo (skipRefresh=false): na carga diária é um dia só, o
 // custo é aceitável e o painel precisa estar atualizado logo em seguida.
 func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
-	res := executarCargaJCSemEmail(db, dataRef, false)
+	res := executarCargaJCSemEmail(db, dataRef, false, "")
 	enviarResumoJC(res)
 	return res
 }
@@ -42,13 +42,17 @@ func ExecutarCargaJC(db *sql.DB, dataRef time.Time) *ResultadoExtracao {
 // Nunca entra em pânico: qualquer falha vira res.Erro e chega ao relatório —
 // silêncio é o pior desfecho possível numa carga automática, porque ninguém
 // descobre que o painel parou de atualizar até alguém estranhar um número.
-func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bool) *ResultadoExtracao {
-	return executarCargaJCPeriodo(db, dataRef, dataRef, pularConsolidacao)
+func executarCargaJCSemEmail(db *sql.DB, dataRef time.Time, pularConsolidacao bool, filial string) *ResultadoExtracao {
+	return executarCargaJCPeriodo(db, dataRef, dataRef, pularConsolidacao, filial)
 }
 
 // executarCargaJCPeriodo processa o intervalo [de..ate] como UM arquivo. Com
 // de==ate é a carga de um dia; com um mês é a fatia do backfill.
-func executarCargaJCPeriodo(db *sql.DB, de, ate time.Time, pularConsolidacao bool) *ResultadoExtracao {
+// `filial` vazio = todas. Preenchido, extrai e regrava SOMENTE aquela filial —
+// o caminho para incorporar uma filial que só agora ficou completa na VM da JC
+// sem pagar a recarga do histórico inteiro (13h para trazer algo que costuma
+// pesar menos de 1% do volume).
+func executarCargaJCPeriodo(db *sql.DB, de, ate time.Time, pularConsolidacao bool, filial string) *ResultadoExtracao {
 	res := &ResultadoExtracao{DataRef: de, DataFim: ate, Inicio: time.Now()}
 	defer func() {
 		res.Fim = time.Now()
@@ -70,7 +74,7 @@ func executarCargaJCPeriodo(db *sql.DB, de, ate time.Time, pularConsolidacao boo
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer cancel()
 
-	arquivo, err := ExtrairPeriodoJC(ctx, de, ate, res)
+	arquivo, err := ExtrairPeriodoJC(ctx, de, ate, filial, res)
 	if err != nil {
 		res.Erro = err
 		log.Printf("[jc:carga] extração FALHOU: %v", err)
@@ -112,7 +116,7 @@ func executarCargaJCPeriodo(db *sql.DB, de, ate time.Time, pularConsolidacao boo
 	// ano/mes aqui são só FALLBACK para linha sem data válida no CSV — a fonte
 	// da verdade é a coluna DATA de cada linha. Passar o início da fatia basta.
 	processImportJob(impCtx, db, jobID, arquivo, true, spCtx,
-		de.Year(), int(de.Month()), pularConsolidacao)
+		de.Year(), int(de.Month()), pularConsolidacao, filial)
 	res.DuracaoImport = time.Since(tImp)
 
 	// Status final vem do banco, não do que achamos que aconteceu.
@@ -240,7 +244,7 @@ func fatiaJaTemDados(db *sql.DB, empresaID string, de, ate time.Time) bool {
 //
 // Falha de um dia NÃO aborta o resto — num backfill, perder os 20 dias
 // seguintes porque um deu erro é pior que ter um buraco conhecido e relatado.
-func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes bool, porMes bool) {
+func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes bool, porMes bool, filial string) {
 	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
 	inicio := time.Now()
 
@@ -264,7 +268,7 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		// É seguro porque upsert_aggs_mes recomputa o mês inteiro de qualquer
 		// forma — repetir o mesmo trabalho a cada fatia não produz resultado
 		// melhor que fazer uma vez no fim.
-		res := executarCargaJCPeriodo(db, fatia.de, fatia.ate, true)
+		res := executarCargaJCPeriodo(db, fatia.de, fatia.ate, true, filial)
 		resultados = append(resultados, res)
 		if res.Erro == nil && res.StatusImport == "done" {
 			// Uma fatia mensal cai num mês só, mas o range livre pode cruzar —

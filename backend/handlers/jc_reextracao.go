@@ -135,7 +135,7 @@ func StartReextracaoJC(db *sql.DB) {
 			de.Format("2006-01-02"), ate.Format("2006-01-02"))
 		// pularExistentes=false: o objetivo é justamente REESCREVER meses que já
 		// temos, para capturar a devolução que entrou retroativa neles.
-		ExecutarCargaJCIntervalo(db, de, ate, false, true)
+		ExecutarCargaJCIntervalo(db, de, ate, false, true, "")
 	}
 }
 
