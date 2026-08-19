@@ -37,9 +37,11 @@ import (
 //
 // A ressalva honesta: a documentação do DevPack descreve o plano para
 // ferramentas de desenvolvimento (Claude Code, Cline, OpenCode), não para
-// aplicação servindo usuário final, e a cota é compartilhada com o Claude Code
-// de quem desenvolve. ZAI_MODO=padrao volta para a API paga assim que a conta
-// tiver saldo, sem deploy.
+// aplicação servindo usuário final. Não há, porém, disputa de cota: a conta
+// Z.AI atende SOMENTE o assistente do Farol — o desenvolvimento roda em conta
+// Anthropic separada. Os 2.000 créditos por 5h da Lite são todos daqui.
+// ZAI_MODO=padrao volta para a API paga assim que a conta tiver saldo, sem
+// necessidade de deploy.
 const (
 	zaiEndpoint       = "https://api.z.ai/api/paas/v4/chat/completions"
 	zaiCodingEndpoint = "https://api.z.ai/api/anthropic/v1/messages"
