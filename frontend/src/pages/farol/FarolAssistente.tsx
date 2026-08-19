@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { Sparkles, Send, Download, RotateCcw, Clock, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
-import { fmtBRL } from '@/lib/farolMoney'
+import { Sparkles, Send, Download, RotateCcw, Clock, ChevronDown, ChevronUp, Copy, Check, BarChart3, Table2 } from 'lucide-react'
+import { fmtCell, buildChartSpec } from '@/lib/farolAiFormat'
+import AssistenteChart from './AssistenteChart'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -17,14 +18,14 @@ interface QueryResult {
 // ─── Sugestões de consultas ───────────────────────────────────────────────────
 
 const SUGESTOES = [
-  { label: 'Top 10 RCAs com menor positivação', query: 'Quais são os 10 RCAs com menor percentual de positivação?' },
-  { label: 'Clientes sem compra no período', query: 'Mostre os clientes que não compraram nada no último período' },
-  { label: 'Produtos com baixa penetração', query: 'Quais produtos têm menos de 15% de penetração na base de clientes?' },
-  { label: 'Ranking de supervisores', query: 'Compare o faturamento e positivação por supervisor ordenado pelo faturado' },
-  { label: 'Top indústrias por faturamento', query: 'Quais são as 10 maiores indústrias por valor faturado?' },
-  { label: 'Clientes com maior mix', query: 'Liste os 20 clientes com maior mix de produtos comprados' },
-  { label: 'RCAs acima da meta', query: 'Quais RCAs atingiram ou superaram o objetivo de vendas?' },
-  { label: 'Clientes por estado', query: 'Quantos clientes ativos temos por estado (UF)?' },
+  { label: 'Melhor cliente de GO e o que ele deixou de comprar', query: 'Qual foi o melhor cliente em Goiás e quais produtos ele comprou em 2025 e não comprou em 2026?' },
+  { label: 'Top 10 RCAs de 2026', query: 'Quais são os 10 RCAs com maior faturamento em 2026?' },
+  { label: 'Faturamento mês a mês em 2026', query: 'Mostre o faturamento total mês a mês em 2026' },
+  { label: 'Top 15 indústrias', query: 'Quais são as 15 maiores indústrias por faturamento líquido em 2026?' },
+  { label: 'Clientes que sumiram', query: 'Quais clientes compraram em 2025 e não compraram nada em 2026?' },
+  { label: 'Ranking de supervisores', query: 'Compare o faturamento por supervisor em 2026, do maior para o menor' },
+  { label: 'Faturamento por filial', query: 'Qual o faturamento por filial em 2026?' },
+  { label: 'Bonificação por indústria', query: 'Quanto foi concedido de bonificação por indústria em 2026?' },
 ]
 
 const HISTORY_KEY = 'farol_ai_history'
@@ -39,53 +40,14 @@ function saveHistory(h: string[]) {
 
 // ─── Formatação de células ────────────────────────────────────────────────────
 
-// fmtCell — formata a célula pelo NOME da coluna, que é tudo que temos: o
-// alias vem do SQL que a IA escreveu, não de um schema conhecido.
-//
-// A versão anterior casava com "faturado", "pvenda", "valor", "ticket" e
-// "transmitido". A IA escreveu `AS faturamento` e nada casou — "faturado" não
-// é substring de "faturamento" — então o número saiu cru: "173859219.92".
-// Daí a regra virar raiz ("fatur") em vez de palavra inteira.
-//
-// A ordem dos testes importa: código e período são checados ANTES de dinheiro,
-// senão "tipo_venda" e "cod_vendedor" viravam moeda por conterem "venda".
-function fmtCell(value: unknown, col: string): string {
-  if (value === null || value === undefined) return '—'
-  const s = String(value)
-  const c = col.toLowerCase()
-
-  if (/(pct|percent|taxa|_perc)/.test(c)) {
-    const n = parseFloat(s)
-    if (!isNaN(n)) return n.toFixed(1).replace('.', ',') + '%'
-  }
-
-  // Código, identificador e período saem como vieram — formatar 2026 como
-  // "2.026" ou um CNPJ como moeda seria pior que não formatar.
-  if (/^(ano|mes|id)$/.test(c) || /(cod_|_cod|codigo|cnpj|ean|tipo_)/.test(c)) return s
-
-  // Contagens: separador de milhar, sem R$.
-  if (/(^qt$|qtd|quantid|positivad|clientes|base_cli|^mix$|pedidos|notas|itens)/.test(c)) {
-    const n = parseFloat(s)
-    if (!isNaN(n)) return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
-    return s
-  }
-
-  // Dinheiro: absoluto, com centavos — igual ao resto do Farol. A versão
-  // anterior abreviava para "R$ 173.9M", contradizendo a decisão do gestor
-  // registrada em lib/farolMoney (valores absolutos, sem K/M/B).
-  if (/(fatur|venda|valor|ticket|transmitid|liquid|bruto|bonific|transfer|remessa|devol|cancel|receita|custo|lucro|verba|total|saldo)/.test(c)) {
-    const n = parseFloat(s)
-    if (!isNaN(n)) return fmtBRL(n)
-  }
-
-  return s
-}
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function FarolAssistente() {
   const [pergunta, setPergunta]     = useState('')
   const [result, setResult]         = useState<QueryResult | null>(null)
+  const [medida, setMedida]         = useState('')
+  const [verGrafico, setVerGrafico] = useState(true)
   const [loading, setLoading]       = useState(false)
   const [showSQL, setShowSQL]       = useState(false)
   const [copied, setCopied]         = useState(false)
@@ -95,6 +57,17 @@ export default function FarolAssistente() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Spec do gráfico é derivada, não estado: recalcular é barato e evita a
+  // classe de bug em que a tabela mostra um resultado e o gráfico, o anterior.
+  const spec = result && !result.error ? buildChartSpec(result.columns, result.rows) : null
+
+  // Medida padrão = primeira do spec. Reposiciona a cada resultado novo, senão
+  // uma consulta herdaria a coluna escolhida na anterior — que pode nem existir.
+  useEffect(() => {
+    setMedida(spec ? spec.medidas[0] : '')
+    setVerGrafico(true)
+  }, [result])   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleQuery(q?: string) {
     const text = (q ?? pergunta).trim()
@@ -307,6 +280,33 @@ export default function FarolAssistente() {
                 {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
               </button>
               <pre className="whitespace-pre-wrap pr-6 overflow-x-auto">{result.sql}</pre>
+            </div>
+          )}
+
+          {/* Gráfico — só quando o formato do resultado comporta */}
+          {spec && medida && (
+            <div className="border-b border-slate-100">
+              <div className="flex items-center gap-1 px-4 pt-3">
+                <button
+                  onClick={() => setVerGrafico(true)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    verGrafico ? 'bg-violet-50 text-violet-700' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <BarChart3 className="h-3.5 w-3.5" /> Gráfico
+                </button>
+                <button
+                  onClick={() => setVerGrafico(false)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    !verGrafico ? 'bg-violet-50 text-violet-700' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Table2 className="h-3.5 w-3.5" /> Só tabela
+                </button>
+              </div>
+              {verGrafico && (
+                <AssistenteChart spec={spec} rows={result.rows} medida={medida} onMedida={setMedida} />
+              )}
             </div>
           )}
 

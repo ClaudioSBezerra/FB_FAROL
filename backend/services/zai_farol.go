@@ -255,6 +255,21 @@ PERÍODO:
 - Se o usuário NÃO indicar período, use o mês mais recente disponível:
   data_faturamento >= date_trunc('month', (SELECT MAX(v.data_faturamento) FROM vendas_faturadas v WHERE v.empresa_id='__EMPRESA_ID__'))
 
+GEOGRAFIA:
+- uf guarda a SIGLA de 2 letras. O usuário fala o nome; traduza:
+  Goiás=GO, Mato Grosso=MT, Mato Grosso do Sul=MS, Distrito Federal=DF,
+  Minas Gerais=MG, São Paulo=SP, Bahia=BA, Tocantins=TO, Pará=PA.
+- A coluna empresa é a FILIAL (código numérico em texto). Não confundir com uf.
+
+PERGUNTAS EM DUAS ETAPAS:
+Quando a pergunta escolhe uma entidade e depois pergunta algo SOBRE ela
+("o melhor cliente ... e quais produtos ELE comprou"), use CTE: a primeira
+seleciona a entidade, a segunda responde. Não devolva duas queries.
+
+COMPROU EM X E NÃO COMPROU EM Y:
+Diferença de conjuntos com NOT EXISTS sobre cod_prod, nunca com NOT IN
+(NOT IN devolve zero linhas se algum valor for NULL).
+
 EXEMPLOS (apenas para orientar o formato):
 
 Pergunta: "top 10 indústrias por faturamento"
@@ -281,6 +296,31 @@ WHERE empresa_id = '__EMPRESA_ID__'
   AND data_faturamento >= '2025-01-01' AND data_faturamento < '2025-02-01'
 GROUP BY cod_supervisor
 ORDER BY faturado_liquido DESC
+LIMIT 200;
+
+Pergunta: "qual foi o melhor cliente em Goiás e quais produtos ele comprou em 2025 e não comprou em 2026"
+WITH melhor_cliente AS (
+  SELECT cod_cli
+  FROM vendas_faturadas
+  WHERE empresa_id = '__EMPRESA_ID__' AND uf = 'GO'
+    AND data_faturamento >= '2025-01-01' AND data_faturamento < '2026-01-01'
+  GROUP BY cod_cli
+  ORDER BY SUM(pvenda) DESC
+  LIMIT 1
+)
+SELECT v.cod_prod, MAX(v.nome_prod) AS produto,
+       SUM(v.pvenda) AS faturado_2025, SUM(v.qt) AS quantidade_2025
+FROM vendas_faturadas v
+WHERE v.empresa_id = '__EMPRESA_ID__'
+  AND v.cod_cli = (SELECT cod_cli FROM melhor_cliente)
+  AND v.data_faturamento >= '2025-01-01' AND v.data_faturamento < '2026-01-01'
+  AND NOT EXISTS (
+    SELECT 1 FROM vendas_faturadas w
+    WHERE w.empresa_id = v.empresa_id AND w.cod_cli = v.cod_cli
+      AND w.cod_prod = v.cod_prod
+      AND w.data_faturamento >= '2026-01-01' AND w.data_faturamento < '2027-01-01')
+GROUP BY v.cod_prod
+ORDER BY faturado_2025 DESC
 LIMIT 200;
 
 Pergunta: "positivação por RCA no mês mais recente"
