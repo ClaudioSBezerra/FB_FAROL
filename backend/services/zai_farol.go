@@ -17,10 +17,40 @@ import (
 
 // ─── Cliente Z.AI ─────────────────────────────────────────────────────────────
 
-const (
-	ZAIModelPrimary  = "glm-4.7-flash"
-	ZAIModelFallback = "glm-4.5-flash"
-	zaiEndpoint      = "https://api.z.ai/api/paas/v4/chat/completions"
+const zaiEndpoint = "https://api.z.ai/api/paas/v4/chat/completions"
+
+// Modelo por variável de ambiente — trocar exige só reiniciar, não deploy.
+//
+// O padrão continua no tier GRATUITO (glm-4.7-flash) de propósito: mudar o
+// default para um modelo pago numa atualização de código geraria fatura que
+// ninguém pediu. Quem decide gastar é quem paga.
+//
+// Para o text-to-SQL, o degrau que importa é sair do flash. Os erros que
+// aparecem na prática — ramo de UNION sem parênteses, alias no WHERE, coluna
+// que não existe — são de escrita, e é exatamente onde o modelo maior ganha.
+// Medido em 19/08/2026 (por 1M de tokens, entrada/saída):
+//
+//	glm-4.7-flash    grátis   — atual; erra sintaxe com frequência
+//	glm-4.7-flashx   $0,07 / $0,40
+//	glm-4.7          $0,60 / $2,20   — recomendado
+//	glm-5.1          $1,40 / $4,40
+//
+// Com o prompt atual (~5,5k entrada, ~500 saída), o glm-4.7 sai a ~R$ 0,024
+// por pergunta.
+//
+// ⚠ NÃO aponte para o endpoint do GLM Coding Plan (api/coding/paas/v4). Além
+// de ser outro endereço, aquela cota é vendida para ferramenta de
+// desenvolvimento, não para aplicação servindo usuário final.
+func envModelo(chave, padrao string) string {
+	if v := strings.TrimSpace(os.Getenv(chave)); v != "" {
+		return v
+	}
+	return padrao
+}
+
+var (
+	ZAIModelPrimary  = envModelo("ZAI_MODEL", "glm-4.7-flash")
+	ZAIModelFallback = envModelo("ZAI_MODEL_FALLBACK", "glm-4.5-flash")
 )
 
 type ZAIClient struct {
