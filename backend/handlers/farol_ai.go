@@ -100,6 +100,24 @@ func FarolAIQueryHandler(db *sql.DB) http.HandlerFunc {
 
 		cols, rows, err := executeQuery(db, finalSQL)
 		if err != nil {
+			// Uma tentativa de conserto: devolve o erro do Postgres ao modelo e
+			// pede a correção. O texto-para-SQL erra em detalhe de sintaxe muito
+			// mais do que em entendimento da pergunta — UNION com ORDER BY sem
+			// parênteses, por exemplo — e esse é justamente o tipo de coisa que
+			// a mensagem de erro descreve com precisão suficiente pra corrigir.
+			//
+			// Uma tentativa só, de propósito: se a segunda falhar, o problema não
+			// é sintaxe e insistir só faz o usuário esperar mais pelo mesmo erro.
+			log.Printf("[farol:ai] SQL falhou (%v) — tentando corrigir", err)
+			corrigido, errFix := corrigirSQL(spCtx.EmpresaID, req.Pergunta, finalSQL, err)
+			if errFix == nil {
+				if cols2, rows2, err2 := executeQuery(db, corrigido); err2 == nil {
+					log.Printf("[farol:ai] correção funcionou")
+					finalSQL, cols, rows, err = corrigido, cols2, rows2, nil
+				}
+			}
+		}
+		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q,"sql":%q}`, err.Error(), finalSQL), http.StatusBadRequest)
 			return
 		}
@@ -203,12 +221,59 @@ func generateAndPrepareSQL(db *sql.DB, empresaID, pergunta string) (string, stri
 		return "", "", fmt.Errorf("SQL gerado contém placeholder não resolvido — tente reformular")
 	}
 
-	// Garante LIMIT
-	if !strings.Contains(strings.ToUpper(finalSQL), "LIMIT") {
-		finalSQL += "\nLIMIT 200"
-	}
+	finalSQL = garantirLimite(finalSQL)
 
 	return finalSQL, result.Model, nil
+}
+
+// corrigirSQL — segunda passada no modelo com o SQL que falhou e o erro do
+// banco. Passa pelas MESMAS validações da primeira: uma resposta de correção é
+// tão não-confiável quanto a original, e nada garante que ela não venha com um
+// DELETE dentro.
+// garantirLimite — teto de linhas quando a IA esquece o LIMIT.
+//
+// O ponto e vírgula importa: concatenar "\nLIMIT 200" depois dele produz um
+// segundo comando órfão e a query inteira falha com erro de sintaxe. Nenhum
+// exemplo do prompt terminava sem LIMIT, então isso nunca disparou — até o
+// exemplo de ROW_NUMBER, que naturalmente não tem.
+func garantirLimite(q string) string {
+	if strings.Contains(strings.ToUpper(q), "LIMIT") {
+		return q
+	}
+	q = strings.TrimRight(q, " \t\r\n")
+	q = strings.TrimSuffix(q, ";")
+	return q + "\nLIMIT 200;"
+}
+
+func corrigirSQL(empresaID, pergunta, sqlRuim string, erroBanco error) (string, error) {
+	ai := services.NewZAIClient()
+	if !ai.IsAvailable() {
+		return "", fmt.Errorf("IA indisponível")
+	}
+
+	result, err := ai.Ask(
+		services.FarolTextToSQLSystem,
+		services.BuildFarolSQLFixPrompt(pergunta, sqlRuim, erroBanco.Error()),
+		"", 2048,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	rawSQL, err := services.ExtractFarolSQL(result.Text)
+	if err != nil {
+		return "", err
+	}
+	if err := validateFarolSQL(rawSQL); err != nil {
+		return "", err
+	}
+
+	fixed := reEmpresaPlaceholder.ReplaceAllString(rawSQL, "'"+empresaID+"'")
+	if strings.Contains(fixed, "__EMPRESA") {
+		return "", fmt.Errorf("placeholder não resolvido")
+	}
+	fixed = garantirLimite(fixed)
+	return fixed, nil
 }
 
 func executeQuery(db *sql.DB, sqlStr string) ([]string, []map[string]interface{}, error) {

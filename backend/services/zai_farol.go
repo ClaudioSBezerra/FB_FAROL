@@ -255,6 +255,12 @@ PERÍODO:
 - Se o usuário NÃO indicar período, use o mês mais recente disponível:
   data_faturamento >= date_trunc('month', (SELECT MAX(v.data_faturamento) FROM vendas_faturadas v WHERE v.empresa_id='__EMPRESA_ID__'))
 
+UNION / TOP E PIOR NA MESMA RESPOSTA:
+No PostgreSQL, cada ramo de um UNION que tenha ORDER BY ou LIMIT PRECISA vir
+entre parênteses — sem eles é erro de sintaxe. Mas prefira evitar o UNION:
+para "os 10 melhores e os 10 piores", use ROW_NUMBER() nos dois sentidos sobre
+uma CTE e marque o grupo numa coluna. Sai em uma passada e já vem rotulado.
+
 GEOGRAFIA:
 - uf guarda a SIGLA de 2 letras. O usuário fala o nome; traduza:
   Goiás=GO, Mato Grosso=MT, Mato Grosso do Sul=MS, Distrito Federal=DF,
@@ -296,6 +302,26 @@ WHERE empresa_id = '__EMPRESA_ID__'
   AND data_faturamento >= '2025-01-01' AND data_faturamento < '2025-02-01'
 GROUP BY cod_supervisor
 ORDER BY faturado_liquido DESC
+LIMIT 200;
+
+Pergunta: "top 10 RCAs de 2026 e os 10 piores"
+WITH base AS (
+  SELECT cod_rca, MAX(nome_rca) AS rca, SUM(pvenda) AS faturamento
+  FROM farol.agg_fat_v04_l0_mes
+  WHERE empresa_id = '__EMPRESA_ID__' AND ano = 2026
+  GROUP BY cod_rca
+), ranqueado AS (
+  SELECT base.*,
+         ROW_NUMBER() OVER (ORDER BY faturamento DESC) AS pos_melhor,
+         ROW_NUMBER() OVER (ORDER BY faturamento ASC)  AS pos_pior
+  FROM base
+)
+SELECT rca,
+       faturamento,
+       CASE WHEN pos_melhor <= 10 THEN 'Top 10' ELSE 'Piores 10' END AS grupo
+FROM ranqueado
+WHERE pos_melhor <= 10 OR pos_pior <= 10
+ORDER BY faturamento DESC
 LIMIT 200;
 
 Pergunta: "qual foi o melhor cliente em Goiás e quais produtos ele comprou em 2025 e não comprou em 2026"
@@ -357,4 +383,26 @@ func ExtractFarolSQL(text string) (string, error) {
 // BuildFarolSQLPrompt monta o prompt de usuário com a pergunta.
 func BuildFarolSQLPrompt(pergunta string) string {
 	return fmt.Sprintf("Pergunta: %s\n\nGere a query SQL PostgreSQL para responder.", pergunta)
+}
+
+// BuildFarolSQLFixPrompt — segunda passada: o SQL que o modelo gerou não rodou.
+// Dar o erro do banco de volta resolve a maior parte dos casos, porque a
+// mensagem do Postgres aponta a posição exata e o modelo raramente errou o
+// ENTENDIMENTO da pergunta — errou a escrita.
+func BuildFarolSQLFixPrompt(pergunta, sqlRuim, erroBanco string) string {
+	return fmt.Sprintf(`A query abaixo, gerada para responder a pergunta, FALHOU no PostgreSQL.
+
+Pergunta original: %s
+
+SQL que falhou:
+%s
+
+Erro do banco:
+%s
+
+Corrija e devolva SOMENTE o bloco SQL corrigido. Mantenha a mesma intenção da
+pergunta. Erros comuns: ramo de UNION com ORDER BY/LIMIT sem parênteses;
+coluna que não existe no schema informado; GROUP BY faltando coluna do SELECT;
+alias usado no WHERE (no PostgreSQL o alias do SELECT não vale no WHERE).`,
+		pergunta, sqlRuim, erroBanco)
 }
