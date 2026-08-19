@@ -19,42 +19,69 @@ import (
 
 // ─── Cliente Z.AI ─────────────────────────────────────────────────────────────
 
-const zaiEndpoint = "https://api.z.ai/api/paas/v4/chat/completions"
+// Dois endpoints, dois PROTOCOLOS diferentes:
+//
+//	zaiEndpoint        API padrão, formato OpenAI  (/chat/completions)
+//	zaiCodingEndpoint  GLM Coding Plan, formato Anthropic (/v1/messages)
+//
+// Medido em 19/08/2026 com a chave de produção:
+//
+//	padrão + glm-4.7-flash  → 1305 "service temporarily overloaded"
+//	padrão + glm-4.7        → 1113 "Insufficient balance. Please recharge."
+//	coding + glm-4.7        → respondeu normalmente
+//
+// A conta da API padrão está zerada e o tier gratuito vive sobrecarregado —
+// era daí que vinha boa parte da lentidão e da instabilidade do assistente.
+// Por isso o modo CODING é o padrão: é o que funciona hoje, e é o plano que a
+// empresa já assina.
+//
+// A ressalva honesta: a documentação do DevPack descreve o plano para
+// ferramentas de desenvolvimento (Claude Code, Cline, OpenCode), não para
+// aplicação servindo usuário final, e a cota é compartilhada com o Claude Code
+// de quem desenvolve. ZAI_MODO=padrao volta para a API paga assim que a conta
+// tiver saldo, sem deploy.
+const (
+	zaiEndpoint       = "https://api.z.ai/api/paas/v4/chat/completions"
+	zaiCodingEndpoint = "https://api.z.ai/api/anthropic/v1/messages"
+)
 
-// Modelo por variável de ambiente — trocar exige só reiniciar, não deploy.
-//
-// Padrão em glm-4.7 (pago) por decisão do gestor em 19/08/2026, depois de o
-// flash gratuito errar sintaxe no primeiro uso real. ATENÇÃO: isso consome
-// saldo da conta Z.AI. O GLM Coding Plan NÃO financia estas chamadas — é
-// carteira separada, de outro endpoint.
-//
-// Para o text-to-SQL, o degrau que importa é sair do flash. Os erros que
-// aparecem na prática — ramo de UNION sem parênteses, alias no WHERE, coluna
-// que não existe — são de escrita, e é exatamente onde o modelo maior ganha.
-// Medido em 19/08/2026 (por 1M de tokens, entrada/saída):
-//
-//	glm-4.7-flash    grátis   — anterior; errava sintaxe com frequência
-//	glm-4.7-flashx   $0,07 / $0,40   — reserva atual, para o 429
-//	glm-4.7          $0,60 / $2,20   — PADRÃO atual
-//	glm-5.1          $1,40 / $4,40
-//
-// Com o prompt atual (~5,5k entrada, ~500 saída), o glm-4.7 sai a ~R$ 0,024
-// por pergunta.
-//
-// ⚠ NÃO aponte para o endpoint do GLM Coding Plan (api/coding/paas/v4). Além
-// de ser outro endereço, aquela cota é vendida para ferramenta de
-// desenvolvimento, não para aplicação servindo usuário final.
-func envModelo(chave, padrao string) string {
+func env(chave, padrao string) string {
 	if v := strings.TrimSpace(os.Getenv(chave)); v != "" {
 		return v
 	}
 	return padrao
 }
 
+// modoCoding — CODING é o default. Só ZAI_MODO=padrao volta ao endpoint pago.
+func modoCoding() bool {
+	return !strings.EqualFold(env("ZAI_MODO", "coding"), "padrao")
+}
+
+// Modelos por variável de ambiente — trocar exige só reiniciar, não deploy.
+//
+// Latência medida no endpoint coding, mesmo prompt de text-to-SQL (19/08/2026):
+//
+//	glm-5.3       3,5 s   — carro-chefe E o mais rápido
+//	glm-5-turbo   5,6 s
+//	glm-4.7       7,2 s
+//
+// O padrão é glm-5.3 porque, incomumente, não há troca a fazer: é ao mesmo
+// tempo o melhor e o mais rápido dos três. Ele responde com bloco "thinking"
+// antes do texto — ver extrairTextoAnthropic.
 var (
-	ZAIModelPrimary  = envModelo("ZAI_MODEL", "glm-4.7")
-	ZAIModelFallback = envModelo("ZAI_MODEL_FALLBACK", "glm-4.7-flashx")
+	ZAIModelPrimary  = env("ZAI_MODEL", "glm-5.3")
+	ZAIModelFallback = env("ZAI_MODEL_FALLBACK", "glm-5-turbo")
 )
+
+// ultimoRecurso — último degrau da cadeia. Depende do modo, porque "o mais
+// disponível" é coisa diferente nos dois: no plano, todos os modelos entram na
+// mesma cota; na API padrão, só o flash não custa saldo.
+func ultimoRecurso() string {
+	if modoCoding() {
+		return "glm-4.7"
+	}
+	return "glm-4.7-flash"
+}
 
 type ZAIClient struct {
 	apiKey     string
@@ -104,13 +131,6 @@ func NewZAIClient() *ZAIClient {
 
 func (c *ZAIClient) IsAvailable() bool { return c != nil && c.apiKey != "" }
 
-// ZAIModelGratuito — último degrau da cadeia de reserva. SEMPRE gratuito.
-//
-// Existe porque o padrão passou a ser um modelo pago: sem esta rede, conta sem
-// saldo derruba o assistente por inteiro, e o sintoma (erro na tela para toda
-// pergunta) não se parece em nada com a causa (fatura).
-const ZAIModelGratuito = "glm-4.7-flash"
-
 // deveTentarReserva — a chamada falhou por LIMITE, não por defeito do pedido?
 //
 // 429 é cota por minuto; 402 e "insufficient balance" são saldo. Nos três a
@@ -133,7 +153,7 @@ func deveTentarReserva(err error) bool {
 // adianta tentar de novo).
 func (c *ZAIClient) tentarCadeia(req zaiRequest) (*ZAIResult, error) {
 	cadeia := []string{req.Model}
-	for _, m := range []string{ZAIModelFallback, ZAIModelGratuito} {
+	for _, m := range []string{ZAIModelFallback, ultimoRecurso()} {
 		if !slices.Contains(cadeia, m) {
 			cadeia = append(cadeia, m)
 		}
@@ -143,7 +163,11 @@ func (c *ZAIClient) tentarCadeia(req zaiRequest) (*ZAIResult, error) {
 	var err error
 	for i, m := range cadeia {
 		req.Model = m
-		result, err = c.call(req)
+		if modoCoding() {
+			result, err = c.callAnthropic(req)
+		} else {
+			result, err = c.call(req)
+		}
 		if err == nil {
 			if i > 0 {
 				log.Printf("[zai] %s respondeu depois de %s falhar", m, cadeia[i-1])
@@ -483,4 +507,92 @@ pergunta. Erros comuns: ramo de UNION com ORDER BY/LIMIT sem parênteses;
 coluna que não existe no schema informado; GROUP BY faltando coluna do SELECT;
 alias usado no WHERE (no PostgreSQL o alias do SELECT não vale no WHERE).`,
 		pergunta, sqlRuim, erroBanco)
+}
+
+// ─── Cliente do endpoint Anthropic (GLM Coding Plan) ─────────────────────────
+
+type anthropicReq struct {
+	Model     string       `json:"model"`
+	MaxTokens int          `json:"max_tokens"`
+	System    string       `json:"system,omitempty"`
+	Messages  []zaiMessage `json:"messages"`
+}
+
+type anthropicResp struct {
+	Model   string `json:"model"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// extrairTextoAnthropic — pega os blocos de TEXTO, ignorando os de raciocínio.
+//
+// O glm-5.3 responde com content = [{type:"thinking"...},{type:"text"...}].
+// Ler content[0] devolveria string vazia justamente no modelo que escolhemos
+// como padrão — e o sintoma seria "a IA não retornou SQL válido", que aponta
+// para o lugar errado.
+func extrairTextoAnthropic(r anthropicResp) string {
+	var b strings.Builder
+	for _, bloco := range r.Content {
+		if bloco.Type == "text" {
+			b.WriteString(bloco.Text)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// callAnthropic — mesma semântica de call(), outro protocolo. O system vai em
+// campo próprio, não como primeira mensagem.
+func (c *ZAIClient) callAnthropic(req zaiRequest) (*ZAIResult, error) {
+	ar := anthropicReq{Model: req.Model, MaxTokens: req.MaxTokens}
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			ar.System = m.Content
+			continue
+		}
+		ar.Messages = append(ar.Messages, m)
+	}
+
+	body, _ := json.Marshal(ar)
+	httpReq, err := http.NewRequest("POST", env("ZAI_CODING_URL", zaiCodingEndpoint), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("Z.AI coding request error: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Z.AI coding HTTP %d: %.300s", resp.StatusCode, string(raw))
+	}
+
+	var ans anthropicResp
+	if err := json.Unmarshal(raw, &ans); err != nil {
+		return nil, fmt.Errorf("Z.AI coding parse error: %w", err)
+	}
+	if ans.Error != nil {
+		return nil, fmt.Errorf("Z.AI coding error [%s]: %s", ans.Error.Type, ans.Error.Message)
+	}
+
+	texto := extrairTextoAnthropic(ans)
+	if texto == "" {
+		return nil, fmt.Errorf("Z.AI coding: resposta sem bloco de texto")
+	}
+	modelo := ans.Model
+	if modelo == "" {
+		modelo = req.Model
+	}
+	return &ZAIResult{Text: texto, Model: modelo}, nil
 }
