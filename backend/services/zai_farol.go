@@ -365,6 +365,15 @@ entre parênteses — sem eles é erro de sintaxe. Mas prefira evitar o UNION:
 para "os 10 melhores e os 10 piores", use ROW_NUMBER() nos dois sentidos sobre
 uma CTE e marque o grupo numa coluna. Sai em uma passada e já vem rotulado.
 
+RANKING DE PIORES:
+"Os piores" significa os piores ENTRE QUEM OPERA. Código sem movimento não é
+mau desempenho — é cadastro desativado, e enche a lista de zeros que não
+respondem a pergunta nenhuma. Sempre que a pergunta pedir os piores/menores:
+  1. exclua faturamento <= 0
+  2. exclua os cadastros que a base marca como mortos no proprio nome:
+     AND nome NOT ILIKE '%INATIVO%' AND nome NOT ILIKE '%SAIU%'
+Isso vale para RCA, supervisor, cliente e produto.
+
 GEOGRAFIA:
 - uf guarda a SIGLA de 2 letras. O usuário fala o nome; traduza:
   Goiás=GO, Mato Grosso=MT, Mato Grosso do Sul=MS, Distrito Federal=DF,
@@ -414,11 +423,16 @@ WITH base AS (
   FROM farol.agg_fat_v04_l0_mes
   WHERE empresa_id = '__EMPRESA_ID__' AND ano = 2026
   GROUP BY cod_rca
+), ativos AS (
+  SELECT * FROM base
+   WHERE faturamento > 0
+     AND rca NOT ILIKE '%INATIVO%'
+     AND rca NOT ILIKE '%SAIU%'
 ), ranqueado AS (
-  SELECT base.*,
+  SELECT ativos.*,
          ROW_NUMBER() OVER (ORDER BY faturamento DESC) AS pos_melhor,
          ROW_NUMBER() OVER (ORDER BY faturamento ASC)  AS pos_pior
-  FROM base
+  FROM ativos
 )
 SELECT rca,
        faturamento,
