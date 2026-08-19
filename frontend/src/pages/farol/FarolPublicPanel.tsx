@@ -7,6 +7,10 @@ import {
   parsePeriodo, BRLValue, fmtPct, fmtNum, fmtInt,
   type CardsResponse, type CardItem, type DrillStep, type KPI,
 } from './FarolV2Dashboard'
+// Direto da lib, não pelo re-export do FarolV2Dashboard: aquele arquivo já
+// quebrou uma vez em produção por um `export ... from` sem binding local, e
+// não há motivo pra passar por ele quando a origem é importável.
+import { brlHeroClass } from '@/lib/farolMoney'
 import { presetRange, PRESET_LABEL_MOBILE, PRESET_ORDER, type Preset } from '@/lib/farolPresets'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useSortedCards } from '@/components/farol/SortToggle'
@@ -161,11 +165,11 @@ function HeaderResumo({
           <div className="flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">{curLabel}</p>
-              {/* Sem whitespace-nowrap: acima de ~R$ 1 bi o valor não cabe numa
-                  linha só no clamp máximo, e nowrap sem overflow-hidden só
-                  faz o texto vazar por cima do % ao lado. break-words deixa
-                  quebrar em 2 linhas quando precisa, sem cortar dígito. */}
-              <p className="text-[clamp(1.25rem,7vw,2.25rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+              {/* Tamanho vem de brlHeroClass: acompanha o comprimento do número
+                  pra caber ao lado do % sem quebrar linha. break-words fica
+                  como último recurso — em tela muito estreita ainda é melhor
+                  quebrar do que vazar por cima do % ao lado. */}
+              <p className={`${brlHeroClass(kpi.total_atual, 'kpi')} font-black tabular-nums text-slate-900 leading-tight mt-1 break-words`}>
                 <BRLValue v={kpi.total_atual} />
               </p>
             </div>
@@ -248,7 +252,7 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold leading-tight">Atual</p>
-              <p className="text-[clamp(1.1rem,6vw,1.875rem)] font-black tabular-nums text-slate-900 leading-tight mt-1 break-words">
+              <p className={`${brlHeroClass(card.valor_atual, 'card')} font-black tabular-nums text-slate-900 leading-tight mt-1 break-words`}>
                 <BRLValue v={card.valor_atual} />
               </p>
             </div>
