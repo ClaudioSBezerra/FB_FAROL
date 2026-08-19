@@ -201,6 +201,40 @@ vendas_transmitidas( MESMAS colunas de vendas_faturadas, PORÉM:
   data_transmissao DATE no lugar de data_faturamento;
   NÃO possui tipo_venda nem desc_condvenda )
 
+-- AGREGADOS MENSAIS (farol.agg_*) — PREFIRA ESTES quando servirem
+-- São rollups já calculados, com MILHARES de linhas em vez de milhões. Um
+-- ranking que leva ~1 minuto na tabela crua responde em milissegundos aqui.
+--
+-- farol.agg_fat_v01_l0_mes(empresa_id, ano, mes, cod_fornec, nome_fornec, ...)
+-- farol.agg_fat_v02_l0_mes(empresa_id, ano, mes, cod_supervisor, nome_supervisor, ...)
+-- farol.agg_fat_v03_l0_mes(empresa_id, ano, mes, cod_gerente, nome_gerente, ...)
+-- farol.agg_fat_v04_l0_mes(empresa_id, ano, mes, cod_rca, nome_rca, ...)
+--
+-- Colunas de medida em TODAS elas:
+--   pvenda      faturamento BRUTO
+--   liquido     faturamento LÍQUIDO (já descontadas devolução e cancelamento)
+--   pv_bonif, pv_transf, pv_remessa, pv_devol, pv_cancel
+--   plucro, qt
+--   base_cli, positivados, mix
+--
+-- QUANDO USAR: ranking ou total por UMA dessas quatro dimensões
+-- (indústria, supervisor, gerente, RCA), com ou sem recorte de período.
+--
+-- QUANDO NÃO USAR — vá para vendas_faturadas:
+--   • a pergunta envolve cliente, produto, UF, filial, categoria ou seção
+--   • cruza DUAS dimensões (ex.: "RCA por indústria")
+--   • precisa de tipo_venda que não seja bruto/líquido/bonificação/transferência
+--
+-- PERÍODO nos agregados é ano/mes, NUNCA data:
+--   2026 inteiro      → WHERE ano = 2026
+--   janeiro/2025      → WHERE ano = 2025 AND mes = 1
+--   mês mais recente  → subquery com MAX sobre (ano, mes) da própria tabela
+--
+-- ⚠ SOMÁVEL entre meses: pvenda, liquido, pv_*, plucro, qt.
+-- ⚠ NÃO SOMÁVEL: positivados, base_cli e mix são fotos DO MÊS. Somar 12 meses
+--   de positivados conta o mesmo cliente 12 vezes. Para positivação num período
+--   com mais de um mês, use vendas_faturadas com COUNT(DISTINCT cnpj).
+
 MÉTRICAS:
 - Faturamento (bruto)  = SUM(pvenda)
 - Faturamento LÍQUIDO  = SUM(pvenda) FILTER (WHERE tipo_venda IN ('1','4','7','8','9','11','14','20'))   -- exclui Bonificação(5), Transferência(10), Remessa(13)
@@ -219,10 +253,18 @@ EXEMPLOS (apenas para orientar o formato):
 
 Pergunta: "top 10 indústrias por faturamento"
 SELECT nome_fornec AS industria, SUM(pvenda) AS faturado
-FROM vendas_faturadas
+FROM farol.agg_fat_v01_l0_mes
 WHERE empresa_id = '__EMPRESA_ID__'
 GROUP BY nome_fornec
 ORDER BY faturado DESC
+LIMIT 10;
+
+Pergunta: "top 10 RCAs de 2026"
+SELECT nome_rca AS rca, SUM(pvenda) AS faturamento
+FROM farol.agg_fat_v04_l0_mes
+WHERE empresa_id = '__EMPRESA_ID__' AND ano = 2026
+GROUP BY nome_rca
+ORDER BY faturamento DESC
 LIMIT 10;
 
 Pergunta: "faturamento líquido por supervisor em janeiro/2025"

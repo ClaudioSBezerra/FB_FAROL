@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Sparkles, Send, Download, RotateCcw, Clock, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
+import { fmtBRL } from '@/lib/farolMoney'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -38,23 +39,45 @@ function saveHistory(h: string[]) {
 
 // ─── Formatação de células ────────────────────────────────────────────────────
 
+// fmtCell — formata a célula pelo NOME da coluna, que é tudo que temos: o
+// alias vem do SQL que a IA escreveu, não de um schema conhecido.
+//
+// A versão anterior casava com "faturado", "pvenda", "valor", "ticket" e
+// "transmitido". A IA escreveu `AS faturamento` e nada casou — "faturado" não
+// é substring de "faturamento" — então o número saiu cru: "173859219.92".
+// Daí a regra virar raiz ("fatur") em vez de palavra inteira.
+//
+// A ordem dos testes importa: código e período são checados ANTES de dinheiro,
+// senão "tipo_venda" e "cod_vendedor" viravam moeda por conterem "venda".
 function fmtCell(value: unknown, col: string): string {
   if (value === null || value === undefined) return '—'
   const s = String(value)
-  const colLower = col.toLowerCase()
-  if (colLower.includes('pct') || colLower.includes('percent') || colLower.includes('taxa')) {
+  const c = col.toLowerCase()
+
+  if (/(pct|percent|taxa|_perc)/.test(c)) {
     const n = parseFloat(s)
-    if (!isNaN(n)) return n.toFixed(1) + '%'
+    if (!isNaN(n)) return n.toFixed(1).replace('.', ',') + '%'
   }
-  if (colLower.includes('faturado') || colLower.includes('pvenda') || colLower.includes('valor')
-    || colLower.includes('ticket') || colLower.includes('transmitido')) {
+
+  // Código, identificador e período saem como vieram — formatar 2026 como
+  // "2.026" ou um CNPJ como moeda seria pior que não formatar.
+  if (/^(ano|mes|id)$/.test(c) || /(cod_|_cod|codigo|cnpj|ean|tipo_)/.test(c)) return s
+
+  // Contagens: separador de milhar, sem R$.
+  if (/(^qt$|qtd|quantid|positivad|clientes|base_cli|^mix$|pedidos|notas|itens)/.test(c)) {
     const n = parseFloat(s)
-    if (!isNaN(n)) {
-      if (n >= 1_000_000) return 'R$ ' + (n / 1_000_000).toFixed(1) + 'M'
-      if (n >= 1_000) return 'R$ ' + (n / 1_000).toFixed(0) + 'K'
-      return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })
-    }
+    if (!isNaN(n)) return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+    return s
   }
+
+  // Dinheiro: absoluto, com centavos — igual ao resto do Farol. A versão
+  // anterior abreviava para "R$ 173.9M", contradizendo a decisão do gestor
+  // registrada em lib/farolMoney (valores absolutos, sem K/M/B).
+  if (/(fatur|venda|valor|ticket|transmitid|liquid|bruto|bonific|transfer|remessa|devol|cancel|receita|custo|lucro|verba|total|saldo)/.test(c)) {
+    const n = parseFloat(s)
+    if (!isNaN(n)) return fmtBRL(n)
+  }
+
   return s
 }
 
