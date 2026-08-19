@@ -177,6 +177,12 @@ REGRAS OBRIGATÓRIAS:
 4. Inclua LIMIT 200 no final (exceto quando o usuário pedir um "top N" menor).
 5. Aliases em português (ex.: AS industria, AS faturado, AS positivacao_pct).
 6. Ordene por valor DESC quando fizer sentido.
+7. AGRUPE SEMPRE PELO CÓDIGO, nunca pelo nome. Use MAX(nome_x) para exibir.
+   O nome da mesma entidade varia entre linhas — acento gravado de formas
+   diferentes na origem já partiu "NÚCLEO DE VENDAS" em duas linhas de um
+   TOP 10, com o faturamento dividido entre elas. O código é estável.
+   CERTO:  SELECT cod_rca, MAX(nome_rca) AS rca, SUM(pvenda) ... GROUP BY cod_rca
+   ERRADO: SELECT nome_rca AS rca, SUM(pvenda) ... GROUP BY nome_rca
 
 TABELAS (grão = 1 linha por item de nota/pedido):
 
@@ -252,39 +258,39 @@ PERÍODO:
 EXEMPLOS (apenas para orientar o formato):
 
 Pergunta: "top 10 indústrias por faturamento"
-SELECT nome_fornec AS industria, SUM(pvenda) AS faturado
+SELECT cod_fornec, MAX(nome_fornec) AS industria, SUM(pvenda) AS faturado
 FROM farol.agg_fat_v01_l0_mes
 WHERE empresa_id = '__EMPRESA_ID__'
-GROUP BY nome_fornec
+GROUP BY cod_fornec
 ORDER BY faturado DESC
 LIMIT 10;
 
 Pergunta: "top 10 RCAs de 2026"
-SELECT nome_rca AS rca, SUM(pvenda) AS faturamento
+SELECT cod_rca, MAX(nome_rca) AS rca, SUM(pvenda) AS faturamento
 FROM farol.agg_fat_v04_l0_mes
 WHERE empresa_id = '__EMPRESA_ID__' AND ano = 2026
-GROUP BY nome_rca
+GROUP BY cod_rca
 ORDER BY faturamento DESC
 LIMIT 10;
 
 Pergunta: "faturamento líquido por supervisor em janeiro/2025"
-SELECT nome_supervisor AS supervisor,
+SELECT cod_supervisor, MAX(nome_supervisor) AS supervisor,
        SUM(pvenda) FILTER (WHERE tipo_venda IN ('1','4','7','8','9','11','14','20')) AS faturado_liquido
 FROM vendas_faturadas
 WHERE empresa_id = '__EMPRESA_ID__'
   AND data_faturamento >= '2025-01-01' AND data_faturamento < '2025-02-01'
-GROUP BY nome_supervisor
+GROUP BY cod_supervisor
 ORDER BY faturado_liquido DESC
 LIMIT 200;
 
 Pergunta: "positivação por RCA no mês mais recente"
-SELECT nome_rca AS rca,
+SELECT cod_rca, MAX(nome_rca) AS rca,
        COUNT(DISTINCT cnpj) FILTER (WHERE qt > 0) AS positivados,
        COUNT(DISTINCT cnpj) AS clientes_no_periodo
 FROM vendas_faturadas
 WHERE empresa_id = '__EMPRESA_ID__'
   AND data_faturamento >= date_trunc('month', (SELECT MAX(v.data_faturamento) FROM vendas_faturadas v WHERE v.empresa_id='__EMPRESA_ID__'))
-GROUP BY nome_rca
+GROUP BY cod_rca
 ORDER BY positivados DESC
 LIMIT 200;`
 
