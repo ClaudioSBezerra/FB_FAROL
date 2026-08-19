@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -21,18 +23,19 @@ const zaiEndpoint = "https://api.z.ai/api/paas/v4/chat/completions"
 
 // Modelo por variável de ambiente — trocar exige só reiniciar, não deploy.
 //
-// O padrão continua no tier GRATUITO (glm-4.7-flash) de propósito: mudar o
-// default para um modelo pago numa atualização de código geraria fatura que
-// ninguém pediu. Quem decide gastar é quem paga.
+// Padrão em glm-4.7 (pago) por decisão do gestor em 19/08/2026, depois de o
+// flash gratuito errar sintaxe no primeiro uso real. ATENÇÃO: isso consome
+// saldo da conta Z.AI. O GLM Coding Plan NÃO financia estas chamadas — é
+// carteira separada, de outro endpoint.
 //
 // Para o text-to-SQL, o degrau que importa é sair do flash. Os erros que
 // aparecem na prática — ramo de UNION sem parênteses, alias no WHERE, coluna
 // que não existe — são de escrita, e é exatamente onde o modelo maior ganha.
 // Medido em 19/08/2026 (por 1M de tokens, entrada/saída):
 //
-//	glm-4.7-flash    grátis   — atual; erra sintaxe com frequência
-//	glm-4.7-flashx   $0,07 / $0,40
-//	glm-4.7          $0,60 / $2,20   — recomendado
+//	glm-4.7-flash    grátis   — anterior; errava sintaxe com frequência
+//	glm-4.7-flashx   $0,07 / $0,40   — reserva atual, para o 429
+//	glm-4.7          $0,60 / $2,20   — PADRÃO atual
 //	glm-5.1          $1,40 / $4,40
 //
 // Com o prompt atual (~5,5k entrada, ~500 saída), o glm-4.7 sai a ~R$ 0,024
@@ -49,8 +52,8 @@ func envModelo(chave, padrao string) string {
 }
 
 var (
-	ZAIModelPrimary  = envModelo("ZAI_MODEL", "glm-4.7-flash")
-	ZAIModelFallback = envModelo("ZAI_MODEL_FALLBACK", "glm-4.5-flash")
+	ZAIModelPrimary  = envModelo("ZAI_MODEL", "glm-4.7")
+	ZAIModelFallback = envModelo("ZAI_MODEL_FALLBACK", "glm-4.7-flashx")
 )
 
 type ZAIClient struct {
@@ -101,6 +104,59 @@ func NewZAIClient() *ZAIClient {
 
 func (c *ZAIClient) IsAvailable() bool { return c != nil && c.apiKey != "" }
 
+// ZAIModelGratuito — último degrau da cadeia de reserva. SEMPRE gratuito.
+//
+// Existe porque o padrão passou a ser um modelo pago: sem esta rede, conta sem
+// saldo derruba o assistente por inteiro, e o sintoma (erro na tela para toda
+// pergunta) não se parece em nada com a causa (fatura).
+const ZAIModelGratuito = "glm-4.7-flash"
+
+// deveTentarReserva — a chamada falhou por LIMITE, não por defeito do pedido?
+//
+// 429 é cota por minuto; 402 e "insufficient balance" são saldo. Nos três a
+// mesma pergunta pode dar certo noutro modelo, então vale reescalar. Erro de
+// prompt ou de rede não entra aqui: repetir só gasta tempo.
+func deveTentarReserva(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := strings.ToLower(err.Error())
+	return strings.Contains(e, "429") ||
+		strings.Contains(e, "402") ||
+		strings.Contains(e, "insufficient") ||
+		strings.Contains(e, "balance") ||
+		strings.Contains(e, "quota")
+}
+
+// tentarCadeia — principal → reserva → gratuito, parando no primeiro sucesso.
+// Modelos repetidos na cadeia são pulados (se ZAI_MODEL já for o gratuito, não
+// adianta tentar de novo).
+func (c *ZAIClient) tentarCadeia(req zaiRequest) (*ZAIResult, error) {
+	cadeia := []string{req.Model}
+	for _, m := range []string{ZAIModelFallback, ZAIModelGratuito} {
+		if !slices.Contains(cadeia, m) {
+			cadeia = append(cadeia, m)
+		}
+	}
+
+	var result *ZAIResult
+	var err error
+	for i, m := range cadeia {
+		req.Model = m
+		result, err = c.call(req)
+		if err == nil {
+			if i > 0 {
+				log.Printf("[zai] %s respondeu depois de %s falhar", m, cadeia[i-1])
+			}
+			return result, nil
+		}
+		if !deveTentarReserva(err) {
+			return result, err
+		}
+	}
+	return result, err
+}
+
 func (c *ZAIClient) Ask(system, user, model string, maxTokens int) (*ZAIResult, error) {
 	if !c.IsAvailable() {
 		return nil, fmt.Errorf("ZAI_API_KEY não configurado")
@@ -118,11 +174,7 @@ func (c *ZAIClient) Ask(system, user, model string, maxTokens int) (*ZAIResult, 
 	}
 	msgs = append(msgs, zaiMessage{Role: "user", Content: user})
 
-	result, err := c.call(zaiRequest{Model: model, MaxTokens: maxTokens, Messages: msgs})
-	if err != nil && strings.Contains(err.Error(), "429") && model == ZAIModelPrimary {
-		result, err = c.call(zaiRequest{Model: ZAIModelFallback, MaxTokens: maxTokens, Messages: msgs})
-	}
-	return result, err
+	return c.tentarCadeia(zaiRequest{Model: model, MaxTokens: maxTokens, Messages: msgs})
 }
 
 // ZAIChatTurn — um turno de conversa (role user/assistant) para AskChat.
@@ -148,11 +200,7 @@ func (c *ZAIClient) AskChat(system string, turns []ZAIChatTurn, maxTokens int) (
 	for _, t := range turns {
 		msgs = append(msgs, zaiMessage{Role: t.Role, Content: t.Content})
 	}
-	result, err := c.call(zaiRequest{Model: ZAIModelPrimary, MaxTokens: maxTokens, Messages: msgs})
-	if err != nil && strings.Contains(err.Error(), "429") {
-		result, err = c.call(zaiRequest{Model: ZAIModelFallback, MaxTokens: maxTokens, Messages: msgs})
-	}
-	return result, err
+	return c.tentarCadeia(zaiRequest{Model: ZAIModelPrimary, MaxTokens: maxTokens, Messages: msgs})
 }
 
 func (c *ZAIClient) call(req zaiRequest) (*ZAIResult, error) {
