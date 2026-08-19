@@ -316,13 +316,20 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		log.Printf("[jc:carga] consolidação final concluída em %v", time.Since(t0).Round(time.Second))
 	}
 
-	enviarResumoIntervaloJC(de, ate, inicio, resultados, pulados)
+	enviarResumoIntervaloJC(de, ate, inicio, resultados, pulados, filial)
 }
 
 // corpoResumoIntervaloJC — uma tabela dia a dia. O veredito consolidado vem na
 // primeira linha pelo mesmo motivo do resumo diário: notificação de celular
 // mostra só o começo.
-func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time) (string, string) {
+//
+// `filial` vazio = todas. O escopo é IMPRESSO SEMPRE, mesmo quando é "todas":
+// em 19/08/2026 foi preciso ir ao log do container para responder se uma carga
+// de 3,7M de linhas tinha coberto a empresa inteira ou uma filial só — e essa
+// é a diferença entre rotina e incidente. No assunto ele só aparece quando há
+// restrição: "todas as filiais" em todo e-mail vira ruído que ninguém lê, e
+// "filial 12" no meio de uma caixa de entrada salta aos olhos.
+func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time, filial string) (string, string) {
 	loc := tzBrasil()
 	fim := time.Now()
 
@@ -347,12 +354,22 @@ func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao,
 		veredito += fmt.Sprintf(", %d sem dados", vazioN)
 	}
 
+	escopo := "todas as filiais"
+	if f := strings.TrimSpace(filial); f != "" {
+		escopo = "SOMENTE filial " + f
+	}
+
 	assunto := fmt.Sprintf("[FAROL] Carga JC %s a %s — %s",
 		de.Format("02/01"), ate.Format("02/01/2006"), veredito)
+	if f := strings.TrimSpace(filial); f != "" {
+		assunto = fmt.Sprintf("[FAROL] Carga JC %s a %s — filial %s — %s",
+			de.Format("02/01"), ate.Format("02/01/2006"), f, veredito)
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Carga automática do Farol (intervalo) — %s\n\n", veredito)
 	fmt.Fprintf(&b, "Período   : %s a %s\n", de.Format("02/01/2006"), ate.Format("02/01/2006"))
+	fmt.Fprintf(&b, "Escopo    : %s\n", escopo)
 	fmt.Fprintf(&b, "Início    : %s\n", inicio.In(loc).Format("02/01/2006 15:04:05"))
 	fmt.Fprintf(&b, "Conclusão : %s\n", fim.In(loc).Format("02/01/2006 15:04:05"))
 	fmt.Fprintf(&b, "Duração   : %s\n", fim.Sub(inicio).Round(time.Second))
@@ -396,8 +413,8 @@ func corpoResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao,
 	return assunto, b.String()
 }
 
-func enviarResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time) {
-	assunto, corpo := corpoResumoIntervaloJC(de, ate, inicio, res, pulados)
+func enviarResumoIntervaloJC(de, ate, inicio time.Time, res []*ResultadoExtracao, pulados []time.Time, filial string) {
+	assunto, corpo := corpoResumoIntervaloJC(de, ate, inicio, res, pulados, filial)
 	para := destinatariosJC()
 	if err := services.SendPlainReport(para, assunto, corpo); err != nil {
 		log.Printf("[jc:carga] FALHA ao enviar resumo do intervalo para %v: %v", para, err)

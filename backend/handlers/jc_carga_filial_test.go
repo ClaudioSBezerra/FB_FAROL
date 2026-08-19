@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A regra que este arquivo protege: quando a carga é de UMA filial, o DELETE
@@ -62,4 +63,34 @@ func TestFilialVaziaMantemComportamentoAntigo(t *testing.T) {
 			t.Errorf("%s: chamada sem escopo de filial explícito", arq)
 		}
 	}
+}
+
+// O e-mail do intervalo precisa dizer o escopo. Em 19/08/2026 chegou um resumo
+// de 3,7M de linhas e não dava para saber, sem abrir o log do container, se
+// aquilo era a empresa inteira ou uma filial só — informação que separa uma
+// carga de rotina de um incidente.
+func TestResumoIntervaloDeclaraEscopoDeFilial(t *testing.T) {
+	de := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	ate := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	inicio := time.Date(2026, 8, 18, 15, 5, 49, 0, time.UTC)
+
+	t.Run("todas as filiais", func(t *testing.T) {
+		assunto, corpo := corpoResumoIntervaloJC(de, ate, inicio, nil, nil, "")
+		if !strings.Contains(corpo, "Escopo    : todas as filiais") {
+			t.Errorf("corpo não declara que foram todas as filiais:\n%s", corpo)
+		}
+		if strings.Contains(assunto, "filial") {
+			t.Errorf("assunto não deveria citar filial quando são todas: %q", assunto)
+		}
+	})
+
+	t.Run("filial única", func(t *testing.T) {
+		assunto, corpo := corpoResumoIntervaloJC(de, ate, inicio, nil, nil, "12")
+		if !strings.Contains(corpo, "Escopo    : SOMENTE filial 12") {
+			t.Errorf("corpo não declara a restrição de filial:\n%s", corpo)
+		}
+		if !strings.Contains(assunto, "filial 12") {
+			t.Errorf("assunto deveria destacar a restrição: %q", assunto)
+		}
+	})
 }
