@@ -113,4 +113,8 @@ func TestSyncUsuariosGuardaPorIdentidade(t *testing.T) {
 	if !strings.Contains(src, "UPDATE users SET full_name = $1") {
 		t.Error("o nome não é sincronizado: código que troca de dono seguiria exibindo o antecessor")
 	}
+	// ...mas só na conta auto-criada. Nome escolhido por gente não se sobrescreve.
+	if !strings.Contains(src, "AND email = $4 AND full_name <> $1") {
+		t.Error("a sincronização de nome não está restrita ao e-mail sintético — reescreveria cadastro manual")
+	}
 }

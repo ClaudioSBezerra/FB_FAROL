@@ -1256,10 +1256,16 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 		// 350 saiu de Gilson Flores para Jocildo Guimarães em 19/08/2026, e o
 		// 346 já havia saído de Jocildo para Divair Pires. Sem este UPDATE a
 		// conta seguiria exibindo o nome do antecessor no painel.
+		//
+		// Restrito à conta AUTO-CRIADA (e-mail sintético). Conta cadastrada por
+		// gente tem nome escolhido por gente: os GGVs foram cadastrados em
+		// 19/08/2026 como "Gilson Flores", e sincronizar sem esta cláusula os
+		// reescreveria como "GGV - GO-BA - GILSON FLORES" na primeira carga.
 		_, _ = db.Exec(`
 			UPDATE users SET full_name = $1
-			 WHERE tipo_persona = $2 AND cod_referencia = $3 AND full_name <> $1`,
-			p.nome, p.tipo, p.cod)
+			 WHERE tipo_persona = $2 AND cod_referencia = $3
+			   AND email = $4 AND full_name <> $1`,
+			p.nome, p.tipo, p.cod, email)
 
 		// A identidade da conta é (tipo_persona, cod_referencia), NÃO o e-mail.
 		//
