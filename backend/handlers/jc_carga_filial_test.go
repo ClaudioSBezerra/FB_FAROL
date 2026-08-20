@@ -94,3 +94,23 @@ func TestResumoIntervaloDeclaraEscopoDeFilial(t *testing.T) {
 		}
 	})
 }
+
+// A identidade da conta auto-criada é (tipo_persona, cod_referencia), não o
+// e-mail. Quando os GGVs receberam os endereços corporativos em 19/08/2026, o
+// e-mail sintético ggv.<cod>@dominio deixou de existir — e um guarda baseado só
+// em e-mail teria recriado cada conta como nova, com o mesmo escopo e a senha
+// derivável Farol@<cod>.
+func TestSyncUsuariosGuardaPorIdentidade(t *testing.T) {
+	fonte, err := os.ReadFile("farol_v2_import.go")
+	if err != nil {
+		t.Fatalf("ler farol_v2_import.go: %v", err)
+	}
+	src := string(fonte)
+
+	if !strings.Contains(src, "SELECT 1 FROM users WHERE tipo_persona = $6 AND cod_referencia = $7") {
+		t.Error("o INSERT de usuários não guarda por (tipo_persona, cod_referencia) — renomear o e-mail volta a criar conta duplicada")
+	}
+	if !strings.Contains(src, "UPDATE users SET full_name = $1") {
+		t.Error("o nome não é sincronizado: código que troca de dono seguiria exibindo o antecessor")
+	}
+}

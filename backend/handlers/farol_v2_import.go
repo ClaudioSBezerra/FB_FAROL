@@ -1252,16 +1252,42 @@ func syncUsuariosFromImport(db *sql.DB, spCtx *FarolContext, ano, mes int) (int,
 			spRolePessoa = "gestor_filial"
 		}
 
+		// O nome do cadastro muda quando o território troca de dono: o código
+		// 350 saiu de Gilson Flores para Jocildo Guimarães em 19/08/2026, e o
+		// 346 já havia saído de Jocildo para Divair Pires. Sem este UPDATE a
+		// conta seguiria exibindo o nome do antecessor no painel.
+		_, _ = db.Exec(`
+			UPDATE users SET full_name = $1
+			 WHERE tipo_persona = $2 AND cod_referencia = $3 AND full_name <> $1`,
+			p.nome, p.tipo, p.cod)
+
+		// A identidade da conta é (tipo_persona, cod_referencia), NÃO o e-mail.
+		//
+		// O guarda era só `ON CONFLICT (email)`, com o e-mail montado como
+		// ggv.<cod>@dominio. Isso funcionava enquanto ninguém mexia no e-mail —
+		// mas em 19/08/2026 os GGVs receberam os endereços corporativos deles
+		// (stenio.tavares@..., lucas.costa@...). O e-mail sintético deixou de
+		// existir, e a próxima importação teria recriado cada um como conta
+		// NOVA: mesmo cod_referencia, mesmo escopo, senha Farol@<cod> — de volta
+		// a senha derivável que a pendência de segurança abaixo descreve, agora
+		// numa conta sósia que ninguém sabe que existe.
+		//
+		// O NOT EXISTS por identidade fecha isso. O ON CONFLICT (email) fica
+		// como segunda linha, para o caso de alguém cadastrar o mesmo e-mail à
+		// mão com outro código.
 		var userID string
 		err := db.QueryRow(`
 			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia)
-			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, $6, $7)
+			SELECT $1, $2, $3, $4, TRUE, 'user', $5, $6, $7
+			 WHERE NOT EXISTS (
+			     SELECT 1 FROM users WHERE tipo_persona = $6 AND cod_referencia = $7
+			 )
 			ON CONFLICT (email) DO NOTHING
 			RETURNING id`,
 			email, hash, p.nome, trialEndsAt, spRolePessoa, p.tipo, p.cod,
 		).Scan(&userID)
 		if err == sql.ErrNoRows {
-			continue // email já existia — OK, ignora
+			continue // já existe conta para este código — OK, ignora
 		}
 		if err != nil {
 			log.Printf("[SyncUsuarios] falha ao criar %s (%s): %v", email, p.nome, err)
