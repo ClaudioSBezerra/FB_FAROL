@@ -83,6 +83,39 @@ func FarolResumoSemanalHandler(db *sql.DB) http.HandlerFunc {
 		previa := q.Get("previa") == "1"
 		forcar := q.Get("forcar") == "1"
 
+		// ?para=email — cópia avulsa para conferir antes da segunda. Sai com o
+		// recorte de quem pediu e idêntica à real, para poder ser
+		// reencaminhada. Não entra no log do envio semanal.
+		if para := strings.TrimSpace(q.Get("para")); para != "" {
+			if !strings.Contains(para, "@") {
+				http.Error(w, `{"error":"destinatário inválido"}`, http.StatusBadRequest)
+				return
+			}
+			var nome string
+			_ = db.QueryRow(`SELECT COALESCE(NULLIF(full_name,''), email) FROM users WHERE id=$1`,
+				spCtx.UserID).Scan(&nome)
+
+			log.Printf("[farol:resumo] CÓPIA DE TESTE para %s, recorte de user=%s persona=%s",
+				para, spCtx.UserID, spCtx.TipoPersona)
+
+			r, err := services.EnviarResumoTeste(db, spCtx.EmpresaID, ano, mes, ate, base,
+				nome, spCtx.TipoPersona, spCtx.CodReferencia, para)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"enviado_para": para,
+				"recorte_de":   nome,
+				"escopo":       r.Escopo,
+				"periodo":      fmt.Sprintf("%04d-%02d", ano, mes),
+				"total_mesa":   r.TotalMesa,
+				"grupos":       len(r.Grupos),
+				"aviso":        "cópia de teste — não conta como envio da semana",
+			})
+			return
+		}
+
 		log.Printf("[farol:resumo] disparo %04d-%02d ate=%s baseline=%s previa=%t forcar=%t por user=%s",
 			ano, mes, ate.Format("2006-01-02"), base, previa, forcar, spCtx.UserID)
 

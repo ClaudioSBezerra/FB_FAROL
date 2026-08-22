@@ -607,3 +607,28 @@ func tzBrasilResumo() *time.Location {
 	}
 	return loc
 }
+
+// EnviarResumoTeste manda UMA cópia para um endereço avulso, com o recorte de
+// quem pediu. O corpo é idêntico ao do envio real — sem tarja de teste — porque
+// o uso previsto é conferir e reencaminhar, e uma tarja obrigaria a explicar o
+// que ela significa.
+//
+// NÃO grava em resumo_semanal_log: aquele log é a prova do envio semanal, e uma
+// cópia de teste ali faria o worker pular o envio de verdade na segunda.
+//
+// A rota só aceita persona sem escopo, e o disparo fica no log da aplicação com
+// quem pediu e para onde foi — mandar o quadro da empresa para endereço externo
+// é exatamente o tipo de ação que precisa deixar rastro.
+func EnviarResumoTeste(db *sql.DB, empresaID string, ano, mes int, ate time.Time,
+	base Baseline, nome, persona, codRef, para string) (ResumoUsuario, error) {
+
+	todos, cob, err := ColetarDinheiroNaMesa(db, empresaID, ano, mes, ate, base)
+	if err != nil {
+		return ResumoUsuario{}, err
+	}
+	nomes := NomesGerentesSupervisores(db, empresaID, ano, mes)
+	r := MontarResumo(todos, cob, nome, persona, codRef, nomes, RotuloMes(ano, mes))
+
+	assunto := fmt.Sprintf("[FAROL] Dinheiro na mesa · %s · %s", r.Mes, brl(r.TotalMesa))
+	return r, sendHTMLReport([]string{para}, assunto, CorpoTexto(r), CorpoHTML(r))
+}
