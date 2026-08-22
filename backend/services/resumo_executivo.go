@@ -17,28 +17,28 @@ import (
 
 // KPIsResumoExecutivo agrega métricas do CD no período do resumo
 type KPIsResumoExecutivo struct {
-	CdID         int    `json:"cd_id"`
-	CdNome       string `json:"cd_nome"`
-	FilialNome   string `json:"filial_nome"`
+	CdID          int    `json:"cd_id"`
+	CdNome        string `json:"cd_nome"`
+	FilialNome    string `json:"filial_nome"`
 	PeriodoInicio string `json:"periodo_inicio"` // YYYY-MM-DD
 	PeriodoFim    string `json:"periodo_fim"`
 
-	TotalPropostas    int `json:"total_propostas"`
-	TotalAprovadas    int `json:"total_aprovadas"`
-	TotalRejeitadas   int `json:"total_rejeitadas"`
-	TotalPendentes    int `json:"total_pendentes"`
-	TotalIgnorados    int `json:"total_ignorados"`
+	TotalPropostas  int `json:"total_propostas"`
+	TotalAprovadas  int `json:"total_aprovadas"`
+	TotalRejeitadas int `json:"total_rejeitadas"`
+	TotalPendentes  int `json:"total_pendentes"`
+	TotalIgnorados  int `json:"total_ignorados"`
 
 	Ampliar       int `json:"ampliar_slot"`
 	Reduzir       int `json:"reduzir_slot"`
 	Calibrados    int `json:"calibrados"`
 	CurvaARevisar int `json:"curva_a_revisar"`
 
-	TaxaAprovacaoPct float64 `json:"taxa_aprovacao_pct"`
+	TaxaAprovacaoPct  float64 `json:"taxa_aprovacao_pct"`
 	TaxaCompliancePct float64 `json:"taxa_compliance_pct"`
 
-	TopMotivosRejeicao []KVPair `json:"top_motivos_rejeicao"`
-	TopDeptosPendentes []KVPair `json:"top_deptos_pendentes"`
+	TopMotivosRejeicao  []KVPair         `json:"top_motivos_rejeicao"`
+	TopDeptosPendentes  []KVPair         `json:"top_deptos_pendentes"`
 	TopProdutosCriticos []ProdutoCritico `json:"top_produtos_criticos"`
 
 	AlertasUrgencia int `json:"alertas_urgencia"`
@@ -65,14 +65,14 @@ type ProdutoCritico struct {
 
 // ImportInfo descreve um arquivo CSV importado no período do resumo
 type ImportInfo struct {
-	JobID        string `json:"job_id"`
-	Filename     string `json:"filename"`
-	Status       string `json:"status"`
-	UploadedBy   string `json:"uploaded_by"`   // nome do usuário ou email
-	UploadedEm   string `json:"uploaded_em"`   // YYYY-MM-DD HH:MM
-	TotalLinhas  int    `json:"total_linhas"`
-	LinhasOk     int    `json:"linhas_ok"`
-	LinhasErro   int    `json:"linhas_erro"`
+	JobID       string `json:"job_id"`
+	Filename    string `json:"filename"`
+	Status      string `json:"status"`
+	UploadedBy  string `json:"uploaded_by"` // nome do usuário ou email
+	UploadedEm  string `json:"uploaded_em"` // YYYY-MM-DD HH:MM
+	TotalLinhas int    `json:"total_linhas"`
+	LinhasOk    int    `json:"linhas_ok"`
+	LinhasErro  int    `json:"linhas_erro"`
 }
 
 // ── Coleta de KPIs ────────────────────────────────────────────────────────────

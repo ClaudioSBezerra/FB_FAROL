@@ -102,14 +102,14 @@ func processNextJob(db *sql.DB) {
 // csvCols agrupa os índices de colunas detectados pelo cabeçalho do CSV.
 // Suporta múltiplos formatos WMS (com ou sem QTUNITCX).
 type csvCols struct {
-	codFilial, codEpto, departamento, codSec, secao int
-	codProd, produto, embalagem, qtUnitCx, foraLinha int
-	rua, predio, apto                               int
-	capacidade, normaPalete, pontoRep               int
-	participacao, acumulado                         int
-	classeVenda, classeDias                         int
-	giroDia, acesso90, qtMovPicking90               int
-	qtDias, qtProd, qtProdCx                        int
+	codFilial, codEpto, departamento, codSec, secao    int
+	codProd, produto, embalagem, qtUnitCx, foraLinha   int
+	rua, predio, apto                                  int
+	capacidade, normaPalete, pontoRep                  int
+	participacao, acumulado                            int
+	classeVenda, classeDias                            int
+	giroDia, acesso90, qtMovPicking90                  int
+	qtDias, qtProd, qtProdCx                           int
 	medVendaCx, medVendaDias, medDiasEst, medVendaCxAA int
 }
 
@@ -127,36 +127,36 @@ func detectCols(header []string) csvCols {
 		return -1
 	}
 	return csvCols{
-		codFilial:    get("CODFILIAL"),
-		codEpto:      get("CODEPTO"),
-		departamento: get("DEPARTAMENTO"),
-		codSec:       get("CODSEC"),
-		secao:        get("SECAO"),
-		codProd:      get("CODPROD"),
-		produto:      get("PRODUTO"),
-		embalagem:    get("EMBALAGEM"),
-		qtUnitCx:     get("QTUNITCX"),   // opcional: ausente em alguns exports
-		foraLinha:    get("FORALINHA"),
-		rua:          get("RUA"),
-		predio:       get("PREDIO"),
-		apto:         get("APTO"),
-		capacidade:      get("CAPACIDADE"),
-		normaPalete:     get("NORMA_PALETE"),
-		pontoRep:        get("PONTOREPOSICAO"),
-		participacao:    get("PARTICIPACAO"),
-		acumulado:       get("ACUMULADO"),
-		classeVenda:     get("CLASSEVENDA"),
-		classeDias:   get("CLASSEVENDA_DIAS"),
-		giroDia:         get("QTGIRODIA_SISTEMA"),
-		acesso90:        get("QTACESSO_PICKING_PERIODO_90"),
-		qtMovPicking90:  get("QT_MOV_PICKING_90"),
-		qtDias:          get("QT_DIAS"),
-		qtProd:       get("QT_PROD"),
-		qtProdCx:     get("QT_PROD_CX"),
-		medVendaCx:   get("MED_VENDA_DIAS_CX"),
-		medVendaDias: get("MED_VENDA_DIAS"),
-		medDiasEst:   get("MED_DIAS_ESTOQUE"),
-		medVendaCxAA: get("MED_VENDA_DIAS_CX_ANOANT_MESSEG"),
+		codFilial:      get("CODFILIAL"),
+		codEpto:        get("CODEPTO"),
+		departamento:   get("DEPARTAMENTO"),
+		codSec:         get("CODSEC"),
+		secao:          get("SECAO"),
+		codProd:        get("CODPROD"),
+		produto:        get("PRODUTO"),
+		embalagem:      get("EMBALAGEM"),
+		qtUnitCx:       get("QTUNITCX"), // opcional: ausente em alguns exports
+		foraLinha:      get("FORALINHA"),
+		rua:            get("RUA"),
+		predio:         get("PREDIO"),
+		apto:           get("APTO"),
+		capacidade:     get("CAPACIDADE"),
+		normaPalete:    get("NORMA_PALETE"),
+		pontoRep:       get("PONTOREPOSICAO"),
+		participacao:   get("PARTICIPACAO"),
+		acumulado:      get("ACUMULADO"),
+		classeVenda:    get("CLASSEVENDA"),
+		classeDias:     get("CLASSEVENDA_DIAS"),
+		giroDia:        get("QTGIRODIA_SISTEMA"),
+		acesso90:       get("QTACESSO_PICKING_PERIODO_90"),
+		qtMovPicking90: get("QT_MOV_PICKING_90"),
+		qtDias:         get("QT_DIAS"),
+		qtProd:         get("QT_PROD"),
+		qtProdCx:       get("QT_PROD_CX"),
+		medVendaCx:     get("MED_VENDA_DIAS_CX"),
+		medVendaDias:   get("MED_VENDA_DIAS"),
+		medDiasEst:     get("MED_DIAS_ESTOQUE"),
+		medVendaCxAA:   get("MED_VENDA_DIAS_CX_ANOANT_MESSEG"),
 	}
 }
 

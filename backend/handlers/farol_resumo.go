@@ -160,3 +160,54 @@ func FarolResumoPreviaHTMLHandler(db *sql.DB) http.HandlerFunc {
 		_, _ = w.Write([]byte(services.CorpoHTML(resumo)))
 	}
 }
+
+// FarolDinheiroNaMesaHandler — GET /api/v2/farol/dinheiro-na-mesa
+//
+// Os mesmos números do e-mail, em JSON, para a página do painel. Reusa o motor
+// inteiro: se um dia o e-mail e a tela discordarem, é porque alguém duplicou o
+// cálculo — e não vai ser aqui.
+//
+// Sempre com o recorte de QUEM PEDIU. Não aceita parâmetro de escopo: o e-mail
+// já manda o link certo para cada um, e um `?gerente=` aqui seria uma porta
+// lateral para um supervisor ler a carteira do vizinho.
+func FarolDinheiroNaMesaHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		loc := tzBrasil()
+		agora := time.Now().In(loc)
+		q := r.URL.Query()
+
+		ano, mes := agora.Year(), int(agora.Month())
+		if v, err := strconv.Atoi(q.Get("ano")); err == nil && v >= 2000 && v <= 2100 {
+			ano = v
+		}
+		if v, err := strconv.Atoi(q.Get("mes")); err == nil && v >= 1 && v <= 12 {
+			mes = v
+		}
+		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+
+		todos, cob, err := services.ColetarDinheiroNaMesa(db, spCtx.EmpresaID, ano, mes, ate,
+			services.BaselineAnoAnterior)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		var nome string
+		if db.QueryRow(`SELECT COALESCE(NULLIF(full_name,''), email) FROM users WHERE id=$1`,
+			spCtx.UserID).Scan(&nome) != nil {
+			nome = ""
+		}
+		nomes := services.NomesGerentesSupervisores(db, spCtx.EmpresaID, ano, mes)
+		res := services.MontarResumo(todos, cob, nome, spCtx.TipoPersona, spCtx.CodReferencia,
+			nomes, services.RotuloMes(ano, mes))
+
+		_ = json.NewEncoder(w).Encode(res)
+	}
+}

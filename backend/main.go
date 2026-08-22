@@ -534,6 +534,7 @@ func main() {
 	// veria o corpo do e-mail alheio na resposta.
 	http.HandleFunc("/api/v2/farol/resumo-semanal", withSP(handlers.FarolResumoSemanalHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/resumo-semanal/previa", withSP(handlers.FarolResumoPreviaHTMLHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/dinheiro-na-mesa", withSP(handlers.FarolDinheiroNaMesaHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/industrias", withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/cards", gz(withSP(handlers.FarolV2CardsHandler, "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos", withSP(handlers.FarolV2PeriodosHandler, "gestor_filial"))

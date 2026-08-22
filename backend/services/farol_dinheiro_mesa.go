@@ -55,22 +55,22 @@ func (b Baseline) Rotulo() string {
 
 // RcaMesa — uma linha do ranking.
 type RcaMesa struct {
-	CodGerente    string
-	CodSupervisor string
-	CodRca        string
-	NomeRca       string
+	CodGerente    string `json:"cod_gerente"`
+	CodSupervisor string `json:"cod_supervisor"`
+	CodRca        string `json:"cod_rca"`
+	NomeRca       string `json:"nome_rca"`
 
-	Meta          float64 // alvo do mês, conforme a Baseline escolhida
-	Realizado     float64
-	RitmoEsperado float64
-	DinheiroMesa  float64
-	Atingimento   float64 // realizado / ritmo × 100
-	Faixa         string  // "R" | "Y" | "G"
-	Motivo        string  // "POSITIVACAO" | "MIX" | ""
+	Meta          float64 `json:"meta"` // alvo do mês, conforme a Baseline
+	Realizado     float64 `json:"realizado"`
+	RitmoEsperado float64 `json:"ritmo_esperado"`
+	DinheiroMesa  float64 `json:"dinheiro_mesa"`
+	Atingimento   float64 `json:"atingimento"` // realizado / ritmo × 100
+	Faixa         string  `json:"faixa"`       // "R" | "Y" | "G"
+	Motivo        string  `json:"motivo"`      // "POSITIVACAO" | "MIX" | ""
 
-	Positivados int
-	BaseCli     int
-	Mix         float64
+	Positivados int     `json:"positivados"`
+	BaseCli     int     `json:"base_cli"`
+	Mix         float64 `json:"mix"`
 }
 
 // PositivacaoPct — 0 quando a carteira é desconhecida, não divisão por zero.
@@ -87,12 +87,12 @@ func (r RcaMesa) PositivacaoPct() float64 {
 // que se declara incompleto: o gestor olha os cinco piores e conclui que o
 // resto está bem, quando na verdade metade da equipe não tinha meta cadastrada.
 type Cobertura struct {
-	RcasComVenda   int
-	RcasComMeta    int
-	DiasDecorridos int
-	DiasTotais     int
-	FonteDiasTotal string // "historico" | "calendario"
-	Baseline       Baseline
+	RcasComVenda   int      `json:"rcas_com_venda"`
+	RcasComMeta    int      `json:"rcas_com_meta"`
+	DiasDecorridos int      `json:"dias_decorridos"`
+	DiasTotais     int      `json:"dias_totais"`
+	FonteDiasTotal string   `json:"fonte_dias_total"` // "historico" | "calendario"
+	Baseline       Baseline `json:"baseline"`
 }
 
 // diasUteis — conta os dias a partir do DADO, não do calendário.

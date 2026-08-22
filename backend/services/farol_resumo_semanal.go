@@ -45,33 +45,33 @@ func linkEquipe(param, cod string) string {
 
 // GrupoResumo — um GGV (ou supervisor) na visão de quem recebe.
 type GrupoResumo struct {
-	Cod        string
-	Nome       string
-	Link       string
-	TotalMesa  float64
-	Rcas       int
-	Vermelhos  int
-	PioresRcas []RcaMesa
+	Cod        string    `json:"cod"`
+	Nome       string    `json:"nome"`
+	Link       string    `json:"link"`
+	TotalMesa  float64   `json:"total_mesa"`
+	Rcas       int       `json:"rcas"`
+	Vermelhos  int       `json:"vermelhos"`
+	PioresRcas []RcaMesa `json:"piores_rcas"`
 }
 
 // ResumoUsuario — tudo que o e-mail de uma pessoa precisa.
 type ResumoUsuario struct {
-	Nome       string
-	Persona    string
-	Escopo     string // texto legível: "toda a empresa", "sua equipe"
-	Mes        string
-	Cobertura  Cobertura
-	TotalMesa  float64
-	Realizado  float64 // soma do que o escopo vendeu no mês
-	Ritmo      float64 // soma do que deveria ter vendido a esta altura
-	Vermelho   int
-	Amarelo    int
-	Verde      int
-	Grupos     []GrupoResumo // por GGV (Geral) ou por supervisor (GGV)
-	TopGeral   []RcaMesa
-	RestoRcas  int
-	RestoValor float64
-	LinkPainel string
+	Nome       string        `json:"nome"`
+	Persona    string        `json:"persona"`
+	Escopo     string        `json:"escopo"` // "toda a empresa", "sua equipe"
+	Mes        string        `json:"mes"`
+	Cobertura  Cobertura     `json:"cobertura"`
+	TotalMesa  float64       `json:"total_mesa"`
+	Realizado  float64       `json:"realizado"` // o que o escopo vendeu no mês
+	Ritmo      float64       `json:"ritmo"`     // o que deveria ter vendido
+	Vermelho   int           `json:"vermelho"`
+	Amarelo    int           `json:"amarelo"`
+	Verde      int           `json:"verde"`
+	Grupos     []GrupoResumo `json:"grupos"` // por GGV, ou por supervisor
+	TopGeral   []RcaMesa     `json:"top_geral"`
+	RestoRcas  int           `json:"resto_rcas"`
+	RestoValor float64       `json:"resto_valor"`
+	LinkPainel string        `json:"link_painel"`
 }
 
 // MontarResumo recorta o ranking para uma pessoa e agrupa do jeito que ela lê.

@@ -414,13 +414,23 @@ func generateReformaHTML(d TaxComparisonData) string {
 
 	// Compute bar widths (relative to the largest value)
 	maxVal := d.IcmsAPagar
-	if d.IbsProjetado > maxVal { maxVal = d.IbsProjetado }
-	if d.CbsProjetado > maxVal { maxVal = d.CbsProjetado }
-	if ibsCbsTotal > maxVal { maxVal = ibsCbsTotal }
-	if maxVal == 0 { maxVal = 1 }
+	if d.IbsProjetado > maxVal {
+		maxVal = d.IbsProjetado
+	}
+	if d.CbsProjetado > maxVal {
+		maxVal = d.CbsProjetado
+	}
+	if ibsCbsTotal > maxVal {
+		maxVal = ibsCbsTotal
+	}
+	if maxVal == 0 {
+		maxVal = 1
+	}
 	barPct := func(v float64) int {
 		p := int(v / maxVal * 100)
-		if v > 0 && p < 3 { return 3 }
+		if v > 0 && p < 3 {
+			return 3
+		}
 		return p
 	}
 
@@ -428,12 +438,15 @@ func generateReformaHTML(d TaxComparisonData) string {
 	sb.WriteString(`<div class="sec"><div class="sec-title">Reforma Tribut&aacute;ria &mdash; Proje&ccedil;&atilde;o 2033</div>`)
 
 	// HTML bar chart (table-based, works in all email clients)
-	type barRow struct { label, color, tipo string; val float64 }
+	type barRow struct {
+		label, color, tipo string
+		val                float64
+	}
 	rows := []barRow{
-		{"ICMS (atual)",   "#3B82F6", "Regime atual",              d.IcmsAPagar},
-		{"IBS Projetado",  "#10B981", "Novo imposto (2033)",       d.IbsProjetado},
-		{"CBS Projetado",  "#F59E0B", "Novo imposto (2033)",       d.CbsProjetado},
-		{"IBS + CBS",      "#8B5CF6", "Substituir&aacute; ICMS+PIS/COFINS", ibsCbsTotal},
+		{"ICMS (atual)", "#3B82F6", "Regime atual", d.IcmsAPagar},
+		{"IBS Projetado", "#10B981", "Novo imposto (2033)", d.IbsProjetado},
+		{"CBS Projetado", "#F59E0B", "Novo imposto (2033)", d.CbsProjetado},
+		{"IBS + CBS", "#8B5CF6", "Substituir&aacute; ICMS+PIS/COFINS", ibsCbsTotal},
 	}
 	sb.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 16px">`)
 	for _, r := range rows {
