@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -531,4 +532,78 @@ func EnviarResumoSemanal(db *sql.DB, empresaID string, ano, mes int, ate time.Ti
 // b64Assunto — RFC 2047. Sem isso, acento no assunto vira lixo em vários clientes.
 func b64Assunto(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// ─── Worker ──────────────────────────────────────────────────────────────────
+
+// StartResumoSemanalFarol — dispara o resumo na segunda de manhã.
+//
+// Tick de hora em hora em vez de dormir até a próxima segunda: se o container
+// reiniciar às 7h30 de uma segunda, um sleep longo perderia a semana inteira em
+// silêncio. Com o tick, o próximo acorda às 8h e manda.
+//
+// A idempotência não depende do horário e sim do UNIQUE (user_id, semana) do
+// log: rodar cinco vezes na mesma segunda envia uma vez só.
+//
+// Janela das 7h às 9h (BRT): antes disso a carga diária das 04:30 ainda pode
+// estar consolidando agregados — o resumo sairia sobre número parcial.
+func StartResumoSemanalFarol(getDB func() *sql.DB) {
+	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
+	if empresaID == "" {
+		log.Printf("[farol:resumo] worker desativado — JC_EMPRESA_ID ausente")
+		return
+	}
+	go func() {
+		log.Printf("[farol:resumo] worker ativo — segunda-feira entre 07h e 09h (America/Sao_Paulo)")
+		time.Sleep(90 * time.Second) // deixa migrations e prewarm respirarem
+		t := time.NewTicker(1 * time.Hour)
+		defer t.Stop()
+
+		rodar := func() {
+			db := getDB()
+			if db == nil {
+				return
+			}
+			loc := tzBrasilResumo()
+			agora := time.Now().In(loc)
+			if agora.Weekday() != time.Monday || agora.Hour() < 7 || agora.Hour() >= 9 {
+				return
+			}
+			// Ontem = domingo. O mês corrente é o que interessa; na virada de
+			// mês a segunda cai no mês novo com pouquíssimo dado, e o resumo
+			// sai pequeno em vez de errado.
+			ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+			res, err := EnviarResumoSemanal(db, empresaID, agora.Year(), int(agora.Month()),
+				ate, BaselineAnoAnterior, false, false)
+			if err != nil {
+				log.Printf("[farol:resumo] worker FALHOU: %v", err)
+				return
+			}
+			env, pul := 0, 0
+			for _, x := range res {
+				if x.Enviado {
+					env++
+				} else if x.Pulado != "" {
+					pul++
+				}
+			}
+			if env > 0 || pul < len(res) {
+				log.Printf("[farol:resumo] worker: %d destinatário(s), %d enviado(s), %d pulado(s)",
+					len(res), env, pul)
+			}
+		}
+
+		rodar()
+		for range t.C {
+			rodar()
+		}
+	}()
+}
+
+func tzBrasilResumo() *time.Location {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		return time.FixedZone("BRT", -3*3600)
+	}
+	return loc
 }

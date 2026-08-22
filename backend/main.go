@@ -309,6 +309,7 @@ func main() {
 	initDBAsync()
 	go services.StartCSVWorker(getDB)
 	services.StartResumoWorker(getDB)
+	services.StartResumoSemanalFarol(getDB)
 
 	port := os.Getenv("PORT")
 	if port == "" {
