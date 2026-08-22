@@ -635,10 +635,19 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 		// Get User
 		var user User
 		var hash string
+		// E-mail SEM diferenciar maiúscula. Em 22/08/2026 o diretor foi
+		// cadastrado como "Edinardo.magalhaes@..." e a comparação exata o
+		// deixaria de fora: digitando tudo minúsculo, como qualquer pessoa faz,
+		// ele receberia "e-mail ou senha inválidos" na conta dele mesmo.
+		//
+		// A migration 206 normaliza o que já está gravado e cria índice único
+		// sobre lower(email); esta condição é o que faz o login funcionar para
+		// quem foi cadastrado antes dela.
+		//
 		// Use COALESCE for role and trial_ends_at to handle NULLs safely
 		err := db.QueryRow(`
 			SELECT id, email, full_name, password_hash, is_verified, COALESCE(trial_ends_at, NOW()), COALESCE(role, 'user'), created_at
-			FROM users WHERE email = $1
+			FROM users WHERE lower(email) = lower($1)
 		`, req.Email).Scan(&user.ID, &user.Email, &user.FullName, &hash, &user.IsVerified, &user.TrialEndsAt, &user.Role, &user.CreatedAt)
 
 		if err == sql.ErrNoRows {
@@ -840,7 +849,11 @@ func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var userID string
-		err := db.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&userID)
+		// lower() dos dois lados, igual ao login. Sem isto, quem foi cadastrado
+		// com maiúscula não consegue nem entrar nem recuperar a senha — e o
+		// fluxo de recuperação devolve sucesso vago de propósito, então a
+		// pessoa fica esperando um e-mail que nunca sai.
+		err := db.QueryRow("SELECT id FROM users WHERE lower(email) = lower($1)", req.Email).Scan(&userID)
 		if err == sql.ErrNoRows {
 			// Return vague success to prevent email enumeration
 			w.Header().Set("Content-Type", "application/json")
