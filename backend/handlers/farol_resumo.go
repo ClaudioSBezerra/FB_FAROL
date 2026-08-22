@@ -226,22 +226,17 @@ func FarolDinheiroNaMesaHandler(db *sql.DB) http.HandlerFunc {
 		}
 		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
 
-		todos, cob, err := services.ColetarDinheiroNaMesa(db, spCtx.EmpresaID, ano, mes, ate,
-			services.BaselineAnoAnterior)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
-			return
-		}
-
 		var nome string
 		if db.QueryRow(`SELECT COALESCE(NULLIF(full_name,''), email) FROM users WHERE id=$1`,
 			spCtx.UserID).Scan(&nome) != nil {
 			nome = ""
 		}
-		nomes := services.NomesGerentesSupervisores(db, spCtx.EmpresaID, ano, mes)
-		res := services.MontarResumo(todos, cob, nome, spCtx.TipoPersona, spCtx.CodReferencia,
-			nomes, services.RotuloMes(ano, mes))
-
+		res, err := services.MontarComAno(db, spCtx.EmpresaID, nome,
+			spCtx.TipoPersona, spCtx.CodReferencia, ano, mes, ate, services.BaselineAnoAnterior)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(res)
 	}
 }
@@ -286,15 +281,12 @@ func FarolQuadroPublicoHandler(db *sql.DB) http.HandlerFunc {
 		agora := time.Now().In(loc)
 		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
 
-		todos, cob, err := services.ColetarDinheiroNaMesa(db, empresaID,
+		res, err := services.MontarComAno(db, empresaID, nome, persona, codRef,
 			agora.Year(), int(agora.Month()), ate, services.BaselineAnoAnterior)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
-		nomes := services.NomesGerentesSupervisores(db, empresaID, agora.Year(), int(agora.Month()))
-		res := services.MontarResumo(todos, cob, nome, persona, codRef, nomes,
-			services.RotuloMes(agora.Year(), int(agora.Month())))
 
 		// O link do painel sai da resposta: ele exige login, e um botão que
 		// leva à tela de senha em cima de um link "que não pede senha" só gera

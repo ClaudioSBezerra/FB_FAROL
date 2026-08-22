@@ -12,7 +12,7 @@
 // no celular, muitas vezes fora do escritório, e compete com a atenção de um
 // aplicativo de mensagem. Fundo escuro com um número grande em âmbar tem outra
 // presença nesse contexto. As telas de trabalho continuam claras.
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 
@@ -49,6 +49,19 @@ interface Resumo {
   top_geral: RcaMesa[] | null
   resto_rcas: number
   resto_valor: number
+  ano?: {
+    rotulo: string
+    realizado: number
+    alvo: number
+    total_mesa: number
+    vermelho: number
+    amarelo: number
+    verde: number
+    grupos: Grupo[] | null
+    top_geral: RcaMesa[] | null
+    resto_rcas: number
+    resto_valor: number
+  } | null
   cobertura: {
     rcas_com_venda: number
     rcas_com_meta: number
@@ -92,6 +105,7 @@ export default function FarolDinheiroNaMesa() {
   // parâmetro, porque não existe parâmetro de escopo.
   const { token } = useParams<{ token?: string }>()
   const publico = !!token
+  const [periodo, setPeriodo] = useState<'mes' | 'ano'>('mes')
 
   const q = useQuery<Resumo>({
     queryKey: ['farol-dinheiro-na-mesa', token ?? 'sessao'],
@@ -124,8 +138,24 @@ export default function FarolDinheiroNaMesa() {
   }
 
   const d = q.data
-  const grupos = d.grupos ?? []
-  const top = d.top_geral ?? []
+
+  // Uma vista só, alimentada pelo mês ou pelo ano. Sem isto o corpo da página
+  // teria dois caminhos paralelos, e a primeira mudança de layout esqueceria um
+  // deles.
+  const ano = d.ano ?? null
+  const verAno = periodo === 'ano' && !!ano
+  const vista = verAno && ano
+    ? { rotulo: ano.rotulo, realizado: ano.realizado, ritmo: ano.alvo,
+        total_mesa: ano.total_mesa, vermelho: ano.vermelho, amarelo: ano.amarelo,
+        verde: ano.verde, grupos: ano.grupos ?? [], top: ano.top_geral ?? [],
+        resto_rcas: ano.resto_rcas, resto_valor: ano.resto_valor }
+    : { rotulo: d.mes, realizado: d.realizado, ritmo: d.ritmo,
+        total_mesa: d.total_mesa, vermelho: d.vermelho, amarelo: d.amarelo,
+        verde: d.verde, grupos: d.grupos ?? [], top: d.top_geral ?? [],
+        resto_rcas: d.resto_rcas, resto_valor: d.resto_valor }
+
+  const grupos = vista.grupos
+  const top = vista.top
   const maiorGrupo = grupos.reduce((m, g) => Math.max(m, g.total_mesa), 0)
   const maiorRca = top.reduce((m, x) => Math.max(m, x.dinheiro_mesa), 0)
 
@@ -133,12 +163,13 @@ export default function FarolDinheiroNaMesa() {
   // esperado até hoje, e a barra de progresso precisa do total para mostrar
   // onde a equipe está no mês, não só contra a fração decorrida.
   const { dias_decorridos: dd, dias_totais: dt } = d.cobertura
-  const alvoMes = dd > 0 ? (d.ritmo * dt) / dd : 0
-  const pctMes = alvoMes > 0 ? (d.realizado / alvoMes) * 100 : 0
-  const pctRitmo = d.ritmo > 0 ? (d.realizado / d.ritmo) * 100 : 0
-  const saldo = d.realizado - d.ritmo
+  // No ano fechado o alvo JÁ é cheio — não há mês pela metade para ratear.
+  const alvoMes = verAno ? vista.ritmo : (dd > 0 ? (d.ritmo * dt) / dd : 0)
+  const pctMes = alvoMes > 0 ? (vista.realizado / alvoMes) * 100 : 0
+  const pctRitmo = vista.ritmo > 0 ? (vista.realizado / vista.ritmo) * 100 : 0
+  const saldo = vista.realizado - vista.ritmo
   const acima = saldo >= 0
-  const marcaEsperada = dt > 0 ? (dd / dt) * 100 : 0
+  const marcaEsperada = verAno ? 100 : (dt > 0 ? (dd / dt) * 100 : 0)
 
   return (
     <div style={{ background: '#0E1621', minHeight: '100vh', color: '#EAF0F5',
@@ -158,19 +189,61 @@ export default function FarolDinheiroNaMesa() {
           </div>
           <div style={{ textAlign: 'right', fontSize: 12.5, color: '#8195A6', lineHeight: 1.5 }}>
             <b style={{ color: '#EAF0F5' }}>{d.nome}</b><br />
-            {d.escopo} · {d.mes} · {d.cobertura.rcas_com_meta} RCAs
+            {d.escopo} · {vista.rotulo}
           </div>
         </div>
+
+        {/* ── comparativo mês × ano ──
+            Os dois lado a lado antes de qualquer detalhe. O mês responde "como
+            estamos agora"; o ano, "como está o acumulado". Vistos separados em
+            telas diferentes, viram duas conversas; juntos, viram uma. */}
+        {ano && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))',
+                        gap: 1, background: '#26343F', border: '1px solid #26343F',
+                        borderRadius: 14, overflow: 'hidden', marginBottom: 30 }}>
+            {[
+              { id: 'mes' as const, rot: d.mes, real: d.realizado, alvo: d.ritmo,
+                mesa: d.total_mesa, nota: `${dd} de ${dt} dias úteis` },
+              { id: 'ano' as const, rot: ano.rotulo, real: ano.realizado, alvo: ano.alvo,
+                mesa: ano.total_mesa, nota: 'meses fechados' },
+            ].map(c => {
+              const pct = c.alvo > 0 ? (c.real / c.alvo) * 100 : 0
+              const ativo = periodo === c.id
+              return (
+                <button key={c.id} onClick={() => setPeriodo(c.id)}
+                        style={{ background: ativo ? '#1B2836' : '#15202D', border: 0,
+                                 borderTop: `3px solid ${ativo ? '#E8A33D' : 'transparent'}`,
+                                 padding: '18px 20px', textAlign: 'left', cursor: 'pointer',
+                                 color: 'inherit', font: 'inherit' }}>
+                  <div style={{ ...display, fontWeight: 700, fontSize: 11, letterSpacing: 1.5,
+                                textTransform: 'uppercase',
+                                color: ativo ? '#E8A33D' : '#5E7080' }}>{c.rot}</div>
+                  <div style={{ ...mono, fontWeight: 600, fontSize: 22, marginTop: 8 }}>
+                    R$ {brl(c.mesa)}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#8195A6', marginTop: 4 }}>
+                    na mesa · <b style={{ color: pct >= 100 ? '#3DC98B' : '#E5544B' }}>
+                      {pct.toFixed(0)}%
+                    </b> do alvo
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#5E7080', marginTop: 6 }}>
+                    R$ {brl(c.real)} de R$ {brl(c.alvo)} · {c.nota}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {/* ── herói ── */}
         <div style={{ ...display, fontWeight: 700, letterSpacing: '2.5px', fontSize: 12,
                       color: '#E8A33D', textTransform: 'uppercase', marginBottom: 14 }}>
-          Deixado de faturar · mês corrente
+          Deixado de faturar · {vista.rotulo}
         </div>
         <div style={{ ...mono, fontWeight: 600, fontSize: 'clamp(40px,11vw,104px)',
                       lineHeight: .92, letterSpacing: '-1px', wordBreak: 'break-word' }}>
           <span style={{ color: '#E8A33D', fontSize: '.42em', verticalAlign: '.28em', marginRight: '.12em' }}>R$</span>
-          {brl(d.total_mesa)}
+          {brl(vista.total_mesa)}
         </div>
         <div style={{ height: 4, borderRadius: 3, marginTop: 18,
                       background: 'linear-gradient(90deg,#E8A33D,rgba(232,163,61,0))',
@@ -181,7 +254,7 @@ export default function FarolDinheiroNaMesa() {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#15202D',
                          border: '1px solid #26343F', borderRadius: 100, padding: '5px 13px', fontSize: 12.5 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#E5544B' }} />
-            {d.vermelho} RCAs abaixo de 70%
+            {vista.vermelho} RCAs abaixo de 70%
           </span>
         </div>
 
@@ -192,8 +265,8 @@ export default function FarolDinheiroNaMesa() {
         <div style={{ margin: '30px 0 40px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
                         marginBottom: 9, fontSize: 13, color: '#8195A6', gap: 12, flexWrap: 'wrap' }}>
-            <span>Realizado <b style={{ color: '#EAF0F5' }}>R$ {brl(d.realizado)}</b> de <b style={{ color: '#EAF0F5' }}>R$ {brl(alvoMes)}</b></span>
-            <span><b style={{ color: acima ? '#3DC98B' : '#E5544B' }}>{pctRitmo.toFixed(0)}%</b> do ritmo · {dd} de {dt} dias úteis</span>
+            <span>Realizado <b style={{ color: '#EAF0F5' }}>R$ {brl(vista.realizado)}</b> de <b style={{ color: '#EAF0F5' }}>R$ {brl(alvoMes)}</b></span>
+            <span><b style={{ color: acima ? '#3DC98B' : '#E5544B' }}>{pctRitmo.toFixed(0)}%</b> do {verAno ? 'alvo' : 'ritmo'}{!verAno && ` · ${dd} de ${dt} dias úteis`}</span>
           </div>
           <div style={{ height: 12, background: '#15202D', border: '1px solid #26343F',
                         borderRadius: 100, overflow: 'hidden', position: 'relative' }}>
@@ -203,7 +276,7 @@ export default function FarolDinheiroNaMesa() {
                           left: `${Math.min(100, marcaEsperada)}%`, opacity: .55 }} />
           </div>
           <div style={{ fontSize: 12.5, color: '#5E7080', marginTop: 8 }}>
-            A marca âmbar é onde a equipe deveria estar hoje. {acima
+            {verAno ? 'Meses fechados: alvo cheio, sem rateio de dias. ' : 'A marca âmbar é onde a equipe deveria estar hoje. '}{acima
               ? `Está R$ ${brl(Math.abs(saldo))} à frente.`
               : `Faltam R$ ${brl(Math.abs(saldo))} para alcançá-la.`}
           </div>
@@ -296,16 +369,16 @@ export default function FarolDinheiroNaMesa() {
               })}
             </div>
 
-            {d.resto_rcas > 0 && (
+            {vista.resto_rcas > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                             gap: 12, marginTop: 14, padding: '15px 18px', border: '1px dashed #26343F',
                             borderRadius: 12, color: '#8195A6', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 13.5 }}>
-                  + <b style={{ color: '#EAF0F5' }}>{d.resto_rcas} RCAs</b> abaixo do ritmo,
+                  + <b style={{ color: '#EAF0F5' }}>{vista.resto_rcas} RCAs</b> abaixo do ritmo,
                   individualmente menores — detalhe no painel completo
                 </span>
                 <span style={{ ...mono, fontWeight: 600, color: '#EAF0F5', fontSize: 15 }}>
-                  R$ {brl(d.resto_valor)}
+                  R$ {brl(vista.resto_valor)}
                 </span>
               </div>
             )}
@@ -317,9 +390,9 @@ export default function FarolDinheiroNaMesa() {
                       gap: 1, background: '#26343F', border: '1px solid #26343F',
                       borderRadius: 14, overflow: 'hidden', marginTop: 36 }}>
           {[
-            { n: d.vermelho, cor: '#E5544B', lbl: 'Vermelho · abaixo de 70% do ritmo' },
-            { n: d.amarelo,  cor: '#E8C13D', lbl: 'Amarelo · entre 70% e 90%' },
-            { n: d.verde,    cor: '#3DC98B', lbl: 'Verde · no ritmo ou acima' },
+            { n: vista.vermelho, cor: '#E5544B', lbl: 'Vermelho · abaixo de 70% do ritmo' },
+            { n: vista.amarelo,  cor: '#E8C13D', lbl: 'Amarelo · entre 70% e 90%' },
+            { n: vista.verde,    cor: '#3DC98B', lbl: 'Verde · no ritmo ou acima' },
           ].map(s => (
             <div key={s.lbl} style={{ background: '#15202D', padding: '18px 20px' }}>
               <div style={{ ...mono, fontWeight: 600, fontSize: 30, color: s.cor }}>{s.n}</div>

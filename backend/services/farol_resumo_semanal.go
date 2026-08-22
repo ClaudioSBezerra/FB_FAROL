@@ -76,6 +76,95 @@ type ResumoUsuario struct {
 	RestoValor float64       `json:"resto_valor"`
 	LinkPainel string        `json:"link_painel"`
 	LinkQuadro string        `json:"link_quadro"`
+
+	// Ano fechado — janeiro até o último mês COMPLETO. Nulo em janeiro, quando
+	// ainda não existe mês fechado. Fica separado do mês corrente de propósito:
+	// juntar um mês pela metade no acumulado faria o número do ano dizer mais
+	// sobre o dia em que se olhou do que sobre a operação.
+	Ano *BlocoPeriodo `json:"ano,omitempty"`
+}
+
+// BlocoPeriodo — o mesmo quadro para um recorte de meses fechados.
+type BlocoPeriodo struct {
+	Rotulo     string        `json:"rotulo"`
+	Realizado  float64       `json:"realizado"`
+	Alvo       float64       `json:"alvo"`
+	TotalMesa  float64       `json:"total_mesa"`
+	Vermelho   int           `json:"vermelho"`
+	Amarelo    int           `json:"amarelo"`
+	Verde      int           `json:"verde"`
+	Grupos     []GrupoResumo `json:"grupos"`
+	TopGeral   []RcaMesa     `json:"top_geral"`
+	RestoRcas  int           `json:"resto_rcas"`
+	RestoValor float64       `json:"resto_valor"`
+}
+
+// MontarBloco recorta e agrupa um período fechado, com a mesma lógica do mês.
+func MontarBloco(todos []RcaMesa, persona, codRef, rotulo string,
+	nomes map[string]string) *BlocoPeriodo {
+
+	rs := FiltrarEscopo(todos, persona, codRef)
+	if len(rs) == 0 {
+		return nil
+	}
+	b := &BlocoPeriodo{Rotulo: rotulo, TotalMesa: TotalNaMesa(rs)}
+	b.Vermelho, b.Amarelo, b.Verde = ContarFaixas(rs)
+	for _, x := range rs {
+		b.Realizado += x.Realizado
+		b.Alvo += x.RitmoEsperado
+	}
+
+	var chave func(RcaMesa) string
+	var param string
+	switch persona {
+	case "ggv":
+		chave, param = func(x RcaMesa) string { return x.CodSupervisor }, "supervisor"
+	case "supervisor":
+	default:
+		chave, param = func(x RcaMesa) string { return x.CodGerente }, "gerente"
+	}
+	if chave != nil {
+		idx := map[string]*GrupoResumo{}
+		var ordem []string
+		for _, x := range rs {
+			k := chave(x)
+			g := idx[k]
+			if g == nil {
+				nm := nomes[k]
+				if nm == "" {
+					nm = k
+				}
+				g = &GrupoResumo{Cod: k, Nome: nm, Link: linkEquipe(param, k)}
+				idx[k] = g
+				ordem = append(ordem, k)
+			}
+			g.TotalMesa += x.DinheiroMesa
+			g.Rcas++
+			if x.Faixa == "R" {
+				g.Vermelhos++
+			}
+		}
+		for _, k := range ordem {
+			b.Grupos = append(b.Grupos, *idx[k])
+		}
+		for i := 1; i < len(b.Grupos); i++ {
+			for j := i; j > 0 && b.Grupos[j].TotalMesa > b.Grupos[j-1].TotalMesa; j-- {
+				b.Grupos[j], b.Grupos[j-1] = b.Grupos[j-1], b.Grupos[j]
+			}
+		}
+	}
+	for _, x := range rs {
+		if x.DinheiroMesa <= 0 {
+			continue
+		}
+		if len(b.TopGeral) < TopN {
+			b.TopGeral = append(b.TopGeral, x)
+			continue
+		}
+		b.RestoRcas++
+		b.RestoValor += x.DinheiroMesa
+	}
+	return b
 }
 
 // MontarResumo recorta o ranking para uma pessoa e agrupa do jeito que ela lê.
@@ -688,4 +777,32 @@ func ResolverTokenQuadro(db *sql.DB, token string) (userID, nome, persona, codRe
 // LinkQuadroToken — a URL que vai no e-mail e no WhatsApp.
 func LinkQuadroToken(token string) string {
 	return baseURLFarol() + "/q/" + token
+}
+
+// MontarComAno monta o mês corrente e anexa o ano fechado.
+//
+// Existe para os três lugares que precisam do quadro — página autenticada,
+// página por token e e-mail — usarem exatamente a mesma composição. Duplicar
+// isso seria criar três verdades que divergem na primeira alteração.
+func MontarComAno(db *sql.DB, empresaID, nome, persona, codRef string,
+	ano, mes int, ate time.Time, base Baseline) (ResumoUsuario, error) {
+
+	todos, cob, err := ColetarDinheiroNaMesa(db, empresaID, ano, mes, ate, base)
+	if err != nil {
+		return ResumoUsuario{}, err
+	}
+	nomes := NomesGerentesSupervisores(db, empresaID, ano, mes)
+	r := MontarResumo(todos, cob, nome, persona, codRef, nomes, RotuloMes(ano, mes))
+
+	if fim := UltimoMesFechado(mes); fim >= 1 {
+		anoRs, _, err := ColetarPeriodoFechado(db, empresaID, ano, 1, fim, base)
+		if err == nil {
+			rot := fmt.Sprintf("%s a %s de %d", mesPtBR[1], mesPtBR[fim], ano)
+			if fim == 1 {
+				rot = fmt.Sprintf("%s de %d", mesPtBR[1], ano)
+			}
+			r.Ano = MontarBloco(anoRs, persona, codRef, rot, nomes)
+		}
+	}
+	return r, nil
 }

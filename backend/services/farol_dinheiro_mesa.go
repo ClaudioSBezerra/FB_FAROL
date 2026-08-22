@@ -374,3 +374,102 @@ func ContarFaixas(rs []RcaMesa) (vermelho, amarelo, verde int) {
 	}
 	return
 }
+
+// ─── Ano fechado ─────────────────────────────────────────────────────────────
+
+// ColetarPeriodoFechado — o mesmo cálculo sobre um intervalo de meses INTEIROS.
+//
+// Aqui não há rateio de dias úteis, e essa é a diferença que importa: mês
+// fechado tem alvo cheio. Ratear um mês que já acabou inventaria uma folga que
+// não existe — se julho terminou, o alvo de julho era o de julho inteiro.
+//
+// Por isso o ano vai só até o último mês COMPLETO (decisão de 22/08/2026).
+// Incluir agosto pela metade inflaria o gap do ano, porque o mês corrente
+// sempre parece atrasado — e o número do ano passaria a dizer mais sobre o dia
+// do mês em que se olhou do que sobre a operação.
+func ColetarPeriodoFechado(db *sql.DB, empresaID string, ano, mesIni, mesFim int,
+	base Baseline) ([]RcaMesa, Cobertura, error) {
+
+	cob := Cobertura{Baseline: base}
+	if mesFim < mesIni {
+		return nil, cob, nil // ainda não há mês fechado no ano
+	}
+
+	alvo := `
+	    SELECT cod_rca, SUM(vl_corrente) AS meta
+	      FROM objetivos_importados
+	     WHERE empresa_id=$1 AND tipo_periodo='MENSAL'
+	       AND ano=$2 AND periodo_seq BETWEEN $3 AND $4
+	     GROUP BY cod_rca`
+	join := `ON m.cod_rca = NULLIF(regexp_replace(a.cod_rca, '[^0-9]', '', 'g'), '')::int`
+
+	if base == BaselineAnoAnterior {
+		alvo = `
+	    SELECT cod_rca::text AS cod_rca, SUM(liquido) AS meta
+	      FROM farol.agg_fat_v04_l0_mes
+	     WHERE empresa_id=$1 AND ano=$2-1 AND mes BETWEEN $3 AND $4
+	     GROUP BY cod_rca`
+		join = `ON m.cod_rca = a.cod_rca`
+	}
+
+	rows, err := db.Query(fmt.Sprintf(`
+		WITH meta AS (%s),
+		dono AS (
+		    SELECT DISTINCT ON (cod_rca) cod_rca, cod_gerente, cod_supervisor
+		      FROM farol.agg_fat_v03_l2_mes
+		     WHERE empresa_id=$1 AND ano=$2 AND mes BETWEEN $3 AND $4 AND cod_rca <> ''
+		     ORDER BY cod_rca, liquido DESC
+		),
+		real AS (
+		    SELECT cod_rca, MAX(nome_rca) AS nome_rca, SUM(liquido) AS liquido
+		      FROM farol.agg_fat_v04_l0_mes
+		     WHERE empresa_id=$1 AND ano=$2 AND mes BETWEEN $3 AND $4 AND cod_rca <> ''
+		       AND nome_rca NOT ILIKE '%%INATIVO%%' AND nome_rca NOT ILIKE '%%SAIU%%'
+		     GROUP BY cod_rca
+		)
+		SELECT COALESCE(d.cod_gerente,''), COALESCE(d.cod_supervisor,''),
+		       a.cod_rca, a.nome_rca, COALESCE(m.meta,0)::float8, a.liquido::float8
+		  FROM real a
+		  LEFT JOIN meta m %s
+		  LEFT JOIN dono d ON d.cod_rca = a.cod_rca`, alvo, join),
+		empresaID, ano, mesIni, mesFim)
+	if err != nil {
+		return nil, cob, fmt.Errorf("consultar período fechado: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RcaMesa
+	for rows.Next() {
+		var r RcaMesa
+		if rows.Scan(&r.CodGerente, &r.CodSupervisor, &r.CodRca, &r.NomeRca,
+			&r.Meta, &r.Realizado) != nil {
+			continue
+		}
+		cob.RcasComVenda++
+		if r.Meta <= 0 {
+			continue
+		}
+		cob.RcasComMeta++
+
+		r.RitmoEsperado = r.Meta // mês fechado: alvo cheio, sem rateio
+		r.Atingimento = r.Realizado / r.Meta * 100
+		if r.DinheiroMesa = r.Meta - r.Realizado; r.DinheiroMesa < 0 {
+			r.DinheiroMesa = 0
+		}
+		switch {
+		case r.Atingimento < 70:
+			r.Faixa = "R"
+		case r.Atingimento < 90:
+			r.Faixa = "Y"
+		default:
+			r.Faixa = "G"
+		}
+		out = append(out, r)
+	}
+	ordenarPorMesa(out)
+	return out, cob, nil
+}
+
+// UltimoMesFechado — o mês anterior ao corrente. Zero em janeiro, quando ainda
+// não há mês completo no ano.
+func UltimoMesFechado(mesCorrente int) int { return mesCorrente - 1 }
