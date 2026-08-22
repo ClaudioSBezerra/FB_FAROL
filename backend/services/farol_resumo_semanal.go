@@ -16,6 +16,7 @@ import (
 	"html"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -703,47 +704,60 @@ func b64Assunto(s string) string {
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
-// StartResumoSemanalFarol — dispara o resumo na segunda de manhã.
+// StartResumoSemanalFarol — dispara o resumo na segunda às 08:00.
 //
-// Tick de hora em hora em vez de dormir até a próxima segunda: se o container
-// reiniciar às 7h30 de uma segunda, um sleep longo perderia a semana inteira em
-// silêncio. Com o tick, o próximo acorda às 8h e manda.
+// Horário CRAVADO, não janela: dorme até a próxima ocorrência e acorda nela.
+// Um tique de hora em hora daria 08:01 ou 08:37 conforme o momento em que o
+// container subiu, e horário de e-mail que chega ao dono da empresa não deve
+// depender de quando foi o último deploy.
 //
-// A idempotência não depende do horário e sim do UNIQUE (user_id, semana) do
-// log: rodar cinco vezes na mesma segunda envia uma vez só.
+// A RECUPERAÇÃO resolve o problema que o tique resolvia de graça: se o
+// container reiniciar às 8h30 de uma segunda, dormir até a próxima ocorrência
+// perderia a semana inteira em silêncio. Por isso, ao subir, se já é segunda e
+// passou da hora, dispara na hora — o UNIQUE (user_id, semana) do log garante
+// que quem já recebeu não receba de novo.
 //
-// Janela das 7h às 9h (BRT): antes disso a carga diária das 04:30 ainda pode
-// estar consolidando agregados — o resumo sairia sobre número parcial.
+// Env: FAROL_RESUMO_DIA (0=domingo..6=sábado, default 1) e FAROL_RESUMO_HORA
+// (HH:MM, default 08:00). Mudar o horário passa a exigir só um restart.
 func StartResumoSemanalFarol(getDB func() *sql.DB) {
 	empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
 	if empresaID == "" {
 		log.Printf("[farol:resumo] worker desativado — JC_EMPRESA_ID ausente")
 		return
 	}
-	go func() {
-		log.Printf("[farol:resumo] worker ativo — segunda-feira entre 07h e 09h (America/Sao_Paulo)")
-		time.Sleep(90 * time.Second) // deixa migrations e prewarm respirarem
-		t := time.NewTicker(1 * time.Hour)
-		defer t.Stop()
 
-		rodar := func() {
+	dia := time.Monday
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FAROL_RESUMO_DIA"))); err == nil && v >= 0 && v <= 6 {
+		dia = time.Weekday(v)
+	}
+	hora, minuto := 8, 0
+	if v := strings.TrimSpace(os.Getenv("FAROL_RESUMO_HORA")); v != "" {
+		var h, m int
+		if _, err := fmt.Sscanf(v, "%d:%d", &h, &m); err == nil &&
+			h >= 0 && h <= 23 && m >= 0 && m <= 59 {
+			hora, minuto = h, m
+		} else {
+			log.Printf("[farol:resumo] FAROL_RESUMO_HORA=%q inválido, usando %02d:%02d", v, hora, minuto)
+		}
+	}
+
+	go func() {
+		loc := tzBrasilResumo()
+		log.Printf("[farol:resumo] worker ativo — %s às %02d:%02d (%s)",
+			diaSemanaPtBR(dia), hora, minuto, loc)
+		time.Sleep(90 * time.Second) // deixa migrations e prewarm respirarem
+
+		disparar := func(motivo string) {
 			db := getDB()
 			if db == nil {
 				return
 			}
-			loc := tzBrasilResumo()
 			agora := time.Now().In(loc)
-			if agora.Weekday() != time.Monday || agora.Hour() < 7 || agora.Hour() >= 9 {
-				return
-			}
-			// Ontem = domingo. O mês corrente é o que interessa; na virada de
-			// mês a segunda cai no mês novo com pouquíssimo dado, e o resumo
-			// sai pequeno em vez de errado.
 			ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
 			res, err := EnviarResumoSemanal(db, empresaID, agora.Year(), int(agora.Month()),
 				ate, BaselineAnoAnterior, false, false)
 			if err != nil {
-				log.Printf("[farol:resumo] worker FALHOU: %v", err)
+				log.Printf("[farol:resumo] %s FALHOU: %v", motivo, err)
 				return
 			}
 			env, pul := 0, 0
@@ -754,18 +768,36 @@ func StartResumoSemanalFarol(getDB func() *sql.DB) {
 					pul++
 				}
 			}
-			if env > 0 || pul < len(res) {
-				log.Printf("[farol:resumo] worker: %d destinatário(s), %d enviado(s), %d pulado(s)",
-					len(res), env, pul)
-			}
+			log.Printf("[farol:resumo] %s: %d destinatário(s), %d enviado(s), %d pulado(s)",
+				motivo, len(res), env, pul)
 		}
 
-		rodar()
-		for range t.C {
-			rodar()
+		// Recuperação de reinício: já é o dia certo e a hora passou.
+		if agora := time.Now().In(loc); agora.Weekday() == dia &&
+			(agora.Hour() > hora || (agora.Hour() == hora && agora.Minute() >= minuto)) {
+			disparar("recuperação após reinício")
+		}
+
+		for {
+			agora := time.Now().In(loc)
+			prox := time.Date(agora.Year(), agora.Month(), agora.Day(), hora, minuto, 0, 0, loc)
+			delta := (int(dia) - int(agora.Weekday()) + 7) % 7
+			prox = prox.AddDate(0, 0, delta)
+			if !prox.After(agora) {
+				prox = prox.AddDate(0, 0, 7)
+			}
+			log.Printf("[farol:resumo] próxima execução %s (em %s)",
+				prox.Format("2006-01-02 15:04"), time.Until(prox).Truncate(time.Minute))
+			time.Sleep(time.Until(prox))
+			disparar("envio semanal")
 		}
 	}()
 }
+
+var diasPtBR = [...]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira",
+	"quinta-feira", "sexta-feira", "sábado"}
+
+func diaSemanaPtBR(d time.Weekday) string { return diasPtBR[int(d)] }
 
 func tzBrasilResumo() *time.Location {
 	loc, err := time.LoadLocation("America/Sao_Paulo")
