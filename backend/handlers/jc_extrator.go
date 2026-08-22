@@ -178,7 +178,7 @@ func valorCSV(v any) string {
 
 // ExtrairDiaJC — atalho para um dia só (carga diária).
 func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao) (string, error) {
-	return ExtrairPeriodoJC(ctx, dataRef, dataRef, "", res)
+	return ExtrairPeriodoJC(ctx, dataRef, dataRef, "", "", res)
 }
 
 // ExtrairPeriodoJC lê o intervalo [de..ate] (INCLUSIVO nas duas pontas) numa
@@ -202,12 +202,25 @@ func ExtrairDiaJC(ctx context.Context, dataRef time.Time, res *ResultadoExtracao
 // correspondente em processImportJob: quando a extração é de uma filial só, o
 // apagamento também precisa ser, senão a carga de uma filial limparia o dia
 // inteiro das demais.
-func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, filial string, res *ResultadoExtracao) (string, error) {
+// `objeto` vazio = a tabela padrão (JC_ORACLE_OBJETO). Preenchido, lê de outra
+// origem — é o caminho das tabelas históricas que a JC entregou em 22/08/2026,
+// COMPRAS_FAROL_01_HIST e COMPRAS_FAROL_12_HIST, com o passado das filiais 01 e
+// 12 anterior à migração delas para a base nova.
+//
+// Por CHAMADA e não por variável de ambiente: a carga diária e a recarga
+// histórica rodam no mesmo processo, e um JC_ORACLE_OBJETO global apontado para
+// o histórico faria a carga da madrugada puxar do lugar errado — em silêncio,
+// porque o formato é o mesmo.
+func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, filial, objeto string, res *ResultadoExtracao) (string, error) {
 	dsn, err := dsnJC()
 	if err != nil {
 		return "", err
 	}
-	objeto := envJC("JC_ORACLE_OBJETO", "IAUSER.COMPRAS_FAROL_VW")
+	if objeto = strings.TrimSpace(objeto); objeto == "" {
+		objeto = envJC("JC_ORACLE_OBJETO", "IAUSER.COMPRAS_FAROL_VW")
+	} else {
+		log.Printf("[jc:extrator] origem alternativa: %s", objeto)
+	}
 
 	conn, err := sql.Open("oracle", dsn)
 	if err != nil {

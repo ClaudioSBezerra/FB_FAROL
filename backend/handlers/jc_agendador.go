@@ -167,6 +167,19 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 			// VM da JC: sem isto, trazer uma filial de <1% do volume custaria a
 			// recarga do histórico inteiro (13h medidas em 17/08/2026).
 			// Aceita só dígitos: o valor entra no SQL do Oracle e no DELETE.
+			// origem — tabela alternativa no Oracle. Vazio = COMPRAS_FAROL_VW.
+			// Aceita só letras, dígitos, ponto e sublinhado: o valor entra no
+			// FROM da consulta, e é o único parâmetro desta rota que vira SQL.
+			objeto := strings.TrimSpace(q.Get("origem"))
+			for _, c := range objeto {
+				if !(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') &&
+					!(c >= '0' && c <= '9') && c != '.' && c != '_' {
+					http.Error(w, `{"error":"origem inválida — use apenas letras, dígitos, ponto e sublinhado"}`,
+						http.StatusBadRequest)
+					return
+				}
+			}
+
 			filial := strings.TrimSpace(q.Get("filial"))
 			if filial != "" {
 				for _, c := range filial {
@@ -188,7 +201,7 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 			}
 			log.Printf("[jc:carga] disparo MANUAL INTERVALO %s..%s (%d dias em %d fatia(s) de %s, %s, pular_existentes=%t) por user=%s",
 				de.Format("2006-01-02"), ate.Format("2006-01-02"), dias, fatias, unidade, escopoFilial, pular, spCtx.UserID)
-			go ExecutarCargaJCIntervalo(db, de, ate, pular, porMes, filial)
+			go ExecutarCargaJCIntervalo(db, de, ate, pular, porMes, filial, objeto)
 
 			json.NewEncoder(w).Encode(map[string]any{
 				"iniciado":         true,
@@ -198,6 +211,7 @@ func CargaJCManualHandler(db *sql.DB) http.HandlerFunc {
 				"passo":            map[bool]string{true: "mes", false: "dia"}[porMes],
 				"fatias":           fatias,
 				"filial":           map[bool]string{true: filial, false: "todas"}[filial != ""],
+				"origem":           map[bool]string{true: objeto, false: "padrão"}[objeto != ""],
 				"pular_existentes": pular,
 				"estimativa":       fmt.Sprintf("~%d min", fatias*minPorFatia),
 				"aviso":            "roda em background, uma fatia por vez; UM e-mail com o consolidado no fim",

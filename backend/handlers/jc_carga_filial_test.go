@@ -44,8 +44,15 @@ func TestExtratorFiltraPorFilial(t *testing.T) {
 	if !strings.Contains(src, `q += " AND EMPRESA = :3"`) {
 		t.Error("o extrator não restringe por EMPRESA quando a filial é informada")
 	}
-	if !strings.Contains(src, "func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, filial string,") {
-		t.Error("ExtrairPeriodoJC deveria receber a filial")
+	if !strings.Contains(src, "func ExtrairPeriodoJC(ctx context.Context, de, ate time.Time, filial, objeto string,") {
+		t.Error("ExtrairPeriodoJC deveria receber a filial e a origem")
+	}
+	// A origem vem por CHAMADA, não por variável de ambiente: carga diária e
+	// recarga histórica rodam no mesmo processo, e um JC_ORACLE_OBJETO global
+	// apontado para o histórico faria a carga da madrugada puxar do lugar
+	// errado — em silêncio, porque o formato é o mesmo.
+	if !strings.Contains(src, `objeto = envJC("JC_ORACLE_OBJETO"`) {
+		t.Error("a origem padrão deveria continuar vindo do ambiente quando o parâmetro é vazio")
 	}
 }
 
@@ -59,8 +66,8 @@ func TestFilialVaziaMantemComportamentoAntigo(t *testing.T) {
 		}
 		if strings.Contains(string(fonte), "ExecutarCargaJCIntervalo(db,") &&
 			!strings.Contains(string(fonte), `, ""`) &&
-			!strings.Contains(string(fonte), ", filial)") {
-			t.Errorf("%s: chamada sem escopo de filial explícito", arq)
+			!strings.Contains(string(fonte), ", filial, objeto)") {
+			t.Errorf("%s: chamada sem escopo de filial/origem explícito", arq)
 		}
 	}
 }
