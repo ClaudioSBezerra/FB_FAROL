@@ -162,6 +162,18 @@ func ColetarDinheiroNaMesa(db *sql.DB, empresaID string, ano, mes int, ate time.
 	// pelos dígitos em vez de castar direto: '06204' e '6204' são o mesmo RCA,
 	// e um cast ingênuo os trataria como diferentes — o RCA sumiria do ranking
 	// sem erro nenhum, que é o pior tipo de falha.
+	// MÉTRICAS do v04_l0 (uma linha por RCA), HIERARQUIA do v03_l2.
+	//
+	// A primeira versão lia tudo do v03_l2, que é chaveado por (gerente,
+	// supervisor, RCA). RCA que atende sob dois supervisores virava DUAS linhas,
+	// cada uma com um alvo inteiro — aparecia duplicado no ranking e inflava o
+	// total. Visto na prévia de 22/08/2026: VALDIMAR e G F GOMES ocupando duas
+	// posições cada.
+	//
+	// O v03_l2 continua entrando, mas só para dizer a QUEM o RCA pertence, pelo
+	// supervisor de maior volume no mês. Um RCA em duas equipes é anomalia de
+	// cadastro; atribuí-lo à equipe onde ele mais vendeu é a leitura menos
+	// errada, e não muda nenhum total.
 	alvo := `
 		    SELECT cod_rca, SUM(vl_corrente) AS meta
 		      FROM objetivos_importados
@@ -171,26 +183,35 @@ func ColetarDinheiroNaMesa(db *sql.DB, empresaID string, ano, mes int, ate time.
 	join := `ON m.cod_rca = NULLIF(regexp_replace(a.cod_rca, '[^0-9]', '', 'g'), '')::int`
 
 	if base == BaselineAnoAnterior {
-		// Mesmo mês, ano anterior, do próprio agregado — mesma régua do
-		// semáforo do painel. Aqui a chave já é TEXT dos dois lados, sem
-		// normalização a fazer.
 		alvo = `
 		    SELECT cod_rca::text AS cod_rca, SUM(liquido) AS meta
-		      FROM farol.agg_fat_v03_l2_mes
+		      FROM farol.agg_fat_v04_l0_mes
 		     WHERE empresa_id=$1 AND ano=$2-1 AND mes=$3
 		     GROUP BY cod_rca`
 		join = `ON m.cod_rca = a.cod_rca`
 	}
 
 	rows, err := db.Query(fmt.Sprintf(`
-		WITH meta AS (%s)
-		SELECT a.cod_gerente, a.cod_supervisor, a.cod_rca, a.nome_rca,
+		WITH meta AS (%s),
+		dono AS (
+		    SELECT DISTINCT ON (cod_rca) cod_rca, cod_gerente, cod_supervisor
+		      FROM farol.agg_fat_v03_l2_mes
+		     WHERE empresa_id=$1 AND ano=$2 AND mes=$3 AND cod_rca <> ''
+		     ORDER BY cod_rca, liquido DESC
+		)
+		SELECT COALESCE(d.cod_gerente,''), COALESCE(d.cod_supervisor,''),
+		       a.cod_rca, a.nome_rca,
 		       COALESCE(m.meta, 0)::float8,
 		       a.liquido::float8, a.positivados, a.base_cli, a.mix::float8
-		  FROM farol.agg_fat_v03_l2_mes a
+		  FROM farol.agg_fat_v04_l0_mes a
 		  LEFT JOIN meta m %s
+		  LEFT JOIN dono d ON d.cod_rca = a.cod_rca
 		 WHERE a.empresa_id=$1 AND a.ano=$2 AND a.mes=$3
-		   AND a.cod_rca <> ''`, alvo, join),
+		   AND a.cod_rca <> ''
+		   -- Cadastro morto não é mau desempenho. Mesma regra do assistente:
+		   -- ranking cheio de INATIVO ensina o gestor a ignorar a lista.
+		   AND a.nome_rca NOT ILIKE '%%INATIVO%%'
+		   AND a.nome_rca NOT ILIKE '%%SAIU%%'`, alvo, join),
 		empresaID, ano, mes)
 	if err != nil {
 		return nil, cob, fmt.Errorf("consultar dinheiro na mesa: %w", err)

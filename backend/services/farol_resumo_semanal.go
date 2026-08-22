@@ -203,6 +203,10 @@ func CorpoHTML(r ResumoUsuario) string {
 <span style="color:#2C6E49;font-weight:bold">%d</span> no ritmo</div></div>`,
 		brl(r.TotalMesa), r.Vermelho, r.Amarelo, r.Verde)
 
+	// O código vai junto do nome de propósito. Em 22/08/2026 a prévia mostrou
+	// duas linhas idênticas — "GGV - GO - GILSON FLORES" nos códigos 3 e 350 —
+	// porque o 350 trocou de dono no WinThor e a origem ainda devolve o nome
+	// antigo. Sem o código não dá para saber qual link é qual.
 	if len(r.Grupos) > 0 {
 		titulo := "Por GGV"
 		if r.Persona == "ggv" {
@@ -214,10 +218,11 @@ func CorpoHTML(r ResumoUsuario) string {
 			fmt.Fprintf(&b, `<tr>
 <td style="padding:10px 0;border-bottom:1px solid #e3e6e5">
   <a href="%s" style="color:#1B6660;font-weight:bold;text-decoration:none">%s</a>
+  <span style="color:#99a;font-size:12px"> · %s</span>
   <div style="color:#667;font-size:12.5px;margin-top:2px">%d RCAs · %d abaixo de 70%%</div>
 </td>
 <td style="padding:10px 0;border-bottom:1px solid #e3e6e5;text-align:right;white-space:nowrap;font-weight:bold">%s</td>
-</tr>`, g.Link, esc(g.Nome), g.Rcas, g.Vermelhos, brl(g.TotalMesa))
+</tr>`, g.Link, esc(g.Nome), esc(g.Cod), g.Rcas, g.Vermelhos, brl(g.TotalMesa))
 		}
 		b.WriteString(`</table>`)
 	}
@@ -272,8 +277,8 @@ func CorpoTexto(r ResumoUsuario) string {
 	if len(r.Grupos) > 0 {
 		b.WriteString("\n")
 		for _, g := range r.Grupos {
-			fmt.Fprintf(&b, "%-34s %14s  (%d RCAs, %d vermelhos)\n  %s\n",
-				g.Nome, brl(g.TotalMesa), g.Rcas, g.Vermelhos, g.Link)
+			fmt.Fprintf(&b, "%-30s [%s] %14s  (%d RCAs, %d vermelhos)\n  %s\n",
+				g.Nome, g.Cod, brl(g.TotalMesa), g.Rcas, g.Vermelhos, g.Link)
 		}
 	}
 	if len(r.TopGeral) > 0 {
