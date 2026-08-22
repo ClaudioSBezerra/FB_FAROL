@@ -22,6 +22,11 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel Vendas',
     tabs: [
       { label: 'Painel Vendas',  path: '/farol/v2' },
+      // Envio do resumo semanal — só admin e admin_fbtax. A tela expõe os
+      // tokens de todos os destinatários, e token abre o quadro sem senha:
+      // é credencial, não configuração. O backend faz a mesma checagem, então
+      // esconder aqui é conveniência, não a proteção.
+      { label: 'Envio do Resumo', path: '/farol/resumo/envio', adminOnly: true },
     ],
   },
   // ── Painel BI — War Room para CEO/Diretoria ───────────────────────────────
