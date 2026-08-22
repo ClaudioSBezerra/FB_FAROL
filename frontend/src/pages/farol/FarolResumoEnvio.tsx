@@ -73,8 +73,10 @@ export default function FarolResumoEnvio() {
         </p>
         <h1 className="text-xl sm:text-2xl font-bold mt-2">Envio do quadro</h1>
         <p className="text-slate-500 mt-1 text-sm">
-          O e-mail sai sozinho toda segunda de manhã. O WhatsApp é manual:
-          o botão abre a conversa com a mensagem pronta.
+          O e-mail sai sozinho toda segunda de manhã. O WhatsApp é manual: o
+          botão abre a conversa com a mensagem já escrita, e <b>você toca em
+          enviar</b> — o WhatsApp não permite disparo automático fora da API
+          oficial da Meta.
         </p>
       </header>
 
@@ -116,9 +118,15 @@ export default function FarolResumoEnvio() {
                   <label className="block text-xs text-slate-500 mb-1">
                     WhatsApp — 55 + DDD + número
                   </label>
+                  {/* Grava ao sair do campo. A primeira versão só tinha o
+                      botão "Salvar", que aparece depois de digitar e é fácil
+                      não notar: em 22/08/2026 o número foi preenchido, o
+                      "Enviar" clicado, e nada aconteceu — porque o telefone
+                      nunca chegou ao banco e o botão estava inerte. */}
                   <input
                     value={tel}
                     onChange={e => setRascunho({ ...rascunho, [d.user_id]: e.target.value })}
+                    onBlur={() => { if (telMudou) acao.mutate({ userId: d.user_id, telefone: tel }) }}
                     placeholder="5562999998888"
                     inputMode="numeric"
                     className="border border-slate-300 rounded px-3 py-2 text-sm w-52 tabular-nums
@@ -146,15 +154,22 @@ export default function FarolResumoEnvio() {
                   </button>
                 ) : (
                   <>
-                    <a
-                      href={podeEnviar ? linkWhats(d) : undefined}
-                      target="_blank" rel="noreferrer"
-                      className={`flex items-center gap-2 text-sm px-4 py-2 rounded text-white ${
-                        podeEnviar ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-300 cursor-not-allowed'
-                      }`}
-                      title={podeEnviar ? '' : 'Cadastre o telefone primeiro'}>
-                      <MessageCircle className="h-4 w-4" /> Enviar no WhatsApp
-                    </a>
+                    {/* Sem telefone gravado, o botão DIZ o que falta em vez de
+                        parecer normal e não responder. Botão inerte sem
+                        explicação é o pior estado possível: o usuário conclui
+                        que o sistema está quebrado. */}
+                    {podeEnviar ? (
+                      <a href={linkWhats(d)} target="_blank" rel="noreferrer"
+                         className="flex items-center gap-2 text-sm px-4 py-2 rounded text-white
+                                    bg-emerald-600 hover:bg-emerald-700">
+                        <MessageCircle className="h-4 w-4" /> Enviar no WhatsApp
+                      </a>
+                    ) : (
+                      <span className="flex items-center gap-2 text-sm px-4 py-2 rounded
+                                       border border-dashed border-slate-300 text-slate-500">
+                        <MessageCircle className="h-4 w-4" /> Cadastre o telefone para enviar
+                      </span>
+                    )}
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(d.link)
