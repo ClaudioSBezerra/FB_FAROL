@@ -85,6 +85,12 @@ type ResumoUsuario struct {
 
 	// Onde o ano fecha se o comportamento se mantiver. Nulo em janeiro.
 	Projecao *Projecao `json:"projecao,omitempty"`
+
+	// Só na PRIMEIRA vez que a pessoa recebe. As sete perguntas são
+	// apresentação do que a base revelou, não conteúdo semanal: repetidas toda
+	// segunda virariam rodapé que ninguém lê, e o convite a apontar erro perde
+	// o efeito na terceira repetição.
+	PrimeiroEnvio bool `json:"primeiro_envio,omitempty"`
 }
 
 // BlocoPeriodo — o mesmo quadro para um recorte de meses fechados.
@@ -397,6 +403,21 @@ No conjunto, %s está em <b style="color:%s">%.0f%%</b> do ritmo — %s <b>%s</b
 			mesPtBR[p.UltimoMes], p.CrescimentoPct, p.AnoAnt, p.MesPct)
 	}
 
+	if r.PrimeiroEnvio {
+		b.WriteString(`<h3 style="font-size:15px;margin:28px 0 8px">Sete perguntas desta primeira leitura</h3>
+<p style="margin:0 0 12px;color:#667;font-size:12.5px">Nenhuma veio de alguém procurando problema — apareceram sozinhas ao conferir número contra número. O sistema não consegue respondê-las: dependem de quem conhece a operação.</p>
+<ol style="margin:0;padding-left:20px;color:#556;font-size:13.5px;line-height:1.75">
+<li><b>A carteira de quem saiu foi redistribuída ou se perdeu?</b> R$ 23,9 milhões de agosto/2025 vieram de códigos que hoje não vendem nada — 15% do mês.</li>
+<li><b>Agosto desacelerou: sazonalidade ou sinal?</b> Janeiro a julho cresceu 6,2%; agosto projeta 1,1%.</li>
+<li><b>O que é vendedor e o que é estrutura?</b> NÚCLEO DE VENDAS aparece no ranking de RCA faturando 13,6× o primeiro vendedor de verdade.</li>
+<li><b>As metas de 2026 vão ser cadastradas?</b> Sem elas, o farol mede crescimento, não atingimento do combinado.</li>
+<li><b>Quando um código troca de dono, como ficamos sabendo?</b> Três gerências mudaram e descobrimos comparando cadastro com dado.</li>
+<li><b>Dos 484 RCAs sem base de comparação, quantos são novos?</b> São dois terços de quem vendeu em agosto.</li>
+<li><b>Devolução reduz o mês da venda ou o mês em que aconteceu?</b> É decisão comercial, e o sistema segue a que for definida.</li>
+</ol>
+<p style="margin:14px 0 0;color:#556;font-size:13.5px"><b>Qualquer coisa que não fizer sentido nos números, avise.</b> Quem conhece a operação enxerga em segundos o que levaria semanas para achar no dado.</p>`)
+	}
+
 	// Dois botões, com hierarquia clara. O quadro é o destino natural de quem
 	// leu o e-mail e quer o detalhe; o painel é para quem já sabe o que
 	// investigar. Invertidos, o gestor cairia na tela genérica e teria que
@@ -456,6 +477,17 @@ func CorpoTexto(r ResumoUsuario) string {
 		if r.RestoRcas > 0 {
 			fmt.Fprintf(&b, "+ %d RCAs menores, %s somados\n", r.RestoRcas, brl(r.RestoValor))
 		}
+	}
+	if r.PrimeiroEnvio {
+		b.WriteString("\nSETE PERGUNTAS DESTA PRIMEIRA LEITURA\n")
+		b.WriteString("1. A carteira de quem saiu foi redistribuida ou se perdeu? (R$ 23,9 mi, 15% de ago/2025)\n")
+		b.WriteString("2. Agosto desacelerou: sazonalidade ou sinal? (jan-jul +6,2%, agosto +1,1%)\n")
+		b.WriteString("3. O que e vendedor e o que e estrutura? (NUCLEO DE VENDAS = 13,6x o 1o RCA)\n")
+		b.WriteString("4. As metas de 2026 vao ser cadastradas?\n")
+		b.WriteString("5. Quando um codigo troca de dono, como ficamos sabendo?\n")
+		b.WriteString("6. Dos 484 RCAs sem base de comparacao, quantos sao novos?\n")
+		b.WriteString("7. Devolucao reduz o mes da venda ou o mes em que aconteceu?\n")
+		b.WriteString("\nQualquer coisa que nao fizer sentido nos numeros, avise.\n")
 	}
 	if p := r.Projecao; p != nil && p.AnoAnterior > 0 {
 		fmt.Fprintf(&b, "\nONDE O ANO FECHA (molde de sazonalidade de %d)\n", p.AnoAnt)
@@ -615,6 +647,14 @@ func EnviarResumoSemanal(db *sql.DB, empresaID string, ano, mes int, ate time.Ti
 		}
 
 		r := MontarResumo(todos, cob, d.nome, d.persona, d.codRef, nomes, rotulo)
+
+		// Primeiro envio = nunca teve linha no log. Vale mesmo em prévia, que
+		// não grava — assim o que você confere é o que a pessoa vai receber.
+		var jaRecebeu bool
+		_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM farol.resumo_semanal_log WHERE user_id=$1)`,
+			d.id).Scan(&jaRecebeu)
+		r.PrimeiroEnvio = !jaRecebeu
+
 		res.Rcas = len(r.TopGeral) + r.RestoRcas
 		res.TotalMesa = r.TotalMesa
 
@@ -755,6 +795,8 @@ func EnviarResumoTeste(db *sql.DB, empresaID string, ano, mes int, ate time.Time
 	}
 	nomes := NomesGerentesSupervisores(db, empresaID, ano, mes)
 	r := MontarResumo(todos, cob, nome, persona, codRef, nomes, RotuloMes(ano, mes))
+	// A cópia de teste é reencaminhada como se fosse o primeiro e-mail deles.
+	r.PrimeiroEnvio = true
 
 	assunto := fmt.Sprintf("[FAROL] Dinheiro na mesa · %s · %s", r.Mes, brl(r.TotalMesa))
 	return r, sendHTMLReport([]string{para}, assunto, CorpoTexto(r), CorpoHTML(r))
