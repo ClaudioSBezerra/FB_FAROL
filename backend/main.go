@@ -376,25 +376,25 @@ func main() {
 	}
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
-	http.HandleFunc("/api/auth/register",        withDB(handlers.RegisterHandler))
-	http.HandleFunc("/api/auth/login",           withDB(handlers.LoginHandler))
-	http.HandleFunc("/api/auth/me",              withAuth(handlers.GetMeHandler, ""))
+	http.HandleFunc("/api/auth/register", withDB(handlers.RegisterHandler))
+	http.HandleFunc("/api/auth/login", withDB(handlers.LoginHandler))
+	http.HandleFunc("/api/auth/me", withAuth(handlers.GetMeHandler, ""))
 	http.HandleFunc("/api/auth/forgot-password", withDB(handlers.ForgotPasswordHandler))
-	http.HandleFunc("/api/auth/reset-password",  withDB(handlers.ResetPasswordHandler))
+	http.HandleFunc("/api/auth/reset-password", withDB(handlers.ResetPasswordHandler))
 	http.HandleFunc("/api/auth/change-password", withAuth(handlers.ChangePasswordHandler, ""))
-	http.HandleFunc("/api/auth/refresh",         withDB(handlers.RefreshHandler))
-	http.HandleFunc("/api/auth/logout",          withDB(handlers.LogoutHandler))
+	http.HandleFunc("/api/auth/refresh", withDB(handlers.RefreshHandler))
+	http.HandleFunc("/api/auth/logout", withDB(handlers.LogoutHandler))
 
 	// ── Hierarchy (tenant/grupo/empresa) ──────────────────────────────────────
-	http.HandleFunc("/api/user/hierarchy",          withAuth(handlers.GetUserHierarchyHandler, ""))
-	http.HandleFunc("/api/user/companies",          withAuth(handlers.GetUserCompaniesHandler, ""))
-	http.HandleFunc("/api/user/preferred-company",  withAuth(handlers.UpdatePreferredCompanyHandler, ""))
+	http.HandleFunc("/api/user/hierarchy", withAuth(handlers.GetUserHierarchyHandler, ""))
+	http.HandleFunc("/api/user/companies", withAuth(handlers.GetUserCompaniesHandler, ""))
+	http.HandleFunc("/api/user/preferred-company", withAuth(handlers.UpdatePreferredCompanyHandler, ""))
 
 	// ── Admin — Usuários ─────────────────────────────────────────────────────
-	http.HandleFunc("/api/admin/users",         withAuth(handlers.ListUsersHandler, "admin"))
-	http.HandleFunc("/api/admin/users/create",  withAuth(handlers.CreateUserHandler, "admin"))
+	http.HandleFunc("/api/admin/users", withAuth(handlers.ListUsersHandler, "admin"))
+	http.HandleFunc("/api/admin/users/create", withAuth(handlers.CreateUserHandler, "admin"))
 	http.HandleFunc("/api/admin/users/promote", withAuth(handlers.PromoteUserHandler, "admin"))
-	http.HandleFunc("/api/admin/users/delete",  withAuth(handlers.DeleteUserHandler, "admin"))
+	http.HandleFunc("/api/admin/users/delete", withAuth(handlers.DeleteUserHandler, "admin"))
 	http.HandleFunc("/api/admin/users/reassign", withAuth(handlers.ReassignUserHandler, "admin"))
 	http.HandleFunc("/api/admin/diagnose-bi", withAuth(handlers.DiagnoseBIHandler, "admin"))
 	http.HandleFunc("/api/admin/diagnose-v01-base-cli", withAuth(handlers.DiagnoseV01BaseCliHandler, "admin"))
@@ -479,14 +479,14 @@ func main() {
 	}
 
 	// ── Objetivos — Import CSV de objetivos de vendas ────────────────────────
-	http.HandleFunc("/api/objetivos/upload-csv",         withSP(handlers.ObjetivosImportHandler,     "gestor_filial"))
-	http.HandleFunc("/api/objetivos/periodos",           withSP(handlers.ObjetivosPeriosHandler,     "gestor_filial"))
-	http.HandleFunc("/api/objetivos/rca-fornecedor",     handlers.GzipMiddleware(withSP(handlers.ObjetivosRCAHandler,              "gestor_filial")))
-	http.HandleFunc("/api/objetivos/supervisor",         handlers.GzipMiddleware(withSP(handlers.ObjetivosSupervisorHandler,        "gestor_filial")))
-	http.HandleFunc("/api/objetivos/painel-rca",         handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelRCAHandler,        "gestor_filial")))
-	http.HandleFunc("/api/objetivos/painel-supervisor",  handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelSupervisorHandler, "gestor_filial")))
-	http.HandleFunc("/api/objetivos/clientes-distintos", withSP(handlers.ObjetivosClientesHandler,  "gestor_filial"))
-	http.HandleFunc("/api/objetivos/limpar",             withSP(handlers.ObjetivosLimparHandler,    "gestor_filial"))
+	http.HandleFunc("/api/objetivos/upload-csv", withSP(handlers.ObjetivosImportHandler, "gestor_filial"))
+	http.HandleFunc("/api/objetivos/periodos", withSP(handlers.ObjetivosPeriosHandler, "gestor_filial"))
+	http.HandleFunc("/api/objetivos/rca-fornecedor", handlers.GzipMiddleware(withSP(handlers.ObjetivosRCAHandler, "gestor_filial")))
+	http.HandleFunc("/api/objetivos/supervisor", handlers.GzipMiddleware(withSP(handlers.ObjetivosSupervisorHandler, "gestor_filial")))
+	http.HandleFunc("/api/objetivos/painel-rca", handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelRCAHandler, "gestor_filial")))
+	http.HandleFunc("/api/objetivos/painel-supervisor", handlers.GzipMiddleware(withSP(handlers.ObjetivosPainelSupervisorHandler, "gestor_filial")))
+	http.HandleFunc("/api/objetivos/clientes-distintos", withSP(handlers.ObjetivosClientesHandler, "gestor_filial"))
+	http.HandleFunc("/api/objetivos/limpar", withSP(handlers.ObjetivosLimparHandler, "gestor_filial"))
 
 	// ── Farol Mobile (público — chamado via WebView do ION VENDAS) ─────────
 	publicHandler := func(factory func(*sql.DB) http.HandlerFunc) http.HandlerFunc {
@@ -502,48 +502,54 @@ func main() {
 	// ── Farol Web (autenticado — usa empresa_id do JWT) ─────────────────────
 	gz := handlers.GzipMiddleware
 	http.HandleFunc("/api/farol/web/supervisores", gz(withSP(handlers.FarolWebSupervisoresHandler, "gestor_filial")))
-	http.HandleFunc("/api/farol/web/sup/",         gz(withSP(handlers.FarolWebSupHandler,          "gestor_filial")))
-	http.HandleFunc("/api/farol/web/rca/",         gz(withSP(handlers.FarolWebRcaHandler,          "gestor_filial")))
-	http.HandleFunc("/api/farol/web/periodos",     gz(withSP(handlers.FarolWebPeriodosHandler,     "gestor_filial")))
+	http.HandleFunc("/api/farol/web/sup/", gz(withSP(handlers.FarolWebSupHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/rca/", gz(withSP(handlers.FarolWebRcaHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/periodos", gz(withSP(handlers.FarolWebPeriodosHandler, "gestor_filial")))
 
-	http.HandleFunc("/api/farol/sup-pulso/",    gz(publicHandler(handlers.FarolPulsoHandler)))
-	http.HandleFunc("/api/farol/sup/",          gz(publicHandler(handlers.FarolSupervisorHandler)))
-	http.HandleFunc("/api/farol/rca/",          gz(publicHandler(handlers.FarolRcaDetailHandler)))
-	http.HandleFunc("/api/farol/periodos/",     gz(publicHandler(handlers.FarolPeriodosHandler)))
-	http.HandleFunc("/api/farol/supervisores",  gz(publicHandler(handlers.FarolSupervisoresListHandler)))
-	http.HandleFunc("/api/farol/sup-forn/",     gz(publicHandler(handlers.FarolSupFornecedoresHandler)))
-	http.HandleFunc("/api/farol/forn-rcas/",    gz(publicHandler(handlers.FarolFornecRcasHandler)))
+	http.HandleFunc("/api/farol/sup-pulso/", gz(publicHandler(handlers.FarolPulsoHandler)))
+	http.HandleFunc("/api/farol/sup/", gz(publicHandler(handlers.FarolSupervisorHandler)))
+	http.HandleFunc("/api/farol/rca/", gz(publicHandler(handlers.FarolRcaDetailHandler)))
+	http.HandleFunc("/api/farol/periodos/", gz(publicHandler(handlers.FarolPeriodosHandler)))
+	http.HandleFunc("/api/farol/supervisores", gz(publicHandler(handlers.FarolSupervisoresListHandler)))
+	http.HandleFunc("/api/farol/sup-forn/", gz(publicHandler(handlers.FarolSupFornecedoresHandler)))
+	http.HandleFunc("/api/farol/forn-rcas/", gz(publicHandler(handlers.FarolFornecRcasHandler)))
 
 	// Versões autenticadas (Web)
-	http.HandleFunc("/api/farol/web/sup-forn/",     gz(withSP(handlers.FarolWebSupFornecedoresHandler,     "gestor_filial")))
-	http.HandleFunc("/api/farol/web/forn-rcas/",    gz(withSP(handlers.FarolWebFornecRcasHandler,          "gestor_filial")))
-	http.HandleFunc("/api/farol/web/fornecedores",  gz(withSP(handlers.FarolWebFornecedoresEmpresaHandler, "gestor_filial")))
-	http.HandleFunc("/api/farol/web/forn/",         gz(withSP(handlers.FarolWebFornecSupervisoresHandler,  "gestor_filial")))
+	http.HandleFunc("/api/farol/web/sup-forn/", gz(withSP(handlers.FarolWebSupFornecedoresHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/forn-rcas/", gz(withSP(handlers.FarolWebFornecRcasHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/fornecedores", gz(withSP(handlers.FarolWebFornecedoresEmpresaHandler, "gestor_filial")))
+	http.HandleFunc("/api/farol/web/forn/", gz(withSP(handlers.FarolWebFornecSupervisoresHandler, "gestor_filial")))
 
 	// ── Farol V2 — Novo sistema de vendas (Reescrita 2026) ───────────────────
-	http.HandleFunc("/api/v2/vendas/import",    withSP(handlers.VendasImportHandler,    "gestor_filial"))
-	http.HandleFunc("/api/v2/vendas/job/",      withSP(handlers.VendasJobHandler,        "gestor_filial")) // GET status + POST cancel
-	http.HandleFunc("/api/v2/vendas/periodos",  withSP(handlers.VendasPeriodosHandler,  "gestor_filial"))
-	http.HandleFunc("/api/v2/vendas/clear",     withSP(handlers.VendasClearHandler,     "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/import", withSP(handlers.VendasImportHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/job/", withSP(handlers.VendasJobHandler, "gestor_filial")) // GET status + POST cancel
+	http.HandleFunc("/api/v2/vendas/periodos", withSP(handlers.VendasPeriodosHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/vendas/clear", withSP(handlers.VendasClearHandler, "gestor_filial"))
 	// Carga JC sob demanda — testar antes do 1º disparo, reprocessar dia que
 	// falhou, ou cobrir atraso do JOB da origem. ?data=AAAA-MM-DD (default D-1).
-	http.HandleFunc("/api/v2/jc/carga",         withSP(handlers.CargaJCManualHandler,   "gestor_filial"))
-	http.HandleFunc("/api/v2/industrias",       withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
-	http.HandleFunc("/api/v2/farol/cards",         gz(withSP(handlers.FarolV2CardsHandler,   "gestor_filial")))
-	http.HandleFunc("/api/v2/farol/periodos",      withSP(handlers.FarolV2PeriodosHandler,   "gestor_filial"))
-	http.HandleFunc("/api/v2/farol/dims",          gz(withSP(handlers.FarolV2DimsHandler,    "gestor_filial")))
-	http.HandleFunc("/api/v2/farol/pulso",         gz(withSP(handlers.FarolPulsoEmpresaHandler, "gestor_filial")))
-	http.HandleFunc("/api/v2/farol/bi",            gz(withSP(handlers.FarolV2BIHandler,      "gestor_filial")))
-	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler,      "gestor_geral"))
-	http.HandleFunc("/api/v2/farol/ai/query",              gz(withSP(handlers.FarolAIQueryHandler,             "gestor_filial")))
-	http.HandleFunc("/api/v2/farol/ai/export",             withSP(handlers.FarolAIExportHandler,              "gestor_filial"))
-	http.HandleFunc("/api/v2/farol/ai/chat",               withSP(handlers.FarolAjudaChatHandler,             "")) // assistente de treinamento (chat)
+	http.HandleFunc("/api/v2/jc/carga", withSP(handlers.CargaJCManualHandler, "gestor_filial"))
+
+	// Resumo semanal "dinheiro na mesa". A prévia em HTML devolve SEMPRE o
+	// recorte de quem pediu; o disparo é barrado para persona com escopo, que
+	// veria o corpo do e-mail alheio na resposta.
+	http.HandleFunc("/api/v2/farol/resumo-semanal", withSP(handlers.FarolResumoSemanalHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/resumo-semanal/previa", withSP(handlers.FarolResumoPreviaHTMLHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/industrias", withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/cards", gz(withSP(handlers.FarolV2CardsHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/periodos", withSP(handlers.FarolV2PeriodosHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/dims", gz(withSP(handlers.FarolV2DimsHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/pulso", gz(withSP(handlers.FarolPulsoEmpresaHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/bi", gz(withSP(handlers.FarolV2BIHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/refresh-views", withSP(handlers.RefreshViewsHandler, "gestor_geral"))
+	http.HandleFunc("/api/v2/farol/ai/query", gz(withSP(handlers.FarolAIQueryHandler, "gestor_filial")))
+	http.HandleFunc("/api/v2/farol/ai/export", withSP(handlers.FarolAIExportHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/ai/chat", withSP(handlers.FarolAjudaChatHandler, "")) // assistente de treinamento (chat)
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
-	http.HandleFunc("/api/v2/farol/public/cards",  gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
+	http.HandleFunc("/api/v2/farol/public/cards", gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
-	http.HandleFunc("/api/v2/farol/cleanup",           withSP(handlers.CleanupExecuteHandler,   "gestor_geral"))
-		// Relatórios — acesso TI e admin
+	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))
+	// Relatórios — acesso TI e admin
 	http.HandleFunc("/api/v2/farol/relatorio/extrato-produto-cliente", gz(withSP(handlers.ExtratoProdutoClienteHandler, "somente_leitura")))
 
 	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
@@ -563,7 +569,7 @@ func main() {
 	}, "admin_fbtax"))
 	// ── Farol — Filiais, CDs, Parâmetros do Motor e Planos ──────────────
 	http.HandleFunc("/api/sp/filiais-empresa", withSP(handlers.SpFiliaisByEmpresaHandler, "admin_fbtax"))
-	http.HandleFunc("/api/sp/cds-empresa",     withSP(handlers.SpCDsByEmpresaHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/cds-empresa", withSP(handlers.SpCDsByEmpresaHandler, "admin_fbtax"))
 	http.HandleFunc("/api/sp/filiais", withSP(handlers.SpFiliaisHandler, "gestor_filial"))
 	http.HandleFunc("/api/sp/filiais/", withSP(func(db *sql.DB) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -592,9 +598,9 @@ func main() {
 	http.HandleFunc("/api/sp/plano", withSP(handlers.SpPlanoHandler, "gestor_filial"))
 
 	// ── Farol — CSV Upload e Motor ────────────────────────────────────
-	http.HandleFunc("/api/sp/csv/upload",    withSP(handlers.SpCSVUploadHandler, "gestor_filial"))
-	http.HandleFunc("/api/sp/csv/jobs",      withSP(handlers.SpCSVJobsHandler, "gestor_filial"))
-	http.HandleFunc("/api/sp/csv/jobs/",     withSP(handlers.SpCSVJobStatusHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/csv/upload", withSP(handlers.SpCSVUploadHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/csv/jobs", withSP(handlers.SpCSVJobsHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/csv/jobs/", withSP(handlers.SpCSVJobStatusHandler, "gestor_filial"))
 	http.HandleFunc("/api/sp/motor/calibrar", withSP(handlers.SpMotorCalibrarHandler, "gestor_filial"))
 
 	// ── Farol — Histórico e Compliance (Epic 7) ──────────────────────────
@@ -609,7 +615,7 @@ func main() {
 	http.HandleFunc("/api/sp/me", withSP(handlers.SpMeHandler, ""))
 
 	// ── Farol — Painel de Resultados (Epic 9) ─────────────────────────────
-	http.HandleFunc("/api/sp/resultados",          withSP(handlers.SpResultadosHandler,          "gestor_filial"))
+	http.HandleFunc("/api/sp/resultados", withSP(handlers.SpResultadosHandler, "gestor_filial"))
 	http.HandleFunc("/api/sp/resultados/historico", withSP(handlers.SpResultadosHistoricoHandler, "gestor_filial"))
 
 	// ── Farol — Geração de PDF (Epic 6) ──────────────────────────────────
@@ -626,8 +632,8 @@ func main() {
 	http.HandleFunc("/api/sp/propostas/", withSP(handlers.SpPropostaItemHandler, "gestor_filial"))
 
 	http.HandleFunc("/api/sp/ignorados/tipos", withSP(handlers.SpIgnoradosTiposHandler, "gestor_filial"))
-	http.HandleFunc("/api/sp/ignorados",       withSP(handlers.SpIgnoradosHandler, "gestor_filial"))
-	http.HandleFunc("/api/sp/ignorados/",      withSP(handlers.SpIgnoradosHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/ignorados", withSP(handlers.SpIgnoradosHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/ignorados/", withSP(handlers.SpIgnoradosHandler, "gestor_filial"))
 
 	http.HandleFunc("/api/sp/usuarios/", withSP(func(db *sql.DB) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -654,16 +660,16 @@ func main() {
 	}, "admin_fbtax"))
 
 	// ── Farol — Rastreamento de uso (E1) ────────────────────────────────
-	http.HandleFunc("/api/sp/uso",          withSP(handlers.SpUsageIngestHandler, ""))
-	http.HandleFunc("/api/sp/admin/uso",    withSP(handlers.SpUsageReportHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/uso", withSP(handlers.SpUsageIngestHandler, ""))
+	http.HandleFunc("/api/sp/admin/uso", withSP(handlers.SpUsageReportHandler, "admin_fbtax"))
 
 	// ── Farol — Assistente de Treinamento ───────────────────────────────
-	http.HandleFunc("/api/sp/ajuda/chat",  withSP(handlers.SpAjudaChatHandler, ""))
+	http.HandleFunc("/api/sp/ajuda/chat", withSP(handlers.SpAjudaChatHandler, ""))
 	http.HandleFunc("/api/sp/ajuda/dados", withSP(handlers.SpAjudaDadosHandler, "gestor_filial"))
 
 	// ── Farol — Resumos Executivos Semanais ─────────────────────────────
-	http.HandleFunc("/api/sp/relatorios",        withSP(handlers.SpResumosHandler, "gestor_filial"))
-	http.HandleFunc("/api/sp/relatorios/",       withSP(func(db *sql.DB) http.HandlerFunc {
+	http.HandleFunc("/api/sp/relatorios", withSP(handlers.SpResumosHandler, "gestor_filial"))
+	http.HandleFunc("/api/sp/relatorios/", withSP(func(db *sql.DB) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/gerar"):
@@ -675,15 +681,15 @@ func main() {
 			}
 		}
 	}, "gestor_filial"))
-	http.HandleFunc("/api/sp/admin/destinatarios",  withSP(handlers.SpDestinatariosHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/admin/destinatarios", withSP(handlers.SpDestinatariosHandler, "admin_fbtax"))
 	http.HandleFunc("/api/sp/admin/destinatarios/", withSP(handlers.SpDestinatariosHandler, "admin_fbtax"))
 
 	// ── Farol — Admin / Manutenção ───────────────────────────────────────
-	http.HandleFunc("/api/sp/admin/limpar-calibragem",   withSP(handlers.SpLimparCalibragemHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/admin/limpar-calibragem", withSP(handlers.SpLimparCalibragemHandler, "admin_fbtax"))
 	http.HandleFunc("/api/sp/admin/purgar-csv-antigos", withSP(handlers.SpPurgarCsvAntigosHandler, "gestor_geral"))
-	http.HandleFunc("/api/sp/admin/audit-log",          withSP(handlers.SpAuditLogHandler, "admin_fbtax"))
-	http.HandleFunc("/api/sp/admin/empresas",           withSP(handlers.SpListEmpresasHandler, "admin_fbtax"))
-	http.HandleFunc("/api/sp/admin/empresas/",          withSP(handlers.SpEmpresaBloqueioHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/admin/audit-log", withSP(handlers.SpAuditLogHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/admin/empresas", withSP(handlers.SpListEmpresasHandler, "admin_fbtax"))
+	http.HandleFunc("/api/sp/admin/empresas/", withSP(handlers.SpEmpresaBloqueioHandler, "admin_fbtax"))
 
 	// ── Frontend estático (SPA React) ─────────────────────────────────────────
 	staticDir := "./static"
@@ -693,10 +699,10 @@ func main() {
 		// redirecionados server-side para a rota canônica /m/... ANTES do
 		// React Router ver, evitando que /:cod e /:cnpj/:kind/:cod (que seriam
 		// mais específicos que /*) engulam outras rotas autenticadas.
-		ionNumericPath  := regexp.MustCompile(`^/(\d+)$`)
-		ionCnpjPath     := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+		ionNumericPath := regexp.MustCompile(`^/(\d+)$`)
+		ionCnpjPath := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
 		// /m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod (ION passa uppercase) → /m/CNPJ/sup|rca/cod
-		ionMobileCnpj   := regexp.MustCompile(`^/m/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+		ionMobileCnpj := regexp.MustCompile(`^/m/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
 
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {

@@ -205,6 +205,38 @@ const COR_TXT: Record<Cor, string> = {
 // números exatos — decisão de 13/08/2026.
 const SINGLE_SELECT_COLS = new Set(['empresa'])
 
+// ─── Filtros vindos da URL ───────────────────────────────────────────────────
+// Existe para o resumo semanal por e-mail poder mandar um link direto para a
+// equipe de cada GGV: /farol/v2?gerente=347
+//
+// NÃO é brecha de permissão. O escopo por persona (farol_escopo.go) SOBRESCREVE
+// o filtro que vem do request, então um GGV que digitar o código de outro
+// continua vendo o próprio. Quem filtra livremente é só quem já podia — as
+// personas sem coluna de escopo (gerente_geral, diretor, ceo). A URL só poupa
+// cliques de quem já tem o direito.
+const PARAM_PARA_COL: Record<string, string> = {
+  gerente:    'cod_gerente',
+  supervisor: 'cod_supervisor',
+  filial:     'empresa',
+}
+
+function filtrosDaURL(): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  if (typeof window === 'undefined') return out
+  const q = new URLSearchParams(window.location.search)
+  for (const [param, col] of Object.entries(PARAM_PARA_COL)) {
+    const bruto = q.get(param)
+    if (!bruto) continue
+    let vals = bruto.split(',').map(v => v.trim()).filter(Boolean)
+    // Filial é single-select desde 15/08 (o multi-filial derrubava a consulta
+    // para ~97s). Um link com duas filiais fica com a primeira, em vez de
+    // reabrir o caminho lento por uma query string.
+    if (SINGLE_SELECT_COLS.has(col) && vals.length > 1) vals = [vals[0]]
+    if (vals.length > 0) out[col] = vals
+  }
+  return out
+}
+
 const COR_TXT_TOTAL: Record<Cor, string> = {
   verde:    'text-emerald-800',
   amarelo:  'text-amber-700',
@@ -844,7 +876,9 @@ export default function FarolExecutivo() {
   const [compInicio, setCompInicio] = useState('')
   const [compFim, setCompFim] = useState('')
 
-  const [filters, setFilters] = useState<Record<string, string[]>>({})
+  // Inicializador de função: roda uma vez, na montagem. Passar o objeto direto
+  // relê a URL a cada render e desfaria o filtro que o usuário mexeu depois.
+  const [filters, setFilters] = useState<Record<string, string[]>>(filtrosDaURL)
   const setFilter = (col: string, vals: string[]) => {
     setFilters(prev => {
       const next = { ...prev }

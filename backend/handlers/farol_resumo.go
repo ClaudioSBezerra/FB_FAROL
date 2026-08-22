@@ -1,0 +1,162 @@
+// farol_resumo.go — disparo manual e prévia do resumo semanal.
+//
+// A prévia existe porque a primeira versão de um e-mail que vai para a
+// diretoria não deve estrear na caixa da diretoria. `previa=1` monta tudo,
+// devolve o HTML e não envia nem registra nada.
+package handlers
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"fb_farol/services"
+)
+
+// FarolResumoSemanalHandler — POST /api/v2/farol/resumo-semanal
+//
+//	?previa=1              monta e devolve o HTML, não envia
+//	?forcar=1              ignora o log da semana (para testar)
+//	?ano=&mes=             default: mês corrente
+//	?ate=AAAA-MM-DD        default: ontem
+//	?baseline=meta         default: ano_anterior (não há meta cadastrada)
+func FarolResumoSemanalHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !RequireWrite(spCtx, w) {
+			return
+		}
+		// Quem tem escopo não dispara: o resumo é montado para TODOS os
+		// destinatários de uma vez, e a prévia devolveria o corpo do e-mail
+		// alheio — inclusive o da diretoria — para quem só pode ver a própria
+		// equipe. É a mesma razão que barra GGV no text-to-SQL.
+		if escopoDoUsuario(db, spCtx, "").restrito() {
+			log.Printf("[farol:resumo] acesso negado — persona=%s user=%s",
+				spCtx.TipoPersona, spCtx.UserID)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+
+		loc := tzBrasil()
+		agora := time.Now().In(loc)
+		q := r.URL.Query()
+
+		ano, mes := agora.Year(), int(agora.Month())
+		if v, err := strconv.Atoi(q.Get("ano")); err == nil && v >= 2000 && v <= 2100 {
+			ano = v
+		}
+		if v, err := strconv.Atoi(q.Get("mes")); err == nil && v >= 1 && v <= 12 {
+			mes = v
+		}
+
+		// Ontem por padrão: o dia corrente ainda está sendo faturado e entraria
+		// pela metade, achatando o ritmo de todo mundo.
+		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+		if s := strings.TrimSpace(q.Get("ate")); s != "" {
+			if t, err := time.Parse("2006-01-02", s); err == nil {
+				ate = t
+			} else {
+				http.Error(w, `{"error":"ate inválido — use AAAA-MM-DD"}`, http.StatusBadRequest)
+				return
+			}
+		}
+
+		base := services.BaselineAnoAnterior
+		if strings.EqualFold(q.Get("baseline"), "meta") {
+			base = services.BaselineMeta
+		}
+
+		previa := q.Get("previa") == "1"
+		forcar := q.Get("forcar") == "1"
+
+		log.Printf("[farol:resumo] disparo %04d-%02d ate=%s baseline=%s previa=%t forcar=%t por user=%s",
+			ano, mes, ate.Format("2006-01-02"), base, previa, forcar, spCtx.UserID)
+
+		res, err := services.EnviarResumoSemanal(db, spCtx.EmpresaID, ano, mes, ate, base, previa, forcar)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		enviados := 0
+		for _, x := range res {
+			if x.Enviado {
+				enviados++
+			}
+		}
+		log.Printf("[farol:resumo] %d destinatário(s), %d enviado(s)", len(res), enviados)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"periodo":       fmt.Sprintf("%04d-%02d", ano, mes),
+			"ate":           ate.Format("2006-01-02"),
+			"baseline":      string(base),
+			"previa":        previa,
+			"destinatarios": len(res),
+			"enviados":      enviados,
+			"resultados":    res,
+		})
+	}
+}
+
+// FarolResumoPreviaHTMLHandler — GET /api/v2/farol/resumo-semanal/previa
+//
+// Devolve o e-mail do PRÓPRIO usuário renderizado como página, para abrir no
+// navegador. Ver o HTML dentro de um JSON escapado não diz nada sobre como o
+// e-mail vai chegar.
+func FarolResumoPreviaHTMLHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		loc := tzBrasil()
+		agora := time.Now().In(loc)
+		q := r.URL.Query()
+
+		ano, mes := agora.Year(), int(agora.Month())
+		if v, err := strconv.Atoi(q.Get("ano")); err == nil && v >= 2000 && v <= 2100 {
+			ano = v
+		}
+		if v, err := strconv.Atoi(q.Get("mes")); err == nil && v >= 1 && v <= 12 {
+			mes = v
+		}
+		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+
+		todos, cob, err := services.ColetarDinheiroNaMesa(db, spCtx.EmpresaID, ano, mes, ate,
+			services.BaselineAnoAnterior)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Sempre o recorte de QUEM PEDIU. Um preview que mostrasse o e-mail de
+		// outra pessoa seria uma porta lateral para o escopo.
+		nome := spCtx.UserID
+		var full string
+		if db.QueryRow(`SELECT COALESCE(NULLIF(full_name,''), email) FROM users WHERE id=$1`,
+			spCtx.UserID).Scan(&full) == nil && full != "" {
+			nome = full
+		}
+		nomes := services.NomesGerentesSupervisores(db, spCtx.EmpresaID, ano, mes)
+		resumo := services.MontarResumo(todos, cob, nome, spCtx.TipoPersona, spCtx.CodReferencia,
+			nomes, services.RotuloMes(ano, mes))
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(services.CorpoHTML(resumo)))
+	}
+}
