@@ -62,6 +62,17 @@ interface Resumo {
     resto_rcas: number
     resto_valor: number
   } | null
+  projecao?: {
+    ano: number
+    ano_ant: number
+    ultimo_mes: number
+    ano_anterior: number
+    crescimento_pct: number
+    mes_pct: number
+    piso: number
+    ritmo: number
+    conservador: number
+  } | null
   cobertura: {
     rcas_com_venda: number
     rcas_com_meta: number
@@ -383,6 +394,72 @@ export default function FarolDinheiroNaMesa() {
               </div>
             )}
           </>
+        )}
+
+        {/* ── onde o ano fecha ──
+            Três cenários, não um. Projeção com número único vira promessa; com
+            a faixa, quem lê enxerga o intervalo e sabe onde está a aposta.
+            A sazonalidade vem do ano passado como molde — regra de três sobre
+            dias decorridos daria número errado com cara de precisão. */}
+        {d.projecao && d.projecao.ano_anterior > 0 && (
+          <div style={{ marginTop: 36 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+              <h2 style={{ ...display, fontWeight: 700, fontSize: 16, margin: 0 }}>
+                Onde o ano fecha
+              </h2>
+              <span style={{ fontSize: 12.5, color: '#5E7080' }}>
+                sazonalidade de {d.projecao.ano_ant} como molde
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: '#26343F',
+                          border: '1px solid #26343F', borderRadius: 14, overflow: 'hidden' }}>
+              {[
+                { rot: 'Piso',        nota: `resto do ano repete ${d.projecao.ano_ant}`, v: d.projecao.piso },
+                { rot: 'Ritmo atual', nota: 'resto do ano como o mês corrente',          v: d.projecao.ritmo },
+                { rot: 'Conservador', nota: 'mantém o crescimento acumulado',            v: d.projecao.conservador },
+              ].map(c => (
+                <div key={c.rot} style={{ background: '#15202D', padding: '16px 18px',
+                                          display: 'flex', gap: 16, alignItems: 'center' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{c.rot}</div>
+                    <div style={{ fontSize: 12.5, color: '#8195A6', marginTop: 4 }}>{c.nota}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ ...mono, fontWeight: 600, fontSize: 17 }}>R$ {brl(c.v)}</div>
+                    <div style={{ fontSize: 11.5, color: '#5E7080', marginTop: 3 }}>
+                      {((c.v / d.projecao!.ano_anterior - 1) * 100).toFixed(1)}% vs {d.projecao!.ano_ant}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div style={{ background: '#1B2836', padding: '14px 18px', display: 'flex',
+                            gap: 16, alignItems: 'center' }}>
+                <div style={{ flex: 1, color: '#8195A6', fontSize: 13.5 }}>
+                  {d.projecao.ano_ant} fechado
+                </div>
+                <div style={{ ...mono, fontWeight: 600, fontSize: 15, color: '#8195A6' }}>
+                  R$ {brl(d.projecao.ano_anterior)}
+                </div>
+              </div>
+            </div>
+
+            {/* Os dois percentuais vivem na mesma tela e divergem por escopo.
+                Sem esta nota, o leitor conclui que um deles está errado. */}
+            <div style={{ fontSize: 12, color: '#5E7080', marginTop: 12, lineHeight: 1.65 }}>
+              Acumulado até {['','janeiro','fevereiro','março','abril','maio','junho','julho',
+                'agosto','setembro','outubro','novembro','dezembro'][d.projecao.ultimo_mes]}:{' '}
+              <b style={{ color: '#8195A6' }}>{d.projecao.crescimento_pct.toFixed(1)}%</b> do mesmo
+              período de {d.projecao.ano_ant}. O mês corrente projeta{' '}
+              <b style={{ color: '#8195A6' }}>{d.projecao.mes_pct.toFixed(1)}%</b> do mesmo mês — se
+              ele desacelerou, o ano tende ao piso.
+              <br />
+              Estes percentuais são da <b style={{ color: '#8195A6' }}>empresa inteira</b>, incluindo
+              códigos que faturavam no ano passado e hoje não operam. O percentual do quadro acima
+              conta só quem está em campo, e por isso é maior.
+            </div>
+          </div>
         )}
 
         {/* ── semáforo ── */}
