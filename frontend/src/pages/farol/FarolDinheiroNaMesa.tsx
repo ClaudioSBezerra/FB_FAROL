@@ -1,16 +1,20 @@
 // FarolDinheiroNaMesa — a página que o resumo semanal linka.
 //
 // Os mesmos números do e-mail, servidos pelo mesmo motor no backend. Se um dia
-// a tela e o e-mail discordarem, é porque alguém duplicou o cálculo — e não
-// vai ser aqui: as duas leem /api/v2/farol/dinheiro-na-mesa.
+// a tela e o e-mail discordarem, é porque alguém duplicou o cálculo — e não vai
+// ser aqui: as duas leem /api/v2/farol/dinheiro-na-mesa.
 //
-// Existe porque a fase 2 é mandar SÓ O LINK por WhatsApp. Um link que abrisse o
-// painel genérico obrigaria o gestor a reconstruir o raciocínio sozinho; este
-// abre direto no quadro.
+// ⚠ ÚNICA TELA ESCURA DO FAROL. O CLAUDE.md manda manter o padrão "Clean
+// Professional", que é claro; esta é exceção deliberada, decidida em 22/08/2026
+// pelo dono da JC, que preferiu este estilo. A exceção está registrada lá.
+//
+// A justificativa de produto: esta tela é de CAMPO. Chega por WhatsApp, é lida
+// no celular, muitas vezes fora do escritório, e compete com a atenção de um
+// aplicativo de mensagem. Fundo escuro com um número grande em âmbar tem outra
+// presença nesse contexto. As telas de trabalho continuam claras.
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { ArrowRight, ExternalLink } from 'lucide-react'
-import { fmtBRL } from '@/lib/farolMoney'
 
 interface RcaMesa {
   cod_rca: string
@@ -55,12 +59,31 @@ interface Resumo {
   }
 }
 
-const MOTIVO: Record<string, string> = {
-  POSITIVACAO: 'positivação abaixo da equipe',
-  MIX: 'mix abaixo da equipe',
+const MOTIVO: Record<string, { tag: string; texto: string; cor: string }> = {
+  POSITIVACAO: { tag: 'POSITIVAÇÃO', texto: 'positivação abaixo da média da equipe', cor: 'rgba(229,84,75,.14);color:#E5544B' },
+  MIX:         { tag: 'MIX',         texto: 'mix abaixo da média da equipe',         cor: 'rgba(232,163,61,.14);color:#E8A33D' },
 }
 
+// Fonte carregada só aqui. O resto do app não usa Archivo nem IBM Plex, e
+// pendurar 3 famílias no index.html faria toda tela pagar o download por causa
+// de uma. Idempotente: se já está no head, não repete.
+function useFontesDoQuadro() {
+  useEffect(() => {
+    const id = 'fontes-dinheiro-na-mesa'
+    if (document.getElementById(id)) return
+    const l = document.createElement('link')
+    l.id = id
+    l.rel = 'stylesheet'
+    l.href = 'https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap'
+    document.head.appendChild(l)
+  }, [])
+}
+
+const brl = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+
 export default function FarolDinheiroNaMesa() {
+  useFontesDoQuadro()
+
   const q = useQuery<Resumo>({
     queryKey: ['farol-dinheiro-na-mesa'],
     queryFn: async () => {
@@ -72,171 +95,248 @@ export default function FarolDinheiroNaMesa() {
     refetchOnWindowFocus: false,
   })
 
-  if (q.isLoading) {
-    return <div className="p-8 text-slate-500">Calculando o ritmo do mês…</div>
-  }
-  if (q.error || !q.data) {
-    return <div className="p-8 text-rose-700">Não foi possível carregar o resumo.</div>
+  const mono = { fontFamily: '"IBM Plex Mono",ui-monospace,monospace', fontVariantNumeric: 'tabular-nums' } as const
+  const display = { fontFamily: '"Archivo",system-ui,sans-serif' } as const
+
+  if (q.isLoading || q.error || !q.data) {
+    return (
+      <div style={{ background: '#0E1621', minHeight: '100vh', color: '#8195A6',
+                    fontFamily: '"IBM Plex Sans",system-ui,sans-serif', padding: '48px 20px' }}>
+        {q.isLoading ? 'Calculando o ritmo do mês…' : 'Não foi possível carregar o quadro.'}
+      </div>
+    )
   }
 
   const d = q.data
-  const pct = d.ritmo > 0 ? (d.realizado / d.ritmo) * 100 : 0
-  const saldo = d.realizado - d.ritmo
-  const acima = saldo >= 0
   const grupos = d.grupos ?? []
   const top = d.top_geral ?? []
   const maiorGrupo = grupos.reduce((m, g) => Math.max(m, g.total_mesa), 0)
+  const maiorRca = top.reduce((m, x) => Math.max(m, x.dinheiro_mesa), 0)
+
+  // O alvo do MÊS INTEIRO, reconstruído a partir do ritmo: o backend manda o
+  // esperado até hoje, e a barra de progresso precisa do total para mostrar
+  // onde a equipe está no mês, não só contra a fração decorrida.
+  const { dias_decorridos: dd, dias_totais: dt } = d.cobertura
+  const alvoMes = dd > 0 ? (d.ritmo * dt) / dd : 0
+  const pctMes = alvoMes > 0 ? (d.realizado / alvoMes) * 100 : 0
+  const pctRitmo = d.ritmo > 0 ? (d.realizado / d.ritmo) * 100 : 0
+  const saldo = d.realizado - d.ritmo
+  const acima = saldo >= 0
+  const marcaEsperada = dt > 0 ? (dd / dt) * 100 : 0
 
   return (
-    // Mobile-first: o destino natural deste link é o celular, aberto a partir
-    // do WhatsApp ou do e-mail no telefone. Larguras e tamanhos crescem no
-    // desktop, não o contrário.
-    <div className="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-8 text-slate-800">
+    <div style={{ background: '#0E1621', minHeight: '100vh', color: '#EAF0F5',
+                  fontFamily: '"IBM Plex Sans",system-ui,sans-serif',
+                  WebkitFontSmoothing: 'antialiased', padding: '24px 16px 56px' }}>
+      <div style={{ maxWidth: 1080, margin: '0 auto' }}>
 
-      <header className="border-b-2 border-slate-200 pb-5 mb-7">
-        <p className="text-xs uppercase tracking-widest font-semibold text-slate-400">
-          Farol de Vendas · resumo do mês
-        </p>
-        <h1 className="text-xl sm:text-2xl font-bold mt-2">Dinheiro na mesa · {d.mes}</h1>
-        <p className="text-slate-500 mt-1 text-sm">
-          {d.nome}, este é o quadro de <b className="text-slate-700">{d.escopo}</b>.
-        </p>
-      </header>
-
-      {/* Destaque + posição do conjunto. Os dois juntos de propósito: o valor
-          na mesa soma só quem está atrás, e sozinho ele lê como "estamos
-          atrasados" mesmo quando o conjunto está à frente. */}
-      <section className="bg-slate-50 border-l-4 border-teal-700 rounded-r p-4 sm:p-5 mb-6 sm:mb-7">
-        {/* O número é o herói: no celular ele ocupa a tela toda de largura, e
-            é a primeira coisa que o gestor vê ao abrir o link do WhatsApp.
-            break-words porque acima de R$ 100 mi o valor não cabe numa linha
-            em tela estreita — melhor quebrar do que vazar. */}
-        <div className="text-[clamp(1.75rem,9vw,2.75rem)] font-bold tabular-nums leading-none break-words">
-          {fmtBRL(d.total_mesa)}
+        {/* ── topo ── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 16, flexWrap: 'wrap', borderBottom: '1px solid #26343F',
+                      paddingBottom: 16, marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#E8A33D',
+                           boxShadow: '0 0 0 4px rgba(232,163,61,.14)' }} />
+            <b style={{ ...display, fontWeight: 800, letterSpacing: '.5px', fontSize: 14 }}>DINHEIRO NA MESA</b>
+            <span style={{ color: '#8195A6', fontSize: 13 }}>· Farol de Vendas</span>
+          </div>
+          <div style={{ textAlign: 'right', fontSize: 12.5, color: '#8195A6', lineHeight: 1.5 }}>
+            <b style={{ color: '#EAF0F5' }}>{d.nome}</b><br />
+            {d.escopo} · {d.mes} · {d.cobertura.rcas_com_meta} RCAs
+          </div>
         </div>
-        <p className="text-sm text-slate-500 mt-1.5">
-          deixados de faturar em relação ao ritmo, somando apenas quem está atrás
-        </p>
-        {d.ritmo > 0 && (
-          <p className="text-sm text-slate-600 mt-3 pt-3 border-t border-slate-200">
-            No conjunto, {d.escopo} está em{' '}
-            <b className={acima ? 'text-emerald-700' : 'text-orange-700'}>
-              {pct.toFixed(0)}%
-            </b>{' '}
-            do ritmo — {acima ? 'acima' : 'abaixo'} de{' '}
-            <b>{fmtBRL(Math.abs(saldo))}</b> do esperado para esta altura do mês.
-          </p>
-        )}
-      </section>
 
-      {/* Três colunas mesmo no celular: são números curtos e a comparação entre
-          as faixas é o ponto — empilhados, viram três fatos soltos. */}
-      <section className="grid grid-cols-3 gap-px bg-slate-200 border border-slate-200 rounded overflow-hidden mb-7 sm:mb-8">
-        {[
-          { n: d.vermelho, cor: 'text-orange-700', dot: 'bg-orange-600', lbl: 'abaixo de 70% do ritmo' },
-          { n: d.amarelo, cor: 'text-amber-700', dot: 'bg-amber-500', lbl: 'entre 70% e 90%' },
-          { n: d.verde, cor: 'text-emerald-700', dot: 'bg-emerald-600', lbl: 'no ritmo ou acima' },
-        ].map(s => (
-          <div key={s.lbl} className="bg-white p-3 sm:p-4">
-            <div className={`text-xl sm:text-2xl font-bold tabular-nums ${s.cor}`}>{s.n}</div>
-            <div className="text-[11px] sm:text-xs text-slate-500 mt-1 flex items-start gap-1.5">
-              <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${s.dot}`} />
-              <span>{s.lbl}</span>
+        {/* ── herói ── */}
+        <div style={{ ...display, fontWeight: 700, letterSpacing: '2.5px', fontSize: 12,
+                      color: '#E8A33D', textTransform: 'uppercase', marginBottom: 14 }}>
+          Deixado de faturar · mês corrente
+        </div>
+        <div style={{ ...mono, fontWeight: 600, fontSize: 'clamp(40px,11vw,104px)',
+                      lineHeight: .92, letterSpacing: '-1px', wordBreak: 'break-word' }}>
+          <span style={{ color: '#E8A33D', fontSize: '.42em', verticalAlign: '.28em', marginRight: '.12em' }}>R$</span>
+          {brl(d.total_mesa)}
+        </div>
+        <div style={{ height: 4, borderRadius: 3, marginTop: 18,
+                      background: 'linear-gradient(90deg,#E8A33D,rgba(232,163,61,0))',
+                      width: `${Math.min(100, 100 - pctRitmo / 2)}%` }} />
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 16,
+                      color: '#8195A6', fontSize: 14, alignItems: 'center' }}>
+          <span>somando apenas quem está atrás do ritmo</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#15202D',
+                         border: '1px solid #26343F', borderRadius: 100, padding: '5px 13px', fontSize: 12.5 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#E5544B' }} />
+            {d.vermelho} RCAs abaixo de 70%
+          </span>
+        </div>
+
+        {/* ── progresso do mês ──
+            A marca âmbar é onde a equipe DEVERIA estar hoje. Sem ela, a barra
+            só diz "faltam X%" e some a informação que importa: se o atraso é
+            do calendário ou do desempenho. */}
+        <div style={{ margin: '30px 0 40px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                        marginBottom: 9, fontSize: 13, color: '#8195A6', gap: 12, flexWrap: 'wrap' }}>
+            <span>Realizado <b style={{ color: '#EAF0F5' }}>R$ {brl(d.realizado)}</b> de <b style={{ color: '#EAF0F5' }}>R$ {brl(alvoMes)}</b></span>
+            <span><b style={{ color: acima ? '#3DC98B' : '#E5544B' }}>{pctRitmo.toFixed(0)}%</b> do ritmo · {dd} de {dt} dias úteis</span>
+          </div>
+          <div style={{ height: 12, background: '#15202D', border: '1px solid #26343F',
+                        borderRadius: 100, overflow: 'hidden', position: 'relative' }}>
+            <div style={{ height: '100%', width: `${Math.min(100, pctMes)}%`, borderRadius: 100,
+                          background: 'linear-gradient(90deg,#2ea877,#3DC98B)' }} />
+            <div style={{ position: 'absolute', top: -5, bottom: -5, width: 2, background: '#E8A33D',
+                          left: `${Math.min(100, marcaEsperada)}%`, opacity: .55 }} />
+          </div>
+          <div style={{ fontSize: 12.5, color: '#5E7080', marginTop: 8 }}>
+            A marca âmbar é onde a equipe deveria estar hoje. {acima
+              ? `Está R$ ${brl(Math.abs(saldo))} à frente.`
+              : `Faltam R$ ${brl(Math.abs(saldo))} para alcançá-la.`}
+          </div>
+        </div>
+
+        {/* ── por GGV ── */}
+        {grupos.length > 0 && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+              <h2 style={{ ...display, fontWeight: 700, fontSize: 16, margin: 0 }}>
+                {d.persona === 'ggv' ? 'Por supervisor' : 'Por GGV'}
+              </h2>
+              <span style={{ fontSize: 12.5, color: '#5E7080' }}>toque para abrir o painel da equipe</span>
             </div>
-          </div>
-        ))}
-      </section>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: '#26343F',
+                          border: '1px solid #26343F', borderRadius: 14, overflow: 'hidden', marginBottom: 34 }}>
+              {grupos.map(g => (
+                <a key={g.cod} href={g.link}
+                   style={{ background: '#15202D', padding: '16px 18px', textDecoration: 'none',
+                            color: 'inherit', display: 'flex', gap: 16, alignItems: 'center' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>
+                      {g.nome} <span style={{ color: '#5E7080', fontWeight: 400, fontSize: 12 }}>· {g.cod}</span>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: '#8195A6', marginTop: 5 }}>
+                      {g.rcas} RCAs · {g.vermelhos} abaixo de 70%
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ ...mono, fontWeight: 600, fontSize: 17 }}>R$ {brl(g.total_mesa)}</div>
+                    <div style={{ height: 4, background: '#1B2836', borderRadius: 3, marginTop: 8,
+                                  width: 110, overflow: 'hidden', marginLeft: 'auto' }}>
+                      <div style={{ height: '100%', borderRadius: 3, background: '#E8A33D',
+                                    width: maiorGrupo > 0 ? `${(g.total_mesa / maiorGrupo) * 100}%` : '0%' }} />
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </>
+        )}
 
-      {grupos.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-base font-bold mb-1">
-            {d.persona === 'ggv' ? 'Por supervisor' : 'Por GGV'}
-          </h2>
-          <p className="text-xs text-slate-500 mb-3">
-            Clique para abrir o painel já filtrado nessa equipe.
-          </p>
-          <div className="border border-slate-200 rounded divide-y divide-slate-100">
-            {grupos.map(g => (
-              <a key={g.cod} href={g.link}
-                 className="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-4 sm:py-3 active:bg-slate-100 hover:bg-slate-50 group">
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-teal-800 group-hover:underline truncate">
-                    {g.nome} <span className="text-slate-400 font-normal text-xs">· {g.cod}</span>
+        {/* ── onde está o dinheiro ── */}
+        {top.length > 0 && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+              <h2 style={{ ...display, fontWeight: 700, fontSize: 16, margin: 0 }}>Onde está o dinheiro</h2>
+              <span style={{ fontSize: 12.5, color: '#5E7080' }}>ordenado por reais — não por % de atingimento</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: '#26343F',
+                          border: '1px solid #26343F', borderRadius: 14, overflow: 'hidden' }}>
+              {top.map((x, i) => {
+                const m = MOTIVO[x.motivo]
+                return (
+                  <div key={`${x.cod_rca}-${i}`}
+                       style={{ background: '#15202D', padding: '16px 18px', display: 'flex',
+                                gap: 16, alignItems: 'center' }}>
+                    <div style={{ ...mono, fontWeight: 600, fontSize: 15, color: '#5E7080',
+                                  width: 22, textAlign: 'center' }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '.2px' }}>{x.nome_rca}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5,
+                                    fontSize: 12.5, color: '#8195A6', flexWrap: 'wrap' }}>
+                        {m && (
+                          <span style={{ ...display, fontWeight: 700, fontSize: 10, letterSpacing: 1,
+                                         padding: '3px 8px', borderRadius: 5, lineHeight: 1,
+                                         background: m.cor.split(';')[0], color: m.cor.split(':')[1] }}>
+                            {m.tag}
+                          </span>
+                        )}
+                        <span>{m ? m.texto : 'volume geral abaixo do ritmo'} · {x.atingimento.toFixed(0)}% do ritmo</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ ...mono, fontWeight: 600, fontSize: 17 }}>R$ {brl(x.dinheiro_mesa)}</div>
+                      <div style={{ height: 4, background: '#1B2836', borderRadius: 3, marginTop: 8,
+                                    width: 110, overflow: 'hidden', marginLeft: 'auto' }}>
+                        <div style={{ height: '100%', borderRadius: 3, background: '#E8A33D',
+                                      width: maiorRca > 0 ? `${(x.dinheiro_mesa / maiorRca) * 100}%` : '0%' }} />
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    {g.rcas} RCAs · {g.vermelhos} abaixo de 70%
-                  </div>
-                  {/* Barra proporcional ao maior: dá a leitura de peso relativo
-                      sem obrigar a comparar números um a um. */}
-                  <div className="h-1 bg-slate-100 rounded mt-2 overflow-hidden">
-                    <div className="h-full bg-teal-700/60 rounded"
-                         style={{ width: maiorGrupo > 0 ? `${(g.total_mesa / maiorGrupo) * 100}%` : '0%' }} />
-                  </div>
-                </div>
-                <div className="text-right font-bold tabular-nums text-sm sm:text-base whitespace-nowrap">
-                  {fmtBRL(g.total_mesa)}
-                </div>
-                <ExternalLink className="h-4 w-4 text-slate-300 group-hover:text-teal-700 shrink-0" />
-              </a>
-            ))}
-          </div>
-        </section>
-      )}
+                )
+              })}
+            </div>
 
-      {top.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-base font-bold mb-1">Onde está o dinheiro</h2>
-          <p className="text-xs text-slate-500 mb-3">
-            Ordenado por reais, não por percentual: o RCA grande a 90% do ritmo
-            pesa mais que o pequeno a 50%.
-          </p>
-          <div className="border border-slate-200 rounded divide-y divide-slate-100">
-            {top.map((x, i) => (
-              <div key={`${x.cod_rca}-${i}`} className="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3">
-                <span className="text-slate-400 tabular-nums w-5">{i + 1}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{x.nome_rca}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    {MOTIVO[x.motivo] ?? 'volume geral'} · {x.atingimento.toFixed(0)}% do ritmo
-                  </div>
-                </div>
-                <div className="text-right font-bold tabular-nums text-sm sm:text-base whitespace-nowrap">
-                  {fmtBRL(x.dinheiro_mesa)}
-                </div>
+            {d.resto_rcas > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            gap: 12, marginTop: 14, padding: '15px 18px', border: '1px dashed #26343F',
+                            borderRadius: 12, color: '#8195A6', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5 }}>
+                  + <b style={{ color: '#EAF0F5' }}>{d.resto_rcas} RCAs</b> abaixo do ritmo,
+                  individualmente menores — detalhe no painel completo
+                </span>
+                <span style={{ ...mono, fontWeight: 600, color: '#EAF0F5', fontSize: 15 }}>
+                  R$ {brl(d.resto_valor)}
+                </span>
               </div>
-            ))}
-          </div>
-          {d.resto_rcas > 0 && (
-            <p className="text-sm text-slate-500 border border-dashed border-slate-300 rounded px-4 py-3 mt-3">
-              + <b className="text-slate-700">{d.resto_rcas} RCAs</b> abaixo do ritmo,
-              individualmente menores — <b className="text-slate-700">{fmtBRL(d.resto_valor)}</b> somados.
-            </p>
-          )}
-        </section>
-      )}
+            )}
+          </>
+        )}
 
-      {/* Bloco no celular, inline no desktop: botão de largura total é mais
-          fácil de acertar com o polegar. */}
-      <Link to="/farol/v2"
-            className="flex sm:inline-flex justify-center items-center gap-2 bg-teal-800 active:bg-teal-900 hover:bg-teal-900 text-white px-5 py-3 sm:py-2.5 rounded text-sm font-medium">
-        Abrir o painel completo <ArrowRight className="h-4 w-4" />
-      </Link>
+        {/* ── semáforo ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))',
+                      gap: 1, background: '#26343F', border: '1px solid #26343F',
+                      borderRadius: 14, overflow: 'hidden', marginTop: 36 }}>
+          {[
+            { n: d.vermelho, cor: '#E5544B', lbl: 'Vermelho · abaixo de 70% do ritmo' },
+            { n: d.amarelo,  cor: '#E8C13D', lbl: 'Amarelo · entre 70% e 90%' },
+            { n: d.verde,    cor: '#3DC98B', lbl: 'Verde · no ritmo ou acima' },
+          ].map(s => (
+            <div key={s.lbl} style={{ background: '#15202D', padding: '18px 20px' }}>
+              <div style={{ ...mono, fontWeight: 600, fontSize: 30, color: s.cor }}>{s.n}</div>
+              <div style={{ fontSize: 12.5, color: '#8195A6', marginTop: 4, display: 'flex',
+                            alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.cor }} />
+                {s.lbl}
+              </div>
+            </div>
+          ))}
+        </div>
 
-      {/* Metodologia no rodapé: quem age lê o topo, quem questiona o número lê
-          aqui. Esconder a régua é o caminho curto para o gestor desconfiar do
-          sistema inteiro na primeira divergência. */}
-      <footer className="mt-9 pt-5 border-t border-slate-200 text-xs text-slate-500 leading-relaxed">
-        Ritmo esperado = alvo × (dias úteis decorridos ÷ dias úteis do mês).
-        Alvo: <b>{d.cobertura.baseline === 'meta' ? 'meta do mês' : 'mesmo mês do ano anterior'}</b>.
-        Dias úteis contados pelo faturamento real ({d.cobertura.dias_decorridos} de{' '}
-        {d.cobertura.dias_totais}, fonte: {d.cobertura.fonte_dias_total}) — considera sábado
-        e feriado sem precisar de calendário. Valores em venda líquida.{' '}
-        {d.cobertura.rcas_com_meta} dos {d.cobertura.rcas_com_venda} RCAs com venda no mês
-        entraram no cálculo; os demais não têm base de comparação.
-        <br />
-        Este quadro descreve onde está o gap, não avalia desempenho: férias, licença e troca
-        de território não são conhecidos pelo sistema.
-      </footer>
+        <Link to="/farol/v2"
+              style={{ display: 'block', textAlign: 'center', marginTop: 28, background: '#E8A33D',
+                       color: '#0E1621', padding: '14px 20px', borderRadius: 8, textDecoration: 'none',
+                       ...display, fontWeight: 700, fontSize: 14 }}>
+          Abrir o painel completo
+        </Link>
+
+        {/* A metodologia fica no rodapé: quem age lê o topo, quem questiona o
+            número lê aqui. Esconder a régua é o caminho curto para o gestor
+            desconfiar do sistema inteiro na primeira divergência. */}
+        <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid #26343F',
+                      fontSize: 12, color: '#5E7080', lineHeight: 1.7 }}>
+          Ritmo esperado = alvo × (dias úteis decorridos ÷ dias úteis do mês).
+          Alvo: <b style={{ color: '#8195A6' }}>
+            {d.cobertura.baseline === 'meta' ? 'meta do mês' : 'mesmo mês do ano anterior'}
+          </b>. Dias úteis contados pelo faturamento real ({dd} de {dt}, fonte:{' '}
+          {d.cobertura.fonte_dias_total}) — considera sábado e feriado sem precisar de calendário.
+          Valores em venda líquida. {d.cobertura.rcas_com_meta} dos {d.cobertura.rcas_com_venda} RCAs
+          com venda no mês entraram no cálculo; os demais não têm base de comparação.
+          <br />
+          Este quadro descreve onde está o gap, não avalia desempenho: férias, licença e troca de
+          território não são conhecidos pelo sistema.
+        </div>
+
+      </div>
     </div>
   )
 }

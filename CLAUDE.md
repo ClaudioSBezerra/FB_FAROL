@@ -11,7 +11,7 @@ Sistema de Farol de Vendas (semáforo de objetivos) para distribuidoras que oper
 
 - **Stack:** Go 8087 + React 3087 + Postgres + Coolify — sem mudança de stack
 - **Compatibilidade ION VENDAS:** URLs `/m/CNPJ/SUP/cod` e `/m/CNPJ/RCA/cod` devem continuar funcionando para o aplicativo de campo
-- **Visual:** padrão "Clean Professional" atual mantido e estendido
+- **Visual:** padrão "Clean Professional" atual mantido e estendido — com UMA exceção registrada: a tela `/farol/dinheiro-na-mesa` é escura. Decisão do dono da JC em 22/08/2026, que preferiu esse estilo. A justificativa de produto é que ela é tela de campo: chega por WhatsApp, é lida no celular e compete com a atenção de um aplicativo de mensagem. As telas de trabalho seguem claras; qualquer nova exceção precisa de decisão explícita, não de precedente
 - **Banco:** continua Postgres com materialized views (sem migração para OLAP / cubo)
 - **Migração:** dados atuais descartados (schema limpo) — gestor aceitou esta perda
 <!-- GSD:project-end -->
