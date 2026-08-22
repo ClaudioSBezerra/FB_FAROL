@@ -3709,7 +3709,7 @@ func FarolV2PeriodosHandler(db *sql.DB) http.HandlerFunc {
 //     "rca":        [...],
 //     "cli":        [...],
 //     "uf":         ["SP", "RJ", ...],
-//     "empresa":    ["NORDESTE", "SUDESTE", ...]
+//     "empresa":    [{"key":"20","label":"JC CONCEICAO DO JACUIPE-BA"}, ...]
 //   }
 
 type dimOption struct {
@@ -3840,6 +3840,42 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			return out
 		}
 
+		// fetchFilial — igual ao fetchScalar, mas trocando o código pelo nome
+		// quando a filial estiver cadastrada em farol.filiais (mig 204).
+		//
+		// LEFT JOIN de propósito: o filtro lista o que TEM MOVIMENTO, e o
+		// cadastro é só rótulo. Filial com venda e sem nome (15, 28 e 33, as de
+		// transporte intercompany) continua aparecendo pelo código — some do
+		// dropdown seria pior que aparecer sem nome.
+		//
+		// O `key` segue sendo o código puro: é ele que vai no filtro, no escopo
+		// e nos agregados. Só o `label` muda.
+		fetchFilial := func() []dimOption {
+			td := time.Now()
+			rows, err := db.Query(fmt.Sprintf(`
+				SELECT d.key, COALESCE(NULLIF(f.nome,''), d.key) AS label
+				  FROM (SELECT DISTINCT key FROM %s
+				         WHERE empresa_id=$1 AND dim='empresa' AND key != '') d
+				  LEFT JOIN farol.filiais f
+				         ON f.empresa_id = $1 AND f.codigo = d.key
+				 ORDER BY label
+			`, dimsTable), spCtx.EmpresaID)
+			if err != nil {
+				log.Printf("[dims] empresa ERRO em %v: %v", time.Since(td), err)
+				return nil
+			}
+			defer rows.Close()
+			out := []dimOption{}
+			for rows.Next() {
+				var d dimOption
+				if rows.Scan(&d.Key, &d.Label) == nil {
+					out = append(out, d)
+				}
+			}
+			log.Printf("[dims] empresa → %d filiais em %v", len(out), time.Since(td))
+			return out
+		}
+
 		// LAZY-LOAD do cod_cli: a dim "cli" (34k+ clientes) é a mais cara (~3s) e
 		// raramente filtrada. Ela só é carregada quando o front pede ?dim=cli
 		// (ao abrir o dropdown de Cliente). O dims "padrão" (sem ?dim) carrega
@@ -3854,7 +3890,8 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 
 		var (
 			fornec, gerente, supervisor, rca []dimOption
-			uf, empresa                      []string
+			uf                               []string
+			empresa                          []dimOption
 			wg                               sync.WaitGroup
 		)
 		wg.Add(6)
@@ -3863,7 +3900,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 		go func() { defer wg.Done(); supervisor = fetchDim("cod_supervisor", "supervisor") }()
 		go func() { defer wg.Done(); rca = fetchDim("cod_rca", "rca") }()
 		go func() { defer wg.Done(); uf = fetchScalar("uf", "uf") }()
-		go func() { defer wg.Done(); empresa = fetchScalar("empresa", "empresa") }()
+		go func() { defer wg.Done(); empresa = fetchFilial() }()
 		wg.Wait()
 
 		log.Printf("[dims] fluxo=%s paralelo=6 (sem cli) total=%v", fluxo.name, time.Since(t0))

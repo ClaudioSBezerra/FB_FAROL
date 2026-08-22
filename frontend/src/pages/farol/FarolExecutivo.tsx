@@ -136,7 +136,10 @@ interface DimsResponse {
   rca?: DimOption[]
   cli?: DimOption[]
   uf?: string[]
-  empresa?: string[]
+  // empresa passou a vir com rótulo na mig 204 ({key:"20", label:"JC CONCEICAO
+  // DO JACUIPE-BA"}). optionsFor já aceitava as duas formas, então a mudança no
+  // backend não exigiu nada aqui além do tipo.
+  empresa?: DimOption[]
   tipo_venda?: DimOption[] // mig 187/188 (faturado) e 203 (transmitido)
 }
 
