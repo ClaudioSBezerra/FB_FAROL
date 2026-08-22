@@ -473,3 +473,126 @@ func ColetarPeriodoFechado(db *sql.DB, empresaID string, ano, mesIni, mesFim int
 // UltimoMesFechado — o mês anterior ao corrente. Zero em janeiro, quando ainda
 // não há mês completo no ano.
 func UltimoMesFechado(mesCorrente int) int { return mesCorrente - 1 }
+
+// ─── Projeção do ano ─────────────────────────────────────────────────────────
+
+// Projecao — onde o ano fecha se o comportamento atual se mantiver.
+type Projecao struct {
+	AnoAnterior      float64 `json:"ano_anterior"`      // total do ano passado
+	RealizadoFechado float64 `json:"realizado_fechado"` // jan..último mês completo
+	BaseFechado      float64 `json:"base_fechado"`      // mesmos meses, ano passado
+	CrescimentoPct   float64 `json:"crescimento_pct"`   // razão entre os dois
+	MesProjetado     float64 `json:"mes_projetado"`     // mês corrente extrapolado
+	MesPct           float64 `json:"mes_pct"`           // mês projetado ÷ mesmo mês do ano passado
+	Piso             float64 `json:"piso"`
+	Ritmo            float64 `json:"ritmo"`
+	Conservador      float64 `json:"conservador"`
+	UltimoMes        int     `json:"ultimo_mes"`
+	Ano              int     `json:"ano"`
+	AnoAnt           int     `json:"ano_ant"`
+}
+
+// CalcularProjecao projeta o fechamento do ano usando o ANO PASSADO COMO MOLDE.
+//
+// Regra de três sobre dias decorridos daria um número errado com cara de
+// precisão: distribuidora tem sazonalidade, e dezembro não é fevereiro. Aplicar
+// o desempenho relativo sobre a forma que o ano passado já teve respeita isso
+// sem inventar curva nenhuma.
+//
+// Três cenários e não um, porque projeção com número único vira promessa. Com a
+// faixa, quem lê enxerga o intervalo e sabe onde está a aposta.
+func CalcularProjecao(db *sql.DB, empresaID string, ano, mes int,
+	diasDecorridos, diasTotais int, escopoCol, escopoVal string) (*Projecao, error) {
+
+	fim := mes - 1
+	if fim < 1 {
+		return nil, nil // janeiro: não há mês fechado para projetar
+	}
+
+	// v04_l0 para as MEDIDAS (uma linha por RCA) e v03_l2 só para o dono, pelo
+	// mesmo motivo do ranking: RCA em duas equipes contaria dobrado.
+	filtro := ""
+	args := []any{empresaID, ano}
+	if escopoCol != "" && escopoVal != "" {
+		filtro = " AND d." + escopoCol + " = $3"
+		args = append(args, escopoVal)
+	}
+
+	rows, err := db.Query(fmt.Sprintf(`
+		WITH dono AS (
+		    SELECT DISTINCT ON (cod_rca) cod_rca, cod_gerente, cod_supervisor
+		      FROM farol.agg_fat_v03_l2_mes
+		     WHERE empresa_id=$1 AND ano IN ($2-1,$2) AND cod_rca <> ''
+		     ORDER BY cod_rca, liquido DESC
+		)
+		SELECT a.ano, a.mes, SUM(a.liquido)::float8
+		  FROM farol.agg_fat_v04_l0_mes a
+		  LEFT JOIN dono d ON d.cod_rca = a.cod_rca
+		 WHERE a.empresa_id=$1 AND a.ano IN ($2-1,$2)%s
+		 GROUP BY a.ano, a.mes`, filtro), args...)
+	if err != nil {
+		return nil, fmt.Errorf("consultar projeção: %w", err)
+	}
+	defer rows.Close()
+
+	porMes := map[int]map[int]float64{ano - 1: {}, ano: {}}
+	for rows.Next() {
+		var a, m int
+		var v float64
+		if rows.Scan(&a, &m, &v) == nil {
+			if porMes[a] != nil {
+				porMes[a][m] = v
+			}
+		}
+	}
+
+	p := &Projecao{UltimoMes: fim, Ano: ano, AnoAnt: ano - 1}
+	ant, cur := porMes[ano-1], porMes[ano]
+	for m := 1; m <= 12; m++ {
+		p.AnoAnterior += ant[m]
+		if m <= fim {
+			p.RealizadoFechado += cur[m]
+			p.BaseFechado += ant[m]
+		}
+	}
+	if p.BaseFechado <= 0 || p.AnoAnterior <= 0 {
+		return nil, nil
+	}
+	p.CrescimentoPct = p.RealizadoFechado / p.BaseFechado * 100
+
+	// Mês corrente extrapolado pelos dias ÚTEIS já faturados — dentro de um mês
+	// a distribuição é razoavelmente uniforme, então aqui a regra de três vale.
+	// Entre meses ela não valeria, e é por isso que os meses restantes usam o
+	// molde do ano passado em vez de projeção linear.
+	if diasDecorridos > 0 && diasTotais > 0 {
+		p.MesProjetado = cur[mes] * float64(diasTotais) / float64(diasDecorridos)
+		if ant[mes] > 0 {
+			p.MesPct = p.MesProjetado / ant[mes] * 100
+		}
+	}
+
+	// Restantes: do mês corrente até dezembro, no ano passado.
+	var restanteAnt, posMesAnt float64
+	for m := mes; m <= 12; m++ {
+		restanteAnt += ant[m]
+		if m > mes {
+			posMesAnt += ant[m]
+		}
+	}
+
+	// PISO — o mês corrente termina no ritmo dele, e o resto do ano apenas
+	// repete o ano passado, sem crescimento nenhum.
+	p.Piso = p.RealizadoFechado + p.MesProjetado + posMesAnt
+
+	// RITMO ATUAL — o resto do ano se comporta como o mês corrente.
+	fatorMes := 1.0
+	if p.MesPct > 0 {
+		fatorMes = p.MesPct / 100
+	}
+	p.Ritmo = p.RealizadoFechado + restanteAnt*fatorMes
+
+	// CONSERVADOR — mantém o crescimento acumulado dos meses fechados.
+	p.Conservador = p.AnoAnterior * (p.CrescimentoPct / 100)
+
+	return p, nil
+}

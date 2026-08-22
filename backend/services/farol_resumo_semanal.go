@@ -82,6 +82,9 @@ type ResumoUsuario struct {
 	// juntar um mês pela metade no acumulado faria o número do ano dizer mais
 	// sobre o dia em que se olhou do que sobre a operação.
 	Ano *BlocoPeriodo `json:"ano,omitempty"`
+
+	// Onde o ano fecha se o comportamento se mantiver. Nulo em janeiro.
+	Projecao *Projecao `json:"projecao,omitempty"`
 }
 
 // BlocoPeriodo — o mesmo quadro para um recorte de meses fechados.
@@ -371,6 +374,28 @@ No conjunto, %s está em <b style="color:%s">%.0f%%</b> do ritmo — %s <b>%s</b
 		}
 	}
 
+	// ONDE O ANO FECHA. Vai depois do ranking de propósito: quem age lê o topo
+	// e para; quem decide orçamento chega até aqui.
+	if p := r.Projecao; p != nil && p.AnoAnterior > 0 {
+		fmt.Fprintf(&b, `<h3 style="font-size:15px;margin:26px 0 8px">Onde o ano fecha</h3>
+<p style="margin:0 0 10px;color:#667;font-size:12.5px">Projeção usando %d como molde de sazonalidade — não regra de três sobre dias decorridos, porque dezembro não é fevereiro. Três cenários, porque projeção com número único vira promessa.</p>
+<table cellpadding="0" cellspacing="0" style="width:100%%;border-collapse:collapse;font-size:14px">
+<tr><td style="padding:8px 0;border-bottom:1px solid #eef1f0">Piso <span style="color:#667;font-size:12px">— resto do ano repete %d</span></td>
+<td style="padding:8px 0;border-bottom:1px solid #eef1f0;text-align:right;white-space:nowrap;font-weight:bold">%s</td></tr>
+<tr><td style="padding:8px 0;border-bottom:1px solid #eef1f0">Ritmo atual <span style="color:#667;font-size:12px">— resto do ano como o mês corrente</span></td>
+<td style="padding:8px 0;border-bottom:1px solid #eef1f0;text-align:right;white-space:nowrap;font-weight:bold">%s</td></tr>
+<tr><td style="padding:8px 0;border-bottom:1px solid #eef1f0">Conservador <span style="color:#667;font-size:12px">— mantém o crescimento acumulado</span></td>
+<td style="padding:8px 0;border-bottom:1px solid #eef1f0;text-align:right;white-space:nowrap;font-weight:bold">%s</td></tr>
+<tr><td style="padding:8px 0;color:#667">%d fechado</td>
+<td style="padding:8px 0;text-align:right;white-space:nowrap;color:#667">%s</td></tr>
+</table>
+<p style="margin:10px 0 0;color:#667;font-size:12.5px">Acumulado até %s: <b>%.1f%%</b> do mesmo período de %d. O mês corrente projeta <b>%.1f%%</b> do mesmo mês — se ele desacelerou, o ano tende ao piso.</p>`,
+			p.AnoAnt, p.AnoAnt,
+			brl(p.Piso), brl(p.Ritmo), brl(p.Conservador),
+			p.AnoAnt, brl(p.AnoAnterior),
+			mesPtBR[p.UltimoMes], p.CrescimentoPct, p.AnoAnt, p.MesPct)
+	}
+
 	// Dois botões, com hierarquia clara. O quadro é o destino natural de quem
 	// leu o e-mail e quer o detalhe; o painel é para quem já sabe o que
 	// investigar. Invertidos, o gestor cairia na tela genérica e teria que
@@ -430,6 +455,15 @@ func CorpoTexto(r ResumoUsuario) string {
 		if r.RestoRcas > 0 {
 			fmt.Fprintf(&b, "+ %d RCAs menores, %s somados\n", r.RestoRcas, brl(r.RestoValor))
 		}
+	}
+	if p := r.Projecao; p != nil && p.AnoAnterior > 0 {
+		fmt.Fprintf(&b, "\nONDE O ANO FECHA (molde de sazonalidade de %d)\n", p.AnoAnt)
+		fmt.Fprintf(&b, "  Piso (resto repete %d)      %16s\n", p.AnoAnt, brl(p.Piso))
+		fmt.Fprintf(&b, "  Ritmo atual                 %16s\n", brl(p.Ritmo))
+		fmt.Fprintf(&b, "  Conservador                 %16s\n", brl(p.Conservador))
+		fmt.Fprintf(&b, "  %d fechado                 %16s\n", p.AnoAnt, brl(p.AnoAnterior))
+		fmt.Fprintf(&b, "  Acumulado ate %s: %.1f%% de %d. Mes corrente projeta %.1f%%.\n",
+			mesPtBR[p.UltimoMes], p.CrescimentoPct, p.AnoAnt, p.MesPct)
 	}
 	fmt.Fprintf(&b, "\nQuadro completo: %s\nPainel: %s\n", r.LinkQuadro, r.LinkPainel)
 	fmt.Fprintf(&b, "\n--\nRitmo = alvo x (dias úteis decorridos / dias do mês). Alvo: %s.\n"+
@@ -802,6 +836,20 @@ func MontarComAno(db *sql.DB, empresaID, nome, persona, codRef string,
 				rot = fmt.Sprintf("%s de %d", mesPtBR[1], ano)
 			}
 			r.Ano = MontarBloco(anoRs, persona, codRef, rot, nomes)
+		}
+
+		// Projeção no mesmo recorte de quem lê: o GGV vê onde a equipe DELE
+		// fecha, não onde a empresa fecha.
+		col := ""
+		switch persona {
+		case "ggv":
+			col = "cod_gerente"
+		case "supervisor":
+			col = "cod_supervisor"
+		}
+		if p, err := CalcularProjecao(db, empresaID, ano, mes,
+			cob.DiasDecorridos, cob.DiasTotais, col, codRef); err == nil {
+			r.Projecao = p
 		}
 	}
 	return r, nil
