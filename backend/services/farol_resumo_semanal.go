@@ -62,6 +62,8 @@ type ResumoUsuario struct {
 	Mes        string
 	Cobertura  Cobertura
 	TotalMesa  float64
+	Realizado  float64 // soma do que o escopo vendeu no mês
+	Ritmo      float64 // soma do que deveria ter vendido a esta altura
 	Vermelho   int
 	Amarelo    int
 	Verde      int
@@ -87,6 +89,10 @@ func MontarResumo(todos []RcaMesa, cob Cobertura, nome, persona, codRef string,
 		TotalMesa: TotalNaMesa(rs), LinkPainel: baseURLFarol() + "/farol/v2",
 	}
 	r.Vermelho, r.Amarelo, r.Verde = ContarFaixas(rs)
+	for _, x := range rs {
+		r.Realizado += x.Realizado
+		r.Ritmo += x.RitmoEsperado
+	}
 
 	var chave func(RcaMesa) string
 	var param string
@@ -203,6 +209,29 @@ func CorpoHTML(r ResumoUsuario) string {
 <span style="color:#2C6E49;font-weight:bold">%d</span> no ritmo</div></div>`,
 		brl(r.TotalMesa), r.Vermelho, r.Amarelo, r.Verde)
 
+	// A POSIÇÃO DO CONJUNTO, logo abaixo do destaque.
+	//
+	// Sem ela o e-mail engana por omissão. Em 22/08/2026 o valor na mesa era de
+	// R$ 12,88 mi e a empresa estava R$ 17,77 mi ACIMA do ritmo — 119%. Quem
+	// lê só o número grande entende "estamos R$ 12,9 milhões atrasados", que é
+	// o oposto do que estava acontecendo.
+	//
+	// Os dois números são verdadeiros e não se contradizem: o da mesa soma
+	// apenas quem está atrás, porque vendedor que vai bem não compensa o que
+	// vai mal na hora de agir. Mas o gestor precisa dos dois para saber se está
+	// corrigindo rota ou buscando margem extra.
+	if r.Ritmo > 0 {
+		pct := r.Realizado / r.Ritmo * 100
+		saldo := r.Realizado - r.Ritmo
+		cor, verbo := "#2C6E49", "acima do"
+		if saldo < 0 {
+			cor, verbo, saldo = "#A34A1B", "abaixo do", -saldo
+		}
+		fmt.Fprintf(&b, `<p style="margin:-8px 0 20px;font-size:14px;color:#556">
+No conjunto, %s está em <b style="color:%s">%.0f%%</b> do ritmo — %s <b>%s</b> do esperado para esta altura do mês.</p>`,
+			esc(r.Escopo), cor, pct, verbo, brl(saldo))
+	}
+
 	// O código vai junto do nome de propósito. Em 22/08/2026 a prévia mostrou
 	// duas linhas idênticas — "GGV - GO - GILSON FLORES" nos códigos 3 e 350 —
 	// porque o 350 trocou de dono no WinThor e a origem ainda devolve o nome
@@ -273,6 +302,15 @@ func CorpoTexto(r ResumoUsuario) string {
 	fmt.Fprintf(&b, "%s, este é o quadro de %s.\n\n", r.Nome, r.Escopo)
 	fmt.Fprintf(&b, "%s deixados de faturar em relação ao ritmo.\n", brl(r.TotalMesa))
 	fmt.Fprintf(&b, "%d abaixo de 70%% · %d entre 70%% e 90%% · %d no ritmo\n", r.Vermelho, r.Amarelo, r.Verde)
+	if r.Ritmo > 0 {
+		pct := r.Realizado / r.Ritmo * 100
+		saldo := r.Realizado - r.Ritmo
+		verbo := "acima do"
+		if saldo < 0 {
+			verbo, saldo = "abaixo do", -saldo
+		}
+		fmt.Fprintf(&b, "No conjunto: %.0f%% do ritmo, %s %s esperado.\n", pct, verbo, brl(saldo))
+	}
 
 	if len(r.Grupos) > 0 {
 		b.WriteString("\n")
