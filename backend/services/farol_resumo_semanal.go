@@ -389,7 +389,8 @@ No conjunto, %s está em <b style="color:%s">%.0f%%</b> do ritmo — %s <b>%s</b
 <tr><td style="padding:8px 0;color:#667">%d fechado</td>
 <td style="padding:8px 0;text-align:right;white-space:nowrap;color:#667">%s</td></tr>
 </table>
-<p style="margin:10px 0 0;color:#667;font-size:12.5px">Acumulado até %s: <b>%.1f%%</b> do mesmo período de %d. O mês corrente projeta <b>%.1f%%</b> do mesmo mês — se ele desacelerou, o ano tende ao piso.</p>`,
+<p style="margin:10px 0 0;color:#667;font-size:12.5px">Acumulado até %s: <b>%.1f%%</b> do mesmo período de %d. O mês corrente projeta <b>%.1f%%</b> do mesmo mês — se ele desacelerou, o ano tende ao piso.</p>
+<p style="margin:8px 0 0;color:#889;font-size:11.5px">Estes percentuais são da <b>empresa inteira</b>, incluindo códigos que faturavam no ano passado e hoje não operam. O percentual do quadro acima considera só quem está em campo, e por isso é maior: um responde "como vai a operação", o outro "como vai a equipe atual".</p>`,
 			p.AnoAnt, p.AnoAnt,
 			brl(p.Piso), brl(p.Ritmo), brl(p.Conservador),
 			p.AnoAnt, brl(p.AnoAnterior),
@@ -464,6 +465,7 @@ func CorpoTexto(r ResumoUsuario) string {
 		fmt.Fprintf(&b, "  %d fechado                 %16s\n", p.AnoAnt, brl(p.AnoAnterior))
 		fmt.Fprintf(&b, "  Acumulado ate %s: %.1f%% de %d. Mes corrente projeta %.1f%%.\n",
 			mesPtBR[p.UltimoMes], p.CrescimentoPct, p.AnoAnt, p.MesPct)
+		fmt.Fprintf(&b, "  (percentuais da EMPRESA INTEIRA; o do quadro acima conta so quem opera hoje)\n")
 	}
 	fmt.Fprintf(&b, "\nQuadro completo: %s\nPainel: %s\n", r.LinkQuadro, r.LinkPainel)
 	fmt.Fprintf(&b, "\n--\nRitmo = alvo x (dias úteis decorridos / dias do mês). Alvo: %s.\n"+
