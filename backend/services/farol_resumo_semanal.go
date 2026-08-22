@@ -72,6 +72,7 @@ type ResumoUsuario struct {
 	RestoRcas  int           `json:"resto_rcas"`
 	RestoValor float64       `json:"resto_valor"`
 	LinkPainel string        `json:"link_painel"`
+	LinkQuadro string        `json:"link_quadro"`
 }
 
 // MontarResumo recorta o ranking para uma pessoa e agrupa do jeito que ela lê.
@@ -86,7 +87,9 @@ func MontarResumo(todos []RcaMesa, cob Cobertura, nome, persona, codRef string,
 	rs := FiltrarEscopo(todos, persona, codRef)
 	r := ResumoUsuario{
 		Nome: nome, Persona: persona, Mes: mes, Cobertura: cob,
-		TotalMesa: TotalNaMesa(rs), LinkPainel: baseURLFarol() + "/farol/v2",
+		TotalMesa:  TotalNaMesa(rs),
+		LinkPainel: baseURLFarol() + "/farol/v2",
+		LinkQuadro: baseURLFarol() + "/farol/dinheiro-na-mesa",
 	}
 	r.Vermelho, r.Amarelo, r.Verde = ContarFaixas(rs)
 	for _, x := range rs {
@@ -276,7 +279,14 @@ No conjunto, %s está em <b style="color:%s">%.0f%%</b> do ritmo — %s <b>%s</b
 		}
 	}
 
-	fmt.Fprintf(&b, `<p style="margin:22px 0 0"><a href="%s" style="background:#1B6660;color:#fff;padding:11px 20px;border-radius:4px;text-decoration:none;font-size:14px;display:inline-block">Abrir o painel</a></p>`, r.LinkPainel)
+	// Dois botões, com hierarquia clara. O quadro é o destino natural de quem
+	// leu o e-mail e quer o detalhe; o painel é para quem já sabe o que
+	// investigar. Invertidos, o gestor cairia na tela genérica e teria que
+	// remontar o raciocínio que o e-mail acabou de dar.
+	fmt.Fprintf(&b, `<p style="margin:24px 0 0">
+<a href="%s" style="background:#1B6660;color:#fff;padding:11px 20px;border-radius:4px;text-decoration:none;font-size:14px;display:inline-block">Ver o quadro completo</a>
+<a href="%s" style="color:#1B6660;padding:11px 16px;text-decoration:none;font-size:14px;display:inline-block">Abrir o painel</a></p>`,
+		r.LinkQuadro, r.LinkPainel)
 
 	// A metodologia vai no rodapé de propósito: quem age lê o topo, quem
 	// questiona o número lê aqui. Esconder a régua é o caminho mais rápido
@@ -329,7 +339,7 @@ func CorpoTexto(r ResumoUsuario) string {
 			fmt.Fprintf(&b, "+ %d RCAs menores, %s somados\n", r.RestoRcas, brl(r.RestoValor))
 		}
 	}
-	fmt.Fprintf(&b, "\nPainel: %s\n", r.LinkPainel)
+	fmt.Fprintf(&b, "\nQuadro completo: %s\nPainel: %s\n", r.LinkQuadro, r.LinkPainel)
 	fmt.Fprintf(&b, "\n--\nRitmo = alvo x (dias úteis decorridos / dias do mês). Alvo: %s.\n"+
 		"Dias úteis pelo faturamento real (%d de %d, %s). Venda líquida.\n"+
 		"%d dos %d RCAs com venda entraram no cálculo.\n"+

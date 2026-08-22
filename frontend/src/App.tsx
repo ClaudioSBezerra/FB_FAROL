@@ -28,6 +28,7 @@ import FarolPublicPanel from './pages/farol/FarolPublicPanel'
 import LimparDados from './pages/LimparDados'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
+import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
 import FarolV2Import from './pages/farol/FarolV2Import'
 import FarolUsuarios from './pages/farol/FarolUsuarios'
 import FarolBI from './pages/farol/FarolBI'
@@ -256,6 +257,9 @@ function AppLayout() {
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
               <Route path="/farol/v2"         element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
+              {/* Página que o resumo semanal linka. Protegida: o quadro da empresa
+                  inteira não fica atrás de URL que circula em conversa. */}
+              <Route path="/farol/dinheiro-na-mesa" element={<ProtectedRoute><FarolDinheiroNaMesa /></ProtectedRoute>} />
               <Route path="/farol/bi"         element={<ProtectedRoute><FarolBI /></ProtectedRoute>} />
               <Route path="/farol/assistente" element={<ProtectedRoute><FarolAssistente /></ProtectedRoute>} />
               <Route path="/farol/importar"   element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
