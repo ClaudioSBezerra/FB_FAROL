@@ -8,8 +8,10 @@
 package services
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"log"
@@ -631,4 +633,59 @@ func EnviarResumoTeste(db *sql.DB, empresaID string, ano, mes int, ate time.Time
 
 	assunto := fmt.Sprintf("[FAROL] Dinheiro na mesa · %s · %s", r.Mes, brl(r.TotalMesa))
 	return r, sendHTMLReport([]string{para}, assunto, CorpoTexto(r), CorpoHTML(r))
+}
+
+// ─── Token do link público ───────────────────────────────────────────────────
+
+// TokenDoQuadro devolve o token do usuário, criando na primeira vez.
+//
+// Preguiçoso de propósito: token só existe para quem recebe o link, e não para
+// os 1.200 usuários da base. Menos credencial viva, menos superfície.
+func TokenDoQuadro(db *sql.DB, userID string) (string, error) {
+	var tok string
+	err := db.QueryRow(`SELECT token FROM farol.quadro_token
+	                     WHERE user_id=$1 AND NOT revogado`, userID).Scan(&tok)
+	if err == nil && tok != "" {
+		return tok, nil
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	tok = hex.EncodeToString(b)
+
+	// ON CONFLICT ressuscita token revogado com valor novo: revogar e mandar o
+	// link de novo tem que gerar credencial diferente, senão a revogação não
+	// revogou nada.
+	_, err = db.Exec(`
+		INSERT INTO farol.quadro_token (user_id, token) VALUES ($1,$2)
+		ON CONFLICT (user_id) DO UPDATE
+		   SET token=EXCLUDED.token, criado_em=NOW(), revogado=FALSE,
+		       acessos=0, ultimo_acesso=NULL`, userID, tok)
+	return tok, err
+}
+
+// ResolverTokenQuadro devolve quem é o dono do token e contabiliza o acesso.
+//
+// O contador não é estatística: é o detector de vazamento. Um link pessoal
+// aberto 200 vezes numa semana circulou.
+func ResolverTokenQuadro(db *sql.DB, token string) (userID, nome, persona, codRef string, ok bool) {
+	err := db.QueryRow(`
+		SELECT t.user_id, COALESCE(NULLIF(u.full_name,''), u.email),
+		       COALESCE(u.tipo_persona,''), COALESCE(u.cod_referencia,'')
+		  FROM farol.quadro_token t JOIN users u ON u.id = t.user_id
+		 WHERE t.token=$1 AND NOT t.revogado`, token).
+		Scan(&userID, &nome, &persona, &codRef)
+	if err != nil {
+		return "", "", "", "", false
+	}
+	_, _ = db.Exec(`UPDATE farol.quadro_token
+	                   SET acessos = acessos + 1, ultimo_acesso = NOW()
+	                 WHERE token=$1`, token)
+	return userID, nome, persona, codRef, true
+}
+
+// LinkQuadroToken — a URL que vai no e-mail e no WhatsApp.
+func LinkQuadroToken(token string) string {
+	return baseURLFarol() + "/q/" + token
 }

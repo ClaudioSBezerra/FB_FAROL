@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -241,6 +242,64 @@ func FarolDinheiroNaMesaHandler(db *sql.DB) http.HandlerFunc {
 		res := services.MontarResumo(todos, cob, nome, spCtx.TipoPersona, spCtx.CodReferencia,
 			nomes, services.RotuloMes(ano, mes))
 
+		_ = json.NewEncoder(w).Encode(res)
+	}
+}
+
+// FarolQuadroPublicoHandler — GET /api/v2/farol/quadro/{token}
+//
+// SEM autenticação: o token na URL É a credencial. Foi decisão consciente de
+// 22/08/2026 para o link do WhatsApp abrir sem login no celular.
+//
+// O que limita o estrago está no desenho, não aqui: um token por pessoa
+// (rastreável e revogável isoladamente), escopo do dono, e SÓ esta tela — os
+// links de "abrir o painel" continuam exigindo login. O que vaza é um quadro de
+// números agregados, não o sistema.
+func FarolQuadroPublicoHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Não indexar: o link circula em mensagem, e mensagem vira página
+		// pública quando alguém cola num grupo com prévia de link.
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
+
+		token := strings.TrimPrefix(r.URL.Path, "/api/v2/farol/quadro/")
+		if len(token) != 64 {
+			http.Error(w, `{"error":"link inválido"}`, http.StatusNotFound)
+			return
+		}
+
+		_, nome, persona, codRef, ok := services.ResolverTokenQuadro(db, token)
+		if !ok {
+			// 404 e não 403: dizer "existe mas está revogado" confirmaria para
+			// quem tentou que o token um dia foi válido.
+			http.Error(w, `{"error":"link inválido ou revogado"}`, http.StatusNotFound)
+			return
+		}
+
+		empresaID := strings.TrimSpace(os.Getenv("JC_EMPRESA_ID"))
+		if empresaID == "" {
+			http.Error(w, `{"error":"empresa não configurada"}`, http.StatusInternalServerError)
+			return
+		}
+
+		loc := tzBrasil()
+		agora := time.Now().In(loc)
+		ate := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+
+		todos, cob, err := services.ColetarDinheiroNaMesa(db, empresaID,
+			agora.Year(), int(agora.Month()), ate, services.BaselineAnoAnterior)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		nomes := services.NomesGerentesSupervisores(db, empresaID, agora.Year(), int(agora.Month()))
+		res := services.MontarResumo(todos, cob, nome, persona, codRef, nomes,
+			services.RotuloMes(agora.Year(), int(agora.Month())))
+
+		// O link do painel sai da resposta: ele exige login, e um botão que
+		// leva à tela de senha em cima de um link "que não pede senha" só gera
+		// a impressão de que algo quebrou.
+		res.LinkPainel = ""
 		_ = json.NewEncoder(w).Encode(res)
 	}
 }

@@ -536,6 +536,10 @@ func main() {
 	http.HandleFunc("/api/v2/farol/resumo-semanal", withSP(handlers.FarolResumoSemanalHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/resumo-semanal/previa", withSP(handlers.FarolResumoPreviaHTMLHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/dinheiro-na-mesa", withSP(handlers.FarolDinheiroNaMesaHandler, "gestor_filial"))
+
+	// Quadro por token, SEM autenticação — o token na URL é a credencial.
+	// Decisão de 22/08/2026 para o link do WhatsApp abrir sem login no celular.
+	http.HandleFunc("/api/v2/farol/quadro/", withDB(handlers.FarolQuadroPublicoHandler))
 	http.HandleFunc("/api/v2/industrias", withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/cards", gz(withSP(handlers.FarolV2CardsHandler, "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos", withSP(handlers.FarolV2PeriodosHandler, "gestor_filial"))

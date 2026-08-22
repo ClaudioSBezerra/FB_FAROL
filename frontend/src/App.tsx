@@ -327,6 +327,11 @@ function App() {
             <Route path="/m/:cod"                           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/forn/:codFornec"           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/rca/:codRca"               element={<FarolPublicPanel />} />
+
+            {/* Quadro por token, sem login — o link que vai por WhatsApp.
+                Fica junto das rotas /m/... porque é o mesmo padrão: token na
+                URL é a credencial, e a tela é só leitura. */}
+            <Route path="/q/:token"                         element={<FarolDinheiroNaMesa />} />
             <Route path="/*" element={
               <ProtectedRoute>
                 <FilialProvider>

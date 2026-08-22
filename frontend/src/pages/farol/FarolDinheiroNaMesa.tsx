@@ -14,7 +14,7 @@
 // presença nesse contexto. As telas de trabalho continuam claras.
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 
 interface RcaMesa {
   cod_rca: string
@@ -84,10 +84,22 @@ const brl = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: 0 
 export default function FarolDinheiroNaMesa() {
   useFontesDoQuadro()
 
+  // Duas portas para a mesma tela. Com token na URL (/q/:token) ela abre sem
+  // login, que é o caminho do link do WhatsApp; sem token, usa a sessão.
+  //
+  // O token manda no que aparece: o backend resolve o dono dele e devolve o
+  // recorte daquela pessoa. Não há como pedir o quadro de outro trocando o
+  // parâmetro, porque não existe parâmetro de escopo.
+  const { token } = useParams<{ token?: string }>()
+  const publico = !!token
+
   const q = useQuery<Resumo>({
-    queryKey: ['farol-dinheiro-na-mesa'],
+    queryKey: ['farol-dinheiro-na-mesa', token ?? 'sessao'],
     queryFn: async () => {
-      const r = await fetch('/api/v2/farol/dinheiro-na-mesa')
+      const url = publico
+        ? `/api/v2/farol/quadro/${token}`
+        : '/api/v2/farol/dinheiro-na-mesa'
+      const r = await fetch(url)
       if (!r.ok) throw new Error('Falha ao carregar o resumo')
       return r.json()
     },
@@ -102,7 +114,11 @@ export default function FarolDinheiroNaMesa() {
     return (
       <div style={{ background: '#0E1621', minHeight: '100vh', color: '#8195A6',
                     fontFamily: '"IBM Plex Sans",system-ui,sans-serif', padding: '48px 20px' }}>
-        {q.isLoading ? 'Calculando o ritmo do mês…' : 'Não foi possível carregar o quadro.'}
+        {q.isLoading
+          ? 'Calculando o ritmo do mês…'
+          : publico
+            ? 'Este link não é mais válido. Peça um novo ao administrador do Farol.'
+            : 'Não foi possível carregar o quadro.'}
       </div>
     )
   }
@@ -201,14 +217,18 @@ export default function FarolDinheiroNaMesa() {
               <h2 style={{ ...display, fontWeight: 700, fontSize: 16, margin: 0 }}>
                 {d.persona === 'ggv' ? 'Por supervisor' : 'Por GGV'}
               </h2>
-              <span style={{ fontSize: 12.5, color: '#5E7080' }}>toque para abrir o painel da equipe</span>
+              {!publico && (
+                <span style={{ fontSize: 12.5, color: '#5E7080' }}>toque para abrir o painel da equipe</span>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: '#26343F',
                           border: '1px solid #26343F', borderRadius: 14, overflow: 'hidden', marginBottom: 34 }}>
               {grupos.map(g => (
-                <a key={g.cod} href={g.link}
+                // Sem link no modo público, pela mesma razão do botão.
+                <a key={g.cod} href={publico ? undefined : g.link}
                    style={{ background: '#15202D', padding: '16px 18px', textDecoration: 'none',
-                            color: 'inherit', display: 'flex', gap: 16, alignItems: 'center' }}>
+                            color: 'inherit', display: 'flex', gap: 16, alignItems: 'center',
+                            cursor: publico ? 'default' : 'pointer' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>
                       {g.nome} <span style={{ color: '#5E7080', fontWeight: 400, fontSize: 12 }}>· {g.cod}</span>
@@ -312,12 +332,17 @@ export default function FarolDinheiroNaMesa() {
           ))}
         </div>
 
-        <Link to="/farol/v2"
-              style={{ display: 'block', textAlign: 'center', marginTop: 28, background: '#E8A33D',
-                       color: '#0E1621', padding: '14px 20px', borderRadius: 8, textDecoration: 'none',
-                       ...display, fontWeight: 700, fontSize: 14 }}>
-          Abrir o painel completo
-        </Link>
+        {/* No modo público o botão some: ele leva ao painel, que exige login,
+            e uma tela de senha em cima de um link "que não pede senha" lê como
+            defeito. Quem quiser o detalhe entra pelo app. */}
+        {!publico && (
+          <Link to="/farol/v2"
+                style={{ display: 'block', textAlign: 'center', marginTop: 28, background: '#E8A33D',
+                         color: '#0E1621', padding: '14px 20px', borderRadius: 8, textDecoration: 'none',
+                         ...display, fontWeight: 700, fontSize: 14 }}>
+            Abrir o painel completo
+          </Link>
+        )}
 
         {/* A metodologia fica no rodapé: quem age lê o topo, quem questiona o
             número lê aqui. Esconder a régua é o caminho curto para o gestor
