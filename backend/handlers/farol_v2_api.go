@@ -1155,8 +1155,15 @@ func cachedAggregatedMes(db *sql.DB, empresaID, fluxoName, aggName, groupCol, na
 	key := aggMesCacheKey(empresaID, fluxoName, aggName, groupCol, ymStart, ymEnd, drillPath, filters)
 	aggMesCacheMu.RLock()
 	if e, ok := aggMesCache[key]; ok && time.Since(e.at) < aggMesCacheTTL {
+		// Cópia dentro do RLock: o chamador (fetchCards) grava positivados e
+		// baseCli nas entradas do mapa. Devolver a referência guardada fazia
+		// duas requisições simultâneas escreverem e iterarem o MESMO mapa —
+		// "fatal error: concurrent map iteration and map write", que não é
+		// panic recuperável: derruba o processo inteiro, com todos os usuários
+		// junto. Ocorreu em 23/08/2026 10:08:17.
+		cp := cloneAggMap(e.data)
 		aggMesCacheMu.RUnlock()
-		return e.data
+		return cp
 	}
 	aggMesCacheMu.RUnlock()
 
@@ -1164,7 +1171,20 @@ func cachedAggregatedMes(db *sql.DB, empresaID, fluxoName, aggName, groupCol, na
 	aggMesCacheMu.Lock()
 	aggMesCache[key] = aggMesCacheEntry{data: data, at: time.Now()}
 	aggMesCacheMu.Unlock()
-	return data
+	// Também no miss: o mapa guardado e o devolvido não podem ser o mesmo,
+	// senão a PRIMEIRA requisição já contamina o cache para todas as seguintes.
+	return cloneAggMap(data)
+}
+
+// cloneAggMap devolve uma cópia rasa — que aqui é cópia completa, porque
+// aggResult só tem campos de valor (string/float64/int). Nenhuma referência
+// compartilhada sobra entre a cópia e o original.
+func cloneAggMap(src map[string]aggResult) map[string]aggResult {
+	dst := make(map[string]aggResult, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // invalidateAggMesCache limpa TODAS as entradas de agg_mes de uma empresa.
