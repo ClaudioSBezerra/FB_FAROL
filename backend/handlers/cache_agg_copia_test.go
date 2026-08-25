@@ -85,3 +85,49 @@ func TestCachedAggregatedMesUsoConcorrente(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// O cache de Q1 (vendasPeriodoCache) tem o mesmo contrato: queryAggregatedVendas
+// grava baseCli nas entradas do mapa que recebe. É o cache das telas de 7 e 30
+// dias — passou despercebido na primeira auditoria porque não é acessado por uma
+// função cached*, e sim direto dentro de vendasPeriodoQ1.
+func TestVendasPeriodoQ1DevolveCopia(t *testing.T) {
+	const emp = "11111111-1111-1111-1111-111111111111"
+	fat := fluxoCtx{name: "faturado"}
+	ini := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	fim := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+
+	key := vendasPeriodoCacheKey(emp, fat.name, "cod_fornec", ini, fim, nil, nil)
+	original := map[string]aggResult{
+		"1": {label: "IND A", valor: 100},
+		"2": {label: "IND B", valor: 200},
+	}
+
+	vendasPeriodoCacheMu.Lock()
+	vendasPeriodoCache = map[string]vendasPeriodoCacheEntry{key: {data: original, at: time.Now()}}
+	vendasPeriodoCacheMu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out := vendasPeriodoQ1(nil, emp, fat, "cod_fornec", "nome_fornec", ini, fim, nil, nil)
+			if !out.cached {
+				t.Error("esperado acerto de cache — com miss a consulta tocaria o banco (db nil)")
+				return
+			}
+			// Exatamente o que queryAggregatedVendas faz com o que recebe.
+			for k, r := range out.result {
+				r.baseCli = 7
+				out.result[k] = r
+			}
+		}()
+	}
+	wg.Wait()
+
+	for k, r := range original {
+		if r.baseCli != 0 {
+			t.Fatalf("o mapa guardado no cache foi alterado pelo chamador em %q: baseCli=%d", k, r.baseCli)
+		}
+	}
+}

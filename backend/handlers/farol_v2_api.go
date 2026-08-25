@@ -1669,8 +1669,14 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nam
 	key := vendasPeriodoCacheKey(empresaID, fluxo.name, groupCol, periodIni, periodFim, drillPath, filters)
 	vendasPeriodoCacheMu.RLock()
 	if e, ok := vendasPeriodoCache[key]; ok && time.Since(e.at) < vendasPeriodoCacheTTL {
+		// Mesma corrida do aggMesCache: queryAggregatedVendas grava baseCli nas
+		// entradas do mapa que recebe daqui. Devolver a referência guardada faz
+		// duas requisições simultâneas escreverem e iterarem o MESMO mapa —
+		// "fatal error: concurrent map iteration and map write", que derruba o
+		// processo. Este é o cache das telas de 7 e 30 dias.
+		cp := cloneAggMap(e.data)
 		vendasPeriodoCacheMu.RUnlock()
-		return vendasPeriodoOutcome{result: e.data, cached: true, elapsed: 0}
+		return vendasPeriodoOutcome{result: cp, cached: true, elapsed: 0}
 	}
 	vendasPeriodoCacheMu.RUnlock()
 
@@ -1718,7 +1724,9 @@ GROUP BY v.%s`,
 	vendasPeriodoCache[key] = vendasPeriodoCacheEntry{data: result, at: time.Now()}
 	vendasPeriodoCacheMu.Unlock()
 
-	return vendasPeriodoOutcome{result: result, cached: false, elapsed: time.Since(t1)}
+	// Cópia também aqui: o mapa guardado e o devolvido não podem ser o mesmo,
+	// senão a primeira requisição grava baseCli dentro do cache.
+	return vendasPeriodoOutcome{result: cloneAggMap(result), cached: false, elapsed: time.Since(t1)}
 }
 
 // queryAggregatedVendas devolve também o erro da consulta: um mapa vazio pode
