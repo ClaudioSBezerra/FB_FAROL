@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import FarolRelatorioReceita from './FarolRelatorioReceita'
 
 // Função para formatar data para input date (YYYY-MM-DD)
 function formatDateForInput(date: Date): string {
@@ -74,6 +75,7 @@ export default function FarolRelatorios() {
   const [dataInicio, setDataInicio] = useState(getOneYearAgo())
   const [dataFim, setDataFim] = useState(getToday())
   const [searchExecuted, setSearchExecuted] = useState(false)
+  const [aba, setAba] = useState<'extrato' | 'receita'>('extrato')
 
   const { data, isLoading, refetch } = useQuery<RelatorioResponse>({
     queryKey: ['relatorio-extrato', codProduto, codCliente, dataInicio, dataFim],
@@ -157,6 +159,29 @@ export default function FarolRelatorios() {
         </div>
       </div>
 
+      {/* Seleção do relatório */}
+      <div className="flex gap-2 border-b border-slate-200">
+        {([
+          { id: 'extrato', label: 'Extrato de Produtos por Cliente' },
+          { id: 'receita', label: 'Clientes com CNPJ irregular' },
+        ] as const).map(t => (
+          <button
+            key={t.id}
+            onClick={() => setAba(t.id)}
+            className={
+              aba === t.id
+                ? '-mb-px px-4 py-2.5 text-sm font-medium border-b-2 border-slate-900 text-slate-900'
+                : '-mb-px px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700'
+            }
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {aba === 'receita' && <FarolRelatorioReceita />}
+
+      {aba === 'extrato' && (<>
       {/* Filtros */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
@@ -307,6 +332,7 @@ export default function FarolRelatorios() {
           )}
         </div>
       )}
+      </>)}
     </div>
   )
 }

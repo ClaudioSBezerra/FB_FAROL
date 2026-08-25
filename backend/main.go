@@ -559,6 +559,13 @@ func main() {
 	// Relatórios — acesso TI e admin
 	http.HandleFunc("/api/v2/farol/relatorio/extrato-produto-cliente", gz(withSP(handlers.ExtratoProdutoClienteHandler, "somente_leitura")))
 
+	// Cadastro da Receita por CNPJ (mig 208). O relatório NÃO passa por gz:
+	// ele também devolve XLSX e PDF, que já são formatos comprimidos — gzipar
+	// por cima só gasta CPU e atrapalha o download no navegador.
+	http.HandleFunc("/api/v2/farol/relatorio/clientes-receita", withSP(handlers.RelatorioClientesReceitaHandler, "somente_leitura"))
+	http.HandleFunc("/api/v2/farol/cnpj-receita/carga", withSP(handlers.CargaCNPJReceitaHandler, "gestor_filial"))
+	http.HandleFunc("/api/v2/farol/cnpj-receita/status", withSP(handlers.StatusCNPJReceitaHandler, "somente_leitura"))
+
 	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
 	// /api/cadastros/* desativado em 2026-05-27
 
