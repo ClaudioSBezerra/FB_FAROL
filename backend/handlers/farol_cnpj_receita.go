@@ -42,12 +42,42 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// Logo embutida no binário. O PNG vive em frontend/public para o navegador, mas
-// o backend não enxerga aquele diretório em produção — o container do Go tem só
-// o binário. Embutir evita "logo sumiu no servidor mas aparece na minha máquina".
+// Logo de ÚLTIMO RECURSO, embutida no binário. A logo de verdade vem do banco,
+// por inquilino (ver logoRelatorio): o Farol é multiempresa, e marca fixa no
+// código serve no máximo a uma delas — o relatório da JC saiu com a marca da FB
+// justamente por isso, em 25/08/2026.
+//
+// Fica embutida, e não em arquivo, porque o container do Go tem só o binário:
+// não enxerga frontend/public, onde o PNG vive para o navegador.
 //
 //go:embed assets/logo.png
 var logoPNG []byte
+
+// logoRelatorio — logo do inquilino, lida de companies.logo_data.
+//
+// Nunca devolve erro: relatório sem marca ainda serve, relatório que não é
+// gerado não serve para nada. Qualquer problema cai no embed.
+func logoRelatorio(db *sql.DB, empresaID string) ([]byte, extension.Type) {
+	var dados []byte
+	var mime string
+	err := db.QueryRow(`SELECT logo_data, logo_mime FROM companies
+	                     WHERE id = $1::uuid AND logo_data IS NOT NULL`, empresaID).Scan(&dados, &mime)
+	if err != nil || len(dados) == 0 {
+		return logoPNG, extension.Png
+	}
+	switch strings.ToLower(strings.TrimSpace(mime)) {
+	case "image/png":
+		return dados, extension.Png
+	case "image/jpeg", "image/jpg":
+		return dados, extension.Jpg
+	default:
+		// SVG e WebP existem no cadastro e o maroto não os desenha — passar
+		// adiante derrubaria a geração inteira. Marca errada é menos ruim que
+		// PDF que não sai.
+		log.Printf("[cnpj:relatorio] logo da empresa %s em formato %q não suportado, usando a padrão", empresaID, mime)
+		return logoPNG, extension.Png
+	}
+}
 
 // ─── Carga ────────────────────────────────────────────────────────────────────
 
@@ -370,7 +400,8 @@ func RelatorioClientesReceitaHandler(db *sql.DB) http.HandlerFunc {
 			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.xlsx"`, nome))
 			w.Write(b)
 		case "pdf":
-			b, err := relatorioReceitaPDF(rel)
+			logo, ext := logoRelatorio(db, spCtx.EmpresaID)
+			b, err := relatorioReceitaPDF(rel, logo, ext)
 			if err != nil {
 				log.Printf("[cnpj:relatorio] PDF ERRO: %v", err)
 				http.Error(w, `{"error":"falha ao gerar PDF"}`, http.StatusInternalServerError)
@@ -438,7 +469,7 @@ func relatorioReceitaXLSX(rel relatorioReceita) ([]byte, error) {
 
 // ─── PDF ──────────────────────────────────────────────────────────────────────
 
-func relatorioReceitaPDF(rel relatorioReceita) ([]byte, error) {
+func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) ([]byte, error) {
 	cfg := config.NewBuilder().
 		WithPageNumber(props.PageNumber{Pattern: "Pág. {current}/{total}", Place: props.RightBottom}).
 		WithLeftMargin(8).WithRightMargin(8).WithTopMargin(10).
@@ -450,7 +481,7 @@ func relatorioReceitaPDF(rel relatorioReceita) ([]byte, error) {
 	// Cabeçalho com logo
 	pg.Add(
 		row.New(14).Add(
-			col.New(2).Add(image.NewFromBytes(logoPNG, extension.Png, props.Rect{Center: true, Percent: 80})),
+			col.New(2).Add(image.NewFromBytes(logo, ext, props.Rect{Center: true, Percent: 80})),
 			col.New(10).Add(
 				text.New("Clientes com CNPJ irregular na Receita Federal",
 					props.Text{Size: 13, Style: fontstyle.Bold, Align: align.Left, Top: 2}),
