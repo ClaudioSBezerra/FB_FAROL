@@ -236,6 +236,14 @@ type clienteReceita struct {
 	NomeGerente   string  `json:"nome_gerente"`
 	NomeSupervisr string  `json:"nome_supervisor"`
 	CodRCA        string  `json:"cod_rca"`
+
+	// Sucessora provável — CNPJ ativo comprando no mesmo endereço.
+	// Forca: "placa" (mesmo nome fantasia, quase certo), "endereco" (endereço
+	// com até 2 ocupantes, forte) ou "galeria" (endereço concorrido, fraco —
+	// mostrado para o gestor julgar, nunca somado como certeza).
+	Sucessora      string `json:"sucessora"`
+	SucessoraNome  string `json:"sucessora_nome"`
+	SucessoraForca string `json:"sucessora_forca"`
 }
 
 type resumoSituacao struct {
@@ -252,6 +260,13 @@ type relatorioReceita struct {
 	GeradoEm   string           `json:"gerado_em"`
 	Cobertura  float64          `json:"cobertura_pct"`
 	Incompleto bool             `json:"incompleto"`
+
+	// Reaberturas — só as de evidência forte ("placa" e "endereco"). As de
+	// galeria ficam de fora da CONTA, embora apareçam na linha do cliente:
+	// somar vizinho de shopping como reabertura infla o efeito, que foi
+	// exatamente o erro que a checagem de 26/08/2026 descartou.
+	Reaberturas      int     `json:"reaberturas"`
+	ReaberturasValor float64 `json:"reaberturas_valor"`
 }
 
 // consultarClientesReceita — clientes cujo CNPJ NÃO está ativo na Receita.
@@ -290,6 +305,46 @@ WITH base AS (
            SUM(liquido) FILTER (WHERE ano = $2) AS liq_ant,
            SUM(liquido) FILTER (WHERE ano = $3) AS liq_atual
       FROM base GROUP BY doc
+), addr AS (
+    -- Ocupantes do mesmo CEP+número. Galeria e shopping têm dezenas de CNPJs no
+    -- mesmo endereço, e ali "mesmo endereço" quase não informa: o ativo ao lado
+    -- é vizinho, não sucessor. Medido em 26/08/2026: 239 endereços concentram
+    -- 3.043 CNPJs, e eram eles que inflavam a detecção.
+    SELECT cep, numero, COUNT(*) AS ocupantes
+      FROM farol.cnpj_receita
+     WHERE COALESCE(cep,'') <> '' AND COALESCE(numero,'') <> ''
+     GROUP BY 1, 2
+), suc AS (
+    -- Sucessora provável: CNPJ ATIVO na Receita, comprando no ano corrente, no
+    -- mesmo endereço de um que parou. É a prática que o dono da JC descreveu —
+    -- fechar a empresa quando o faturamento cresce e reabrir em outro CPF.
+    -- Quando existe, não houve perda: a venda mudou de linha, não sumiu.
+    SELECT DISTINCT ON (p.cnpj)
+           p.cnpj AS morto, a.cnpj AS sucessora,
+           COALESCE(NULLIF(a.razao_social,''), a.nome_fantasia, '') AS sucessora_nome,
+           CASE WHEN upper(trim(COALESCE(a.nome_fantasia,''))) = upper(trim(COALESCE(p.nome_fantasia,'')))
+                     AND COALESCE(p.nome_fantasia,'') <> '' THEN 'placa'
+                WHEN ad.ocupantes <= 2 THEN 'endereco'
+                ELSE 'galeria' END AS forca
+      FROM farol.cnpj_receita p
+      JOIN addr ad ON ad.cep = p.cep AND ad.numero = p.numero
+      JOIN farol.cnpj_receita a
+        ON a.cep = p.cep AND a.numero = p.numero AND a.cnpj <> p.cnpj
+       AND a.situacao_cod = 2
+      JOIN val va ON va.doc = a.cnpj AND COALESCE(va.liq_atual,0) > 0
+      -- O cliente precisa ter PARADO. Sucessora de quem continua comprando não
+      -- existe: são dois negócios vivos no mesmo endereço, e tratá-los como
+      -- sucessão inflou a conta em R$ 55 milhões na primeira versão (26/08/2026).
+      LEFT JOIN val vp ON vp.doc = p.cnpj
+     WHERE p.situacao_cod IS NOT NULL AND p.situacao_cod <> 2
+       AND COALESCE(vp.liq_atual, 0) = 0
+       AND COALESCE(p.cep,'') <> '' AND COALESCE(p.numero,'') <> ''
+     -- Uma sucessora por cliente, a de evidência mais forte.
+     ORDER BY p.cnpj,
+              CASE WHEN upper(trim(COALESCE(a.nome_fantasia,''))) = upper(trim(COALESCE(p.nome_fantasia,'')))
+                        AND COALESCE(p.nome_fantasia,'') <> '' THEN 1
+                   WHEN ad.ocupantes <= 2 THEN 2
+                   ELSE 3 END
 ), ger AS (
     SELECT DISTINCT ON (cod_gerente) cod_gerente, nome_gerente
       FROM farol.agg_fat_v03_l0_mes WHERE empresa_id = $1
@@ -307,12 +362,14 @@ SELECT r.cnpj,
        d.ultimo_ym,
        COALESCE(v.liq_ant, 0)::float8, COALESCE(v.liq_atual, 0)::float8,
        COALESCE(g.nome_gerente, d.cod_gerente), COALESCE(s.nome_supervisor, d.cod_supervisor),
-       COALESCE(d.cod_rca, '')
+       COALESCE(d.cod_rca, ''),
+       COALESCE(sc.sucessora, ''), COALESCE(sc.sucessora_nome, ''), COALESCE(sc.forca, '')
   FROM farol.cnpj_receita r
   JOIN dono d ON d.doc = r.cnpj
   LEFT JOIN val v ON v.doc = r.cnpj
   LEFT JOIN ger g ON g.cod_gerente    = d.cod_gerente
   LEFT JOIN sup s ON s.cod_supervisor = d.cod_supervisor
+  LEFT JOIN suc sc ON sc.morto = r.cnpj
  WHERE r.situacao_cod IS NOT NULL AND r.situacao_cod <> 2%s
  ORDER BY COALESCE(v.liq_ant, 0) DESC`, filtro)
 
@@ -329,7 +386,8 @@ SELECT r.cnpj,
 		if err := rows.Scan(&c.CNPJ, &c.RazaoSocial, &c.NomeCadastro, &c.Situacao,
 			&c.SituacaoData, &c.CNAE, &c.Municipio, &c.UF, &ym,
 			&c.LiquidoAnt, &c.LiquidoAtual,
-			&c.NomeGerente, &c.NomeSupervisr, &c.CodRCA); err != nil {
+			&c.NomeGerente, &c.NomeSupervisr, &c.CodRCA,
+			&c.Sucessora, &c.SucessoraNome, &c.SucessoraForca); err != nil {
 			return out, err
 		}
 		c.UltimaCompra = fmt.Sprintf("%02d/%04d", ym%100, ym/100)
@@ -342,6 +400,11 @@ SELECT r.cnpj,
 		}
 		r.Clientes++
 		r.LiquidoAnt += c.LiquidoAnt
+
+		if c.SucessoraForca == "placa" || c.SucessoraForca == "endereco" {
+			out.Reaberturas++
+			out.ReaberturasValor += c.LiquidoAnt
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return out, err
@@ -428,7 +491,8 @@ func relatorioReceitaXLSX(rel relatorioReceita) ([]byte, error) {
 	cab := []string{"CNPJ", "Razão Social", "Nome no cadastro", "Situação", "Desde",
 		"CNAE", "Município", "UF", "Última compra",
 		fmt.Sprintf("Líquido %d", rel.AnoAnt), fmt.Sprintf("Líquido %d", rel.AnoAtual),
-		"Gerente", "Supervisor", "RCA"}
+		"Gerente", "Supervisor", "RCA",
+		"Sucessora (CNPJ)", "Sucessora", "Evidência"}
 	for i, h := range cab {
 		cel, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(aba, cel, h)
@@ -440,6 +504,7 @@ func relatorioReceitaXLSX(rel relatorioReceita) ([]byte, error) {
 	// zero à esquerda, quebrando qualquer PROCV que o gestor fizer depois.
 	txt, _ := f.NewStyle(&excelize.Style{NumFmt: 49})
 	f.SetColStyle(aba, "A", txt)
+	f.SetColStyle(aba, "O", txt) // idem para o CNPJ da sucessora
 	moeda, _ := f.NewStyle(&excelize.Style{NumFmt: 4}) // #,##0.00
 	f.SetColStyle(aba, "J:K", moeda)
 
@@ -447,14 +512,16 @@ func relatorioReceitaXLSX(rel relatorioReceita) ([]byte, error) {
 		l := i + 2
 		vals := []any{c.CNPJ, c.RazaoSocial, c.NomeCadastro, c.Situacao, c.SituacaoData,
 			c.CNAE, c.Municipio, c.UF, c.UltimaCompra,
-			c.LiquidoAnt, c.LiquidoAtual, c.NomeGerente, c.NomeSupervisr, c.CodRCA}
+			c.LiquidoAnt, c.LiquidoAtual, c.NomeGerente, c.NomeSupervisr, c.CodRCA,
+			c.Sucessora, c.SucessoraNome, rotuloForca(c.SucessoraForca)}
 		for j, v := range vals {
 			cel, _ := excelize.CoordinatesToCellName(j+1, l)
 			f.SetCellValue(aba, cel, v)
 		}
 	}
 	larguras := map[string]float64{"A": 18, "B": 38, "C": 32, "D": 12, "E": 11,
-		"F": 34, "G": 20, "H": 5, "I": 13, "J": 15, "K": 15, "L": 24, "M": 24, "N": 8}
+		"F": 34, "G": 20, "H": 5, "I": 13, "J": 15, "K": 15, "L": 24, "M": 24, "N": 8,
+		"O": 18, "P": 32, "Q": 22}
 	for col, larg := range larguras {
 		f.SetColWidth(aba, col, col, larg)
 	}
@@ -500,6 +567,14 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 		)))
 	}
 
+	if rel.Reaberturas > 0 {
+		pg.Add(row.New(5).Add(col.New(12).Add(
+			text.New(fmt.Sprintf("Destes, %d são REABERTURA PROVÁVEL (R$ %s): há CNPJ ativo comprando no mesmo endereço. Não conte como perda.",
+				rel.Reaberturas, moedaBR(rel.ReaberturasValor)),
+				props.Text{Size: 8, Style: fontstyle.Bold}),
+		)))
+	}
+
 	for _, s := range rel.Resumo {
 		pg.Add(row.New(5).Add(col.New(12).Add(
 			text.New(fmt.Sprintf("%s: %d cliente(s) — R$ %s faturados em %d",
@@ -511,11 +586,12 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 	cab := props.Text{Size: 7, Style: fontstyle.Bold}
 	pg.Add(row.New(6).Add(
 		col.New(2).Add(text.New("CNPJ", cab)),
-		col.New(3).Add(text.New("Razão social", cab)),
+		col.New(2).Add(text.New("Razão social", cab)),
 		col.New(1).Add(text.New("Situação", cab)),
 		col.New(1).Add(text.New("Desde", cab)),
 		col.New(2).Add(text.New("Município/UF", cab)),
 		col.New(1).Add(text.New("Últ. compra", cab)),
+		col.New(1).Add(text.New("Reabertura", cab)),
 		col.New(2).Add(text.New(fmt.Sprintf("Líquido %d", rel.AnoAnt), props.Text{Size: 7, Style: fontstyle.Bold, Align: align.Right})),
 	))
 
@@ -523,14 +599,21 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 	for _, c := range rel.Linhas {
 		pg.Add(row.New(4.5).Add(
 			col.New(2).Add(text.New(fmtCNPJ(c.CNPJ), cel)),
-			col.New(3).Add(text.New(corta(primeiroNaoVazio(c.RazaoSocial, c.NomeCadastro), 40), cel)),
+			col.New(2).Add(text.New(corta(primeiroNaoVazio(c.RazaoSocial, c.NomeCadastro), 26), cel)),
 			col.New(1).Add(text.New(c.Situacao, cel)),
 			col.New(1).Add(text.New(c.SituacaoData, cel)),
 			col.New(2).Add(text.New(corta(c.Municipio, 18)+"/"+c.UF, cel)),
 			col.New(1).Add(text.New(c.UltimaCompra, cel)),
+			col.New(1).Add(text.New(marcaReabertura(c.SucessoraForca), cel)),
 			col.New(2).Add(text.New(moedaBR(c.LiquidoAnt), props.Text{Size: 7, Align: align.Right})),
 		))
 	}
+
+	pg.Add(row.New(8).Add(col.New(12).Add(
+		text.New("Reabertura: SIM = CNPJ ativo comprando no mesmo endereço, e com a mesma placa ou em endereço de até 2 ocupantes. "+
+			"\"talvez\" = mesmo endereço, mas em galeria com muitos CNPJs, onde o vizinho se confunde com o sucessor.",
+			props.Text{Size: 6, Top: 3}),
+	)))
 
 	mrt.AddPages(pg)
 	doc, err := mrt.Generate()
@@ -538,6 +621,33 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 		return nil, err
 	}
 	return doc.GetBytes(), nil
+}
+
+// rotuloForca — traduz o código interno para o que o gestor lê. "galeria" diz
+// explicitamente que é fraco, senão vira certeza na cabeça de quem lê a planilha.
+func rotuloForca(f string) string {
+	switch f {
+	case "placa":
+		return "mesma placa e endereço"
+	case "endereco":
+		return "mesmo endereço"
+	case "galeria":
+		return "mesmo endereço (galeria — fraco)"
+	}
+	return ""
+}
+
+// marcaReabertura — compacta para a coluna estreita do PDF. "talvez" para o
+// caso de galeria: mostrar como SIM transformaria um palpite fraco em fato para
+// quem só lê a tabela.
+func marcaReabertura(f string) string {
+	switch f {
+	case "placa", "endereco":
+		return "SIM"
+	case "galeria":
+		return "talvez"
+	}
+	return ""
 }
 
 func fmtCNPJ(d string) string {

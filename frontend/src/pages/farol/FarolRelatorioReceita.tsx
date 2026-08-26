@@ -29,6 +29,9 @@ interface Cliente {
   nome_gerente: string
   nome_supervisor: string
   cod_rca: string
+  sucessora: string
+  sucessora_nome: string
+  sucessora_forca: string
 }
 
 interface Resumo {
@@ -45,6 +48,8 @@ interface Relatorio {
   gerado_em: string
   cobertura_pct: number
   incompleto: boolean
+  reaberturas: number
+  reaberturas_valor: number
 }
 
 function fmtBRL(v: number) {
@@ -64,6 +69,19 @@ function corSituacao(s: string) {
   if (t === 'INAPTA') return 'bg-amber-50 text-amber-700 border-amber-200'
   if (t === 'SUSPENSA') return 'bg-orange-50 text-orange-700 border-orange-200'
   return 'bg-slate-50 text-slate-700 border-slate-200'
+}
+
+// A força da evidência vai junto do selo, sempre. "mesmo endereço" numa galeria
+// com trinta CNPJs é vizinho, não sucessor — mostrar isso como SIM transformaria
+// um palpite fraco em fato para quem só bate o olho na tabela.
+function seloReabertura(forca: string) {
+  if (forca === 'placa')
+    return { texto: 'Sim — mesma placa', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+  if (forca === 'endereco')
+    return { texto: 'Sim — mesmo endereço', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+  if (forca === 'galeria')
+    return { texto: 'Talvez — galeria', classe: 'bg-slate-50 text-slate-500 border-slate-200' }
+  return null
 }
 
 const SITUACOES = ['TODAS', 'BAIXADA', 'INAPTA', 'SUSPENSA', 'NULA'] as const
@@ -198,7 +216,18 @@ export default function FarolRelatorioReceita() {
               </div>
               <div className="mt-1 text-3xl font-bold text-slate-900">{fmtBRL(totalPerdido)}</div>
             </div>
-            {resumo.slice(0, 2).map(r => (
+            {(data?.reaberturas ?? 0) > 0 && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+                <div className="text-xs uppercase tracking-wide text-emerald-700">Reabertura provável</div>
+                <div className="mt-1 text-3xl font-bold text-emerald-900">
+                  {(data?.reaberturas ?? 0).toLocaleString('pt-BR')}
+                </div>
+                <div className="text-sm text-emerald-700">
+                  {fmtBRL(data?.reaberturas_valor ?? 0)} — não conte como perda
+                </div>
+              </div>
+            )}
+            {resumo.slice(0, 1).map(r => (
               <div key={r.situacao} className="rounded-xl border border-slate-200 bg-white p-5">
                 <div className="text-xs uppercase tracking-wide text-slate-500">{r.situacao}</div>
                 <div className="mt-1 text-3xl font-bold text-slate-900">{r.clientes.toLocaleString('pt-BR')}</div>
@@ -218,6 +247,7 @@ export default function FarolRelatorioReceita() {
                     <th className="px-4 py-3 font-medium">Desde</th>
                     <th className="px-4 py-3 font-medium">Cidade</th>
                     <th className="px-4 py-3 font-medium">Últ. compra</th>
+                    <th className="px-4 py-3 font-medium">Reabertura</th>
                     <th className="px-4 py-3 font-medium text-right">Líquido {data?.ano_anterior}</th>
                     <th className="px-4 py-3 font-medium text-right">Líquido {data?.ano_atual}</th>
                     <th className="px-4 py-3 font-medium">Supervisor</th>
@@ -244,6 +274,20 @@ export default function FarolRelatorioReceita() {
                         {c.municipio}{c.uf ? `/${c.uf}` : ''}
                       </td>
                       <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{c.ultima_compra}</td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        {(() => {
+                          const s = seloReabertura(c.sucessora_forca)
+                          if (!s) return <span className="text-slate-300">—</span>
+                          return (
+                            <span
+                              className={`inline-block rounded-md border px-2 py-0.5 text-xs font-medium ${s.classe}`}
+                              title={c.sucessora_nome ? `${c.sucessora_nome} (${fmtCNPJ(c.sucessora)})` : ''}
+                            >
+                              {s.texto}
+                            </span>
+                          )
+                        })()}
+                      </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-slate-900">{fmtBRL(c.liquido_ant)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtBRL(c.liquido_atual)}</td>
                       <td className="px-4 py-2.5 text-slate-600">{c.nome_supervisor}</td>
