@@ -131,3 +131,25 @@ func TestVendasPeriodoQ1DevolveCopia(t *testing.T) {
 		}
 	}
 }
+
+// O MEI vem da Receita com o CNPJ prefixado na razão social. Como o CNPJ já é a
+// primeira coluna da tabela do PDF, o prefixo só rouba espaço do nome — que é a
+// parte pela qual o supervisor reconhece a loja.
+func TestSemPrefixoCNPJ(t *testing.T) {
+	casos := []struct{ entrada, esperado string }{
+		{"57.463.500 RUBENS OLIVEIRA DA SILVA", "RUBENS OLIVEIRA DA SILVA"},
+		{"62.269.701 JALISON MOTA", "JALISON MOTA"},
+		{"MERCEARIA MELO MESQUITA LTDA", "MERCEARIA MELO MESQUITA LTDA"},
+		{"SUPERMERCADO NORTE LTDA", "SUPERMERCADO NORTE LTDA"},
+		// Parecido mas não é o formato: não pode mutilar.
+		{"12.345 ARMAZEM", "12.345 ARMAZEM"},
+		{"AB.CDE.FGH LOJA", "AB.CDE.FGH LOJA"},
+		{"", ""},
+		{"57.463.500", "57.463.500"},
+	}
+	for _, c := range casos {
+		if got := semPrefixoCNPJ(c.entrada); got != c.esperado {
+			t.Errorf("semPrefixoCNPJ(%q) = %q, esperado %q", c.entrada, got, c.esperado)
+		}
+	}
+}

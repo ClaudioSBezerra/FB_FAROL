@@ -583,7 +583,9 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 		)))
 	}
 
-	cab := props.Text{Size: 7, Style: fontstyle.Bold}
+	// Cabeçalho um ponto menor que a célula: "Últ. compra" e "Reabertura" têm
+	// 11 e 10 caracteres numa coluna de 16,2mm, e a 7pt não cabiam.
+	cab := props.Text{Size: 6, Style: fontstyle.Bold}
 	pg.Add(row.New(6).Add(
 		col.New(2).Add(text.New("CNPJ", cab)),
 		col.New(2).Add(text.New("Razão social", cab)),
@@ -592,20 +594,20 @@ func relatorioReceitaPDF(rel relatorioReceita, logo []byte, ext extension.Type) 
 		col.New(2).Add(text.New("Município/UF", cab)),
 		col.New(1).Add(text.New("Últ. compra", cab)),
 		col.New(1).Add(text.New("Reabertura", cab)),
-		col.New(2).Add(text.New(fmt.Sprintf("Líquido %d", rel.AnoAnt), props.Text{Size: 7, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(2).Add(text.New(fmt.Sprintf("Líquido %d", rel.AnoAnt), props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
 	))
 
-	cel := props.Text{Size: 7}
+	cel := props.Text{Size: fonteCelula}
 	for _, c := range rel.Linhas {
-		pg.Add(row.New(4.5).Add(
+		pg.Add(row.New(5).Add(
 			col.New(2).Add(text.New(fmtCNPJ(c.CNPJ), cel)),
-			col.New(2).Add(text.New(corta(primeiroNaoVazio(c.RazaoSocial, c.NomeCadastro), 26), cel)),
+			col.New(2).Add(text.New(cabeNaColuna(semPrefixoCNPJ(primeiroNaoVazio(c.RazaoSocial, c.NomeCadastro)), 2), cel)),
 			col.New(1).Add(text.New(c.Situacao, cel)),
 			col.New(1).Add(text.New(c.SituacaoData, cel)),
-			col.New(2).Add(text.New(corta(c.Municipio, 18)+"/"+c.UF, cel)),
+			col.New(2).Add(text.New(cabeNaColunaReserva(c.Municipio, 2, 3)+"/"+c.UF, cel)),
 			col.New(1).Add(text.New(c.UltimaCompra, cel)),
 			col.New(1).Add(text.New(marcaReabertura(c.SucessoraForca), cel)),
-			col.New(2).Add(text.New(moedaBR(c.LiquidoAnt), props.Text{Size: 7, Align: align.Right})),
+			col.New(2).Add(text.New(moedaBR(c.LiquidoAnt), props.Text{Size: fonteCelula, Align: align.Right})),
 		))
 	}
 
@@ -650,6 +652,24 @@ func marcaReabertura(f string) string {
 	return ""
 }
 
+// semPrefixoCNPJ tira o CNPJ que a Receita prefixa na razão social do MEI
+// ("57.463.500 RUBENS OLIVEIRA"). Na tabela o CNPJ já é a primeira coluna, então
+// o prefixo só consome 11 dos ~21 caracteres que cabem — e é justamente o nome
+// da pessoa, a parte que identifica a loja, que sobrava de fora.
+func semPrefixoCNPJ(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	// Formato: dd.ddd.ddd seguido de espaço.
+	if len(r) < 12 || r[2] != '.' || r[6] != '.' || r[10] != ' ' {
+		return s
+	}
+	for _, i := range []int{0, 1, 3, 4, 5, 7, 8, 9} {
+		if r[i] < '0' || r[i] > '9' {
+			return s
+		}
+	}
+	return strings.TrimSpace(string(r[11:]))
+}
+
 func fmtCNPJ(d string) string {
 	if len(d) != 14 {
 		return d
@@ -663,6 +683,38 @@ func corta(s string, n int) string {
 		return string(r[:n-1]) + "…"
 	}
 	return s
+}
+
+// Geometria da tabela do PDF. A4 tem 210mm; com as margens de 8mm de cada lado
+// sobram 194mm para as 12 colunas do maroto.
+const (
+	fonteCelula   = 6.5  // pontos
+	larguraColMM  = 194.0 / 12.0
+	// Largura média de um caractere em CAIXA ALTA, que é como vem razão social
+	// da Receita. Caixa alta é ~20% mais larga que o texto misto, e usar a média
+	// geral aqui foi exatamente o erro que quebrou o layout.
+	larguraCharMM = fonteCelula * 0.353 * 0.63
+)
+
+// cabeNaColuna corta o texto para caber em UMA linha de `cols` colunas.
+//
+// Sem isso a célula quebra em duas linhas dentro de uma linha de tabela de 4,5mm
+// (12,8 pontos), e a segunda linha invade a linha seguinte — a sobreposição
+// relatada em 26/08/2026. Medido no PDF gerado: baselines a 7,0 e 5,7 pontos
+// dentro de um passo de 12,8.
+func cabeNaColuna(s string, cols int) string {
+	return cabeNaColunaReserva(s, cols, 0)
+}
+
+// cabeNaColunaReserva — idem, guardando `reserva` caracteres para o que será
+// concatenado depois. Sem isso, cortar o município para ocupar a coluna inteira
+// e só então acrescentar "/BA" devolve o estouro pela porta dos fundos.
+func cabeNaColunaReserva(s string, cols, reserva int) string {
+	max := int(float64(cols)*larguraColMM/larguraCharMM) - 1 - reserva
+	if max < 4 {
+		max = 4
+	}
+	return corta(s, max)
 }
 
 func primeiroNaoVazio(vs ...string) string {
