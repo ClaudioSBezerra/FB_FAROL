@@ -1,42 +1,48 @@
 installation:
-  version: 6.3.0
+  version: 6.11.0
   installDate: 2026-04-27T21:43:53.282Z
-  lastUpdated: 2026-04-27T21:43:53.282Z
+  lastUpdated: 2026-08-27T15:42:42.618Z
 modules:
   - name: core
-    version: 6.3.0
+    version: 6.11.0
     installDate: 2026-04-27T21:43:39.056Z
-    lastUpdated: 2026-04-27T21:43:53.149Z
+    lastUpdated: 2026-08-27T15:42:42.422Z
+    source: built-in
+    npmPackage: null
+    repoUrl: null
+  - name: bmm
+    version: 6.11.0
+    installDate: 2026-04-27T21:43:42.003Z
+    lastUpdated: 2026-08-27T15:42:42.423Z
     source: built-in
     npmPackage: null
     repoUrl: null
   - name: bmb
-    version: 1.6.0
+    version: v2.2.1
     installDate: 2026-04-27T21:43:40.328Z
-    lastUpdated: 2026-04-27T21:43:53.220Z
+    lastUpdated: 2026-08-27T15:42:42.610Z
     source: external
     npmPackage: bmad-builder
     repoUrl: https://github.com/bmad-code-org/bmad-builder
-  - name: bmm
-    version: 6.3.0
-    installDate: 2026-04-27T21:43:42.003Z
-    lastUpdated: 2026-04-27T21:43:53.221Z
-    source: built-in
-    npmPackage: null
-    repoUrl: null
+    channel: pinned
+    sha: 38df19573f493c5025c7efce331debe8498832c1
   - name: cis
-    version: 0.2.0
+    version: v0.3.1
     installDate: 2026-04-27T21:43:43.530Z
-    lastUpdated: 2026-04-27T21:43:53.252Z
+    lastUpdated: 2026-08-27T15:42:42.616Z
     source: external
     npmPackage: bmad-creative-intelligence-suite
     repoUrl: https://github.com/bmad-code-org/bmad-module-creative-intelligence-suite
+    channel: stable
+    sha: 0e4ff9233a792db1a1cd00f22a482f338168cdc3
   - name: tea
-    version: 1.15.1
+    version: v1.23.3
     installDate: 2026-04-27T21:43:47.468Z
-    lastUpdated: 2026-04-27T21:43:53.282Z
+    lastUpdated: 2026-08-27T15:42:42.618Z
     source: external
     npmPackage: bmad-method-test-architecture-enterprise
     repoUrl: https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise
+    channel: stable
+    sha: ee292979a36d4eda5c1a6fd23ad1a5b4e7aef48c
 ides:
   - claude-code
