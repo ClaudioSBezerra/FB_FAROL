@@ -39,6 +39,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnfercher/maroto/v2"
+	"github.com/johnfercher/maroto/v2/pkg/components/col"
+	"github.com/johnfercher/maroto/v2/pkg/components/image"
+	"github.com/johnfercher/maroto/v2/pkg/components/page"
+	"github.com/johnfercher/maroto/v2/pkg/components/row"
+	"github.com/johnfercher/maroto/v2/pkg/components/text"
+	"github.com/johnfercher/maroto/v2/pkg/config"
+	"github.com/johnfercher/maroto/v2/pkg/consts/align"
+	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
+	"github.com/johnfercher/maroto/v2/pkg/consts/fontstyle"
+	"github.com/johnfercher/maroto/v2/pkg/props"
 	"github.com/ledongthuc/pdf"
 	"github.com/lib/pq"
 )
@@ -599,6 +610,27 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// ?formato=pdf reprocessa o mesmo upload no mesmo request e devolve o
+		// PDF do RESULTADO do comparativo — nunca do PDF do WinThor enviado.
+		// Sem persistência, igual ao resto da feature. Default (json) mantém
+		// o contrato já em produção intocado.
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("formato")), "pdf") {
+			logo, ext := logoRelatorio(db, spCtx.EmpresaID)
+			pdfBytes, gerr := comparativoRel322PDF(resultado, logo, ext)
+			if gerr != nil {
+				log.Printf("[comparativo322] PDF ERRO: %v", gerr)
+				http.Error(w, jsonErrorRel322("falha ao gerar PDF"), http.StatusInternalServerError)
+				return
+			}
+			nome := fmt.Sprintf("comparativo-rel322_%s_a_%s", resultado.DataInicio, resultado.DataFim)
+			w.Header().Set("Content-Type", "application/pdf")
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, nome))
+			if _, werr := w.Write(pdfBytes); werr != nil {
+				log.Printf("[comparativo322] falha ao escrever resposta PDF: %v", werr)
+			}
+			return
+		}
+
 		// Defesa em profundidade: depois do fix do DiferencaPct (+Inf → nil)
 		// isto não deveria mais falhar, mas se algum outro campo algum dia
 		// carregar um valor não serializável, não pode ficar invisível — sem
@@ -612,4 +644,125 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 func jsonErrorRel322(msg string) string {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	return string(b)
+}
+
+// ─── PDF ──────────────────────────────────────────────────────────────────────
+
+// comparativoRel322PDF — PDF do RESULTADO do comparativo (nunca do PDF do
+// WinThor enviado). Mesma estrutura de relatorioReceitaPDF
+// (farol_cnpj_receita.go): logo do inquilino, cabeçalho, tabela com
+// cabeNaColuna/fonteCelula (evita a sobreposição de linha corrigida ali),
+// rodapé. O comparativo tem no máximo ~50-90 linhas — bem abaixo do volume
+// que já pagina automaticamente, sem paginação manual nova.
+func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext extension.Type) ([]byte, error) {
+	cfg := config.NewBuilder().
+		WithPageNumber(props.PageNumber{Pattern: "Pág. {current}/{total}", Place: props.RightBottom}).
+		WithLeftMargin(8).WithRightMargin(8).WithTopMargin(10).
+		Build()
+	mrt := maroto.New(cfg)
+
+	pg := page.New()
+
+	// Cabeçalho com logo
+	pg.Add(
+		row.New(14).Add(
+			col.New(2).Add(image.NewFromBytes(logo, ext, props.Rect{Center: true, Percent: 80})),
+			col.New(10).Add(
+				text.New("Comparativo REL 322 (WinThor) x Farol",
+					props.Text{Size: 13, Style: fontstyle.Bold, Align: align.Left, Top: 2}),
+				text.New(fmt.Sprintf("Período do PDF de origem: %s", resultado.Periodo),
+					props.Text{Size: 8, Align: align.Left, Top: 9}),
+			),
+		),
+	)
+
+	// Cobertura parcial: o PDF é o que circula por e-mail, descolado do
+	// contexto em que foi gerado — a ressalva vai no topo, nunca vira erro
+	// (mesmo princípio da ressalva de cobertura em relatorioReceitaPDF).
+	if resultado.SemDadoFarolNoPeriodo {
+		pg.Add(row.New(6).Add(col.New(12).Add(
+			text.New(fmt.Sprintf("PARCIAL — o Farol não tem NENHUM dado importado no período %s. Bruto e Líquido aparecem como R$ 0,00 em todas as linhas.", resultado.Periodo),
+				props.Text{Size: 8, Style: fontstyle.BoldItalic, Align: align.Left}),
+		)))
+	}
+
+	pg.Add(row.New(5).Add(col.New(12).Add(
+		text.New(fmt.Sprintf("%d supervisor(es) no PDF — %d divergência(s), %d órfã(s)",
+			resultado.QtdSupervisoresPDF, resultado.QtdDivergencias, resultado.QtdOrfaos),
+			props.Text{Size: 9, Style: fontstyle.Bold}),
+	)))
+
+	cab := props.Text{Size: 6, Style: fontstyle.Bold}
+	pg.Add(row.New(6).Add(
+		col.New(1).Add(text.New("Código", cab)),
+		col.New(3).Add(text.New("Supervisor", cab)),
+		col.New(2).Add(text.New("Vl.Vendido (PDF)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(2).Add(text.New("Bruto (Farol)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(2).Add(text.New("Líquido (Farol)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(1).Add(text.New("% dif.", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(1).Add(text.New("Status", cab)),
+	))
+
+	cel := props.Text{Size: fonteCelula}
+	celDir := props.Text{Size: fonteCelula, Align: align.Right}
+	for _, l := range resultado.Linhas {
+		pg.Add(row.New(5).Add(
+			col.New(1).Add(text.New(l.CodSupervisor, cel)),
+			col.New(3).Add(text.New(cabeNaColuna(primeiroNaoVazio(l.Supervisor, "—"), 3), cel)),
+			col.New(2).Add(text.New(valorOuTracoRel322(l.VlVendidoPDF), celDir)),
+			col.New(2).Add(text.New(valorOuTracoRel322(l.BrutoFarol), celDir)),
+			col.New(2).Add(text.New(valorOuTracoRel322(l.LiquidoFarol), celDir)),
+			col.New(1).Add(text.New(pctOuTracoRel322(l.DiferencaPct), celDir)),
+			col.New(1).Add(text.New(statusTextoRel322(l.Status), cel)),
+		))
+	}
+
+	pg.Add(row.New(8).Add(col.New(12).Add(
+		text.New("OK = Bruto ou Líquido do Farol está a até 0,5% do Vl.Vendido do PDF (menor distância das duas). "+
+			"DIVERGÊNCIA = fora dessa tolerância. ÓRFÃ = supervisor presente em só um dos dois lados (PDF ou Farol) no período.",
+			props.Text{Size: 6, Top: 3}),
+	)))
+
+	mrt.AddPages(pg)
+	doc, err := mrt.Generate()
+	if err != nil {
+		return nil, err
+	}
+	return doc.GetBytes(), nil
+}
+
+// valorOuTracoRel322 — "—" para "não existe deste lado" (ponteiro nil),
+// nunca R$ 0,00: 0 apurado e ausente são coisas diferentes (mesma distinção
+// que o JSON já preserva com ponteiros).
+func valorOuTracoRel322(v *float64) string {
+	if v == nil {
+		return "—"
+	}
+	return moedaBR(*v)
+}
+
+// pctOuTracoRel322 — cruzarComRel322 já garante que DiferencaPct vira nil
+// (não +Inf) quando a distância é infinita — é o que alimenta JSON e PDF.
+// A checagem de NaN/Inf aqui é defesa em profundidade: se um valor não-nil
+// mas não-finito chegar mesmo assim (hoje ou por uma mudança futura), o PDF
+// não pode imprimir literalmente "+Inf%"/"NaN%" numa linha de um relatório
+// que circula por e-mail.
+func pctOuTracoRel322(v *float64) string {
+	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) {
+		return "—"
+	}
+	return strings.ReplaceAll(strconv.FormatFloat(*v, 'f', 2, 64), ".", ",") + "%"
+}
+
+// statusTextoRel322 — o PDF não tem o selo colorido da tela; status em texto.
+func statusTextoRel322(s string) string {
+	switch s {
+	case "ok":
+		return "OK"
+	case "divergencia":
+		return "DIVERGÊNCIA"
+	case "orfao":
+		return "ÓRFÃ"
+	}
+	return strings.ToUpper(s)
 }

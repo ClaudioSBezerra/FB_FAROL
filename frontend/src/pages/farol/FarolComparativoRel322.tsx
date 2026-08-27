@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, FileUp, Scale, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileUp, Scale, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -70,6 +70,7 @@ export default function FarolComparativoRel322() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [carregando, setCarregando] = useState(false)
+  const [baixandoPDF, setBaixandoPDF] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [resultado, setResultado] = useState<ComparativoResposta | null>(null)
 
@@ -99,6 +100,58 @@ export default function FarolComparativoRel322() {
       toast.error('Não foi possível montar o comparativo')
     } finally {
       setCarregando(false)
+    }
+  }
+
+  // baixarPDF — reenvia o MESMO arquivo já selecionado com ?formato=pdf: o
+  // backend reprocessa o upload no mesmo request (nada fica salvo, mesmo
+  // padrão do resto da feature) e devolve o PDF do RESULTADO do comparativo.
+  // Não é um <a href> simples: a rota exige o cabeçalho de autorização.
+  async function baixarPDF() {
+    if (!arquivo) {
+      toast.error('Selecione o PDF do REL 322 (WinThor)')
+      return
+    }
+    setBaixandoPDF(true)
+    try {
+      const form = new FormData()
+      form.append('file', arquivo)
+      const res = await fetch('/api/v2/farol/relatorio/comparativo-rel322?formato=pdf', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error || `Falha ao gerar o PDF (HTTP ${res.status})`)
+      }
+      const blob = await res.blob()
+      if (blob.size === 0) {
+        throw new Error('PDF vazio devolvido pelo servidor')
+      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      // O nome inclui o período do PDF de origem — vem do Content-Disposition
+      // que o backend já monta com data_inicio/data_fim, então funciona mesmo
+      // se "Baixar PDF" for clicado antes de "Comparar" (resultado ainda nulo).
+      const disposicao = res.headers.get('content-disposition') ?? ''
+      const nomeMatch = disposicao.match(/filename="?([^"]+)"?/)
+      const periodo = resultado ? `${resultado.data_inicio}_a_${resultado.data_fim}` : new Date().toISOString().slice(0, 10)
+      a.download = nomeMatch?.[1] || `comparativo-rel322_${periodo}.pdf`
+      // Precisa estar no DOM antes do clique — em alguns navegadores um <a>
+      // solto não dispara o download. Revoga a URL blob: um pouco depois
+      // (não na hora): revogar cedo demais pode cancelar o download em
+      // navegadores que resolvem a URL de forma assíncrona.
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      toast.success('PDF gerado')
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível gerar o PDF')
+    } finally {
+      setBaixandoPDF(false)
     }
   }
 
@@ -156,9 +209,13 @@ export default function FarolComparativoRel322() {
           <Button variant="outline" onClick={() => inputRef.current?.click()}>
             Escolher arquivo
           </Button>
-          <Button onClick={enviar} disabled={!arquivo || carregando} className="gap-2">
+          <Button onClick={enviar} disabled={!arquivo || carregando || baixandoPDF} className="gap-2">
             <Upload className="h-4 w-4" />
             {carregando ? 'Processando…' : 'Comparar'}
+          </Button>
+          <Button variant="outline" onClick={baixarPDF} disabled={!arquivo || carregando || baixandoPDF} className="gap-2">
+            <Download className="h-4 w-4" />
+            {baixandoPDF ? 'Gerando…' : 'Baixar PDF'}
           </Button>
         </div>
       </div>

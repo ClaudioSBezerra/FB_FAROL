@@ -1,13 +1,27 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"math"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/johnfercher/maroto/v2"
+	"github.com/johnfercher/maroto/v2/pkg/components/col"
+	"github.com/johnfercher/maroto/v2/pkg/components/page"
+	"github.com/johnfercher/maroto/v2/pkg/components/row"
+	"github.com/johnfercher/maroto/v2/pkg/components/text"
+	"github.com/johnfercher/maroto/v2/pkg/config"
+	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
+	"github.com/johnfercher/maroto/v2/pkg/props"
 	"github.com/lib/pq"
 )
 
@@ -648,6 +662,142 @@ func mustParseData(t *testing.T, s string) time.Time {
 	return tm
 }
 
+// tinyPNGRel322 — logo mínima válida (1x1) para exercitar
+// comparativoRel322PDF sem depender do banco (logoRelatorio lê
+// companies.logo_data).
+func tinyPNGRel322(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("falha ao gerar PNG de teste: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestComparativoRel322_PDF_Normal — I/O Matrix: "PDF do comparativo normal".
+// Cobre linha ok, divergência e órfã (dos dois lados) na mesma tabela —
+// devolve as mesmas linhas/status que o JSON equivalente, sem erro.
+func TestComparativoRel322_PDF_Normal(t *testing.T) {
+	resultado := &comparativoRel322Resposta{
+		Periodo:            "01/08/2026 a 26/08/2026",
+		DataInicio:         "2026-08-01",
+		DataFim:            "2026-08-26",
+		QtdSupervisoresPDF: 2,
+		QtdDivergencias:    1,
+		QtdOrfaos:          2,
+		Linhas: []linhaComparativoRel322{
+			{
+				CodSupervisor: "124", Supervisor: "GO - VALE SAO PATRICIO - LUCAS",
+				VlVendidoPDF: f64p(9223911.54), BrutoFarol: f64p(9223911.54), LiquidoFarol: f64p(9000000),
+				DiferencaPct: f64p(0), Status: "ok", Origem: "ambos",
+			},
+			{
+				CodSupervisor: "240", Supervisor: "GO - NORTE - JOSENILTON",
+				VlVendidoPDF: f64p(100000), BrutoFarol: f64p(90000), LiquidoFarol: f64p(89000),
+				DiferencaPct: f64p(10), Status: "divergencia", Origem: "ambos",
+			},
+			{
+				CodSupervisor: "705", Supervisor: "SUPERVISOR SO NO PDF",
+				VlVendidoPDF: f64p(1000), Status: "orfao", Origem: "pdf",
+			},
+			{
+				CodSupervisor: "999",
+				BrutoFarol:    f64p(5000), LiquidoFarol: f64p(5000), Status: "orfao", Origem: "farol",
+			},
+		},
+	}
+
+	b, err := comparativoRel322PDF(resultado, tinyPNGRel322(t), extension.Png)
+	if err != nil {
+		t.Fatalf("comparativoRel322PDF: erro inesperado: %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("PDF vazio")
+	}
+	if !bytes.HasPrefix(b, []byte("%PDF")) {
+		t.Errorf("saída não parece um PDF válido (assinatura ausente): %q", b[:min(20, len(b))])
+	}
+
+	// O Verification Gap provou que checar só "gerou sem erro" deixa passar
+	// até deletar o loop de linhas inteiro. extrairTextoPDF (a mesma função
+	// que lê o PDF do WinThor) lê de volta o PDF que ACABAMOS de gerar —
+	// confirmado rodando de verdade que ela funciona nesse sentido também —
+	// e o texto extraído precisa refletir cada linha/status do resultado.
+	texto, err := extrairTextoPDF(b)
+	if err != nil {
+		t.Fatalf("extrairTextoPDF no PDF recém-gerado: %v", err)
+	}
+	for _, cod := range []string{"124", "240", "705", "999"} {
+		if !strings.Contains(texto, cod) {
+			t.Errorf("texto extraído não contém o código de supervisor %s: %q", cod, texto)
+		}
+	}
+	for _, esperado := range []string{"OK", "DIVERGÊNCIA", "ÓRFÃ"} {
+		if !strings.Contains(texto, esperado) {
+			t.Errorf("texto extraído não contém o status %q: %q", esperado, texto)
+		}
+	}
+	// Linha 999 (órfã só-farol): VlVendidoPDF e DiferencaPct são nil →
+	// precisam aparecer como "—", nunca R$ 0,00 nem "+Inf%"/"NaN%".
+	if !strings.Contains(texto, "—") {
+		t.Errorf("texto extraído não contém o traço \"—\" esperado para os campos ausentes: %q", texto)
+	}
+}
+
+// TestComparativoRel322_PDF_SemDadoNoPeriodo — I/O Matrix: "Sem dado do
+// Farol no período". O PDF ainda é gerado, com a ressalva no topo — nunca
+// vira erro.
+func TestComparativoRel322_PDF_SemDadoNoPeriodo(t *testing.T) {
+	resultado := &comparativoRel322Resposta{
+		Periodo:               "01/01/2099 a 31/01/2099",
+		DataInicio:            "2099-01-01",
+		DataFim:               "2099-01-31",
+		QtdSupervisoresPDF:    2,
+		QtdDivergencias:       2,
+		QtdOrfaos:             0,
+		SemDadoFarolNoPeriodo: true,
+		Linhas: []linhaComparativoRel322{
+			{
+				CodSupervisor: "124", Supervisor: "GO - VALE SAO PATRICIO - LUCAS",
+				VlVendidoPDF: f64p(9223911.54), BrutoFarol: f64p(0), LiquidoFarol: f64p(0),
+				DiferencaPct: nil, Status: "divergencia", Origem: "ambos",
+			},
+			{
+				CodSupervisor: "240", Supervisor: "GO - NORTE - JOSENILTON",
+				VlVendidoPDF: f64p(8597443.46), BrutoFarol: f64p(0), LiquidoFarol: f64p(0),
+				DiferencaPct: nil, Status: "divergencia", Origem: "ambos",
+			},
+		},
+	}
+
+	b, err := comparativoRel322PDF(resultado, tinyPNGRel322(t), extension.Png)
+	if err != nil {
+		t.Fatalf("comparativoRel322PDF: esperava PDF gerado mesmo sem dado do Farol no período, veio erro: %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("PDF vazio")
+	}
+	if !bytes.HasPrefix(b, []byte("%PDF")) {
+		t.Errorf("saída não parece um PDF válido (assinatura ausente): %q", b[:min(20, len(b))])
+	}
+
+	// Acceptance Criteria da spec: "quando sem_dado_farol_no_periodo, o PDF
+	// inclui a ressalva no topo". Sem ler o conteúdo de volta, nada garante
+	// que a ressalva realmente foi escrita (só checar "gerou sem erro" não
+	// prova isso — é exatamente o gap que o Verification Gap apontou).
+	texto, err := extrairTextoPDF(b)
+	if err != nil {
+		t.Fatalf("extrairTextoPDF no PDF recém-gerado: %v", err)
+	}
+	if !strings.Contains(texto, "PARCIAL") {
+		t.Errorf("texto extraído não contém a ressalva \"PARCIAL\": %q", texto)
+	}
+	if !strings.Contains(texto, "NENHUM dado importado") {
+		t.Errorf("texto extraído não contém a frase da ressalva sobre não haver dado importado: %q", texto)
+	}
+}
+
 func TestComparativoRel322_PercentDiff(t *testing.T) {
 	if got := percentDiffRel322(100, 100); got != 0 {
 		t.Errorf("iguais deveria dar 0%%, veio %v", got)
@@ -663,5 +813,165 @@ func TestComparativoRel322_PercentDiff(t *testing.T) {
 	}
 	if got := percentDiffRel322(101, 100); got <= 0.005 {
 		t.Errorf("1%% de diferença deveria estourar a tolerância de 0,5%%, veio %v", got)
+	}
+}
+
+// TestComparativoRel322_PctOuTraco_InfNaN — defesa em profundidade.
+// cruzarComRel322 já garante que DiferencaPct vira nil (não +Inf) quando a
+// distância é infinita, mas pctOuTracoRel322 não pode confiar cegamente
+// nisso: se um ponteiro não-nil só NaN/Inf chegasse até ela (hoje ou por uma
+// mudança futura em cruzarComRel322), formatar direto imprimiria
+// literalmente "+Inf%"/"NaN%" numa linha do PDF que circula por e-mail.
+func TestComparativoRel322_PctOuTraco_InfNaN(t *testing.T) {
+	inf := math.Inf(1)
+	if got := pctOuTracoRel322(&inf); got != "—" {
+		t.Errorf("pctOuTracoRel322(+Inf) = %q, want \"—\"", got)
+	}
+	infNeg := math.Inf(-1)
+	if got := pctOuTracoRel322(&infNeg); got != "—" {
+		t.Errorf("pctOuTracoRel322(-Inf) = %q, want \"—\"", got)
+	}
+	nan := math.NaN()
+	if got := pctOuTracoRel322(&nan); got != "—" {
+		t.Errorf("pctOuTracoRel322(NaN) = %q, want \"—\"", got)
+	}
+	if got := pctOuTracoRel322(nil); got != "—" {
+		t.Errorf("pctOuTracoRel322(nil) = %q, want \"—\"", got)
+	}
+	dez := 10.0
+	if got := pctOuTracoRel322(&dez); got != "10,00%" {
+		t.Errorf("pctOuTracoRel322(10) = %q, want \"10,00%%\"", got)
+	}
+}
+
+// ─── PDF de fixture para os testes de handler ──────────────────────────────
+//
+// O handler precisa de um upload de verdade: extrairTextoPDF lê BYTES DE PDF
+// reais (github.com/ledongthuc/pdf.NewReader), não o texto sintético que
+// alimenta parseRel322Texto nos testes acima. construirPDFRel322Fixture usa
+// o MESMO maroto que comparativoRel322PDF (já confirmado compatível com
+// extrairTextoPDF) para desenhar cada linha da fixture como uma linha de PDF
+// própria — reproduzindo o "um token por linha" que o parser espera.
+func construirPDFRel322Fixture(t *testing.T, linhas []string) []byte {
+	t.Helper()
+	cfg := config.NewBuilder().Build()
+	mrt := maroto.New(cfg)
+	pg := page.New()
+	for _, l := range linhas {
+		pg.Add(row.New(4).Add(col.New(12).Add(text.New(l, props.Text{Size: 8}))))
+	}
+	mrt.AddPages(pg)
+	doc, err := mrt.Generate()
+	if err != nil {
+		t.Fatalf("construirPDFRel322Fixture: gerar PDF: %v", err)
+	}
+	return doc.GetBytes()
+}
+
+// linhasRel322FixtureCompleta — cabeçalho + uma linha de supervisor + totais,
+// já achatado em uma linha por token (mesmo formato que cabecalhoRel322 /
+// linhaRel322Fixture / totaisRel322Fixture produzem quando unidos por "\n").
+func linhasRel322FixtureCompleta(periodo string) []string {
+	texto := strings.Join([]string{
+		cabecalhoRel322(periodo, "14-Por Supervisor"),
+		linhaRel322Fixture("124", "GO - VALE SAO PATRICIO - LUCAS", "9.223.911,54", "7,10"),
+		totaisRel322Fixture,
+	}, "\n")
+	var linhas []string
+	for _, l := range strings.Split(texto, "\n") {
+		if strings.TrimSpace(l) != "" {
+			linhas = append(linhas, l)
+		}
+	}
+	return linhas
+}
+
+// multipartPDFReqRel322 — monta uma request POST multipart de verdade (campo
+// "file"), já autenticada via FarolContext injetado direto no contexto
+// (mesmo atalho de biReq em farol_bi_api_test.go — evita depender de
+// login/JWT real para exercitar o handler).
+func multipartPDFReqRel322(t *testing.T, url string, pdfBytes []byte, empresaID string) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "rel322.pdf")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write(pdfBytes); err != nil {
+		t.Fatalf("escrever bytes do PDF no multipart: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("fechar multipart writer: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, url, &buf)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	ctx := context.WithValue(r.Context(), SpContextKey, &FarolContext{
+		UserID: "teste", SpRole: "gestor_geral", EmpresaID: empresaID,
+		AllFiliais: true, Modulos: []string{"vendas"},
+	})
+	return r.WithContext(ctx)
+}
+
+// TestComparativoRel322_Handler_FormatoPDF — ninguém testava o handler HTTP
+// de verdade com ?formato=pdf, só a função pura comparativoRel322PDF: trocar
+// o nome do parâmetro, inverter a comparação, ou deixar o
+// Content-Type: application/json vazando pro caminho do PDF não quebraria
+// teste nenhum antes deste. Integração real: precisa de *sql.DB (o handler
+// chama logoRelatorio/montarComparativo), mesmo padrão biTestDB — pula sem
+// DATABASE_URL.
+func TestComparativoRel322_Handler_FormatoPDF(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	periodo := "01/08/2026 a 26/08/2026"
+	pdfBytes := construirPDFRel322Fixture(t, linhasRel322FixtureCompleta(periodo))
+
+	r := multipartPDFReqRel322(t, "/api/v2/farol/relatorio/comparativo-rel322?formato=pdf", pdfBytes, empresaID)
+	w := httptest.NewRecorder()
+	ComparativoRel322Handler(db)(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, corpo: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type = %q, want application/pdf", ct)
+	}
+	if !bytes.HasPrefix(w.Body.Bytes(), []byte("%PDF")) {
+		t.Errorf("corpo da resposta não começa com %%PDF")
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "2026-08-01") || !strings.Contains(cd, "2026-08-26") {
+		t.Errorf("Content-Disposition sem o período do PDF de origem: %q", cd)
+	}
+}
+
+// TestComparativoRel322_Handler_FormatoJSONPadrao — o "Never" da spec: sem
+// ?formato (ou formato diferente de pdf), o contrato antigo não pode
+// quebrar. Mesmo upload do teste acima, sem a querystring.
+func TestComparativoRel322_Handler_FormatoJSONPadrao(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	periodo := "01/08/2026 a 26/08/2026"
+	pdfBytes := construirPDFRel322Fixture(t, linhasRel322FixtureCompleta(periodo))
+
+	r := multipartPDFReqRel322(t, "/api/v2/farol/relatorio/comparativo-rel322", pdfBytes, empresaID)
+	w := httptest.NewRecorder()
+	ComparativoRel322Handler(db)(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, corpo: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json (contrato antigo não pode quebrar)", ct)
+	}
+	var resp comparativoRel322Resposta
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("corpo não é JSON válido: %v — corpo: %s", err, w.Body.String())
+	}
+	if resp.Periodo != periodo {
+		t.Errorf("periodo = %q, want %q", resp.Periodo, periodo)
+	}
+	if len(resp.Linhas) == 0 {
+		t.Error("esperava ao menos 1 linha no comparativo")
 	}
 }

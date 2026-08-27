@@ -104,10 +104,22 @@ Concentração >100% (denominador só-positivo), fatia negativa no donut (pula �
 
 ### Adiados por exigir decisão de produto/dado
 
+- **Comparativo compara contra Faturado, mas o WinThor pode estar mostrando Transmitido** (levantado pelo Claudio em 27/08/2026, depois do primeiro teste em produção). O Farol tem tabelas/views DISTINTAS para Faturado (`vendas_faturadas`, `agg_fat_*`) e Transmitido (`vendas_transmitidas`, `agg_trans_*`) — são fluxos diferentes (pedido do RCA vs NF emitida). O comparativo REL 322 hoje só busca `vendas_faturadas` (Bruto/Líquido faturado); não está confirmado se o "Vl.Vendido" do relatório WinThor corresponde a isso ou ao transmitido. Decisão explícita do Claudio: pausar essa investigação por ora e seguir com a exportação em PDF sobre os dados atuais (Faturado) — não trocar a fonte nem adicionar Transmitido sem decisão. Quando retomar, a opção mais provável (padrão já usado no Bruto x Líquido) é mostrar os dois lados (Faturado e Transmitido, Bruto e Líquido) e deixar o gestor comparar contra o número real do PDF.
+
 - **"Filiai(s) :" do cabeçalho do PDF é ignorado no filtro do Farol** (Blind Hunter). O REL 322 pode ser gerado para um subconjunto de filiais (o campo existe no cabeçalho, visível no fixture de teste), mas `farolBrutoLiquidoPorSupervisor` só filtra por `empresa_id` + período — nunca por filial. Nos 4 PDFs de exemplo o campo sempre veio com a lista completa de filiais, então não se manifestou na prática, mas um upload de um REL 322 rodado para filiais específicas incluiria dado do Farol de filiais FORA do escopo do PDF, produzindo divergências enganosas. Não corrigido agora porque não ficou claro, olhando o schema de `vendas_faturadas`/`vendas_ccd`, se existe uma coluna de filial utilizável para esse filtro (o campo `empresa` da tabela pode ou não ser isso) — precisa de confirmação antes de implementar.
 
 ### Adiados por baixa probabilidade prática
 
 - **Órfãos só-no-Farol aparecem na tabela sem o nome do supervisor** (Blind Hunter). A query de `farolBrutoLiquidoPorSupervisor` não faz join com uma tabela de nomes — o código volta, mas o campo `Supervisor` fica vazio para essas linhas (o front mostra "—"). O gestor ainda consegue identificar pelo código, então não bloqueia; mas seria mais rápido de ler com o nome.
+
+## 2026-08-27 — spec-comparativo-rel322-pdf (revisão adversarial, 3 revisores)
+
+### Adiados por serem pré-existentes ou desproporcionais a este diff
+
+- **Frontend não tem infraestrutura de teste nenhuma** (Verification Gap). Não existe `vitest`/`jest` configurado (`frontend/src/lib/utils.test.ts` existe mas não roda — falta o módulo `vitest`), nem `e2e/`/`playwright`/`cypress`. `baixarPDF` (o botão "Baixar PDF") ficou sem teste automatizado por causa disso, não por falta de tentativa — corrigir a lacuna de infraestrutura é maior que este diff.
+- **`http.Error(w, jsonErrorRel322(...), ...)` sempre envia `Content-Type: text/plain` apesar do corpo ser JSON** (Blind Hunter). Já era assim em TODOS os erros deste arquivo antes desta mudança (não é regressão do PDF) — mexer nisso é uma limpeza maior no padrão de erro do arquivo inteiro.
+- **`logoRelatorio` nunca foi testado contra uma linha real de `companies.logo_data`** (Verification Gap) — os testes (deste diff e do anterior) sempre usam um PNG 1x1 fabricado. É o mesmo ponto cego que causou o bug da logo errada em 25/08/2026 (`farol_cnpj_receita.go`), só que ainda não fechado.
+
+### Adiados por baixa probabilidade prática
 
 - **Descrição do supervisor com um token puramente numérico isolado desalinha o parser** (Blind Hunter + Edge Case Hunter). O regex que separa "descrição" de "números" não distingue um token numérico dentro da descrição (ex.: um número de zona como palavra solta) de um dos 11 valores da tabela. Na prática, os nomes reais de supervisor observados nos 4 PDFs de exemplo nunca têm token puramente numérico solto (são sempre "UF - REGIÃO - NOME"), e quando o desalinhamento acontece o parser majoritariamente ainda aborta com erro (porque o próximo token esperado como código de supervisor não bate) — não gera dado silenciosamente errado no caso comum. Corrigir direito exigiria uma heurística de lookahead mais esperta; não vale o custo até aparecer um caso real.
