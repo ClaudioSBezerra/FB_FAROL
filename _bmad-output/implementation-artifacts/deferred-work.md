@@ -93,3 +93,21 @@ Concentração >100% (denominador só-positivo), fatia negativa no donut (pula �
   para 5 min de propósito, para encurtar a janela de dado velho (Auditor #5).
   O critério, como escrito, é falso além disso. O comportamento está certo;
   o texto é que ficou impreciso.
+
+## 2026-08-27 — spec-comparativo-rel322 (split por limite de tokens)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-comparativo-rel322.md`
+  summary: Histórico consultável dos comparativos REL 322 — persistir cada upload/resultado (tabela `farol.comparativo_rel322`) e expor um GET para revisitar comparativos anteriores sem subir o PDF de novo.
+  evidence: Spec ultrapassou o limite de 1600 tokens (2422 medidos); usuário escolheu [S] Split — core (upload + parse + comparação exibida na tela, sem persistência) primeiro, histórico persistido fica para depois.
+
+## 2026-08-27 — spec-comparativo-rel322 (revisão adversarial, 3 revisores)
+
+### Adiados por exigir decisão de produto/dado
+
+- **"Filiai(s) :" do cabeçalho do PDF é ignorado no filtro do Farol** (Blind Hunter). O REL 322 pode ser gerado para um subconjunto de filiais (o campo existe no cabeçalho, visível no fixture de teste), mas `farolBrutoLiquidoPorSupervisor` só filtra por `empresa_id` + período — nunca por filial. Nos 4 PDFs de exemplo o campo sempre veio com a lista completa de filiais, então não se manifestou na prática, mas um upload de um REL 322 rodado para filiais específicas incluiria dado do Farol de filiais FORA do escopo do PDF, produzindo divergências enganosas. Não corrigido agora porque não ficou claro, olhando o schema de `vendas_faturadas`/`vendas_ccd`, se existe uma coluna de filial utilizável para esse filtro (o campo `empresa` da tabela pode ou não ser isso) — precisa de confirmação antes de implementar.
+
+### Adiados por baixa probabilidade prática
+
+- **Órfãos só-no-Farol aparecem na tabela sem o nome do supervisor** (Blind Hunter). A query de `farolBrutoLiquidoPorSupervisor` não faz join com uma tabela de nomes — o código volta, mas o campo `Supervisor` fica vazio para essas linhas (o front mostra "—"). O gestor ainda consegue identificar pelo código, então não bloqueia; mas seria mais rápido de ler com o nome.
+
+- **Descrição do supervisor com um token puramente numérico isolado desalinha o parser** (Blind Hunter + Edge Case Hunter). O regex que separa "descrição" de "números" não distingue um token numérico dentro da descrição (ex.: um número de zona como palavra solta) de um dos 11 valores da tabela. Na prática, os nomes reais de supervisor observados nos 4 PDFs de exemplo nunca têm token puramente numérico solto (são sempre "UF - REGIÃO - NOME"), e quando o desalinhamento acontece o parser majoritariamente ainda aborta com erro (porque o próximo token esperado como código de supervisor não bate) — não gera dado silenciosamente errado no caso comum. Corrigir direito exigiria uma heurística de lookahead mais esperta; não vale o custo até aparecer um caso real.

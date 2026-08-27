@@ -566,6 +566,10 @@ func main() {
 	http.HandleFunc("/api/v2/farol/cnpj-receita/carga", withSP(handlers.CargaCNPJReceitaHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/cnpj-receita/status", withSP(handlers.StatusCNPJReceitaHandler, "somente_leitura"))
 
+	// Comparativo REL 322 (WinThor) x Farol — upload do PDF que o WinThor já
+	// exporta, sem persistir nada (leitura pura, cada upload é independente).
+	http.HandleFunc("/api/v2/farol/relatorio/comparativo-rel322", withSP(handlers.ComparativoRel322Handler, "somente_leitura"))
+
 	// ── Cadastros legados — removidos (dados migrados para vendas_importadas) ──
 	// /api/cadastros/* desativado em 2026-05-27
 

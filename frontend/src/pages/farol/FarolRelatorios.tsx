@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import FarolRelatorioReceita from './FarolRelatorioReceita'
+import FarolComparativoRel322 from './FarolComparativoRel322'
 
 // Função para formatar data para input date (YYYY-MM-DD)
 function formatDateForInput(date: Date): string {
@@ -75,7 +76,7 @@ export default function FarolRelatorios() {
   const [dataInicio, setDataInicio] = useState(getOneYearAgo())
   const [dataFim, setDataFim] = useState(getToday())
   const [searchExecuted, setSearchExecuted] = useState(false)
-  const [aba, setAba] = useState<'extrato' | 'receita'>('extrato')
+  const [aba, setAba] = useState<'extrato' | 'receita' | 'comparativo'>('extrato')
 
   const { data, isLoading, refetch } = useQuery<RelatorioResponse>({
     queryKey: ['relatorio-extrato', codProduto, codCliente, dataInicio, dataFim],
@@ -164,6 +165,7 @@ export default function FarolRelatorios() {
         {([
           { id: 'extrato', label: 'Extrato de Produtos por Cliente' },
           { id: 'receita', label: 'Clientes com CNPJ irregular' },
+          { id: 'comparativo', label: 'Comparativo REL 322' },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -180,6 +182,8 @@ export default function FarolRelatorios() {
       </div>
 
       {aba === 'receita' && <FarolRelatorioReceita />}
+
+      {aba === 'comparativo' && <FarolComparativoRel322 />}
 
       {aba === 'extrato' && (<>
       {/* Filtros */}
