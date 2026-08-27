@@ -24,10 +24,13 @@ interface LinhaComparativo {
   origem: 'pdf' | 'farol' | 'ambos'
 }
 
+type FluxoComparativo = 'faturado' | 'transmitido'
+
 interface ComparativoResposta {
   periodo: string
   data_inicio: string
   data_fim: string
+  fluxo: FluxoComparativo
   linhas: LinhaComparativo[]
   total_vl_vendido_pdf: number
   total_bruto_farol: number
@@ -65,6 +68,10 @@ function linhaFundo(l: LinhaComparativo) {
   return ''
 }
 
+function fluxoLabel(f: FluxoComparativo) {
+  return f === 'transmitido' ? 'Transmitido' : 'Faturado'
+}
+
 export default function FarolComparativoRel322() {
   const { token } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -73,6 +80,11 @@ export default function FarolComparativoRel322() {
   const [baixandoPDF, setBaixandoPDF] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [resultado, setResultado] = useState<ComparativoResposta | null>(null)
+  // Fluxo do PDF de origem — o WinThor não se autodeclara (o REL 322 tem o
+  // mesmo layout nos dois casos), então é sempre escolha explícita do
+  // usuário aqui. Default Faturado: quem não mexer no toggle mantém o
+  // comportamento já em produção.
+  const [fluxo, setFluxo] = useState<FluxoComparativo>('faturado')
 
   async function enviar() {
     if (!arquivo) {
@@ -85,7 +97,7 @@ export default function FarolComparativoRel322() {
     try {
       const form = new FormData()
       form.append('file', arquivo)
-      const res = await fetch('/api/v2/farol/relatorio/comparativo-rel322', {
+      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?fluxo=${fluxo}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -116,7 +128,7 @@ export default function FarolComparativoRel322() {
     try {
       const form = new FormData()
       form.append('file', arquivo)
-      const res = await fetch('/api/v2/farol/relatorio/comparativo-rel322?formato=pdf', {
+      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?formato=pdf&fluxo=${fluxo}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -155,6 +167,18 @@ export default function FarolComparativoRel322() {
     }
   }
 
+  // trocarFluxo — trocar o toggle depois de já existir um resultado na tela
+  // precisa limpar esse resultado (mesmo comportamento de trocar o arquivo):
+  // senão o toggle mostraria um fluxo enquanto a tabela ainda reflete o
+  // fluxo anterior, e um "Baixar PDF" nesse meio-tempo bateria com o toggle
+  // (fluxo novo), não com o que está na tela (fluxo antigo) — inconsistência
+  // que a spec proíbe explicitamente.
+  function trocarFluxo(f: FluxoComparativo) {
+    setFluxo(f)
+    setResultado(null)
+    setErro(null)
+  }
+
   function onSelecionarArquivo(files: FileList | null) {
     const f = files?.[0] ?? null
     // O <input accept="application/pdf"> só filtra no caminho de clicar e
@@ -178,11 +202,41 @@ export default function FarolComparativoRel322() {
           <Scale className="h-5 w-5 text-slate-600" />
           <h2 className="text-lg font-semibold text-slate-900">Comparativo REL 322 (WinThor) x Farol</h2>
         </div>
-        <p className="text-sm text-slate-500 mb-6">
+        <p className="text-sm text-slate-500 mb-4">
           Sobe o PDF que o WinThor exporta ("322 — Venda Por Departamento", por supervisor) e o Farol cruza,
           supervisor a supervisor, o Vl.Vendido do relatório com o Bruto e o Líquido apurados no mesmo período.
           Nada é salvo — cada upload é uma consulta independente.
         </p>
+
+        <div className="mb-6">
+          <label className="block text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
+            Base do PDF gerado no WinThor
+          </label>
+          {/* Toggle Faturado x Transmitido — o WinThor não indica no PDF qual base foi
+              usada pra gerar o REL 322, então a escolha é sempre explícita do usuário
+              aqui (nunca inferida do conteúdo). Padrão visual copiado de
+              FarolPublicPanel.tsx (mesmo toggle de fluxo usado no painel do RCA/Supervisor). */}
+          <div className="inline-flex rounded-lg border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
+            <button
+              type="button"
+              onClick={() => trocarFluxo('faturado')}
+              className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors ${
+                fluxo === 'faturado' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Faturado
+            </button>
+            <button
+              type="button"
+              onClick={() => trocarFluxo('transmitido')}
+              className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors border-l-2 border-slate-300 ${
+                fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Transmitido
+            </button>
+          </div>
+        </div>
 
         <div
           className="flex flex-wrap items-center gap-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4"
@@ -232,8 +286,12 @@ export default function FarolComparativoRel322() {
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-900">
             <strong>O Farol não tem NENHUM dado importado no período {resultado.periodo}.</strong>{' '}
-            Bruto e Líquido aparecem como R$ 0,00 para todas as linhas — isso reflete a realidade (range futuro
-            ou período ainda não importado), não é um erro do comparativo.
+            {resultado.fluxo === 'transmitido' ? (
+              <>Bruto aparece como R$ 0,00 para todas as linhas (o fluxo Transmitido não calcula Líquido)</>
+            ) : (
+              <>Bruto e Líquido aparecem como R$ 0,00 para todas as linhas</>
+            )}{' '}
+            — isso reflete a realidade (range futuro ou período ainda não importado), não é um erro do comparativo.
           </div>
         </div>
       )}
@@ -244,6 +302,15 @@ export default function FarolComparativoRel322() {
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Período (do PDF)</div>
               <div className="mt-1 text-lg font-bold text-slate-900">{resultado.periodo}</div>
+              <span
+                className={`mt-2 inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                  resultado.fluxo === 'transmitido'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}
+              >
+                Fluxo: {fluxoLabel(resultado.fluxo)}
+              </span>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Total Vl.Vendido (PDF)</div>
@@ -255,7 +322,12 @@ export default function FarolComparativoRel322() {
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (Farol)</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_farol)}</div>
+              {/* Transmitido não calcula Líquido (mesma convenção do painel
+                  Transmitido, ver spec-comparativo-rel322-fluxo.md) — "—" em vez
+                  de R$ 0,00, senão pareceria um valor apurado. */}
+              <div className="mt-1 text-2xl font-bold text-slate-900">
+                {resultado.fluxo === 'transmitido' ? '—' : fmtBRL(resultado.total_liquido_farol)}
+              </div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Divergências / Órfãs</div>
@@ -306,9 +378,19 @@ export default function FarolComparativoRel322() {
           </div>
 
           <p className="text-xs text-slate-400">
-            Bruto = soma de todas as vendas faturadas no período. Líquido = venda real (exclui bonificação,
-            transferência e remessa) menos devolvido/cancelado — mesma composição do painel Faturado. Uma linha
-            é "OK" quando Bruto OU Líquido do Farol está a até 0,5% do Vl.Vendido do PDF.
+            {resultado.fluxo === 'transmitido' ? (
+              <>
+                Fluxo Transmitido: Bruto = soma de todos os pedidos transmitidos no período. Este fluxo não calcula
+                Líquido — mesma convenção do painel Transmitido do Farol (aparece como "—" em todas as linhas).
+                Uma linha é "OK" quando o Bruto do Farol está a até 0,5% do Vl.Vendido do PDF.
+              </>
+            ) : (
+              <>
+                Fluxo Faturado: Bruto = soma de todas as vendas faturadas no período. Líquido = venda real (exclui
+                bonificação, transferência e remessa) menos devolvido/cancelado — mesma composição do painel
+                Faturado. Uma linha é "OK" quando Bruto OU Líquido do Farol está a até 0,5% do Vl.Vendido do PDF.
+              </>
+            )}
           </p>
         </>
       )}

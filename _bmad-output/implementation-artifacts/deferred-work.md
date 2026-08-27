@@ -123,3 +123,9 @@ Concentração >100% (denominador só-positivo), fatia negativa no donut (pula �
 ### Adiados por baixa probabilidade prática
 
 - **Descrição do supervisor com um token puramente numérico isolado desalinha o parser** (Blind Hunter + Edge Case Hunter). O regex que separa "descrição" de "números" não distingue um token numérico dentro da descrição (ex.: um número de zona como palavra solta) de um dos 11 valores da tabela. Na prática, os nomes reais de supervisor observados nos 4 PDFs de exemplo nunca têm token puramente numérico solto (são sempre "UF - REGIÃO - NOME"), e quando o desalinhamento acontece o parser majoritariamente ainda aborta com erro (porque o próximo token esperado como código de supervisor não bate) — não gera dado silenciosamente errado no caso comum. Corrigir direito exigiria uma heurística de lookahead mais esperta; não vale o custo até aparecer um caso real.
+
+## 2026-08-27 — spec-comparativo-rel322-fluxo (split por limite de tokens)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-comparativo-rel322-fluxo.md`
+  summary: PDF exportado (`?formato=pdf`) refletir o fluxo escolhido (Faturado/Transmitido) no cabeçalho e nos rótulos das colunas — hoje, com o core implementado, o PDF gera normalmente mas sem indicar explicitamente qual dos dois fluxos foi comparado.
+  evidence: Spec ultrapassou o limite de 1600 tokens (2095 medidos); usuário escolheu [S] Split — core (toggle + troca de fonte no backend + tela) primeiro, rótulo do fluxo no PDF fica pra depois.
