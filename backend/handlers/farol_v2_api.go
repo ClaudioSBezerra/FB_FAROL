@@ -704,6 +704,9 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
 			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, currentLevel.Level, spCtx.EmpresaID, pr, drillPath, filters)
+			if currentLevel.Level == "cod_fornec" {
+				fixOverlappingBaseCards(cards, kpi, !pr.CompInicio.IsZero() && !pr.CompFim.IsZero())
+			}
 		}
 		// O "de Y" (mix_total) do totalizador foi omitido na tela a pedido do gestor;
 		// por isso NÃO recalculamos o universo aqui (queries COUNT(DISTINCT) caras).
@@ -2418,6 +2421,44 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 	return count
 }
 
+// queryDistinctCliMix — Mix Médio real do recorte (drillPath+filtros), direto
+// da folha (grão cnpj), igual padrão de queryDistinctCliPositivados.
+//
+// Corrige o mesmo tipo de bug que motivou fixOverlappingBaseKPI: o KPI
+// totalizador antes fazia média simples dos Mix de cada card (mixTotal /
+// mixCount em computeKPI). Isso depende de QUANTOS cards existem e de como a
+// visão agrupa — "Por RCA" (poucos cards, mix individual alto) e "Por
+// Fornecedor" (~280 cards, muitos de mix baixo) davam números bem diferentes
+// pro MESMO recorte (visto por Heverton 27/08/2026: 25,8 vs 1,6 itens/cli no
+// mesmo Supervisor). SUM(mix)/COUNT(DISTINCT cnpj) na folha não depende de
+// agrupamento nenhum — mesmo número nas duas visões.
+func queryDistinctCliMix(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) float64 {
+	leafTable, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
+	if !ok {
+		return 0
+	}
+
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymStart, ymEnd, &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+
+	q := fmt.Sprintf(`
+SELECT COALESCE(SUM(v.mix), 0) / NULLIF(COUNT(DISTINCT v.cnpj), 0)
+FROM %s v
+WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
+		leafTable, mesCond, cond)
+
+	var avg sql.NullFloat64
+	if err := db.QueryRow(q, args...).Scan(&avg); err != nil {
+		log.Printf("[farol:mix] queryDistinctCliMix view=%s nível=%s folha=%s ERRO: %v", view, groupCol, leafTable, err)
+		return 0
+	}
+	return avg.Float64
+}
+
 // leafTableFor — tabela folha (grão cnpj) da view: o nível mais profundo das
 // agg_*_mes (cliente/cnpj; produto não é agg). Tem cnpj + toda a hierarquia.
 func leafTableFor(fluxo fluxoCtx, view string) (string, int, bool) {
@@ -2793,6 +2834,54 @@ func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view, gr
 	kpi.TotalPositCor = "vermelho"
 	if kpi.TotalPositPct >= kpi.TotalPositPctAnt {
 		kpi.TotalPositCor = "verde"
+	}
+	// Mix Médio real do recorte — substitui a média simples dos cards
+	// (computeKPI), que varia com a visão. Ver queryDistinctCliMix.
+	kpi.AvgMix = queryDistinctCliMix(db, fluxo, view, groupCol, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+	if !pr.CompInicio.IsZero() {
+		kpi.AvgMixAnt = queryDistinctCliMix(db, fluxo, view, groupCol, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+	}
+	kpi.MixCor = "vermelho"
+	if kpi.AvgMix >= kpi.AvgMixAnt {
+		kpi.MixCor = "verde"
+	}
+}
+
+// fixOverlappingBaseCards substitui BaseCli/BaseCliAnt de cada card por
+// cod_fornec pelo total FIXO do RCA/CRV (kpi.TotalBaseCli/TotalBaseCliAnt, já
+// corrigidos por fixOverlappingBaseKPI), em vez do nº de clientes que
+// compraram daquele fornecedor específico. Pedido do Heverton 27/08/2026:
+// "Clientes ativos... é fixo tanto no Rca como no Crv, independente da visão
+// ou fornecedor" — antes cada card de Por Fornecedor mostrava sua própria
+// base (ex: 46 vs 52 no mesmo RCA), o que lia como inconsistência.
+// PositPct/PositPctAnt/PositCor são recalculados contra a nova base fixa —
+// sem isso a % ficaria descasada do nº de Clientes Ativos exibido no card.
+func fixOverlappingBaseCards(cards []cardItem, kpi kpiSummary, hasComp bool) {
+	for i := range cards {
+		cards[i].BaseCli = kpi.TotalBaseCli
+		cards[i].BaseCliAnt = kpi.TotalBaseCliAnt
+		cards[i].PositPct = 0
+		if kpi.TotalBaseCli > 0 {
+			cards[i].PositPct = float64(cards[i].Positivados) / float64(kpi.TotalBaseCli) * 100
+		}
+		cards[i].PositPctAnt = 0
+		if kpi.TotalBaseCliAnt > 0 {
+			cards[i].PositPctAnt = float64(cards[i].PositivadosAnt) / float64(kpi.TotalBaseCliAnt) * 100
+		}
+		if !hasComp {
+			cards[i].PositCor = "verde"
+			continue
+		}
+		var pct float64
+		if cards[i].PositPctAnt > 0 {
+			pct = cards[i].PositPct / cards[i].PositPctAnt * 100
+		} else if cards[i].PositPct > 0 {
+			pct = 100
+		}
+		cards[i].PositCor = "vermelho"
+		if pct >= 100 {
+			cards[i].PositCor = "verde"
+		}
 	}
 }
 
@@ -4241,6 +4330,9 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
 			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
 			fixOverlappingBaseKPI(db, &kpi, fluxo, view, currentLevel.Level, empresaID, pr, drillPath, filters)
+			if currentLevel.Level == "cod_fornec" {
+				fixOverlappingBaseCards(cards, kpi, !pr.CompInicio.IsZero() && !pr.CompFim.IsZero())
+			}
 		}
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
