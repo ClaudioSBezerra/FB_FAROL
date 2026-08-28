@@ -79,10 +79,11 @@ baseline_commit: '1ecb0904be03b8866286001b16cc073962290323'
   3. **Edge Case Hunter** demonstrou, testando contra a API real, que `?fluxo=cancdev` e `?fluxo=cortado` (valores internos do `resolveFluxo`, nunca documentados como fluxo válido) eram aceitos verbatim pelo handler e faziam a query principal ler de `vendas_ccd` como se fosse a base comparada. Virou uma regra explícita em `Boundaries`.
   4. **Verification Gap** também mostrou que o teste de escopo por persona (`TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor`) depende de já existirem 2 `cod_supervisor` na base local — que está vazia — e por isso sempre pulou, nunca validando de verdade o recorte por persona no fluxo novo. Virou requisito explícito em `Boundaries`: o teste precisa inserir seus próprios dados.
 - **KEEP** (validado, sobrevive à re-derivação): uso de `resolveFluxo` pra tabela/coluna do fluxo principal; alias `v` na CTE `ccd`; toggle visual copiado de `FarolPublicPanel.tsx`; envio do fluxo em `enviar()` e `baixarPDF()`; campo `Fluxo` na resposta.
+- **2026-08-27, renegociação (Claudio, dono da intenção).** A decisão acima de "Transmitido devolve SÓ Bruto" foi revertida: o Claudio quer Líquido também no Transmitido, calculado como Bruto − Cortado (evento `CORTADO` de `vendas_ccd`, mesmo padrão de CTE que o Faturado já usa para CANCELADO/DEVOLVIDO, mas sem filtro de `tipo_venda` — Transmitido nunca teve o conceito de venda_real). Isso fecha só a CAUSA específica da preocupação #2 do achado do Verification Gap acima: a versão antiga do Líquido-via-CORTADO dependia de `tipo_venda` pra apurar venda_real, e dado antigo sem essa classificação zerava venda_real e deixava o Líquido negativo por um bug de dado incompleto. O novo cálculo não depende de `tipo_venda`, então esse mecanismo específico deixou de existir — mas Líquido negativo continua sendo um resultado VÁLIDO e ESPERADO sempre que Cortado > Bruto (ver Boundaries de `spec-comparativo-rel322-liquido-transmitido.md`), só que agora por um motivo legítimo de negócio, não por dado malformado. `comLiquido` foi removido — os dois fluxos sempre calculam Líquido. Detalhe completo em `spec-comparativo-rel322-liquido-transmitido.md`.
 
 ## Design Notes
 
-`eventoFilter` de `resolveFluxo` (ex.: `"AND v.evento IN (...)"`) assume tabela aliada `v` — a CTE `ccd` atual não tem alias. Trocar pra `FROM vendas_ccd v` deixa `eventoFilter` reaproveitável verbatim. Isso só se aplica ao fluxo Faturado agora (Transmitido não tem CTE `ccd`/Líquido).
+`eventoFilter` de `resolveFluxo` (ex.: `"AND v.evento IN (...)"`) assume tabela aliada `v` — a CTE `ccd` atual não tem alias. Trocar pra `FROM vendas_ccd v` deixa `eventoFilter` reaproveitável verbatim. Na época desta spec isso só se aplicava ao fluxo Faturado (Transmitido não tinha CTE `ccd`/Líquido) — deixou de ser verdade em 2026-08-27, quando o Transmitido passou a ter sua própria CTE `ccd` (evento CORTADO) seguindo o mesmo `eventoFilter` reaproveitável; ver `spec-comparativo-rel322-liquido-transmitido.md`.
 
 ## Verification
 
@@ -103,14 +104,14 @@ baseline_commit: '1ecb0904be03b8866286001b16cc073962290323'
 
 **Bruto/Líquido por fluxo**
 
-- `farolBrutoLiquidoPorSupervisor` — despacha pra `brutoPorSupervisorTransmitido` (só Bruto) ou `brutoLiquidoPorSupervisorFaturado` (Bruto+Líquido, como sempre foi); decisão confirmada com o usuário depois do Verification Gap apontar que o resto do Farol trata Transmitido como só Bruto.
+- `farolBrutoLiquidoPorSupervisor` — despachava pra `brutoPorSupervisorTransmitido` (só Bruto) ou `brutoLiquidoPorSupervisorFaturado` (Bruto+Líquido, como sempre foi); decisão confirmada com o usuário depois do Verification Gap apontar que o resto do Farol trata Transmitido como só Bruto.
   [`farol_comparativo_rel322.go:356`](../../backend/handlers/farol_comparativo_rel322.go#L356)
 
 - `brutoPorSupervisorTransmitido` — sem CTE `ccd`, sem cálculo de venda real; elimina de graça o bug do Líquido negativo em dado antigo sem `tipo_venda` classificado.
-  [`farol_comparativo_rel322.go:367`](../../backend/handlers/farol_comparativo_rel322.go#L367)
 
 - `cruzarComRel322` — novo parâmetro `comLiquido`; quando falso, `LiquidoFarol` fica `nil` em toda linha e a tolerância de 0,5% considera só o Bruto.
-  [`farol_comparativo_rel322.go:475`](../../backend/handlers/farol_comparativo_rel322.go#L475)
+
+  **Desatualizado em 2026-08-27:** `brutoPorSupervisorTransmitido` foi renomeada pra `brutoLiquidoPorSupervisorTransmitido` (ganhou CTE `ccd`/Líquido) e o parâmetro `comLiquido` de `cruzarComRel322` foi removido — os dois fluxos sempre calculam Líquido agora. As âncoras de linha acima não apontam mais pro código descrito; ver `spec-comparativo-rel322-liquido-transmitido.md` (Code Map e diff) pro estado atual dessas funções.
 
 **Frontend**
 

@@ -286,12 +286,8 @@ export default function FarolComparativoRel322() {
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-900">
             <strong>O Farol não tem NENHUM dado importado no período {resultado.periodo}.</strong>{' '}
-            {resultado.fluxo === 'transmitido' ? (
-              <>Bruto aparece como R$ 0,00 para todas as linhas (o fluxo Transmitido não calcula Líquido)</>
-            ) : (
-              <>Bruto e Líquido aparecem como R$ 0,00 para todas as linhas</>
-            )}{' '}
-            — isso reflete a realidade (range futuro ou período ainda não importado), não é um erro do comparativo.
+            Bruto e Líquido aparecem como R$ 0,00 para todas as linhas — isso reflete a realidade (range futuro ou
+            período ainda não importado), não é um erro do comparativo.
           </div>
         </div>
       )}
@@ -322,12 +318,7 @@ export default function FarolComparativoRel322() {
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (Farol)</div>
-              {/* Transmitido não calcula Líquido (mesma convenção do painel
-                  Transmitido, ver spec-comparativo-rel322-fluxo.md) — "—" em vez
-                  de R$ 0,00, senão pareceria um valor apurado. */}
-              <div className="mt-1 text-2xl font-bold text-slate-900">
-                {resultado.fluxo === 'transmitido' ? '—' : fmtBRL(resultado.total_liquido_farol)}
-              </div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_farol)}</div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Divergências / Órfãs</div>
@@ -380,9 +371,9 @@ export default function FarolComparativoRel322() {
           <p className="text-xs text-slate-400">
             {resultado.fluxo === 'transmitido' ? (
               <>
-                Fluxo Transmitido: Bruto = soma de todos os pedidos transmitidos no período. Este fluxo não calcula
-                Líquido — mesma convenção do painel Transmitido do Farol (aparece como "—" em todas as linhas).
-                Uma linha é "OK" quando o Bruto do Farol está a até 0,5% do Vl.Vendido do PDF.
+                Fluxo Transmitido: Bruto = soma de todos os pedidos transmitidos no período. Líquido = Bruto menos
+                Cortado (vendas perdidas no período) — pode vir negativo quando o Cortado supera o Bruto. Uma linha
+                é "OK" quando Bruto OU Líquido do Farol está a até 0,5% do Vl.Vendido do PDF.
               </>
             ) : (
               <>

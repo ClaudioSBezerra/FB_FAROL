@@ -335,45 +335,67 @@ func escopoCondRel322(escopo escopoRecorte, args []any) (string, []any) {
 	return fmt.Sprintf(" AND %s = ANY($%d)", escopo.Col, len(args)), args
 }
 
-// farolBrutoLiquido — Bruto (e, só no fluxo Faturado, Líquido) por
-// cod_supervisor no range de datas, já recortado pelo escopo do usuário
-// logado (ggv/supervisor/rca só veem a própria equipe — mesma regra de
-// farol_relatorios.go, ver farol_escopo.go).
+// farolBrutoLiquido — Bruto e Líquido por cod_supervisor no range de datas,
+// já recortado pelo escopo do usuário logado (ggv/supervisor/rca só veem a
+// própria equipe — mesma regra de farol_relatorios.go, ver farol_escopo.go).
 //
-// fluxo decide a fonte E o formato da resposta: Faturado lê vendas_faturadas
-// e calcula Bruto + Líquido (venda real menos DEVOLVIDO/CANCELADO de
-// vendas_ccd, inalterado). Transmitido lê vendas_transmitidas e devolve SÓ
-// Bruto — decisão confirmada com o usuário (ver spec-comparativo-rel322-fluxo.md,
-// Spec Change Log): o resto do Farol já trata Transmitido como só-Bruto
-// (farol_v2_api.go, painel Transmitido), e um Líquido via CORTADO seria uma
-// invenção nova — além de poder ficar NEGATIVO em dado antigo sem
-// tipo_venda classificado (venda_real=0, Líquido = 0 − CORTADO). O REL 322
-// do WinThor não se autodeclara qual base gerou o PDF, então fluxo vem
-// sempre de escolha explícita do usuário (nunca inferido).
+// fluxo decide a fonte: Faturado lê vendas_faturadas e calcula Líquido como
+// venda real menos DEVOLVIDO/CANCELADO de vendas_ccd (inalterado).
+// Transmitido lê vendas_transmitidas e calcula Líquido como Bruto menos
+// CORTADO de vendas_ccd — sem filtro de tipo_venda, porque Transmitido nunca
+// teve o conceito de venda_real (renegociado em 2026-08-27, ver
+// spec-comparativo-rel322-liquido-transmitido.md; a versão anterior desta
+// função devolvia só Bruto pro Transmitido, ver spec-comparativo-rel322-fluxo.md
+// pro histórico dessa decisão original). O REL 322 do WinThor não se
+// autodeclara qual base gerou o PDF, então fluxo vem sempre de escolha
+// explícita do usuário (nunca inferido).
 //
 // Consulta as tabelas DIÁRIAS, não os agregados mensais: o período do PDF
 // pode ser parcial (mês em andamento).
 func farolBrutoLiquidoPorSupervisor(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
 	if fluxo.name == "transmitido" {
-		return brutoPorSupervisorTransmitido(ctx, db, empresaID, dataInicio, dataFim, escopo, fluxo)
+		return brutoLiquidoPorSupervisorTransmitido(ctx, db, empresaID, dataInicio, dataFim, escopo, fluxo)
 	}
 	return brutoLiquidoPorSupervisorFaturado(ctx, db, empresaID, dataInicio, dataFim, escopo, fluxo)
 }
 
-// brutoPorSupervisorTransmitido — só Bruto, sem CTE ccd/venda_real: nunca
-// calcula Líquido pro Transmitido (ver comentário acima). O chamador
-// (cruzarComRel322, via montarComparativo) é quem decide não expor o campo
-// Líquido nesse fluxo — aqui o valor simplesmente não é calculado.
-func brutoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
+// brutoLiquidoPorSupervisorTransmitido — Bruto = SUM(pvenda) de
+// vendas_transmitidas, incondicional (sem filtro de tipo_venda: Transmitido
+// nunca teve o conceito de venda_real). Líquido = Bruto − Cortado (evento
+// CORTADO de vendas_ccd, via resolveFluxo("cortado")) — mesmo padrão de CTE
+// que brutoLiquidoPorSupervisorFaturado usa pra CANCELADO/DEVOLVIDO, só troca
+// o eventoFilter. Pode dar negativo (Cortado > Bruto) sem clamp nem erro —
+// mesma paridade não-protegida que o Faturado já tem pro próprio Líquido.
+func brutoLiquidoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
 	args := []any{empresaID, dataInicio, dataFim}
 	escopoCond, args := escopoCondRel322(escopo, args)
 
+	// Evento CORTADO em vendas_ccd do lado transmitido. resolveFluxo não é
+	// reimplementado — só reaproveitado pelo eventoFilter que ele já monta
+	// (assume a tabela aliada `v`, ver comentário na CTE ccd abaixo).
+	cortado := resolveFluxo("cortado")
+
 	q := fmt.Sprintf(`
+WITH trans AS (
     SELECT trim(cod_supervisor) AS cod_supervisor,
-           SUM(pvenda)::float8 AS bruto
+           SUM(pvenda) AS bruto
       FROM %s
      WHERE empresa_id = $1 AND %s BETWEEN $2 AND $3%s
-     GROUP BY trim(cod_supervisor)`, fluxo.tableName, fluxo.dateCol, escopoCond)
+     GROUP BY trim(cod_supervisor)
+), ccd AS (
+    SELECT trim(v.cod_supervisor) AS cod_supervisor,
+           SUM(v.pvenda) AS cortado
+      FROM vendas_ccd v
+     WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $2 AND $3
+       %s%s
+     GROUP BY trim(v.cod_supervisor)
+)
+SELECT COALESCE(trans.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
+       COALESCE(trans.bruto, 0)::float8 AS bruto,
+       (COALESCE(trans.bruto, 0) - COALESCE(ccd.cortado, 0))::float8 AS liquido
+  FROM trans
+  FULL OUTER JOIN ccd ON ccd.cod_supervisor = trans.cod_supervisor`,
+		fluxo.tableName, fluxo.dateCol, escopoCond, cortado.eventoFilter, escopoCond)
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -384,11 +406,11 @@ func brutoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empresaID st
 	out := map[string]struct{ Bruto, Liquido float64 }{}
 	for rows.Next() {
 		var cod string
-		var bruto float64
-		if err := rows.Scan(&cod, &bruto); err != nil {
+		var bruto, liquido float64
+		if err := rows.Scan(&cod, &bruto, &liquido); err != nil {
 			return nil, err
 		}
-		out[cod] = struct{ Bruto, Liquido float64 }{Bruto: bruto}
+		out[cod] = struct{ Bruto, Liquido float64 }{Bruto: bruto, Liquido: liquido}
 	}
 	return out, rows.Err()
 }
@@ -456,10 +478,8 @@ func montarComparativo(ctx context.Context, db *sql.DB, empresaID string, parsed
 	if err != nil {
 		return nil, err
 	}
-	// Só Faturado calcula Líquido — Transmitido não tem o conceito (ver
-	// farolBrutoLiquidoPorSupervisor e spec-comparativo-rel322-fluxo.md).
-	comLiquido := fluxo.name != "transmitido"
-	resp := cruzarComRel322(farol, parsed, comLiquido)
+	// Os dois fluxos calculam Líquido agora (ver farolBrutoLiquidoPorSupervisor).
+	resp := cruzarComRel322(farol, parsed)
 	resp.Fluxo = fluxo.name
 	return resp, nil
 }
@@ -468,11 +488,12 @@ func montarComparativo(ctx context.Context, db *sql.DB, empresaID string, parsed
 // período sem dado) sobre o resultado já buscado do Farol. Separada de
 // montarComparativo para ser testável sem *sql.DB.
 //
-// comLiquido — false no fluxo Transmitido: LiquidoFarol vem nil em TODA
-// linha (mesmo tratamento que a tela já dá a "não existe deste lado", ver
-// linhaComparativoRel322), e a tolerância de 0,5% considera só o Bruto —
-// nunca compara contra um Líquido inexistente.
-func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *rel322Parsed, comLiquido bool) *comparativoRel322Resposta {
+// Os dois fluxos (Faturado e Transmitido) sempre têm Líquido calculado (ver
+// farolBrutoLiquidoPorSupervisor) — LiquidoFarol é sempre populado aqui, e a
+// tolerância de 0,5% considera a menor distância entre Bruto e Líquido.
+// Líquido pode vir negativo (ex.: Cortado > Bruto no Transmitido) sem clamp
+// nem erro.
+func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *rel322Parsed) *comparativoRel322Resposta {
 	// Período sem NENHUM dado no Farol (range futuro ou ainda não
 	// importado): reflete a realidade, todas as linhas viram divergência
 	// (Farol = 0), não um conjunto de órfãos — é uma condição sistêmica, não
@@ -505,20 +526,16 @@ func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *
 
 		bruto := fl.Bruto
 		totalBruto += bruto
+		liquido := fl.Liquido
+		totalLiquido += liquido
+		liquidoFarol := f64p(liquido)
 
-		// menor distância entre os campos que EXISTEM nesse fluxo — no
-		// Transmitido (comLiquido=false) só o Bruto existe, nunca compara
-		// contra um Líquido que a tela vai mostrar como "—".
+		// menor distância entre Bruto e Líquido — os dois campos sempre
+		// existem agora, nos dois fluxos.
 		pctBruto := percentDiffRel322(bruto, vlPDF)
 		melhorPct := pctBruto
-		var liquidoFarol *float64
-		if comLiquido {
-			liquido := fl.Liquido
-			totalLiquido += liquido
-			liquidoFarol = f64p(liquido)
-			if pctLiquido := percentDiffRel322(liquido, vlPDF); pctLiquido < melhorPct {
-				melhorPct = pctLiquido
-			}
+		if pctLiquido := percentDiffRel322(liquido, vlPDF); pctLiquido < melhorPct {
+			melhorPct = pctLiquido
 		}
 
 		status := "divergencia"
@@ -570,11 +587,8 @@ func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *
 			fl := farol[cod]
 			qtdOrfaos++
 			totalBruto += fl.Bruto
-			var liquidoFarol *float64
-			if comLiquido {
-				totalLiquido += fl.Liquido
-				liquidoFarol = f64p(fl.Liquido)
-			}
+			totalLiquido += fl.Liquido
+			liquidoFarol := f64p(fl.Liquido)
 			linhas = append(linhas, linhaComparativoRel322{
 				CodSupervisor: cod,
 				BrutoFarol:    f64p(fl.Bruto),

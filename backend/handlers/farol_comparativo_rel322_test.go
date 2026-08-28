@@ -375,7 +375,7 @@ func TestComparativoRel322_Cruzamento_TudoBate(t *testing.T) {
 		"240": {8600000.00, 8597443.46}, // Líquido bate exato
 	})
 
-	resp := cruzarComRel322(farol, parsed, true)
+	resp := cruzarComRel322(farol, parsed)
 
 	if resp.SemDadoFarolNoPeriodo {
 		t.Error("não deveria marcar sem-dado-no-período: o Farol tem dado para ambos")
@@ -408,7 +408,7 @@ func TestComparativoRel322_Cruzamento_Orfaos(t *testing.T) {
 		"999": {5000.00, 5000.00}, // só no Farol, não veio no PDF
 	})
 
-	resp := cruzarComRel322(farol, parsed, true)
+	resp := cruzarComRel322(farol, parsed)
 
 	if resp.SemDadoFarolNoPeriodo {
 		t.Error("não deveria marcar sem-dado-no-período: o Farol tem dado")
@@ -458,7 +458,7 @@ func TestComparativoRel322_Cruzamento_Divergencia(t *testing.T) {
 		"124": {90000.00, 89000.00}, // 10%/11% de distância — bem acima de 0,5%
 	})
 
-	resp := cruzarComRel322(farol, parsed, true)
+	resp := cruzarComRel322(farol, parsed)
 
 	if resp.QtdDivergencias != 1 {
 		t.Fatalf("esperava 1 divergência, veio %d", resp.QtdDivergencias)
@@ -486,7 +486,7 @@ func TestComparativoRel322_Cruzamento_SemDadoNoPeriodo(t *testing.T) {
 	}
 	farol := farolFake(nil) // Farol vazio: nada importado para o período
 
-	resp := cruzarComRel322(farol, parsed, true)
+	resp := cruzarComRel322(farol, parsed)
 
 	if !resp.SemDadoFarolNoPeriodo {
 		t.Fatal("esperava sem_dado_farol_no_periodo = true")
@@ -504,59 +504,6 @@ func TestComparativoRel322_Cruzamento_SemDadoNoPeriodo(t *testing.T) {
 		if l.BrutoFarol == nil || *l.BrutoFarol != 0 || l.LiquidoFarol == nil || *l.LiquidoFarol != 0 {
 			t.Errorf("linha %s deveria mostrar Bruto/Líquido = 0, não ausente: %+v", l.CodSupervisor, l)
 		}
-	}
-}
-
-// TestComparativoRel322_Cruzamento_ComLiquidoFalse_SoBruto — pura, sem
-// banco: com comLiquido=false (fluxo Transmitido), LiquidoFarol tem que vir
-// nil em TODA linha (matched, órfã-do-Farol, e sem-dado-no-período) e a
-// tolerância de 0,5% considerar só o Bruto — nunca comparar contra um
-// Líquido inexistente. farolFake sempre popula os dois campos do map (Bruto
-// e Liquido); aqui o Liquido do fake é propositalmente diferente do PDF pra
-// provar que ele é ignorado quando comLiquido=false.
-func TestComparativoRel322_Cruzamento_ComLiquidoFalse_SoBruto(t *testing.T) {
-	parsed := &rel322Parsed{
-		PeriodoTexto: "01/08/2026 a 26/08/2026",
-		DataInicio:   mustParseData(t, "2026-08-01"),
-		DataFim:      mustParseData(t, "2026-08-26"),
-		Linhas: []linhaExtraidaRel322{
-			// Bruto bate exato (ok); Liquido do fake está bem longe do PDF —
-			// se comLiquido=false não isolasse o Líquido, isso viraria divergência.
-			{CodSupervisor: "124", Descricao: "BRUTO OK", VlVendido: 1000},
-			// só no Farol (órfã origem farol) — cobre o outro branch que também
-			// precisa respeitar comLiquido.
-		},
-	}
-	farol := farolFake(map[string][2]float64{
-		"124": {1000, 1}, // Bruto=1000 bate; "Liquido"=1 bateria muito mal se contasse
-		"999": {5000, 5000},
-	})
-
-	resp := cruzarComRel322(farol, parsed, false)
-
-	for _, l := range resp.Linhas {
-		if l.LiquidoFarol != nil {
-			t.Errorf("linha %s: LiquidoFarol = %v, want nil (comLiquido=false)", l.CodSupervisor, *l.LiquidoFarol)
-		}
-	}
-	if resp.TotalLiquidoFarol != 0 {
-		t.Errorf("TotalLiquidoFarol = %v, want 0 (comLiquido=false não deveria somar Líquido)", resp.TotalLiquidoFarol)
-	}
-
-	var linha124 *linhaComparativoRel322
-	for i := range resp.Linhas {
-		if resp.Linhas[i].CodSupervisor == "124" {
-			linha124 = &resp.Linhas[i]
-		}
-	}
-	if linha124 == nil {
-		t.Fatal("linha 124 não encontrada")
-	}
-	if linha124.Status != "ok" {
-		t.Errorf("status = %q, want ok (Bruto bate exato; Liquido não deveria contar pra tolerância)", linha124.Status)
-	}
-	if linha124.BrutoFarol == nil || *linha124.BrutoFarol != 1000 {
-		t.Errorf("BrutoFarol = %v, want 1000", linha124.BrutoFarol)
 	}
 }
 
@@ -580,7 +527,7 @@ func TestComparativoRel322_Cruzamento_PDFZeroFarolNaoZero_NaoQuebraJSON(t *testi
 		"999": {1000.00, 900.00}, // Farol tem venda, mas o PDF mostrou 0 pra esse supervisor
 	})
 
-	resp := cruzarComRel322(farol, parsed, true)
+	resp := cruzarComRel322(farol, parsed)
 
 	if len(resp.Linhas) != 1 {
 		t.Fatalf("esperava 1 linha, veio %d", len(resp.Linhas))
@@ -719,6 +666,76 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor(t *testing.
 	}
 }
 
+// TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
+// — mesmo achado da versão Faturado acima, mas cobrindo o Líquido do
+// Transmitido (Bruto − Cortado): o Cortado do supervisor FORA do escopo não
+// pode vazar pro Líquido calculado, nem indiretamente via FULL OUTER JOIN
+// (escopoCondRel322 se aplica às duas CTEs — trans e ccd — ver
+// spec-comparativo-rel322-liquido-transmitido.md).
+func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	codigos := []string{"T322ESCTRMEU", "T322ESCTROUT"}
+	meu, outro := codigos[0], codigos[1]
+	data := mustParseData(t, "2020-06-19")
+
+	for _, cod := range codigos {
+		limparFluxoRel322Fixture(t, db, empresaID, cod)
+	}
+	t.Cleanup(func() {
+		for _, cod := range codigos {
+			limparFluxoRel322Fixture(t, db, empresaID, cod)
+		}
+	})
+
+	if _, err := db.Exec(`INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cod_supervisor, pvenda, tipo_venda) VALUES ($1,$2,$3,1000,'1'), ($1,$2,$4,2000,'1')`,
+		empresaID, data, meu, outro); err != nil {
+		t.Fatalf("insert vendas_transmitidas: %v", err)
+	}
+	// CORTADO só do supervisor fora do escopo — não pode vazar pro Líquido de
+	// "meu" nem aparecer na resposta de forma alguma.
+	if _, err := db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_supervisor, pvenda) VALUES ($1,$2,'CORTADO',$3,9999)`, empresaID, data, outro); err != nil {
+		t.Fatalf("insert vendas_ccd: %v", err)
+	}
+
+	parsed := &rel322Parsed{
+		PeriodoTexto: "19/06/2020 a 19/06/2020",
+		DataInicio:   data,
+		DataFim:      data,
+		Linhas: []linhaExtraidaRel322{
+			{CodSupervisor: meu, Descricao: "MEU", VlVendido: 1000},
+			{CodSupervisor: outro, Descricao: "OUTRO", VlVendido: 2000},
+		},
+	}
+	escopo := escopoRecorte{Col: "cod_supervisor", Vals: []string{meu}, Persona: "supervisor"}
+
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopo, resolveFluxo("transmitido"))
+	if err != nil {
+		t.Fatalf("montarComparativo: %v", err)
+	}
+
+	var achouMeu, achouOutro bool
+	for _, l := range resp.Linhas {
+		if l.CodSupervisor == meu {
+			achouMeu = true
+			if l.LiquidoFarol == nil || *l.LiquidoFarol != 1000 {
+				t.Errorf("Líquido de %s = %v, want 1000 (Bruto=1000, sem Cortado dentro do escopo)", meu, l.LiquidoFarol)
+			}
+		}
+		if l.CodSupervisor == outro {
+			achouOutro = true
+			if l.BrutoFarol != nil || l.LiquidoFarol != nil {
+				t.Errorf("vazou Bruto/Líquido do supervisor %s, fora do escopo de %s: %+v", outro, meu, l)
+			}
+			if l.Status != "orfao" || l.Origem != "pdf" {
+				t.Errorf("supervisor %s fora do escopo deveria virar órfão de origem pdf: %+v", outro, l)
+			}
+		}
+	}
+	if !achouMeu || !achouOutro {
+		t.Fatalf("esperava linhas de %s e %s na resposta: %+v", meu, outro, resp.Linhas)
+	}
+}
+
 // ─── Fluxo (Faturado x Transmitido) ────────────────────────────────────────
 //
 // Cobre a I/O Matrix de spec-comparativo-rel322-fluxo.md: dado sintético
@@ -741,15 +758,16 @@ func limparFluxoRel322Fixture(t *testing.T, db *sql.DB, empresaID, codSupervisor
 }
 
 // TestComparativoRel322_Fluxo_Transmitido — I/O Matrix "Fluxo Transmitido":
-// Bruto vem de vendas_transmitidas — nunca de vendas_faturadas — e Líquido
-// vem SEMPRE nil nesse fluxo (decisão confirmada com o usuário: Transmitido
-// não calcula Líquido, mesma convenção do painel Transmitido que já existe
-// em farol_v2_api.go; ver Spec Change Log de spec-comparativo-rel322-fluxo.md).
-// Insere dado em vendas_transmitidas, vendas_faturadas E vendas_ccd (evento
-// CORTADO) com valores propositalmente diferentes, pra provar que nem a
-// tabela errada nem vendas_ccd vazam pro resultado. Testa no nível de
+// Bruto vem de vendas_transmitidas — nunca de vendas_faturadas — e Líquido =
+// Bruto − Cortado (renegociado em 2026-08-27, ver
+// spec-comparativo-rel322-liquido-transmitido.md: antes disso o Transmitido
+// não calculava Líquido, ver Spec Change Log de spec-comparativo-rel322-fluxo.md
+// pro histórico da decisão original). Insere dado em vendas_transmitidas,
+// vendas_faturadas E vendas_ccd (evento CORTADO) com valores propositalmente
+// diferentes, pra provar que a tabela errada não vaza pro resultado e que o
+// CORTADO agora É subtraído (não mais ignorado). Testa no nível de
 // montarComparativo (não só farolBrutoLiquidoPorSupervisor) porque é aí que
-// o ponteiro LiquidoFarol vira nil.
+// o ponteiro LiquidoFarol é montado pra resposta.
 func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	cod := "T322TRANS"
@@ -759,7 +777,7 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
 
 	// vendas_transmitidas: 1000 + 200 = bruto 1200. tipo_venda não importa
-	// aqui — Transmitido não calcula venda_real/Líquido.
+	// aqui — Transmitido nunca teve o conceito de venda_real.
 	if _, err := db.Exec(`INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cod_supervisor, pvenda, tipo_venda) VALUES ($1,$2,$3,1000,'1'), ($1,$2,$3,200,'5')`, empresaID, data, cod); err != nil {
 		t.Fatalf("insert vendas_transmitidas: %v", err)
 	}
@@ -768,9 +786,8 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_supervisor, pvenda, tipo_venda) VALUES ($1,$2,$3,99999,'1')`, empresaID, data, cod); err != nil {
 		t.Fatalf("insert vendas_faturadas: %v", err)
 	}
-	// vendas_ccd CORTADO — precisa NÃO afetar o resultado: Transmitido não lê
-	// vendas_ccd de jeito nenhum agora (nem CTE, nem Líquido). Valor grande de
-	// propósito pra denunciar qualquer vazamento.
+	// vendas_ccd CORTADO=777 — agora PRECISA afetar o Líquido: Líquido =
+	// Bruto(1200) - Cortado(777) = 423.
 	if _, err := db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_supervisor, pvenda) VALUES ($1,$2,'CORTADO',$3,777)`, empresaID, data, cod); err != nil {
 		t.Fatalf("insert vendas_ccd: %v", err)
 	}
@@ -796,14 +813,143 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	if l.BrutoFarol == nil || *l.BrutoFarol != 1200 {
 		t.Errorf("BrutoFarol = %v, want 1200 (transmitido, não deve ler vendas_faturadas)", l.BrutoFarol)
 	}
-	if l.LiquidoFarol != nil {
-		t.Errorf("LiquidoFarol = %v, want nil (Transmitido não calcula Líquido)", *l.LiquidoFarol)
+	if l.LiquidoFarol == nil || *l.LiquidoFarol != 423 {
+		t.Errorf("LiquidoFarol = %v, want 423 (1200 Bruto - 777 Cortado)", l.LiquidoFarol)
 	}
 	if l.Status != "ok" {
 		t.Errorf("status = %q, want ok (Bruto bate exato com o Vl.Vendido do PDF)", l.Status)
 	}
-	if resp.TotalLiquidoFarol != 0 {
-		t.Errorf("TotalLiquidoFarol = %v, want 0 (Transmitido não soma Líquido)", resp.TotalLiquidoFarol)
+	if resp.TotalLiquidoFarol != 423 {
+		t.Errorf("TotalLiquidoFarol = %v, want 423", resp.TotalLiquidoFarol)
+	}
+}
+
+// TestComparativoRel322_Fluxo_Transmitido_CortadoMaiorQueBruto — I/O Matrix
+// "Cortado maior que Bruto": Líquido vem negativo, sem clamp nem erro — mesma
+// paridade não-protegida que o Faturado já tem hoje pro próprio Líquido.
+func TestComparativoRel322_Fluxo_Transmitido_CortadoMaiorQueBruto(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	cod := "T322TRANSNEG"
+	data := mustParseData(t, "2020-06-18")
+
+	limparFluxoRel322Fixture(t, db, empresaID, cod)
+	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
+
+	// Bruto = 500, Cortado = 800 → Líquido = -300.
+	if _, err := db.Exec(`INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cod_supervisor, pvenda, tipo_venda) VALUES ($1,$2,$3,500,'1')`, empresaID, data, cod); err != nil {
+		t.Fatalf("insert vendas_transmitidas: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_supervisor, pvenda) VALUES ($1,$2,'CORTADO',$3,800)`, empresaID, data, cod); err != nil {
+		t.Fatalf("insert vendas_ccd: %v", err)
+	}
+
+	out, err := farolBrutoLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, escopoRecorte{}, resolveFluxo("transmitido"))
+	if err != nil {
+		t.Fatalf("farolBrutoLiquidoPorSupervisor: %v", err)
+	}
+	got, achou := out[cod]
+	if !achou {
+		t.Fatalf("cod_supervisor %s não apareceu no resultado: %+v", cod, out)
+	}
+	if got.Bruto != 500 {
+		t.Errorf("Bruto = %v, want 500", got.Bruto)
+	}
+	if got.Liquido != -300 {
+		t.Errorf("Liquido = %v, want -300 (Cortado > Bruto, negativo sem clamp nem erro)", got.Liquido)
+	}
+}
+
+// TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida — achado
+// confirmado independentemente pelo Blind Hunter e pelo Verification Gap: o
+// FULL OUTER JOIN entre as CTEs `trans` e `ccd` em
+// brutoLiquidoPorSupervisorTransmitido precisa trazer um cod_supervisor que
+// só existe do lado `ccd` (CORTADO) — NENHUMA linha em vendas_transmitidas no
+// período — sem sumir silenciosamente. Antes deste teste, todo teste do
+// fluxo Transmitido sempre dava ao supervisor uma linha em
+// vendas_transmitidas também, nunca exercitando o lado "só ccd" do join.
+//
+// Cobre nos dois níveis: farolBrutoLiquidoPorSupervisor (o mapa cru) e
+// montarComparativo (a resposta final) — no segundo nível, confirma que o
+// corte isolado não gera um SemDadoFarolNoPeriodo falso-positivo (o Farol TEM
+// dado no período, só que Bruto=0) nem some da lista de linhas: vira órfão
+// do lado Farol, com Bruto=0/Líquido negativo visíveis.
+func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	cod := "T322CORTESO"
+	outroCod := "T322CORTESOOUT"
+	data := mustParseData(t, "2020-06-20")
+
+	for _, c := range []string{cod, outroCod} {
+		limparFluxoRel322Fixture(t, db, empresaID, c)
+	}
+	t.Cleanup(func() {
+		for _, c := range []string{cod, outroCod} {
+			limparFluxoRel322Fixture(t, db, empresaID, c)
+		}
+	})
+
+	// cod só tem CORTADO — nenhuma linha em vendas_transmitidas no período.
+	if _, err := db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_supervisor, pvenda) VALUES ($1,$2,'CORTADO',$3,650)`, empresaID, data, cod); err != nil {
+		t.Fatalf("insert vendas_ccd: %v", err)
+	}
+
+	out, err := farolBrutoLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, escopoRecorte{}, resolveFluxo("transmitido"))
+	if err != nil {
+		t.Fatalf("farolBrutoLiquidoPorSupervisor: %v", err)
+	}
+	got, achou := out[cod]
+	if !achou {
+		t.Fatalf("cod_supervisor %s (só CORTADO, sem linha em vendas_transmitidas) não apareceu no mapa — vazou do FULL OUTER JOIN: %+v", cod, out)
+	}
+	if got.Bruto != 0 {
+		t.Errorf("Bruto = %v, want 0 (sem linha em vendas_transmitidas no período)", got.Bruto)
+	}
+	if got.Liquido != -650 {
+		t.Errorf("Liquido = %v, want -650 (0 Bruto - 650 Cortado)", got.Liquido)
+	}
+
+	// outroCod tem uma linha mínima em vendas_transmitidas só pra não virar
+	// órfão do lado pdf e contaminar a leitura do teste — o que importa aqui
+	// é só o comportamento do corte isolado (cod).
+	if _, err := db.Exec(`INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cod_supervisor, pvenda, tipo_venda) VALUES ($1,$2,$3,1,'1')`, empresaID, data, outroCod); err != nil {
+		t.Fatalf("insert vendas_transmitidas outroCod: %v", err)
+	}
+
+	// O PDF não cita `cod` (ele não vendeu nada transmitido, só teve corte) —
+	// só o outro supervisor comum.
+	parsed := &rel322Parsed{
+		PeriodoTexto: "20/06/2020 a 20/06/2020",
+		DataInicio:   data,
+		DataFim:      data,
+		Linhas:       []linhaExtraidaRel322{{CodSupervisor: outroCod, Descricao: "OUTRO SUPERVISOR NO PDF", VlVendido: 1}},
+	}
+
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopoRecorte{}, resolveFluxo("transmitido"))
+	if err != nil {
+		t.Fatalf("montarComparativo: %v", err)
+	}
+	if resp.SemDadoFarolNoPeriodo {
+		t.Error("não deveria marcar sem-dado-no-período: o corte isolado É dado do Farol no período")
+	}
+
+	var achouCorte bool
+	for _, l := range resp.Linhas {
+		if l.CodSupervisor != cod {
+			continue
+		}
+		achouCorte = true
+		if l.Status != "orfao" || l.Origem != "farol" {
+			t.Errorf("corte isolado deveria virar órfão de origem farol (não citado no PDF): %+v", l)
+		}
+		if l.BrutoFarol == nil || *l.BrutoFarol != 0 {
+			t.Errorf("BrutoFarol = %v, want 0", l.BrutoFarol)
+		}
+		if l.LiquidoFarol == nil || *l.LiquidoFarol != -650 {
+			t.Errorf("LiquidoFarol = %v, want -650 (corte sem venda transmitida não pode sumir nem vir positivo/nil)", l.LiquidoFarol)
+		}
+	}
+	if !achouCorte {
+		t.Fatalf("supervisor %s (só corte, sem linha transmitida) não apareceu na resposta — vazou silenciosamente do FULL OUTER JOIN: %+v", cod, resp.Linhas)
 	}
 }
 
