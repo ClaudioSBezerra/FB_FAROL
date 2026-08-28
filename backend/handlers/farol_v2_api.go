@@ -4325,6 +4325,12 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
+		// FORN DIST (cadastro /gestao/industrias) — cross-filter, adicionado ao
+		// painel público em 28/08/2026 (mesmo dia do rename pro desktop). Ver
+		// resolveIndustriaFilter — mesma função do handler autenticado.
+		if ci := q.Get("cod_industria"); ci != "" {
+			resolveIndustriaFilter(db, empresaID, ci, filters)
+		}
 		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&

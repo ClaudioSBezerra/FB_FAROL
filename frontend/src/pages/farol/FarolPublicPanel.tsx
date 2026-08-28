@@ -55,6 +55,118 @@ function corPosit(pct: number): Cor {
   return pct >= 100 ? 'verde' : 'vermelho'
 }
 
+// ─── FORN DIST — filtro cruzado (canônico, cadastro /gestao/industrias) ───
+//
+// Adicionado ao painel público em 28/08/2026, mesmo dia do rename pro
+// desktop (era "Indústria", virou "FORN DIST" a pedido do Heverton, pra
+// manter o padrão com "FORN.GERAL"). Endpoint próprio (sem auth, resolve
+// empresa por ?cnpj=) — o painel público não tem sessão pra chamar
+// /api/farol/industrias (ver PublicIndustriasHandler, farol_industrias.go).
+function usePublicIndustrias(cnpj: string) {
+  return useQuery<{ id: number; nome: string }[]>({
+    queryKey: ['farol-public-industrias', cnpj],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/public/industrias?cnpj=${cnpj}`)
+      if (!r.ok) throw new Error('Falha ao carregar indústrias')
+      return r.json()
+    },
+    enabled: !!cnpj,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// Bottom-sheet no mobile (touch alvo grande, texto grande — mesmo público
+// 60+ do resto do painel) em vez do dropdown denso do desktop (MultiSelect
+// em FarolExecutivo.tsx): não cabe nem faz sentido reaproveitar aquele aqui.
+function FiltroFornDist({ options, selected, onChange }: {
+  options: { id: number; nome: string }[]
+  selected: string[]
+  onChange: (next: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (options.length === 0) return null
+
+  const toggle = (id: string) => {
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-2 px-4 py-2.5 text-base font-bold uppercase tracking-wide rounded-lg border-2 transition-colors ${
+          selected.length > 0 ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+        }`}
+      >
+        Forn Dist
+        {selected.length > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 rounded-full bg-white text-slate-800 text-sm font-extrabold">
+            {selected.length}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center bg-slate-900/50"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-md sm:rounded-xl rounded-t-2xl shadow-xl max-h-[80vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b-2 border-slate-200 flex items-center justify-between shrink-0">
+              <p className="text-lg font-extrabold text-slate-900 uppercase tracking-wide">Forn Dist</p>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-slate-500 text-2xl leading-none px-2 py-1"
+                aria-label="Fechar"
+              >
+                ×
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
+              {options.map(opt => {
+                const id = String(opt.id)
+                const checked = selected.includes(id)
+                return (
+                  <label key={id} className="flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(id)}
+                      className="w-5 h-5 accent-slate-700 shrink-0"
+                    />
+                    <span className={`text-base ${checked ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
+                      {opt.nome}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+            <div className="px-4 py-3 border-t-2 border-slate-200 flex items-center justify-between gap-3 shrink-0">
+              <button
+                onClick={() => onChange([])}
+                disabled={selected.length === 0}
+                className="text-base font-bold text-slate-500 disabled:opacity-40"
+              >
+                Limpar
+              </button>
+              <button
+                onClick={() => setOpen(false)}
+                className="px-5 py-2.5 rounded-lg bg-slate-800 text-white text-base font-bold uppercase tracking-wide"
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ─── Sub-componentes pequenos ────────────────────────────────────────────
 
 // Dot maior pra ser visível em telas de RCA/Supervisor (público 60+).
@@ -348,15 +460,26 @@ export default function FarolPublicPanel() {
     setViewMode(v); setUserDrill([])
     try { localStorage.setItem('farol.public.view', v) } catch { /* ignora */ }
   }
+  // FORN DIST — não persiste em localStorage (diferente de fluxo/view): filtro
+  // "invisível" sobrevivendo entre sessões poderia esconder quem não está
+  // batendo meta sem o supervisor perceber, o que vai contra o propósito do
+  // painel. Reseta a cada carga da página, como o drill.
+  const [industriaFilter, setIndustriaFilterState] = useState<string[]>([])
+  const setIndustriaFilter = (ids: string[]) => {
+    setIndustriaFilterState(ids); setUserDrill([])
+  }
+  const industriasQ = usePublicIndustrias(cnpj)
 
   const drillParam = JSON.stringify(userDrill)
+  const industriaParam = industriaFilter.join(',')
   const { data, isLoading, error } = useQuery<CardsResponse>({
-    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, fluxo, refInicio, refFim, compInicio, compFim, drillParam],
+    queryKey: ['farol-public', cnpj, scope, scopeCod, viewMode, fluxo, refInicio, refFim, compInicio, compFim, drillParam, industriaParam],
     queryFn: async () => {
       const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, view: viewMode, fluxo })
       if (refInicio && refFim) { p.set('ref_inicio', refInicio); p.set('ref_fim', refFim) }
       if (compInicio && compFim) { p.set('comp_inicio', compInicio); p.set('comp_fim', compFim) }
       if (userDrill.length > 0) p.set('drill', drillParam)
+      if (industriaParam) p.set('cod_industria', industriaParam)
       const r = await fetch(`/api/v2/farol/public/cards?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar painel')
       return r.json()
@@ -465,6 +588,14 @@ export default function FarolPublicPanel() {
               </button>
             </div>
           )}
+
+          {/* FORN DIST — cross-filter canônico (cadastro /gestao/industrias),
+              disponível em qualquer scope/view (mesmo critério do desktop). */}
+          <FiltroFornDist
+            options={industriasQ.data ?? []}
+            selected={industriaFilter}
+            onChange={setIndustriaFilter}
+          />
         </div>
       </div>
 
