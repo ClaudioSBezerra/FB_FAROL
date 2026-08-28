@@ -129,3 +129,9 @@ Concentração >100% (denominador só-positivo), fatia negativa no donut (pula �
 - source_spec: `_bmad-output/implementation-artifacts/spec-comparativo-rel322-fluxo.md`
   summary: PDF exportado (`?formato=pdf`) refletir o fluxo escolhido (Faturado/Transmitido) no cabeçalho e nos rótulos das colunas — hoje, com o core implementado, o PDF gera normalmente mas sem indicar explicitamente qual dos dois fluxos foi comparado.
   evidence: Spec ultrapassou o limite de 1600 tokens (2095 medidos); usuário escolheu [S] Split — core (toggle + troca de fonte no backend + tela) primeiro, rótulo do fluxo no PDF fica pra depois.
+
+## 2026-08-28 — cadastro de Indústria (multi-goal split)
+
+- source_spec: none
+  summary: Filtro cruzado "Indústria" (deduplicado por cliente, mesma classe de risco que UF/Filial — ver migrations 197 e 199) pluggável em TODAS as visões existentes (Por Gerência, Por Equipe, Por Rede, Por Departamento), MAIS renomear a hierarquia V01 atual (`cod_fornec` cru, rotulada "Por Indústria") para "Por FORN.GERAL", liberando o rótulo "Por Indústria" pro novo conceito canônico deduplicado.
+  evidence: Pedido original do Claudio ("montar cadastro de indústrias + filtro do lado do fornecedor") se desdobrou, na clarificação, em bem mais que um cadastro — cross-filter em 5 visões + rename de hierarquia existente + garantia de não duplicar positivação quando uma indústria mapeia 2+ cod_fornec (mesmo problema que a mig 199 resolveu pra filial: ~23% dos clientes compram de 2+ filiais). Usuário escolheu [S] Split — cadastro + tela CRUD de Indústria primeiro (goal independente e útil sozinho); o cross-filter fica para depois que o cadastro estiver validado.

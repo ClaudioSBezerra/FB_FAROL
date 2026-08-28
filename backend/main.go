@@ -542,6 +542,11 @@ func main() {
 	http.HandleFunc("/api/v2/farol/quadro/", withDB(handlers.FarolQuadroPublicoHandler))
 	http.HandleFunc("/api/v2/farol/resumo/envio", withSP(handlers.FarolEnvioHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/industrias", withSP(handlers.IndustriasConfigHandler, "gestor_filial"))
+	// Cadastro de Indústrias — mapeamento de N cod_fornec pra 1 indústria
+	// canônica (fabricante com cod_fornec diferente por filial). Não confundir
+	// com /api/v2/industrias acima (config por-fornecedor, tabela diferente).
+	http.HandleFunc("/api/farol/industrias", withSP(handlers.IndustriasHandler, "gestor_filial"))
+	http.HandleFunc("/api/farol/industrias/", withSP(handlers.IndustriaItemHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/cards", gz(withSP(handlers.FarolV2CardsHandler, "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos", withSP(handlers.FarolV2PeriodosHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/dims", gz(withSP(handlers.FarolV2DimsHandler, "gestor_filial")))

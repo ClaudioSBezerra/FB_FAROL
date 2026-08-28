@@ -26,6 +26,7 @@ import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolPublicPanel from './pages/farol/FarolPublicPanel'
 import LimparDados from './pages/LimparDados'
+import GestaoIndustrias from './pages/GestaoIndustrias'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
@@ -279,6 +280,7 @@ function AppLayout() {
               {/* Gestão de CD (gestor_filial+) */}
               <Route path="/gestao/filiais" element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
               <Route path="/gestao/regras"  element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
+              <Route path="/gestao/industrias" element={<ProtectedRoute><GestaoIndustrias /></ProtectedRoute>} />
 
               {/* Configurações (admin) */}
               <Route path="/config/planos"      element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />

@@ -70,6 +70,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Uso do Sistema',    path: '/config/uso',              masterOnly: true },
       { label: 'Limpar Dados',      path: '/config/limpar-dados',     adminOnly: true,  danger: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
+      { label: 'Indústrias',        path: '/gestao/industrias'        },
     ],
   },
 }
