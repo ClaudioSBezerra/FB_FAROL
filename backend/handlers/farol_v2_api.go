@@ -81,12 +81,16 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
 	// V05: visão Supervisor → Fornecedor → RCA → Cliente → Produto
-	// (mig 167) — usada pelo painel mobile como toggle "Por Fornecedor"
-	// alternando com V02 ("Por RCA"). Permite o gestor pivotar a análise
-	// sem trocar o escopo de supervisor.
+	// (mig 167) — usada EXCLUSIVAMENTE pelo painel mobile, como toggle "Por
+	// Indústria" (rótulo renomeado de "Por Fornecedor" em 28/08/2026, pedido
+	// do Heverton) alternando com V02 ("Por RCA"). O nível cod_fornec deste
+	// toggle é restrito só a fornecedores cadastrados como indústria — ver
+	// industriaMappedFornecs em FarolV2PublicCardsHandler — por isso o Label
+	// já reflete "Indústria" (level_label do card na tela), não "Fornecedor"
+	// cru como em V01/V02/V04.
 	"V05": {
 		{Level: "cod_supervisor", NameField: "nome_supervisor", Label: "Supervisor"},
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
+		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Indústria"},
 		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
@@ -950,6 +954,33 @@ func resolveIndustriaFilter(db *sql.DB, empresaID, raw string, filters multiFilt
 	if !achouAlgum && len(filters["cod_fornec"]) == 0 {
 		filters["cod_fornec"] = []string{"__industria_sem_fornecedores__"}
 	}
+}
+
+// industriaMappedFornecs — todos os cod_fornec cadastrados em alguma indústria
+// (/gestao/industrias) pra uma empresa, usado por FarolV2PublicCardsHandler
+// (V05 "Por Indústria") pra restringir o card de fornecedor no painel público
+// só aos que o gestor efetivamente cadastrou — nunca deixa passar "sem
+// filtro": lista vazia (nenhuma indústria cadastrada, ou erro na consulta)
+// vira `= ANY('{}')`, que não bate com nenhuma linha (buildMultiFilterCond),
+// então o painel mostra zero fornecedores em vez da lista crua inteira.
+func industriaMappedFornecs(db *sql.DB, empresaID string) []string {
+	rows, err := db.Query(`
+		SELECT DISTINCT cod_fornec FROM farol.industria_fornecedores WHERE empresa_id = $1
+	`, empresaID)
+	if err != nil {
+		log.Printf("[farol:industria] industriaMappedFornecs ERRO: %v", err)
+		return []string{}
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var cod string
+		if rows.Scan(&cod) == nil {
+			out = append(out, cod)
+		}
+	}
+	return out
 }
 
 // buildMultiFilterCond — gera `AND v.col = ANY($N::text[])` por dimensão.
@@ -4343,11 +4374,17 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
-		// FORN DIST (cadastro /gestao/industrias) — cross-filter, adicionado ao
-		// painel público em 28/08/2026 (mesmo dia do rename pro desktop). Ver
-		// resolveIndustriaFilter — mesma função do handler autenticado.
-		if ci := q.Get("cod_industria"); ci != "" {
-			resolveIndustriaFilter(db, empresaID, ci, filters)
+		// Decisão do Heverton 28/08/2026: RCA/Supervisor no painel público só
+		// devem ver fornecedores cadastrados como indústria (/gestao/industrias),
+		// não a lista crua de cod_fornec (que inclui fornecedores avulsos sem
+		// relevância pro gestor de campo). Vale pra QUALQUER lugar do painel
+		// público que chegue no nível cod_fornec — V05 "Por Indústria" (direto
+		// no Supervisor) E V02 "Por RCA" (o RCA vê isso de cara ao abrir o
+		// próprio link, e o Supervisor vê ao entrar numa RCA específica).
+		// Restringe só nesse nível — depois de escolhido um cod_fornec, o drill
+		// já é sobre ele e a restrição não precisa mais ser reaplicada.
+		if currentLevel.Level == "cod_fornec" {
+			filters["cod_fornec"] = industriaMappedFornecs(db, empresaID)
 		}
 		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")

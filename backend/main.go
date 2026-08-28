@@ -558,7 +558,6 @@ func main() {
 	http.HandleFunc("/api/v2/farol/ai/chat", withSP(handlers.FarolAjudaChatHandler, "")) // assistente de treinamento (chat)
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
 	http.HandleFunc("/api/v2/farol/public/cards", gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
-	http.HandleFunc("/api/farol/public/industrias", gz(publicHandler(handlers.PublicIndustriasHandler)))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))

@@ -26,8 +26,11 @@ export const PRESET_LABEL_MOBILE: Record<Preset, string> = {
   last30:       '30 dias',
 }
 
-// Ordem de exibição dos botões (esquerda → direita).
-export const PRESET_ORDER: Preset[] = ['dia_anterior', 'yoy', 'ytd', 'ant_corrente', 'mes_corrente', 'last7', 'last30']
+// Ordem de exibição dos botões (esquerda → direita) — só o painel mobile usa
+// (FarolExecutivo tem sua própria lista local). "Mês Atual", "7 dias" e
+// "30 dias" removidos em 28/08/2026 a pedido do Heverton — os RCAs/SUPVs no
+// campo não usavam esses recortes.
+export const PRESET_ORDER: Preset[] = ['dia_anterior', 'yoy', 'ytd', 'ant_corrente']
 
 export interface PresetRange {
   ref_inicio: string

@@ -4,13 +4,14 @@ package handlers
 //
 // Mapeia N cod_fornec (WinThor) pra 1 indústria canônica — o mesmo fabricante
 // às vezes tem cod_fornec diferente por filial. Ver spec-cadastro-industria.md.
-// CRUD do cadastro + listagem pública consumida pelo filtro cruzado "FORN DIST"
-// (FarolExecutivo.tsx no web, FarolPublicPanel.tsx no painel público).
+// CRUD do cadastro, consumido pelo filtro cruzado "FORN DIST" no web
+// (FarolExecutivo.tsx) e pela restrição de fornecedores em
+// FarolV2PublicCardsHandler (V05 "Por Indústria" no painel público — ver
+// industriaMappedFornecs em farol_v2_api.go).
 //
 // Rotas:
 //   GET/POST         /api/farol/industrias           (autenticado)
 //   PUT/DELETE       /api/farol/industrias/{id}       (autenticado)
-//   GET              /api/farol/public/industrias     (público — ?cnpj=)
 
 import (
 	"database/sql"
@@ -95,43 +96,6 @@ func scanIndustrias(rows *sql.Rows) ([]IndustriaResponse, error) {
 		out = append(out, *porID[id])
 	}
 	return out, nil
-}
-
-// ─── PublicIndustriasHandler — GET /api/farol/public/industrias (SEM auth) ─
-//
-// Opções do filtro cruzado "FORN DIST" no painel público (/m/CNPJ/SUP|RCA/cod
-// — ION VENDAS), que não tem sessão autenticada e por isso não pode chamar
-// IndustriasHandler (exige spCtx via withSP). Empresa resolvida por ?cnpj=,
-// mesmo padrão do FarolV2PublicCardsHandler. Só leitura — sem POST aqui.
-func PublicIndustriasHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		empresaID := resolveEmpresaCNPJ(db, r.URL.Query().Get("cnpj"))
-		if empresaID == "" {
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]any{"error": "empresa não encontrada para este CNPJ"})
-			return
-		}
-		rows, err := db.Query(`
-			SELECT i.id, i.nome, i.razao_social, i.ativo, i.created_at,
-			       fo.cod_fornec, fo.rotulo
-			FROM farol.industrias i
-			LEFT JOIN farol.industria_fornecedores fo ON fo.industria_id = i.id
-			WHERE i.empresa_id = $1
-			ORDER BY i.nome ASC, fo.cod_fornec ASC
-		`, empresaID)
-		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-		industrias, err := scanIndustrias(rows)
-		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(industrias)
-	}
 }
 
 // ─── IndustriasHandler — GET/POST /api/farol/industrias ────────────────────
