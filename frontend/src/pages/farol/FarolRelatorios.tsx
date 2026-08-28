@@ -70,13 +70,19 @@ function fmtInt(v: number) {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function FarolRelatorios() {
-  const { token } = useAuth()
+  const { token, user, spRole, tipoPersona } = useAuth()
+  // Extrato de Produtos por Cliente e Clientes com CNPJ irregular ficam
+  // admin/TI-only (mesmo recorte de AdminOrTIRoute, ver App.tsx); Comparativo
+  // REL 322 é de uso geral — qualquer usuário com acesso web (pedido do
+  // Claudio em 28/08/2026). A rota em si não é mais admin/TI-only, então
+  // esse recorte precisa acontecer aqui dentro.
+  const isAdminOuTI = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
   const [codProduto, setCodProduto] = useState('')
   const [codCliente, setCodCliente] = useState('')
   const [dataInicio, setDataInicio] = useState(getOneYearAgo())
   const [dataFim, setDataFim] = useState(getToday())
   const [searchExecuted, setSearchExecuted] = useState(false)
-  const [aba, setAba] = useState<'extrato' | 'receita' | 'comparativo'>('extrato')
+  const [aba, setAba] = useState<'extrato' | 'receita' | 'comparativo'>(isAdminOuTI ? 'extrato' : 'comparativo')
 
   const { data, isLoading, refetch } = useQuery<RelatorioResponse>({
     queryKey: ['relatorio-extrato', codProduto, codCliente, dataInicio, dataFim],
@@ -163,10 +169,12 @@ export default function FarolRelatorios() {
       {/* Seleção do relatório */}
       <div className="flex gap-2 border-b border-slate-200">
         {([
-          { id: 'extrato', label: 'Extrato de Produtos por Cliente' },
-          { id: 'receita', label: 'Clientes com CNPJ irregular' },
+          { id: 'extrato', label: 'Extrato de Produtos por Cliente', adminOuTI: true },
+          { id: 'receita', label: 'Clientes com CNPJ irregular', adminOuTI: true },
           { id: 'comparativo', label: 'Comparativo REL 322' },
-        ] as const).map(t => (
+        ] as const)
+          .filter(t => !t.adminOuTI || isAdminOuTI)
+          .map(t => (
           <button
             key={t.id}
             onClick={() => setAba(t.id)}

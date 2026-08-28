@@ -267,7 +267,13 @@ function AppLayout() {
               <Route path="/farol/assistente" element={<ProtectedRoute><FarolAssistente /></ProtectedRoute>} />
               <Route path="/farol/importar"   element={<AdminOrTIRoute><FarolV2Import /></AdminOrTIRoute>} />
               <Route path="/farol/usuarios"   element={<ManagerRoute><FarolUsuarios /></ManagerRoute>} />
-              <Route path="/farol/relatorios" element={<AdminOrTIRoute><FarolRelatorios /></AdminOrTIRoute>} />
+              {/* Relatórios: a página inteira era admin/TI-only. Comparativo REL 322
+                  passou a valer pra QUALQUER usuário com acesso web (pedido do
+                  Claudio em 28/08/2026) — Extrato de Produtos por Cliente e
+                  Clientes com CNPJ irregular continuam admin/TI-only, mas esse
+                  recorte agora é feito DENTRO de FarolRelatorios.tsx (abas
+                  escondidas + aba padrão), não mais no gate da rota. */}
+              <Route path="/farol/relatorios" element={<ProtectedRoute><FarolRelatorios /></ProtectedRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
               <Route path="/farol"                              element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />

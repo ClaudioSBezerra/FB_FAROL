@@ -47,7 +47,11 @@ const mainItems: RailItem[] = [
   { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
   { id: 'bi',             icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
-  { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false, adminOrTI: true },
+  // Relatórios: visível pra QUALQUER usuário (Comparativo REL 322 é de uso
+  // geral, pedido do Claudio em 28/08/2026) — o recorte admin/TI só se
+  // aplica às outras duas abas (Extrato de Produtos por Cliente, CNPJ
+  // irregular), escondidas dentro de FarolRelatorios.tsx pra quem não é.
+  { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false },
   { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
   { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
 ]
