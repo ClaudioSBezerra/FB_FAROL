@@ -49,6 +49,7 @@ import (
 	"github.com/johnfercher/maroto/v2/pkg/consts/align"
 	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
 	"github.com/johnfercher/maroto/v2/pkg/consts/fontstyle"
+	"github.com/johnfercher/maroto/v2/pkg/consts/orientation"
 	"github.com/johnfercher/maroto/v2/pkg/props"
 	"github.com/ledongthuc/pdf"
 	"github.com/lib/pq"
@@ -69,20 +70,45 @@ type rel322Parsed struct {
 	PeriodoTexto string // "01/08/2026 a 26/08/2026", como impresso no PDF
 	DataInicio   time.Time
 	DataFim      time.Time
-	Linhas       []linhaExtraidaRel322
+	// Filiais — códigos do cabeçalho "Filiai(s) :" (ex.: ["10","11","13"]).
+	// Vazio = PDF rodado para "Todas as Filiais" (ou o campo não foi
+	// encontrado no cabeçalho) — nenhum filtro de filial é aplicado nesse
+	// caso. O comparativo tem que recortar pela MESMA filial do relatório:
+	// sem isso, um REL 322 gerado só pra um subconjunto de filiais seria
+	// comparado contra o Farol da empresa INTEIRA, divergindo de forma
+	// enganosa (achado do Blind Hunter em spec-comparativo-rel322.md).
+	Filiais []string
+	Linhas  []linhaExtraidaRel322
 }
 
 // linhaComparativoRel322 — uma linha da resposta da API, já cruzada com o
-// Farol. Ponteiros distinguem "0 apurado" de "não existe deste lado".
+// Farol e (quando disponível) com a base de origem (VM). Ponteiros
+// distinguem "0 apurado" de "não existe deste lado". Só Líquido — Bruto foi
+// removido da tela (decisão do Claudio em 28/08/2026): o gestor trabalha só
+// com Líquido, que é o número que efetivamente importa pra conferência.
 type linhaComparativoRel322 struct {
 	CodSupervisor string   `json:"cod_supervisor"`
 	Supervisor    string   `json:"supervisor"`
 	VlVendidoPDF  *float64 `json:"vl_vendido_pdf"`
-	BrutoFarol    *float64 `json:"bruto_farol"`
 	LiquidoFarol  *float64 `json:"liquido_farol"`
-	DiferencaPct  *float64 `json:"diferenca_pct"` // menor distância (Bruto ou Líquido) até o Vl.Vendido do PDF
-	Status        string   `json:"status"`        // ok | divergencia | orfao
-	Origem        string   `json:"origem"`        // pdf | farol | ambos
+	// LiquidoVM — Líquido consultado AO VIVO na base Oracle de origem (a
+	// mesma que o JC lê todo dia, ver farol_comparativo_rel322_vm.go). nil
+	// quando a VM está indisponível (ver VMIndisponivel na resposta) OU essa
+	// linha simplesmente não apareceu na consulta à VM.
+	LiquidoVM *float64 `json:"liquido_vm"`
+	// Três diferenças percentuais — cada uma isola uma causa possível de
+	// divergência: 322×VM aponta se o PRÓPRIO relatório do WinThor já diverge
+	// da base de origem; 322×Farol é a comparação histórica (WinThor x
+	// Farol); VM×Farol isola perdas/erros especificamente na importação pro
+	// Farol (VM é a origem; Farol é o que chegou depois do import).
+	DiferencaPDFxVMPct    *float64 `json:"diferenca_pdf_vm_pct"`
+	DiferencaPDFxFarolPct *float64 `json:"diferenca_pdf_farol_pct"`
+	DiferencaVMxFarolPct  *float64 `json:"diferenca_vm_farol_pct"`
+	// Status — sempre decidido por PDF×Farol (tolerância 0,5%), nunca pela
+	// VM: a VM é diagnóstico adicional, não substitui o Farol como a base
+	// contra a qual o gestor decide "bateu ou não bateu".
+	Status string `json:"status"` // ok | divergencia | orfao
+	Origem string `json:"origem"` // pdf | farol | ambos
 }
 
 // comparativoRel322Resposta — payload devolvido ao front.
@@ -94,15 +120,26 @@ type comparativoRel322Resposta struct {
 	// do WinThor não se autodeclara qual base foi usada pra gerá-lo (o PDF é
 	// idêntico nos dois casos) — é sempre escolha explícita do usuário no
 	// upload, nunca inferida do conteúdo do PDF. Ver spec-comparativo-rel322-fluxo.md.
-	Fluxo                 string                   `json:"fluxo"`
+	Fluxo string `json:"fluxo"`
+	// Filiais — códigos do cabeçalho "Filiai(s) :" do PDF, aplicados como
+	// filtro na consulta ao Farol e à VM. Vazio = todas as filiais (PDF sem
+	// recorte, ou o campo não foi encontrado no cabeçalho).
+	Filiais               []string                 `json:"filiais"`
 	Linhas                []linhaComparativoRel322 `json:"linhas"`
 	TotalVlVendidoPDF     float64                  `json:"total_vl_vendido_pdf"`
-	TotalBrutoFarol       float64                  `json:"total_bruto_farol"`
 	TotalLiquidoFarol     float64                  `json:"total_liquido_farol"`
+	TotalLiquidoVM        *float64                 `json:"total_liquido_vm"`
 	QtdSupervisoresPDF    int                      `json:"qtd_supervisores_pdf"`
 	QtdDivergencias       int                      `json:"qtd_divergencias"`
 	QtdOrfaos             int                      `json:"qtd_orfaos"`
 	SemDadoFarolNoPeriodo bool                     `json:"sem_dado_farol_no_periodo"`
+	// VMIndisponivel — a consulta à base de origem falhou (Oracle
+	// inalcançável, credenciais ausentes, timeout). O comparativo PDF×Farol
+	// continua valendo — a VM é só um diagnóstico a mais, nunca bloqueia o
+	// resultado principal (mesmo princípio de resiliência do projeto: "se
+	// algum indicador secundário falhar, isso ainda precisa funcionar").
+	VMIndisponivel bool   `json:"vm_indisponivel"`
+	VMErro         string `json:"vm_erro,omitempty"`
 }
 
 // tipoVendaReal — códigos que entram na venda real (mesma classificação do
@@ -189,8 +226,10 @@ func parseRel322Texto(texto string) (*rel322Parsed, error) {
 	}
 
 	// Remove os blocos de cabeçalho (repetidos a cada página, de "Código" até
-	// "Todos os Períodos"), capturando o valor de "Periodo :" pelo caminho.
+	// "Todos os Períodos"), capturando o valor de "Periodo :" e "Filiai(s) :"
+	// pelo caminho.
 	periodoTexto := ""
+	filiaisTexto := ""
 	var out []string
 	i := 0
 	for i < len(lines) {
@@ -200,6 +239,9 @@ func parseRel322Texto(texto string) (*rel322Parsed, error) {
 			for j < len(lines) {
 				if lines[j] == "Periodo :" && j+1 < len(lines) && periodoTexto == "" {
 					periodoTexto = lines[j+1]
+				}
+				if lines[j] == "Filiai(s) :" && j+1 < len(lines) && filiaisTexto == "" {
+					filiaisTexto = lines[j+1]
 				}
 				if lines[j] == "Todos os Períodos" {
 					fechou = true
@@ -292,8 +334,28 @@ func parseRel322Texto(texto string) (*rel322Parsed, error) {
 		PeriodoTexto: periodoTexto,
 		DataInicio:   dataInicio,
 		DataFim:      dataFim,
+		Filiais:      parseFiliaisRel322(filiaisTexto),
 		Linhas:       linhas,
 	}, nil
+}
+
+// parseFiliaisRel322 — "10,11,13" → ["10","11","13"]. "Todas as Filiais" (ou
+// o campo ausente do cabeçalho, filiaisTexto=="") devolve nil — sem filtro,
+// mesmo comportamento de "Todos os Supervisores"/"Todos os Departamentos"
+// nos outros campos deste cabeçalho.
+func parseFiliaisRel322(filiaisTexto string) []string {
+	ft := strings.TrimSpace(filiaisTexto)
+	if ft == "" || strings.HasPrefix(strings.ToUpper(ft), "TODAS") || strings.HasPrefix(strings.ToUpper(ft), "TODOS") {
+		return nil
+	}
+	var filiais []string
+	for _, p := range strings.Split(ft, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			filiais = append(filiais, p)
+		}
+	}
+	return filiais
 }
 
 // parseNumeroBR — "9.223.911,54" → 9223911.54 (separador de milhar '.',
@@ -335,40 +397,100 @@ func escopoCondRel322(escopo escopoRecorte, args []any) (string, []any) {
 	return fmt.Sprintf(" AND %s = ANY($%d)", escopo.Col, len(args)), args
 }
 
-// farolBrutoLiquido — Bruto e Líquido por cod_supervisor no range de datas,
+// filialCondRel322 — filtro por filial (coluna `empresa`, presente em
+// vendas_faturadas/vendas_transmitidas/vendas_ccd) a partir do cabeçalho
+// "Filiai(s) :" do PDF. Sem isso um REL 322 rodado só pra um subconjunto de
+// filiais compararia contra o Farol da empresa INTEIRA — divergência
+// enganosa, achado do Blind Hunter em spec-comparativo-rel322.md. Vazio (PDF
+// pra "Todas as Filiais") não filtra.
+func filialCondRel322(filiais []string, args []any) (string, []any) {
+	if len(filiais) == 0 {
+		return "", args
+	}
+	args = append(args, pq.Array(filiais))
+	return fmt.Sprintf(" AND empresa = ANY($%d)", len(args)), args
+}
+
+// tipoVendaSelecionado — códigos vindos do filtro "Tipo de Venda" da tela
+// (multi-seleção, ?tipo_venda=1,4,7). Vazio (usuário não mexeu no filtro)
+// cai no default de cada fluxo: Faturado usa tipoVendaReal (a definição de
+// "venda real" já em produção, inalterada); Transmitido fica sem filtro —
+// nil, soma incondicional — preservando o comportamento atual de quem não
+// toca no filtro (Transmitido nunca teve o conceito de venda_real).
+func tipoVendaSelecionado(selecao []string, fluxo fluxoCtx) []string {
+	if len(selecao) > 0 {
+		return selecao
+	}
+	if fluxo.name == "transmitido" {
+		return nil
+	}
+	return tipoVendaReal
+}
+
+// somaComTipoVendaRel322 — expressão SQL pra somar `pvenda`, opcionalmente
+// recortada pelo filtro "Tipo de Venda" da tela. tiposVenda vazio = soma
+// incondicional (nenhum filtro pedido) — é o caminho do Transmitido quando
+// o usuário não seleciona nada.
+func somaComTipoVendaRel322(tiposVenda []string, args []any) (string, []any) {
+	if len(tiposVenda) == 0 {
+		return "SUM(pvenda)", args
+	}
+	args = append(args, pq.Array(tiposVenda))
+	return fmt.Sprintf("SUM(pvenda) FILTER (WHERE tipo_venda = ANY($%d))", len(args)), args
+}
+
+// parseListaCSVRel322 — "1, 4 ,7" → ["1","4","7"]. Usada tanto pro filtro de
+// Tipo de Venda (?tipo_venda=) quanto em qualquer outro parâmetro CSV futuro
+// desta rota. Vazio ou só espaços devolve nil.
+func parseListaCSVRel322(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// farolLiquidoPorSupervisor — Líquido por cod_supervisor no range de datas,
 // já recortado pelo escopo do usuário logado (ggv/supervisor/rca só veem a
-// própria equipe — mesma regra de farol_relatorios.go, ver farol_escopo.go).
+// própria equipe — mesma regra de farol_relatorios.go, ver farol_escopo.go)
+// e pela(s) filial(is) declarada(s) no cabeçalho do PDF. Só Líquido — Bruto
+// foi removido da tela (decisão do Claudio em 28/08/2026).
 //
 // fluxo decide a fonte: Faturado lê vendas_faturadas e calcula Líquido como
 // venda real menos DEVOLVIDO/CANCELADO de vendas_ccd (inalterado).
 // Transmitido lê vendas_transmitidas e calcula Líquido como Bruto menos
 // CORTADO de vendas_ccd — sem filtro de tipo_venda, porque Transmitido nunca
 // teve o conceito de venda_real (renegociado em 2026-08-27, ver
-// spec-comparativo-rel322-liquido-transmitido.md; a versão anterior desta
-// função devolvia só Bruto pro Transmitido, ver spec-comparativo-rel322-fluxo.md
-// pro histórico dessa decisão original). O REL 322 do WinThor não se
-// autodeclara qual base gerou o PDF, então fluxo vem sempre de escolha
+// spec-comparativo-rel322-liquido-transmitido.md). O REL 322 do WinThor não
+// se autodeclara qual base gerou o PDF, então fluxo vem sempre de escolha
 // explícita do usuário (nunca inferido).
 //
 // Consulta as tabelas DIÁRIAS, não os agregados mensais: o período do PDF
-// pode ser parcial (mês em andamento).
-func farolBrutoLiquidoPorSupervisor(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
+// pode ser parcial (mês em andamento). tiposVenda vem de
+// tipoVendaSelecionado — já resolvido pro default de cada fluxo quando o
+// usuário não mexe no filtro "Tipo de Venda" da tela.
+func farolLiquidoPorSupervisor(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, filiais, tiposVenda []string, escopo escopoRecorte, fluxo fluxoCtx) (map[string]float64, error) {
 	if fluxo.name == "transmitido" {
-		return brutoLiquidoPorSupervisorTransmitido(ctx, db, empresaID, dataInicio, dataFim, escopo, fluxo)
+		return liquidoPorSupervisorTransmitido(ctx, db, empresaID, dataInicio, dataFim, filiais, tiposVenda, escopo, fluxo)
 	}
-	return brutoLiquidoPorSupervisorFaturado(ctx, db, empresaID, dataInicio, dataFim, escopo, fluxo)
+	return liquidoPorSupervisorFaturado(ctx, db, empresaID, dataInicio, dataFim, filiais, tiposVenda, escopo, fluxo)
 }
 
-// brutoLiquidoPorSupervisorTransmitido — Bruto = SUM(pvenda) de
-// vendas_transmitidas, incondicional (sem filtro de tipo_venda: Transmitido
-// nunca teve o conceito de venda_real). Líquido = Bruto − Cortado (evento
-// CORTADO de vendas_ccd, via resolveFluxo("cortado")) — mesmo padrão de CTE
-// que brutoLiquidoPorSupervisorFaturado usa pra CANCELADO/DEVOLVIDO, só troca
-// o eventoFilter. Pode dar negativo (Cortado > Bruto) sem clamp nem erro —
-// mesma paridade não-protegida que o Faturado já tem pro próprio Líquido.
-func brutoLiquidoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
+// liquidoPorSupervisorTransmitido — Líquido = Bruto (SUM(pvenda) de
+// vendas_transmitidas, opcionalmente recortado pelo filtro "Tipo de Venda"
+// da tela — sem seleção, soma incondicional, pois Transmitido nunca teve o
+// conceito de venda_real) − Cortado (evento CORTADO de vendas_ccd, via
+// resolveFluxo("cortado")). Pode dar negativo (Cortado > Bruto) sem clamp
+// nem erro — mesma paridade não-protegida que o Faturado já tem pro próprio
+// Líquido.
+func liquidoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, filiais, tiposVenda []string, escopo escopoRecorte, fluxo fluxoCtx) (map[string]float64, error) {
 	args := []any{empresaID, dataInicio, dataFim}
+	filialCond, args := filialCondRel322(filiais, args)
 	escopoCond, args := escopoCondRel322(escopo, args)
+	somaTotal, args := somaComTipoVendaRel322(tiposVenda, args)
 
 	// Evento CORTADO em vendas_ccd do lado transmitido. resolveFluxo não é
 	// reimplementado — só reaproveitado pelo eventoFilter que ele já monta
@@ -378,24 +500,24 @@ func brutoLiquidoPorSupervisorTransmitido(ctx context.Context, db *sql.DB, empre
 	q := fmt.Sprintf(`
 WITH trans AS (
     SELECT trim(cod_supervisor) AS cod_supervisor,
-           SUM(pvenda) AS bruto
+           %s AS total
       FROM %s
-     WHERE empresa_id = $1 AND %s BETWEEN $2 AND $3%s
+     WHERE empresa_id = $1 AND %s BETWEEN $2 AND $3%s%s
      GROUP BY trim(cod_supervisor)
 ), ccd AS (
     SELECT trim(v.cod_supervisor) AS cod_supervisor,
            SUM(v.pvenda) AS cortado
       FROM vendas_ccd v
      WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $2 AND $3
-       %s%s
+       %s%s%s
      GROUP BY trim(v.cod_supervisor)
 )
 SELECT COALESCE(trans.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
-       COALESCE(trans.bruto, 0)::float8 AS bruto,
-       (COALESCE(trans.bruto, 0) - COALESCE(ccd.cortado, 0))::float8 AS liquido
+       (COALESCE(trans.total, 0) - COALESCE(ccd.cortado, 0))::float8 AS liquido
   FROM trans
   FULL OUTER JOIN ccd ON ccd.cod_supervisor = trans.cod_supervisor`,
-		fluxo.tableName, fluxo.dateCol, escopoCond, cortado.eventoFilter, escopoCond)
+		somaTotal, fluxo.tableName, fluxo.dateCol, filialCond, escopoCond,
+		cortado.eventoFilter, filialCond, escopoCond)
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -403,26 +525,28 @@ SELECT COALESCE(trans.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
 	}
 	defer rows.Close()
 
-	out := map[string]struct{ Bruto, Liquido float64 }{}
+	out := map[string]float64{}
 	for rows.Next() {
 		var cod string
-		var bruto, liquido float64
-		if err := rows.Scan(&cod, &bruto, &liquido); err != nil {
+		var liquido float64
+		if err := rows.Scan(&cod, &liquido); err != nil {
 			return nil, err
 		}
-		out[cod] = struct{ Bruto, Liquido float64 }{Bruto: bruto, Liquido: liquido}
+		out[cod] = liquido
 	}
 	return out, rows.Err()
 }
 
-// brutoLiquidoPorSupervisorFaturado — Bruto = SUM(pvenda) de
-// vendas_faturadas. Líquido = venda real (tipo_venda em 1,4,7,8,9,11,14,20)
-// menos DEVOLVIDO/CANCELADO de vendas_ccd — mesma classificação do painel
-// faturado (spec-venda-liquida-composicao.md). Comportamento inalterado
-// desde antes de spec-comparativo-rel322-fluxo.md.
-func brutoLiquidoPorSupervisorFaturado(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, escopo escopoRecorte, fluxo fluxoCtx) (map[string]struct{ Bruto, Liquido float64 }, error) {
-	args := []any{empresaID, dataInicio, dataFim, pq.Array(tipoVendaReal)}
+// liquidoPorSupervisorFaturado — Líquido = venda real (tipo_venda no filtro
+// "Tipo de Venda" da tela — default tipoVendaReal quando o usuário não
+// mexe) menos DEVOLVIDO/CANCELADO de vendas_ccd — mesma classificação do
+// painel faturado (spec-venda-liquida-composicao.md) quando o filtro fica
+// no default.
+func liquidoPorSupervisorFaturado(ctx context.Context, db *sql.DB, empresaID string, dataInicio, dataFim time.Time, filiais, tiposVenda []string, escopo escopoRecorte, fluxo fluxoCtx) (map[string]float64, error) {
+	args := []any{empresaID, dataInicio, dataFim}
+	filialCond, args := filialCondRel322(filiais, args)
 	escopoCond, args := escopoCondRel322(escopo, args)
+	somaVendaReal, args := somaComTipoVendaRel322(tiposVenda, args)
 
 	// Evento negativo em vendas_ccd do lado faturado. resolveFluxo não é
 	// reimplementado — só reaproveitado pelo eventoFilter que ele já monta
@@ -432,25 +556,24 @@ func brutoLiquidoPorSupervisorFaturado(ctx context.Context, db *sql.DB, empresaI
 	q := fmt.Sprintf(`
 WITH fat AS (
     SELECT trim(cod_supervisor) AS cod_supervisor,
-           SUM(pvenda) AS bruto,
-           SUM(pvenda) FILTER (WHERE tipo_venda = ANY($4)) AS venda_real
+           %s AS venda_real
       FROM %s
-     WHERE empresa_id = $1 AND %s BETWEEN $2 AND $3%s
+     WHERE empresa_id = $1 AND %s BETWEEN $2 AND $3%s%s
      GROUP BY trim(cod_supervisor)
 ), ccd AS (
     SELECT trim(v.cod_supervisor) AS cod_supervisor,
            SUM(v.pvenda) AS descontos
       FROM vendas_ccd v
      WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $2 AND $3
-       %s%s
+       %s%s%s
      GROUP BY trim(v.cod_supervisor)
 )
 SELECT COALESCE(fat.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
-       COALESCE(fat.bruto, 0)::float8 AS bruto,
        (COALESCE(fat.venda_real, 0) - COALESCE(ccd.descontos, 0))::float8 AS liquido
   FROM fat
   FULL OUTER JOIN ccd ON ccd.cod_supervisor = fat.cod_supervisor`,
-		fluxo.tableName, fluxo.dateCol, escopoCond, negativo.eventoFilter, escopoCond)
+		somaVendaReal, fluxo.tableName, fluxo.dateCol, filialCond, escopoCond,
+		negativo.eventoFilter, filialCond, escopoCond)
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -458,42 +581,56 @@ SELECT COALESCE(fat.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
 	}
 	defer rows.Close()
 
-	out := map[string]struct{ Bruto, Liquido float64 }{}
+	out := map[string]float64{}
 	for rows.Next() {
 		var cod string
-		var bruto, liquido float64
-		if err := rows.Scan(&cod, &bruto, &liquido); err != nil {
+		var liquido float64
+		if err := rows.Scan(&cod, &liquido); err != nil {
 			return nil, err
 		}
-		out[cod] = struct{ Bruto, Liquido float64 }{Bruto: bruto, Liquido: liquido}
+		out[cod] = liquido
 	}
 	return out, rows.Err()
 }
 
-// montarComparativo — busca o Farol (já recortado pelo escopo do usuário e
-// pelo fluxo escolhido no upload) e cruza com as linhas do PDF. Fina: toda a
-// regra de status vive em cruzarComRel322 (pura, testável sem banco).
-func montarComparativo(ctx context.Context, db *sql.DB, empresaID string, parsed *rel322Parsed, escopo escopoRecorte, fluxo fluxoCtx) (*comparativoRel322Resposta, error) {
-	farol, err := farolBrutoLiquidoPorSupervisor(ctx, db, empresaID, parsed.DataInicio, parsed.DataFim, escopo, fluxo)
+// montarComparativo — busca o Farol e a VM (já recortados pelo escopo do
+// usuário, pelo fluxo escolhido no upload, pela(s) filial(is) do cabeçalho
+// do PDF e pelo filtro "Tipo de Venda" da tela) e cruza os três com as
+// linhas do PDF. Fina: toda a regra de status/diferenças vive em
+// cruzarComRel322 (pura, testável sem banco/Oracle).
+//
+// A falha da VM (Oracle inalcançável, credenciais ausentes, timeout) NUNCA
+// aborta o comparativo — só marca VMIndisponivel na resposta. PDF×Farol é o
+// resultado principal; a VM é diagnóstico a mais.
+func montarComparativo(ctx context.Context, db *sql.DB, empresaID string, parsed *rel322Parsed, tiposVendaSelecao []string, escopo escopoRecorte, fluxo fluxoCtx) (*comparativoRel322Resposta, error) {
+	tiposVenda := tipoVendaSelecionado(tiposVendaSelecao, fluxo)
+
+	farol, err := farolLiquidoPorSupervisor(ctx, db, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
 	if err != nil {
 		return nil, err
 	}
-	// Os dois fluxos calculam Líquido agora (ver farolBrutoLiquidoPorSupervisor).
-	resp := cruzarComRel322(farol, parsed)
+
+	vm, vmErr := vmLiquidoPorSupervisor(ctx, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
+	if vmErr != nil {
+		log.Printf("[comparativo322] VM indisponível: %v", vmErr)
+	}
+
+	resp := cruzarComRel322(farol, vm, vmErr, parsed)
 	resp.Fluxo = fluxo.name
 	return resp, nil
 }
 
-// cruzarComRel322 — aplica a regra de status (tolerância 0,5%, órfãos,
-// período sem dado) sobre o resultado já buscado do Farol. Separada de
-// montarComparativo para ser testável sem *sql.DB.
+// cruzarComRel322 — aplica a regra de status (tolerância 0,5% PDF×Farol),
+// órfãos, período sem dado e as três diferenças percentuais (PDF×VM,
+// PDF×Farol, VM×Farol) sobre o resultado já buscado do Farol e da VM.
+// Separada de montarComparativo para ser testável sem *sql.DB nem Oracle —
+// os mapas de entrada já vêm prontos.
 //
-// Os dois fluxos (Faturado e Transmitido) sempre têm Líquido calculado (ver
-// farolBrutoLiquidoPorSupervisor) — LiquidoFarol é sempre populado aqui, e a
-// tolerância de 0,5% considera a menor distância entre Bruto e Líquido.
-// Líquido pode vir negativo (ex.: Cortado > Bruto no Transmitido) sem clamp
-// nem erro.
-func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *rel322Parsed) *comparativoRel322Resposta {
+// Só Líquido — Bruto foi removido da tela (decisão do Claudio em
+// 28/08/2026). Líquido pode vir negativo (ex.: Cortado > Bruto no
+// Transmitido) sem clamp nem erro. Status é decidido SEMPRE por PDF×Farol,
+// nunca pela VM — a VM é diagnóstico adicional.
+func cruzarComRel322(farol map[string]float64, vm map[string]float64, vmErr error, parsed *rel322Parsed) *comparativoRel322Resposta {
 	// Período sem NENHUM dado no Farol (range futuro ou ainda não
 	// importado): reflete a realidade, todas as linhas viram divergência
 	// (Farol = 0), não um conjunto de órfãos — é uma condição sistêmica, não
@@ -502,44 +639,55 @@ func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *
 
 	usados := map[string]bool{}
 	var linhas []linhaComparativoRel322
-	var totalPDF, totalBruto, totalLiquido float64
+	var totalPDF, totalLiquido, totalVM float64
+	var temVM bool
 	var qtdDivergencias, qtdOrfaos int
+
+	aplicarVM := func(linha *linhaComparativoRel322, cod string, vlPDF *float64, liquidoFarol *float64) {
+		vmVal, ok := vm[cod]
+		if !ok {
+			return
+		}
+		linha.LiquidoVM = f64p(vmVal)
+		totalVM += vmVal
+		temVM = true
+		if vlPDF != nil {
+			if pct := percentDiffRel322(vmVal, *vlPDF); !math.IsInf(pct, 0) {
+				linha.DiferencaPDFxVMPct = f64p(pct * 100)
+			}
+		}
+		if liquidoFarol != nil {
+			if pct := percentDiffRel322(*liquidoFarol, vmVal); !math.IsInf(pct, 0) {
+				linha.DiferencaVMxFarolPct = f64p(pct * 100)
+			}
+		}
+	}
 
 	for _, l := range parsed.Linhas {
 		totalPDF += l.VlVendido
 		vlPDF := l.VlVendido
 
-		fl, achou := farol[l.CodSupervisor]
+		liquido, achou := farol[l.CodSupervisor]
 		if !achou && !semDadoNoPeriodo {
 			// Farol tem dado no período, só não para ESTE supervisor: órfão.
 			qtdOrfaos++
-			linhas = append(linhas, linhaComparativoRel322{
+			linha := linhaComparativoRel322{
 				CodSupervisor: l.CodSupervisor,
 				Supervisor:    l.Descricao,
 				VlVendidoPDF:  f64p(vlPDF),
 				Status:        "orfao",
 				Origem:        "pdf",
-			})
+			}
+			aplicarVM(&linha, l.CodSupervisor, &vlPDF, nil)
+			linhas = append(linhas, linha)
 			continue
 		}
 		usados[l.CodSupervisor] = true
-
-		bruto := fl.Bruto
-		totalBruto += bruto
-		liquido := fl.Liquido
 		totalLiquido += liquido
-		liquidoFarol := f64p(liquido)
 
-		// menor distância entre Bruto e Líquido — os dois campos sempre
-		// existem agora, nos dois fluxos.
-		pctBruto := percentDiffRel322(bruto, vlPDF)
-		melhorPct := pctBruto
-		if pctLiquido := percentDiffRel322(liquido, vlPDF); pctLiquido < melhorPct {
-			melhorPct = pctLiquido
-		}
-
+		pctFarol := percentDiffRel322(liquido, vlPDF)
 		status := "divergencia"
-		if melhorPct <= 0.005 {
+		if pctFarol <= 0.005 {
 			status = "ok"
 		} else {
 			qtdDivergencias++
@@ -551,21 +699,19 @@ func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *
 		// corpo vazio/truncado, o "comparativo parcial silencioso" que o spec
 		// proíbe. Vira nil (o front já trata como "—"); o status continua
 		// "divergencia" — nunca "ok" nesse caso, já garantido pela tolerância.
-		var diferencaPct *float64
-		if !math.IsInf(melhorPct, 0) {
-			diferencaPct = f64p(melhorPct * 100)
-		}
-
-		linhas = append(linhas, linhaComparativoRel322{
+		linha := linhaComparativoRel322{
 			CodSupervisor: l.CodSupervisor,
 			Supervisor:    l.Descricao,
 			VlVendidoPDF:  f64p(vlPDF),
-			BrutoFarol:    f64p(bruto),
-			LiquidoFarol:  liquidoFarol,
-			DiferencaPct:  diferencaPct,
+			LiquidoFarol:  f64p(liquido),
 			Status:        status,
 			Origem:        "ambos",
-		})
+		}
+		if !math.IsInf(pctFarol, 0) {
+			linha.DiferencaPDFxFarolPct = f64p(pctFarol * 100)
+		}
+		aplicarVM(&linha, l.CodSupervisor, &vlPDF, &liquido)
+		linhas = append(linhas, linha)
 	}
 
 	// Supervisores com dado no Farol no período, mas ausentes do PDF —
@@ -584,34 +730,45 @@ func cruzarComRel322(farol map[string]struct{ Bruto, Liquido float64 }, parsed *
 		sort.Strings(codsOrfaosFarol)
 
 		for _, cod := range codsOrfaosFarol {
-			fl := farol[cod]
+			liquido := farol[cod]
 			qtdOrfaos++
-			totalBruto += fl.Bruto
-			totalLiquido += fl.Liquido
-			liquidoFarol := f64p(fl.Liquido)
-			linhas = append(linhas, linhaComparativoRel322{
+			totalLiquido += liquido
+			linha := linhaComparativoRel322{
 				CodSupervisor: cod,
-				BrutoFarol:    f64p(fl.Bruto),
-				LiquidoFarol:  liquidoFarol,
+				LiquidoFarol:  f64p(liquido),
 				Status:        "orfao",
 				Origem:        "farol",
-			})
+			}
+			aplicarVM(&linha, cod, nil, &liquido)
+			linhas = append(linhas, linha)
 		}
 	}
 
-	return &comparativoRel322Resposta{
+	filiais := parsed.Filiais
+	if filiais == nil {
+		filiais = []string{}
+	}
+
+	resp := &comparativoRel322Resposta{
 		Periodo:               parsed.PeriodoTexto,
 		DataInicio:            parsed.DataInicio.Format("2006-01-02"),
 		DataFim:               parsed.DataFim.Format("2006-01-02"),
+		Filiais:               filiais,
 		Linhas:                linhas,
 		TotalVlVendidoPDF:     totalPDF,
-		TotalBrutoFarol:       totalBruto,
 		TotalLiquidoFarol:     totalLiquido,
 		QtdSupervisoresPDF:    len(parsed.Linhas),
 		QtdDivergencias:       qtdDivergencias,
 		QtdOrfaos:             qtdOrfaos,
 		SemDadoFarolNoPeriodo: semDadoNoPeriodo,
 	}
+	if vmErr != nil {
+		resp.VMIndisponivel = true
+		resp.VMErro = "não foi possível consultar a base de origem (VM) agora — tente novamente em instantes"
+	} else if temVM {
+		resp.TotalLiquidoVM = f64p(totalVM)
+	}
+	return resp
 }
 
 // percentDiffRel322 — distância percentual entre o valor do Farol e o
@@ -729,7 +886,11 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 		// fosse a base comparada (normalizarFluxoParam fecha essa porta).
 		fluxo := resolveFluxo(normalizarFluxoParam(r.URL.Query().Get("fluxo")))
 
-		resultado, qerr := montarComparativo(r.Context(), db, spCtx.EmpresaID, parsed, escopo, fluxo)
+		// ?tipo_venda= — filtro "Tipo de Venda" da tela (multi-seleção, ex.:
+		// "1,4,7"). Vazio cai no default de cada fluxo (tipoVendaSelecionado).
+		tiposVendaSelecao := parseListaCSVRel322(r.URL.Query().Get("tipo_venda"))
+
+		resultado, qerr := montarComparativo(r.Context(), db, spCtx.EmpresaID, parsed, tiposVendaSelecao, escopo, fluxo)
 		if qerr != nil {
 			log.Printf("[comparativo322] consulta Farol ERRO: %v", qerr)
 			http.Error(w, jsonErrorRel322("falha ao consultar o Farol"), http.StatusInternalServerError)
@@ -781,8 +942,12 @@ func jsonErrorRel322(msg string) string {
 // rodapé. O comparativo tem no máximo ~50-90 linhas — bem abaixo do volume
 // que já pagina automaticamente, sem paginação manual nova.
 func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext extension.Type) ([]byte, error) {
+	// Paisagem: com Líquido (Farol) + Líquido (VM) + 3 diferenças percentuais
+	// + Status, a tabela não cabe numa página retrato sem espremer os valores
+	// em moeda (a mesma limitação que já existia SÓ com Bruto+Líquido).
 	cfg := config.NewBuilder().
 		WithPageNumber(props.PageNumber{Pattern: "Pág. {current}/{total}", Place: props.RightBottom}).
+		WithOrientation(orientation.Horizontal).
 		WithLeftMargin(8).WithRightMargin(8).WithTopMargin(10).
 		Build()
 	mrt := maroto.New(cfg)
@@ -807,8 +972,20 @@ func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext
 	// (mesmo princípio da ressalva de cobertura em relatorioReceitaPDF).
 	if resultado.SemDadoFarolNoPeriodo {
 		pg.Add(row.New(6).Add(col.New(12).Add(
-			text.New(fmt.Sprintf("PARCIAL — o Farol não tem NENHUM dado importado no período %s. Bruto e Líquido aparecem como R$ 0,00 em todas as linhas.", resultado.Periodo),
+			text.New(fmt.Sprintf("PARCIAL — o Farol não tem NENHUM dado importado no período %s. Líquido aparece como R$ 0,00 em todas as linhas.", resultado.Periodo),
 				props.Text{Size: 8, Style: fontstyle.BoldItalic, Align: align.Left}),
+		)))
+	}
+	// VM indisponível — mesmo princípio: nunca vira erro, só um aviso visível.
+	if resultado.VMIndisponivel {
+		pg.Add(row.New(6).Add(col.New(12).Add(
+			text.New("VM (base de origem) indisponível nesta consulta — as colunas de Líquido (VM) e as diferenças que dependem dela aparecem como \"—\".",
+				props.Text{Size: 8, Style: fontstyle.Italic, Align: align.Left}),
+		)))
+	}
+	if len(resultado.Filiais) > 0 {
+		pg.Add(row.New(5).Add(col.New(12).Add(
+			text.New("Filial(is) do PDF: "+strings.Join(resultado.Filiais, ", "), props.Text{Size: 7, Align: align.Left}),
 		)))
 	}
 
@@ -819,13 +996,16 @@ func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext
 	)))
 
 	cab := props.Text{Size: 6, Style: fontstyle.Bold}
-	pg.Add(row.New(6).Add(
+	cabDir := props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right}
+	pg.Add(row.New(8).Add(
 		col.New(1).Add(text.New("Código", cab)),
 		col.New(3).Add(text.New("Supervisor", cab)),
-		col.New(2).Add(text.New("Vl.Vendido (PDF)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
-		col.New(2).Add(text.New("Bruto (Farol)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
-		col.New(2).Add(text.New("Líquido (Farol)", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
-		col.New(1).Add(text.New("% dif.", props.Text{Size: 6, Style: fontstyle.Bold, Align: align.Right})),
+		col.New(2).Add(text.New("Vl.Vendido (PDF)", cabDir)),
+		col.New(1).Add(text.New("Líquido (Farol)", cabDir)),
+		col.New(1).Add(text.New("Líquido (VM)", cabDir)),
+		col.New(1).Add(text.New("% PDF×VM", cabDir)),
+		col.New(1).Add(text.New("% PDF×Farol", cabDir)),
+		col.New(1).Add(text.New("% VM×Farol", cabDir)),
 		col.New(1).Add(text.New("Status", cab)),
 	))
 
@@ -836,16 +1016,20 @@ func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext
 			col.New(1).Add(text.New(l.CodSupervisor, cel)),
 			col.New(3).Add(text.New(cabeNaColuna(primeiroNaoVazio(l.Supervisor, "—"), 3), cel)),
 			col.New(2).Add(text.New(valorOuTracoRel322(l.VlVendidoPDF), celDir)),
-			col.New(2).Add(text.New(valorOuTracoRel322(l.BrutoFarol), celDir)),
-			col.New(2).Add(text.New(valorOuTracoRel322(l.LiquidoFarol), celDir)),
-			col.New(1).Add(text.New(pctOuTracoRel322(l.DiferencaPct), celDir)),
+			col.New(1).Add(text.New(valorOuTracoRel322(l.LiquidoFarol), celDir)),
+			col.New(1).Add(text.New(valorOuTracoRel322(l.LiquidoVM), celDir)),
+			col.New(1).Add(text.New(pctOuTracoRel322(l.DiferencaPDFxVMPct), celDir)),
+			col.New(1).Add(text.New(pctOuTracoRel322(l.DiferencaPDFxFarolPct), celDir)),
+			col.New(1).Add(text.New(pctOuTracoRel322(l.DiferencaVMxFarolPct), celDir)),
 			col.New(1).Add(text.New(statusTextoRel322(l.Status), cel)),
 		))
 	}
 
-	pg.Add(row.New(8).Add(col.New(12).Add(
-		text.New("OK = Bruto ou Líquido do Farol está a até 0,5% do Vl.Vendido do PDF (menor distância das duas). "+
-			"DIVERGÊNCIA = fora dessa tolerância. ÓRFÃ = supervisor presente em só um dos dois lados (PDF ou Farol) no período.",
+	pg.Add(row.New(10).Add(col.New(12).Add(
+		text.New("OK = Líquido (Farol) está a até 0,5% do Vl.Vendido do PDF. DIVERGÊNCIA = fora dessa tolerância. "+
+			"ÓRFÃ = supervisor presente em só um dos lados (PDF ou Farol) no período. "+
+			"Líquido (VM) vem AO VIVO da base de origem (WinThor/Oracle) — diagnóstico adicional, nunca decide o Status. "+
+			"% PDF×VM e % VM×Farol isolam se a divergência já vem do próprio relatório WinThor ou surgiu na importação pro Farol.",
 			props.Text{Size: 6, Top: 3}),
 	)))
 

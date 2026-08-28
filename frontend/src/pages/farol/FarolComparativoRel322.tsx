@@ -1,25 +1,34 @@
 import { useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, FileUp, Scale, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileUp, Scale, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 
-// Comparativo REL 322 (WinThor) x Farol.
+// Comparativo REL 322 (WinThor) x Farol x VM (base de origem).
 //
 // POR QUE ELE EXISTE. O gestor precisa validar se o Farol bate com o
-// relatório oficial do WinThor, mas de onde ele está não alcança nem o
-// Oracle de origem nem o Postgres de produção — só o PDF que o WinThor já
-// exporta está disponível. Sobe-se o PDF aqui; o Farol lê o período do
-// próprio cabeçalho e cruza Bruto/Líquido por supervisor. Nada fica salvo:
-// cada upload é uma consulta independente.
+// relatório oficial do WinThor. Sobe-se o PDF aqui; o Farol lê o período e a
+// filial do próprio cabeçalho e cruza, por supervisor, o Vl.Vendido do
+// relatório com o Líquido apurado no Farol E com o Líquido consultado AO VIVO
+// na base Oracle de origem (VM) — a mesma que alimenta o Farol todo dia. As
+// três diferenças percentuais (PDF×VM, PDF×Farol, VM×Farol) separam "o
+// WinThor já gerou errado" de "o import pro Farol perdeu algo no caminho".
+// Nada é salvo — cada upload é uma consulta independente.
+//
+// A consulta à VM é AO VIVO e pode levar até ~1-2 MINUTOS (custo fixo da
+// view Oracle, independente do período) — o spinner avisa disso. Se a VM
+// falhar (Oracle indisponível), o comparativo PDF×Farol continua valendo;
+// só a coluna/diagnóstico da VM fica ausente.
 
 interface LinhaComparativo {
   cod_supervisor: string
   supervisor: string
   vl_vendido_pdf: number | null
-  bruto_farol: number | null
   liquido_farol: number | null
-  diferenca_pct: number | null
+  liquido_vm: number | null
+  diferenca_pdf_vm_pct: number | null
+  diferenca_pdf_farol_pct: number | null
+  diferenca_vm_farol_pct: number | null
   status: 'ok' | 'divergencia' | 'orfao'
   origem: 'pdf' | 'farol' | 'ambos'
 }
@@ -31,15 +40,36 @@ interface ComparativoResposta {
   data_inicio: string
   data_fim: string
   fluxo: FluxoComparativo
+  filiais: string[]
   linhas: LinhaComparativo[]
   total_vl_vendido_pdf: number
-  total_bruto_farol: number
   total_liquido_farol: number
+  total_liquido_vm: number | null
   qtd_supervisores_pdf: number
   qtd_divergencias: number
   qtd_orfaos: number
   sem_dado_farol_no_periodo: boolean
+  vm_indisponivel: boolean
+  vm_erro?: string
 }
+
+// TIPO_VENDA_OPTIONS — espelha farol.tipo_venda_label (migration 191). Fixo
+// porque é uma classificação de negócio rara de mudar; evita depender de um
+// fetch de dims (que é por-período e some tipos sem movimento recente — aqui
+// o objetivo é o oposto: deixar o gestor escolher QUALQUER tipo pra investigar).
+const TIPO_VENDA_OPTIONS = [
+  { key: '1',  label: 'Normal' },
+  { key: '4',  label: 'Simples Fatura' },
+  { key: '5',  label: 'Bonificação' },
+  { key: '7',  label: 'Entrega Futura' },
+  { key: '8',  label: 'Simples Entrega' },
+  { key: '9',  label: 'CFOP Específico' },
+  { key: '10', label: 'Transferência' },
+  { key: '11', label: 'Venda com Troca' },
+  { key: '13', label: 'Remessa Manifesto' },
+  { key: '14', label: 'Venda Manifesto' },
+  { key: '20', label: 'Consignada' },
+]
 
 function fmtBRL(v: number | null) {
   if (v === null) return '—'
@@ -72,6 +102,61 @@ function fluxoLabel(f: FluxoComparativo) {
   return f === 'transmitido' ? 'Transmitido' : 'Faturado'
 }
 
+// TipoVendaSelect — multi-seleção simples (só ~11 opções, sem busca).
+function TipoVendaSelect({ selected, onChange }: { selected: string[]; onChange: (next: string[]) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  function toggle(k: string) {
+    onChange(selected.includes(k) ? selected.filter(x => x !== k) : [...selected, k])
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-md bg-white shadow-sm ${
+          selected.length > 0 ? 'border-slate-600 text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+        }`}
+      >
+        Tipo de Venda
+        {selected.length > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-slate-800 text-white text-xs font-bold">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-50 w-64 bg-white border border-slate-200 rounded-md shadow-lg overflow-hidden">
+            <div className="max-h-64 overflow-y-auto">
+              {TIPO_VENDA_OPTIONS.map(opt => {
+                const checked = selected.includes(opt.key)
+                return (
+                  <label key={opt.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input type="checkbox" checked={checked} onChange={() => toggle(opt.key)} className="w-3.5 h-3.5 accent-slate-700" />
+                    <span className={checked ? 'font-medium text-slate-900' : 'text-slate-600'}>{opt.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {selected.length > 0 && (
+              <div className="border-t border-slate-100 p-2">
+                <button className="text-xs text-slate-500 hover:text-slate-800" onClick={() => onChange([])}>
+                  Limpar seleção (volta ao padrão)
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function FarolComparativoRel322() {
   const { token } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -85,6 +170,15 @@ export default function FarolComparativoRel322() {
   // usuário aqui. Default Faturado: quem não mexer no toggle mantém o
   // comportamento já em produção.
   const [fluxo, setFluxo] = useState<FluxoComparativo>('faturado')
+  // Tipo de Venda — vazio = default do backend (tipoVendaReal no Faturado,
+  // sem filtro no Transmitido). Seleção sobrescreve os dois.
+  const [tipoVenda, setTipoVenda] = useState<string[]>([])
+
+  function queryString() {
+    const params = new URLSearchParams({ fluxo })
+    if (tipoVenda.length > 0) params.set('tipo_venda', tipoVenda.join(','))
+    return params.toString()
+  }
 
   async function enviar() {
     if (!arquivo) {
@@ -97,7 +191,7 @@ export default function FarolComparativoRel322() {
     try {
       const form = new FormData()
       form.append('file', arquivo)
-      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?fluxo=${fluxo}`, {
+      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?${queryString()}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -107,6 +201,9 @@ export default function FarolComparativoRel322() {
         throw new Error(body?.error || `Falha ao processar o PDF (HTTP ${res.status})`)
       }
       setResultado(body as ComparativoResposta)
+      if (body?.vm_indisponivel) {
+        toast.warning('Base de origem (VM) indisponível agora — o comparativo PDF×Farol foi montado normalmente')
+      }
     } catch (e: any) {
       setErro(e?.message || 'Falha ao processar o PDF')
       toast.error('Não foi possível montar o comparativo')
@@ -128,7 +225,7 @@ export default function FarolComparativoRel322() {
     try {
       const form = new FormData()
       form.append('file', arquivo)
-      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?formato=pdf&fluxo=${fluxo}`, {
+      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?formato=pdf&${queryString()}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -204,37 +301,46 @@ export default function FarolComparativoRel322() {
         </div>
         <p className="text-sm text-slate-500 mb-4">
           Sobe o PDF que o WinThor exporta ("322 — Venda Por Departamento", por supervisor) e o Farol cruza,
-          supervisor a supervisor, o Vl.Vendido do relatório com o Bruto e o Líquido apurados no mesmo período.
-          Nada é salvo — cada upload é uma consulta independente.
+          supervisor a supervisor, o Vl.Vendido do relatório com o Líquido apurado no Farol e com o Líquido consultado
+          AO VIVO na base Oracle de origem (VM). Nada é salvo — cada upload é uma consulta independente.
         </p>
 
-        <div className="mb-6">
-          <label className="block text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
-            Base do PDF gerado no WinThor
-          </label>
-          {/* Toggle Faturado x Transmitido — o WinThor não indica no PDF qual base foi
-              usada pra gerar o REL 322, então a escolha é sempre explícita do usuário
-              aqui (nunca inferida do conteúdo). Padrão visual copiado de
-              FarolPublicPanel.tsx (mesmo toggle de fluxo usado no painel do RCA/Supervisor). */}
-          <div className="inline-flex rounded-lg border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
-            <button
-              type="button"
-              onClick={() => trocarFluxo('faturado')}
-              className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors ${
-                fluxo === 'faturado' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              Faturado
-            </button>
-            <button
-              type="button"
-              onClick={() => trocarFluxo('transmitido')}
-              className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors border-l-2 border-slate-300 ${
-                fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              Transmitido
-            </button>
+        <div className="mb-4 flex flex-wrap items-end gap-6">
+          <div>
+            <label className="block text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
+              Base do PDF gerado no WinThor
+            </label>
+            {/* Toggle Faturado x Transmitido — o WinThor não indica no PDF qual base foi
+                usada pra gerar o REL 322, então a escolha é sempre explícita do usuário
+                aqui (nunca inferida do conteúdo). Padrão visual copiado de
+                FarolPublicPanel.tsx (mesmo toggle de fluxo usado no painel do RCA/Supervisor). */}
+            <div className="inline-flex rounded-lg border-2 border-slate-300 overflow-hidden bg-white shadow-sm">
+              <button
+                type="button"
+                onClick={() => trocarFluxo('faturado')}
+                className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors ${
+                  fluxo === 'faturado' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                Faturado
+              </button>
+              <button
+                type="button"
+                onClick={() => trocarFluxo('transmitido')}
+                className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors border-l-2 border-slate-300 ${
+                  fluxo === 'transmitido' ? 'bg-emerald-700 text-white' : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                Transmitido
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
+              Tipo de Venda (opcional)
+            </label>
+            <TipoVendaSelect selected={tipoVenda} onChange={vs => { setTipoVenda(vs); setResultado(null); setErro(null) }} />
           </div>
         </div>
 
@@ -265,13 +371,19 @@ export default function FarolComparativoRel322() {
           </Button>
           <Button onClick={enviar} disabled={!arquivo || carregando || baixandoPDF} className="gap-2">
             <Upload className="h-4 w-4" />
-            {carregando ? 'Processando…' : 'Comparar'}
+            {carregando ? 'Consultando (PDF, Farol e base de origem)…' : 'Comparar'}
           </Button>
           <Button variant="outline" onClick={baixarPDF} disabled={!arquivo || carregando || baixandoPDF} className="gap-2">
             <Download className="h-4 w-4" />
             {baixandoPDF ? 'Gerando…' : 'Baixar PDF'}
           </Button>
         </div>
+        {(carregando || baixandoPDF) && (
+          <p className="mt-2 text-xs text-slate-400">
+            A consulta à base de origem (VM) é ao vivo e pode levar até 1-2 minutos — é o custo fixo dessa consulta,
+            não uma trava. Se ela falhar, o comparativo PDF×Farol aparece normalmente mesmo assim.
+          </p>
+        )}
       </div>
 
       {erro && (
@@ -281,13 +393,24 @@ export default function FarolComparativoRel322() {
         </div>
       )}
 
+      {resultado?.vm_indisponivel && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            <strong>Base de origem (VM) indisponível nesta consulta.</strong>{' '}
+            {resultado.vm_erro || 'Não foi possível consultar a VM agora.'} O comparativo PDF×Farol abaixo continua
+            valendo normalmente — só as colunas de Líquido (VM) e as diferenças que dependem dela aparecem como "—".
+          </div>
+        </div>
+      )}
+
       {resultado?.sem_dado_farol_no_periodo && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-900">
             <strong>O Farol não tem NENHUM dado importado no período {resultado.periodo}.</strong>{' '}
-            Bruto e Líquido aparecem como R$ 0,00 para todas as linhas — isso reflete a realidade (range futuro ou
-            período ainda não importado), não é um erro do comparativo.
+            Líquido aparece como R$ 0,00 para todas as linhas — isso reflete a realidade (range futuro ou período
+            ainda não importado), não é um erro do comparativo.
           </div>
         </div>
       )}
@@ -307,18 +430,21 @@ export default function FarolComparativoRel322() {
               >
                 Fluxo: {fluxoLabel(resultado.fluxo)}
               </span>
+              {resultado.filiais.length > 0 && (
+                <div className="mt-2 text-xs text-slate-400">Filial(is): {resultado.filiais.join(', ')}</div>
+              )}
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Total Vl.Vendido (PDF)</div>
               <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_vl_vendido_pdf)}</div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Total Bruto (Farol)</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_bruto_farol)}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (Farol)</div>
               <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_farol)}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (VM)</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_vm)}</div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Divergências / Órfãs</div>
@@ -337,9 +463,11 @@ export default function FarolComparativoRel322() {
                     <th className="px-4 py-3 font-medium">Código</th>
                     <th className="px-4 py-3 font-medium">Supervisor</th>
                     <th className="px-4 py-3 font-medium text-right">Vl.Vendido (PDF)</th>
-                    <th className="px-4 py-3 font-medium text-right">Bruto (Farol)</th>
                     <th className="px-4 py-3 font-medium text-right">Líquido (Farol)</th>
-                    <th className="px-4 py-3 font-medium text-right">% diferença</th>
+                    <th className="px-4 py-3 font-medium text-right">Líquido (VM)</th>
+                    <th className="px-4 py-3 font-medium text-right">% PDF×VM</th>
+                    <th className="px-4 py-3 font-medium text-right">% PDF×Farol</th>
+                    <th className="px-4 py-3 font-medium text-right">% VM×Farol</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                   </tr>
                 </thead>
@@ -351,9 +479,11 @@ export default function FarolComparativoRel322() {
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-600 whitespace-nowrap">{l.cod_supervisor}</td>
                         <td className="px-4 py-2.5 text-slate-900">{l.supervisor || '—'}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-900">{fmtBRL(l.vl_vendido_pdf)}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtBRL(l.bruto_farol)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtBRL(l.liquido_farol)}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_pct)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtBRL(l.liquido_vm)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_pdf_vm_pct)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_pdf_farol_pct)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_vm_farol_pct)}</td>
                         <td className="px-4 py-2.5">
                           <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${selo.classe}`}>
                             {l.status === 'ok' && <CheckCircle2 className="h-3 w-3" />}
@@ -371,17 +501,20 @@ export default function FarolComparativoRel322() {
           <p className="text-xs text-slate-400">
             {resultado.fluxo === 'transmitido' ? (
               <>
-                Fluxo Transmitido: Bruto = soma de todos os pedidos transmitidos no período. Líquido = Bruto menos
-                Cortado (vendas perdidas no período) — pode vir negativo quando o Cortado supera o Bruto. Uma linha
-                é "OK" quando Bruto OU Líquido do Farol está a até 0,5% do Vl.Vendido do PDF.
+                Fluxo Transmitido: Líquido (Farol) = soma de todos os pedidos transmitidos no período menos Cortado
+                (vendas perdidas) — pode vir negativo quando o Cortado supera o total. Uma linha é "OK" quando
+                Líquido (Farol) está a até 0,5% do Vl.Vendido do PDF.
               </>
             ) : (
               <>
-                Fluxo Faturado: Bruto = soma de todas as vendas faturadas no período. Líquido = venda real (exclui
-                bonificação, transferência e remessa) menos devolvido/cancelado — mesma composição do painel
-                Faturado. Uma linha é "OK" quando Bruto OU Líquido do Farol está a até 0,5% do Vl.Vendido do PDF.
+                Fluxo Faturado: Líquido (Farol) = venda real (por padrão exclui bonificação, transferência e remessa —
+                ajustável pelo filtro Tipo de Venda acima) menos devolvido/cancelado. Uma linha é "OK" quando Líquido
+                (Farol) está a até 0,5% do Vl.Vendido do PDF.
               </>
             )}
+            {' '}Líquido (VM) vem AO VIVO da base de origem (WinThor/Oracle) — é diagnóstico adicional e nunca decide
+            o Status. % PDF×VM e % VM×Farol ajudam a isolar se uma divergência já vem do próprio relatório WinThor ou
+            surgiu na importação pro Farol.
           </p>
         </>
       )}

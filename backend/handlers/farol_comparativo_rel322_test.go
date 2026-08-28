@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -347,14 +348,190 @@ func TestComparativoRel322_ParseNumeroBR(t *testing.T) {
 	}
 }
 
-// farolFake — atalho para montar o mapa que farolBrutoLiquidoPorSupervisor
-// devolveria, sem precisar de banco.
-func farolFake(m map[string][2]float64) map[string]struct{ Bruto, Liquido float64 } {
-	out := map[string]struct{ Bruto, Liquido float64 }{}
-	for cod, v := range m {
-		out[cod] = struct{ Bruto, Liquido float64 }{Bruto: v[0], Liquido: v[1]}
+// TestComparativoRel322_ParseFiliais — cobre a I/O Matrix do campo
+// "Filiai(s) :" do cabeçalho: lista normal, "Todas as Filiais" (não filtra)
+// e campo ausente (também não filtra — layouts sem o campo não podem quebrar
+// o parser inteiro por causa de um recorte que é refinamento, não essencial).
+func TestComparativoRel322_ParseFiliais(t *testing.T) {
+	casos := []struct {
+		in   string
+		want []string
+	}{
+		{"10,11,13,15,16,18,20,22,23,24,28,29,30,31,32,33", []string{"10", "11", "13", "15", "16", "18", "20", "22", "23", "24", "28", "29", "30", "31", "32", "33"}},
+		{"10, 11 , 13", []string{"10", "11", "13"}},
+		{"Todas as Filiais", nil},
+		{"todas", nil},
+		{"", nil},
+		{"  ", nil},
 	}
-	return out
+	for _, c := range casos {
+		got := parseFiliaisRel322(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("parseFiliaisRel322(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("parseFiliaisRel322(%q) = %v, want %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+// TestComparativoRel322_Parse_CapturaFiliaisDoCabecalho — integração com o
+// parser inteiro: o cabeçalho de fixture (cabecalhoRel322) já traz
+// "Filiai(s) :" com uma lista real — parseRel322Texto tem que devolver isso
+// em rel322Parsed.Filiais, não só ignorar a linha.
+func TestComparativoRel322_Parse_CapturaFiliaisDoCabecalho(t *testing.T) {
+	texto := strings.Join([]string{
+		cabecalhoRel322("01/08/2026 a 26/08/2026", "14-Por Supervisor"),
+		linhaRel322Fixture("124", "GO - VALE SAO PATRICIO - LUCAS", "9.223.911,54"),
+		totaisRel322Fixture,
+	}, "\n")
+	parsed, err := parseRel322Texto(texto)
+	if err != nil {
+		t.Fatalf("parseRel322Texto: %v", err)
+	}
+	want := []string{"10", "11", "13", "15", "16", "18", "20", "22", "23", "24", "28", "29", "30", "31", "32", "33"}
+	if len(parsed.Filiais) != len(want) {
+		t.Fatalf("Filiais = %v, want %v", parsed.Filiais, want)
+	}
+	for i := range want {
+		if parsed.Filiais[i] != want[i] {
+			t.Errorf("Filiais[%d] = %q, want %q", i, parsed.Filiais[i], want[i])
+		}
+	}
+}
+
+// TestComparativoRel322_TipoVendaSelecionado — cobre o default por fluxo
+// (Faturado cai em tipoVendaReal, Transmitido fica sem filtro) e a seleção
+// do usuário sobrescrevendo os dois.
+func TestComparativoRel322_TipoVendaSelecionado(t *testing.T) {
+	if got := tipoVendaSelecionado(nil, resolveFluxo("faturado")); len(got) != len(tipoVendaReal) {
+		t.Errorf("Faturado sem seleção deveria cair no default tipoVendaReal, veio %v", got)
+	}
+	if got := tipoVendaSelecionado(nil, resolveFluxo("transmitido")); got != nil {
+		t.Errorf("Transmitido sem seleção deveria ficar sem filtro (nil), veio %v", got)
+	}
+	sel := []string{"5", "10"}
+	if got := tipoVendaSelecionado(sel, resolveFluxo("faturado")); len(got) != 2 || got[0] != "5" || got[1] != "10" {
+		t.Errorf("seleção do usuário deveria sobrescrever o default do Faturado, veio %v", got)
+	}
+	if got := tipoVendaSelecionado(sel, resolveFluxo("transmitido")); len(got) != 2 || got[0] != "5" || got[1] != "10" {
+		t.Errorf("seleção do usuário deveria sobrescrever o default (sem filtro) do Transmitido, veio %v", got)
+	}
+}
+
+// TestComparativoRel322_ColOracleRel322 — tradução da coluna de escopo do
+// Postgres pro nome da coluna equivalente na view Oracle da JC. cod_rca é o
+// caso especial (CODUSUR, não CODRCA — nome herdado do layout do ION VENDAS).
+func TestComparativoRel322_ColOracleRel322(t *testing.T) {
+	casos := map[string]string{
+		"cod_gerente":    "CODGERENTE",
+		"cod_supervisor": "CODSUPERVISOR",
+		"cod_rca":        "CODUSUR",
+		"":               "CODSUPERVISOR", // default seguro
+	}
+	for in, want := range casos {
+		if got := colOracleRel322(in); got != want {
+			t.Errorf("colOracleRel322(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestComparativoRel322_Cruzamento_ComVM — a VM populada acrescenta
+// LiquidoVM e as duas diferenças que dependem dela (PDF×VM, VM×Farol) sem
+// mudar o Status (que continua decidido só por PDF×Farol).
+func TestComparativoRel322_Cruzamento_ComVM(t *testing.T) {
+	parsed := &rel322Parsed{
+		PeriodoTexto: "01/08/2026 a 26/08/2026",
+		DataInicio:   mustParseData(t, "2026-08-01"),
+		DataFim:      mustParseData(t, "2026-08-26"),
+		Linhas: []linhaExtraidaRel322{
+			{CodSupervisor: "124", Descricao: "GO - VALE SAO PATRICIO - LUCAS", VlVendido: 1000},
+		},
+	}
+	farol := farolFake(map[string]float64{"124": 990}) // ~1% do PDF — divergência
+	vm := vmFake(map[string]float64{"124": 1000})      // bate exato com o PDF
+
+	resp := cruzarComRel322(farol, vm, nil, parsed)
+
+	if resp.VMIndisponivel {
+		t.Fatal("não deveria marcar VM indisponível — vm veio sem erro")
+	}
+	if resp.TotalLiquidoVM == nil || *resp.TotalLiquidoVM != 1000 {
+		t.Errorf("TotalLiquidoVM = %v, want 1000", resp.TotalLiquidoVM)
+	}
+	l := resp.Linhas[0]
+	if l.LiquidoVM == nil || *l.LiquidoVM != 1000 {
+		t.Errorf("LiquidoVM = %v, want 1000", l.LiquidoVM)
+	}
+	if l.DiferencaPDFxVMPct == nil || *l.DiferencaPDFxVMPct != 0 {
+		t.Errorf("DiferencaPDFxVMPct = %v, want 0 (VM bate exato com o PDF)", l.DiferencaPDFxVMPct)
+	}
+	if l.DiferencaVMxFarolPct == nil {
+		t.Error("DiferencaVMxFarolPct não deveria ser nil (VM e Farol têm valor)")
+	}
+	// Status continua vindo só de PDF×Farol (990 vs 1000 = 1% > 0,5%): a VM
+	// é diagnóstico, nunca decide o Status.
+	if l.Status != "divergencia" {
+		t.Errorf("status = %q, want divergencia (PDF×Farol continua decidindo, não a VM)", l.Status)
+	}
+}
+
+// TestComparativoRel322_Cruzamento_VMIndisponivel — Oracle inalcançável não
+// pode derrubar o comparativo: PDF×Farol continua valendo, só marca
+// VMIndisponivel e deixa LiquidoVM/as diferenças que dependem dela nil.
+func TestComparativoRel322_Cruzamento_VMIndisponivel(t *testing.T) {
+	parsed := &rel322Parsed{
+		PeriodoTexto: "01/08/2026 a 26/08/2026",
+		DataInicio:   mustParseData(t, "2026-08-01"),
+		DataFim:      mustParseData(t, "2026-08-26"),
+		Linhas: []linhaExtraidaRel322{
+			{CodSupervisor: "124", Descricao: "GO - VALE SAO PATRICIO - LUCAS", VlVendido: 1000},
+		},
+	}
+	farol := farolFake(map[string]float64{"124": 1000})
+
+	resp := cruzarComRel322(farol, nil, fmt.Errorf("conectar na base de origem (VM): timeout"), parsed)
+
+	if !resp.VMIndisponivel {
+		t.Fatal("esperava VMIndisponivel = true")
+	}
+	if resp.VMErro == "" {
+		t.Error("esperava VMErro preenchido")
+	}
+	if resp.TotalLiquidoVM != nil {
+		t.Errorf("TotalLiquidoVM deveria ser nil quando a VM falha, veio %v", resp.TotalLiquidoVM)
+	}
+	l := resp.Linhas[0]
+	if l.LiquidoVM != nil || l.DiferencaPDFxVMPct != nil || l.DiferencaVMxFarolPct != nil {
+		t.Errorf("campos da VM deveriam ser nil quando ela falha: %+v", l)
+	}
+	// PDF×Farol continua íntegro apesar da falha da VM.
+	if l.Status != "ok" || l.LiquidoFarol == nil || *l.LiquidoFarol != 1000 {
+		t.Errorf("PDF×Farol não deveria ser afetado pela falha da VM: %+v", l)
+	}
+}
+
+// farolFake — atalho pra montar o mapa que farolLiquidoPorSupervisor
+// devolveria, sem precisar de banco. Só Líquido — Bruto foi removido da tela.
+func farolFake(m map[string]float64) map[string]float64 {
+	if m == nil {
+		return map[string]float64{}
+	}
+	return m
+}
+
+// vmFake — mesmo atalho, pro mapa que vmLiquidoPorSupervisor devolveria.
+// nil devolve mapa vazio (VM alcançável, mas sem dado pra nenhum supervisor
+// destas linhas) — distinto de vmErr != nil (VM indisponível).
+func vmFake(m map[string]float64) map[string]float64 {
+	if m == nil {
+		return map[string]float64{}
+	}
+	return m
 }
 
 // TestComparativoRel322_Cruzamento_TudoBate — Farol dentro da tolerância de
@@ -370,12 +547,12 @@ func TestComparativoRel322_Cruzamento_TudoBate(t *testing.T) {
 			{CodSupervisor: "240", Descricao: "GO - NORTE - JOSENILTON", VlVendido: 8597443.46},
 		},
 	}
-	farol := farolFake(map[string][2]float64{
-		"124": {9223911.54, 9000000.00}, // Bruto bate exato
-		"240": {8600000.00, 8597443.46}, // Líquido bate exato
+	farol := farolFake(map[string]float64{
+		"124": 9223911.54, // bate exato
+		"240": 8597443.46, // bate exato
 	})
 
-	resp := cruzarComRel322(farol, parsed)
+	resp := cruzarComRel322(farol, vmFake(nil), nil, parsed)
 
 	if resp.SemDadoFarolNoPeriodo {
 		t.Error("não deveria marcar sem-dado-no-período: o Farol tem dado para ambos")
@@ -403,12 +580,12 @@ func TestComparativoRel322_Cruzamento_Orfaos(t *testing.T) {
 			{CodSupervisor: "705", Descricao: "SUPERVISOR SO NO PDF", VlVendido: 1000.00},
 		},
 	}
-	farol := farolFake(map[string][2]float64{
-		"124": {9223911.54, 9223911.54},
-		"999": {5000.00, 5000.00}, // só no Farol, não veio no PDF
+	farol := farolFake(map[string]float64{
+		"124": 9223911.54,
+		"999": 5000.00, // só no Farol, não veio no PDF
 	})
 
-	resp := cruzarComRel322(farol, parsed)
+	resp := cruzarComRel322(farol, vmFake(nil), nil, parsed)
 
 	if resp.SemDadoFarolNoPeriodo {
 		t.Error("não deveria marcar sem-dado-no-período: o Farol tem dado")
@@ -424,8 +601,8 @@ func TestComparativoRel322_Cruzamento_Orfaos(t *testing.T) {
 			if l.Status != "orfao" || l.Origem != "pdf" {
 				t.Errorf("705 deveria ser órfão de origem pdf: %+v", l)
 			}
-			if l.BrutoFarol != nil || l.LiquidoFarol != nil {
-				t.Errorf("705 não deveria ter Bruto/Líquido do Farol: %+v", l)
+			if l.LiquidoFarol != nil {
+				t.Errorf("705 não deveria ter Líquido do Farol: %+v", l)
 			}
 		}
 		if l.CodSupervisor == "999" {
@@ -444,7 +621,7 @@ func TestComparativoRel322_Cruzamento_Orfaos(t *testing.T) {
 }
 
 // TestComparativoRel322_Cruzamento_Divergencia — Farol distante >0,5% do
-// Vl.Vendido do PDF em Bruto E Líquido: linha marcada divergência.
+// Vl.Vendido do PDF: linha marcada divergência.
 func TestComparativoRel322_Cruzamento_Divergencia(t *testing.T) {
 	parsed := &rel322Parsed{
 		PeriodoTexto: "01/08/2026 a 26/08/2026",
@@ -454,11 +631,11 @@ func TestComparativoRel322_Cruzamento_Divergencia(t *testing.T) {
 			{CodSupervisor: "124", Descricao: "GO - VALE SAO PATRICIO - LUCAS", VlVendido: 100000.00},
 		},
 	}
-	farol := farolFake(map[string][2]float64{
-		"124": {90000.00, 89000.00}, // 10%/11% de distância — bem acima de 0,5%
+	farol := farolFake(map[string]float64{
+		"124": 89000.00, // 11% de distância — bem acima de 0,5%
 	})
 
-	resp := cruzarComRel322(farol, parsed)
+	resp := cruzarComRel322(farol, vmFake(nil), nil, parsed)
 
 	if resp.QtdDivergencias != 1 {
 		t.Fatalf("esperava 1 divergência, veio %d", resp.QtdDivergencias)
@@ -466,8 +643,8 @@ func TestComparativoRel322_Cruzamento_Divergencia(t *testing.T) {
 	if resp.Linhas[0].Status != "divergencia" {
 		t.Errorf("status = %s, want divergencia", resp.Linhas[0].Status)
 	}
-	if resp.Linhas[0].DiferencaPct == nil || *resp.Linhas[0].DiferencaPct < 10 {
-		t.Errorf("diferenca_pct deveria refletir a menor distância (~10%%): %+v", resp.Linhas[0].DiferencaPct)
+	if resp.Linhas[0].DiferencaPDFxFarolPct == nil || *resp.Linhas[0].DiferencaPDFxFarolPct < 10 {
+		t.Errorf("diferenca_pdf_farol_pct deveria refletir ~11%%: %+v", resp.Linhas[0].DiferencaPDFxFarolPct)
 	}
 }
 
@@ -486,7 +663,7 @@ func TestComparativoRel322_Cruzamento_SemDadoNoPeriodo(t *testing.T) {
 	}
 	farol := farolFake(nil) // Farol vazio: nada importado para o período
 
-	resp := cruzarComRel322(farol, parsed)
+	resp := cruzarComRel322(farol, vmFake(nil), nil, parsed)
 
 	if !resp.SemDadoFarolNoPeriodo {
 		t.Fatal("esperava sem_dado_farol_no_periodo = true")
@@ -501,8 +678,8 @@ func TestComparativoRel322_Cruzamento_SemDadoNoPeriodo(t *testing.T) {
 		if l.Status != "divergencia" {
 			t.Errorf("linha %s deveria ser divergencia, veio %s", l.CodSupervisor, l.Status)
 		}
-		if l.BrutoFarol == nil || *l.BrutoFarol != 0 || l.LiquidoFarol == nil || *l.LiquidoFarol != 0 {
-			t.Errorf("linha %s deveria mostrar Bruto/Líquido = 0, não ausente: %+v", l.CodSupervisor, l)
+		if l.LiquidoFarol == nil || *l.LiquidoFarol != 0 {
+			t.Errorf("linha %s deveria mostrar Líquido = 0, não ausente: %+v", l.CodSupervisor, l)
 		}
 	}
 }
@@ -512,7 +689,7 @@ func TestComparativoRel322_Cruzamento_SemDadoNoPeriodo(t *testing.T) {
 // percentDiffRel322 devolver +Inf, que encoding/json não sabe serializar.
 // json.NewEncoder(w).Encode falhava (erro descartado) e o cliente recebia
 // HTTP 200 com corpo vazio/truncado — o "comparativo parcial silencioso" que
-// o spec proíbe. DiferencaPct tem que virar nil, nunca Inf, e a resposta
+// o spec proíbe. DiferencaPDFxFarolPct tem que virar nil, nunca Inf, e a resposta
 // inteira tem que serializar sem erro.
 func TestComparativoRel322_Cruzamento_PDFZeroFarolNaoZero_NaoQuebraJSON(t *testing.T) {
 	parsed := &rel322Parsed{
@@ -523,18 +700,18 @@ func TestComparativoRel322_Cruzamento_PDFZeroFarolNaoZero_NaoQuebraJSON(t *testi
 			{CodSupervisor: "999", Descricao: "TESTE VL VENDIDO ZERO", VlVendido: 0},
 		},
 	}
-	farol := farolFake(map[string][2]float64{
-		"999": {1000.00, 900.00}, // Farol tem venda, mas o PDF mostrou 0 pra esse supervisor
+	farol := farolFake(map[string]float64{
+		"999": 900.00, // Farol tem venda, mas o PDF mostrou 0 pra esse supervisor
 	})
 
-	resp := cruzarComRel322(farol, parsed)
+	resp := cruzarComRel322(farol, vmFake(nil), nil, parsed)
 
 	if len(resp.Linhas) != 1 {
 		t.Fatalf("esperava 1 linha, veio %d", len(resp.Linhas))
 	}
 	l := resp.Linhas[0]
-	if l.DiferencaPct != nil {
-		t.Errorf("DiferencaPct deveria ser nil quando PDF=0 e Farol!=0, veio %v", *l.DiferencaPct)
+	if l.DiferencaPDFxFarolPct != nil {
+		t.Errorf("DiferencaPDFxFarolPct deveria ser nil quando PDF=0 e Farol!=0, veio %v", *l.DiferencaPDFxFarolPct)
 	}
 	if l.Status != "divergencia" {
 		t.Errorf("status = %q, want divergencia (nunca ok quando a distância é infinita)", l.Status)
@@ -644,7 +821,7 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor(t *testing.
 	}
 	escopo := escopoRecorte{Col: "cod_supervisor", Vals: []string{meu}, Persona: "supervisor"}
 
-	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopo, resolveFluxo("faturado"))
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, nil, escopo, resolveFluxo("faturado"))
 	if err != nil {
 		t.Fatalf("montarComparativo: %v", err)
 	}
@@ -654,8 +831,8 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor(t *testing.
 			continue
 		}
 		achouOutro = true
-		if l.BrutoFarol != nil || l.LiquidoFarol != nil {
-			t.Errorf("vazou Bruto/Líquido do supervisor %s, fora do escopo de %s: %+v", outro, meu, l)
+		if l.LiquidoFarol != nil {
+			t.Errorf("vazou Líquido do supervisor %s, fora do escopo de %s: %+v", outro, meu, l)
 		}
 		if l.Status != "orfao" || l.Origem != "pdf" {
 			t.Errorf("supervisor %s fora do escopo deveria virar órfão de origem pdf (o escopo o exclui da consulta ao Farol): %+v", outro, l)
@@ -708,7 +885,7 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
 	}
 	escopo := escopoRecorte{Col: "cod_supervisor", Vals: []string{meu}, Persona: "supervisor"}
 
-	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopo, resolveFluxo("transmitido"))
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, nil, escopo, resolveFluxo("transmitido"))
 	if err != nil {
 		t.Fatalf("montarComparativo: %v", err)
 	}
@@ -723,8 +900,8 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
 		}
 		if l.CodSupervisor == outro {
 			achouOutro = true
-			if l.BrutoFarol != nil || l.LiquidoFarol != nil {
-				t.Errorf("vazou Bruto/Líquido do supervisor %s, fora do escopo de %s: %+v", outro, meu, l)
+			if l.LiquidoFarol != nil {
+				t.Errorf("vazou Líquido do supervisor %s, fora do escopo de %s: %+v", outro, meu, l)
 			}
 			if l.Status != "orfao" || l.Origem != "pdf" {
 				t.Errorf("supervisor %s fora do escopo deveria virar órfão de origem pdf: %+v", outro, l)
@@ -736,12 +913,72 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
 	}
 }
 
+// TestComparativoRel322_FiltroFilial — achado do Blind Hunter em
+// spec-comparativo-rel322.md: um REL 322 gerado só pra um subconjunto de
+// filiais (cabeçalho "Filiai(s) :") não pode comparar contra o Farol da
+// empresa INTEIRA. Duas linhas do MESMO cod_supervisor, uma na filial do
+// PDF ("10") e outra fora ("99") — só a primeira pode entrar no Líquido.
+func TestComparativoRel322_FiltroFilial(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	cod := "T322FILIAL"
+	data := mustParseData(t, "2020-06-21")
+
+	limparFluxoRel322Fixture(t, db, empresaID, cod)
+	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
+
+	if _, err := db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_supervisor, pvenda, tipo_venda, empresa) VALUES ($1,$2,$3,1000,'1','10'), ($1,$2,$3,9999,'1','99')`,
+		empresaID, data, cod); err != nil {
+		t.Fatalf("insert vendas_faturadas: %v", err)
+	}
+
+	out, err := farolLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, []string{"10"}, tipoVendaReal, escopoRecorte{}, resolveFluxo("faturado"))
+	if err != nil {
+		t.Fatalf("farolLiquidoPorSupervisor: %v", err)
+	}
+	got, achou := out[cod]
+	if !achou {
+		t.Fatalf("cod_supervisor %s não apareceu no resultado: %+v", cod, out)
+	}
+	if got != 1000 {
+		t.Errorf("Liquido = %v, want 1000 — a filial 99 (fora do PDF) não pode vazar pro total", got)
+	}
+
+	// Sem filtro de filial (PDF "Todas as Filiais"), as duas filiais contam.
+	semFiltro, err := farolLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, nil, tipoVendaReal, escopoRecorte{}, resolveFluxo("faturado"))
+	if err != nil {
+		t.Fatalf("farolLiquidoPorSupervisor sem filtro: %v", err)
+	}
+	if semFiltro[cod] != 1000+9999 {
+		t.Errorf("sem filtro de filial, Liquido = %v, want %v (as duas filiais)", semFiltro[cod], 1000+9999)
+	}
+}
+
+// TestVMLiquidoPorSupervisor_SemCredenciais_FalhaRapido — sem
+// JC_ORACLE_USER/JC_ORACLE_PASS (caso do ambiente de dev/CI), a função tem
+// que falhar IMEDIATAMENTE — sem tentar abrir socket nem esperar timeout de
+// rede. É o que garante que o comparativo continua rápido quando a VM não
+// está configurada, em vez de travar ~20-100s por upload.
+func TestVMLiquidoPorSupervisor_SemCredenciais_FalhaRapido(t *testing.T) {
+	if os.Getenv("JC_ORACLE_USER") != "" {
+		t.Skip("JC_ORACLE_USER configurada neste ambiente — este teste só cobre o caminho SEM credenciais")
+	}
+	t0 := time.Now()
+	_, err := vmLiquidoPorSupervisor(context.Background(), "empresa-x", mustParseData(t, "2026-08-01"), mustParseData(t, "2026-08-26"), nil, tipoVendaReal, escopoRecorte{}, resolveFluxo("faturado"))
+	dur := time.Since(t0)
+	if err == nil {
+		t.Fatal("esperava erro (sem credenciais Oracle configuradas)")
+	}
+	if dur > 2*time.Second {
+		t.Errorf("deveria falhar rápido (sem credenciais = nem tenta conectar), levou %v", dur)
+	}
+}
+
 // ─── Fluxo (Faturado x Transmitido) ────────────────────────────────────────
 //
 // Cobre a I/O Matrix de spec-comparativo-rel322-fluxo.md: dado sintético
 // próprio (a base local está vazia, ver "Manual checks" da spec), inserido e
 // removido pelo próprio teste — nunca depende de dado pré-existente. Testa
-// direto farolBrutoLiquidoPorSupervisor (o mesmo código que o handler chama
+// direto farolLiquidoPorSupervisor (o mesmo código que o handler chama
 // via montarComparativo), sem subir PDF: quem cobre o parsing é a suíte
 // acima.
 
@@ -766,7 +1003,7 @@ func limparFluxoRel322Fixture(t *testing.T, db *sql.DB, empresaID, codSupervisor
 // vendas_faturadas E vendas_ccd (evento CORTADO) com valores propositalmente
 // diferentes, pra provar que a tabela errada não vaza pro resultado e que o
 // CORTADO agora É subtraído (não mais ignorado). Testa no nível de
-// montarComparativo (não só farolBrutoLiquidoPorSupervisor) porque é aí que
+// montarComparativo (não só farolLiquidoPorSupervisor) porque é aí que
 // o ponteiro LiquidoFarol é montado pra resposta.
 func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	db, empresaID := biTestDB(t)
@@ -799,7 +1036,7 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 		Linhas:       []linhaExtraidaRel322{{CodSupervisor: cod, Descricao: "TESTE TRANSMITIDO", VlVendido: 1200}},
 	}
 
-	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopoRecorte{}, resolveFluxo("transmitido"))
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, nil, escopoRecorte{}, resolveFluxo("transmitido"))
 	if err != nil {
 		t.Fatalf("montarComparativo: %v", err)
 	}
@@ -810,14 +1047,14 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 		t.Fatalf("esperava 1 linha, veio %d: %+v", len(resp.Linhas), resp.Linhas)
 	}
 	l := resp.Linhas[0]
-	if l.BrutoFarol == nil || *l.BrutoFarol != 1200 {
-		t.Errorf("BrutoFarol = %v, want 1200 (transmitido, não deve ler vendas_faturadas)", l.BrutoFarol)
-	}
 	if l.LiquidoFarol == nil || *l.LiquidoFarol != 423 {
 		t.Errorf("LiquidoFarol = %v, want 423 (1200 Bruto - 777 Cortado)", l.LiquidoFarol)
 	}
-	if l.Status != "ok" {
-		t.Errorf("status = %q, want ok (Bruto bate exato com o Vl.Vendido do PDF)", l.Status)
+	// Status agora é decidido SÓ por Líquido×PDF (Bruto saiu da tela) — 423
+	// está longe dos 1200 do PDF, então diverge. Não é regressão: é
+	// exatamente o efeito esperado de trabalhar só com Líquido.
+	if l.Status != "divergencia" {
+		t.Errorf("status = %q, want divergencia (Líquido 423 está longe do Vl.Vendido 1200 do PDF)", l.Status)
 	}
 	if resp.TotalLiquidoFarol != 423 {
 		t.Errorf("TotalLiquidoFarol = %v, want 423", resp.TotalLiquidoFarol)
@@ -843,19 +1080,16 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoMaiorQueBruto(t *testing.T) 
 		t.Fatalf("insert vendas_ccd: %v", err)
 	}
 
-	out, err := farolBrutoLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, escopoRecorte{}, resolveFluxo("transmitido"))
+	out, err := farolLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, nil, nil, escopoRecorte{}, resolveFluxo("transmitido"))
 	if err != nil {
-		t.Fatalf("farolBrutoLiquidoPorSupervisor: %v", err)
+		t.Fatalf("farolLiquidoPorSupervisor: %v", err)
 	}
 	got, achou := out[cod]
 	if !achou {
 		t.Fatalf("cod_supervisor %s não apareceu no resultado: %+v", cod, out)
 	}
-	if got.Bruto != 500 {
-		t.Errorf("Bruto = %v, want 500", got.Bruto)
-	}
-	if got.Liquido != -300 {
-		t.Errorf("Liquido = %v, want -300 (Cortado > Bruto, negativo sem clamp nem erro)", got.Liquido)
+	if got != -300 {
+		t.Errorf("Liquido = %v, want -300 (Cortado > Bruto, negativo sem clamp nem erro)", got)
 	}
 }
 
@@ -868,7 +1102,7 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoMaiorQueBruto(t *testing.T) 
 // fluxo Transmitido sempre dava ao supervisor uma linha em
 // vendas_transmitidas também, nunca exercitando o lado "só ccd" do join.
 //
-// Cobre nos dois níveis: farolBrutoLiquidoPorSupervisor (o mapa cru) e
+// Cobre nos dois níveis: farolLiquidoPorSupervisor (o mapa cru) e
 // montarComparativo (a resposta final) — no segundo nível, confirma que o
 // corte isolado não gera um SemDadoFarolNoPeriodo falso-positivo (o Farol TEM
 // dado no período, só que Bruto=0) nem some da lista de linhas: vira órfão
@@ -893,19 +1127,16 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testi
 		t.Fatalf("insert vendas_ccd: %v", err)
 	}
 
-	out, err := farolBrutoLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, escopoRecorte{}, resolveFluxo("transmitido"))
+	out, err := farolLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, nil, nil, escopoRecorte{}, resolveFluxo("transmitido"))
 	if err != nil {
-		t.Fatalf("farolBrutoLiquidoPorSupervisor: %v", err)
+		t.Fatalf("farolLiquidoPorSupervisor: %v", err)
 	}
 	got, achou := out[cod]
 	if !achou {
 		t.Fatalf("cod_supervisor %s (só CORTADO, sem linha em vendas_transmitidas) não apareceu no mapa — vazou do FULL OUTER JOIN: %+v", cod, out)
 	}
-	if got.Bruto != 0 {
-		t.Errorf("Bruto = %v, want 0 (sem linha em vendas_transmitidas no período)", got.Bruto)
-	}
-	if got.Liquido != -650 {
-		t.Errorf("Liquido = %v, want -650 (0 Bruto - 650 Cortado)", got.Liquido)
+	if got != -650 {
+		t.Errorf("Liquido = %v, want -650 (0 Bruto - 650 Cortado)", got)
 	}
 
 	// outroCod tem uma linha mínima em vendas_transmitidas só pra não virar
@@ -924,7 +1155,7 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testi
 		Linhas:       []linhaExtraidaRel322{{CodSupervisor: outroCod, Descricao: "OUTRO SUPERVISOR NO PDF", VlVendido: 1}},
 	}
 
-	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopoRecorte{}, resolveFluxo("transmitido"))
+	resp, err := montarComparativo(context.Background(), db, empresaID, parsed, nil, escopoRecorte{}, resolveFluxo("transmitido"))
 	if err != nil {
 		t.Fatalf("montarComparativo: %v", err)
 	}
@@ -940,9 +1171,6 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testi
 		achouCorte = true
 		if l.Status != "orfao" || l.Origem != "farol" {
 			t.Errorf("corte isolado deveria virar órfão de origem farol (não citado no PDF): %+v", l)
-		}
-		if l.BrutoFarol == nil || *l.BrutoFarol != 0 {
-			t.Errorf("BrutoFarol = %v, want 0", l.BrutoFarol)
 		}
 		if l.LiquidoFarol == nil || *l.LiquidoFarol != -650 {
 			t.Errorf("LiquidoFarol = %v, want -650 (corte sem venda transmitida não pode sumir nem vir positivo/nil)", l.LiquidoFarol)
@@ -979,19 +1207,20 @@ func TestComparativoRel322_Fluxo_FaturadoPadraoInalterado(t *testing.T) {
 
 	// fluxo vazio ("" não reconhecido) tem que cair no default faturado, sem
 	// validação nova — mesmo resolveFluxo("") usado em qualquer outra tela.
-	out, err := farolBrutoLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, escopoRecorte{}, resolveFluxo(""))
+	// tiposVenda = tipoVendaReal replica o default que montarComparativo
+	// resolveria via tipoVendaSelecionado quando o usuário não mexe no
+	// filtro "Tipo de Venda" — chamada direta a farolLiquidoPorSupervisor
+	// (bypassando montarComparativo) precisa fornecer esse default à mão.
+	out, err := farolLiquidoPorSupervisor(context.Background(), db, empresaID, data, data, nil, tipoVendaReal, escopoRecorte{}, resolveFluxo(""))
 	if err != nil {
-		t.Fatalf("farolBrutoLiquidoPorSupervisor: %v", err)
+		t.Fatalf("farolLiquidoPorSupervisor: %v", err)
 	}
 	got, achou := out[cod]
 	if !achou {
 		t.Fatalf("cod_supervisor %s não apareceu no resultado: %+v", cod, out)
 	}
-	if got.Bruto != 1200 {
-		t.Errorf("Bruto = %v, want 1200 (faturado, não deve ler vendas_transmitidas)", got.Bruto)
-	}
-	if got.Liquido != 700 {
-		t.Errorf("Liquido = %v, want 700 (1000 venda_real - 300 CANCELADO; CORTADO não conta no fluxo faturado)", got.Liquido)
+	if got != 700 {
+		t.Errorf("Liquido = %v, want 700 (1000 venda_real - 300 CANCELADO; CORTADO não conta no fluxo faturado)", got)
 	}
 }
 
@@ -1012,7 +1241,7 @@ func TestComparativoRel322_MontarComparativo_ExpoeFluxoNaResposta(t *testing.T) 
 		{"faturado", "faturado"},
 		{"transmitido", "transmitido"},
 	} {
-		resp, err := montarComparativo(context.Background(), db, empresaID, parsed, escopoRecorte{}, resolveFluxo(caso.param))
+		resp, err := montarComparativo(context.Background(), db, empresaID, parsed, nil, escopoRecorte{}, resolveFluxo(caso.param))
 		if err != nil {
 			t.Fatalf("montarComparativo(%q): %v", caso.param, err)
 		}
@@ -1111,13 +1340,14 @@ func TestComparativoRel322_PDF_Normal(t *testing.T) {
 		Linhas: []linhaComparativoRel322{
 			{
 				CodSupervisor: "124", Supervisor: "GO - VALE SAO PATRICIO - LUCAS",
-				VlVendidoPDF: f64p(9223911.54), BrutoFarol: f64p(9223911.54), LiquidoFarol: f64p(9000000),
-				DiferencaPct: f64p(0), Status: "ok", Origem: "ambos",
+				VlVendidoPDF: f64p(9223911.54), LiquidoFarol: f64p(9000000), LiquidoVM: f64p(9223911.54),
+				DiferencaPDFxFarolPct: f64p(0), DiferencaPDFxVMPct: f64p(0), DiferencaVMxFarolPct: f64p(2.4),
+				Status: "ok", Origem: "ambos",
 			},
 			{
 				CodSupervisor: "240", Supervisor: "GO - NORTE - JOSENILTON",
-				VlVendidoPDF: f64p(100000), BrutoFarol: f64p(90000), LiquidoFarol: f64p(89000),
-				DiferencaPct: f64p(10), Status: "divergencia", Origem: "ambos",
+				VlVendidoPDF: f64p(100000), LiquidoFarol: f64p(89000),
+				DiferencaPDFxFarolPct: f64p(10), Status: "divergencia", Origem: "ambos",
 			},
 			{
 				CodSupervisor: "705", Supervisor: "SUPERVISOR SO NO PDF",
@@ -1125,7 +1355,7 @@ func TestComparativoRel322_PDF_Normal(t *testing.T) {
 			},
 			{
 				CodSupervisor: "999",
-				BrutoFarol:    f64p(5000), LiquidoFarol: f64p(5000), Status: "orfao", Origem: "farol",
+				LiquidoFarol:  f64p(5000), Status: "orfao", Origem: "farol",
 			},
 		},
 	}
@@ -1160,7 +1390,7 @@ func TestComparativoRel322_PDF_Normal(t *testing.T) {
 			t.Errorf("texto extraído não contém o status %q: %q", esperado, texto)
 		}
 	}
-	// Linha 999 (órfã só-farol): VlVendidoPDF e DiferencaPct são nil →
+	// Linha 999 (órfã só-farol): VlVendidoPDF e DiferencaPDFxFarolPct são nil →
 	// precisam aparecer como "—", nunca R$ 0,00 nem "+Inf%"/"NaN%".
 	if !strings.Contains(texto, "—") {
 		t.Errorf("texto extraído não contém o traço \"—\" esperado para os campos ausentes: %q", texto)
@@ -1182,13 +1412,13 @@ func TestComparativoRel322_PDF_SemDadoNoPeriodo(t *testing.T) {
 		Linhas: []linhaComparativoRel322{
 			{
 				CodSupervisor: "124", Supervisor: "GO - VALE SAO PATRICIO - LUCAS",
-				VlVendidoPDF: f64p(9223911.54), BrutoFarol: f64p(0), LiquidoFarol: f64p(0),
-				DiferencaPct: nil, Status: "divergencia", Origem: "ambos",
+				VlVendidoPDF: f64p(9223911.54), LiquidoFarol: f64p(0),
+				DiferencaPDFxFarolPct: nil, Status: "divergencia", Origem: "ambos",
 			},
 			{
 				CodSupervisor: "240", Supervisor: "GO - NORTE - JOSENILTON",
-				VlVendidoPDF: f64p(8597443.46), BrutoFarol: f64p(0), LiquidoFarol: f64p(0),
-				DiferencaPct: nil, Status: "divergencia", Origem: "ambos",
+				VlVendidoPDF: f64p(8597443.46), LiquidoFarol: f64p(0),
+				DiferencaPDFxFarolPct: nil, Status: "divergencia", Origem: "ambos",
 			},
 		},
 	}
@@ -1239,7 +1469,7 @@ func TestComparativoRel322_PercentDiff(t *testing.T) {
 }
 
 // TestComparativoRel322_PctOuTraco_InfNaN — defesa em profundidade.
-// cruzarComRel322 já garante que DiferencaPct vira nil (não +Inf) quando a
+// cruzarComRel322 já garante que DiferencaPDFxFarolPct vira nil (não +Inf) quando a
 // distância é infinita, mas pctOuTracoRel322 não pode confiar cegamente
 // nisso: se um ponteiro não-nil só NaN/Inf chegasse até ela (hoje ou por uma
 // mudança futura em cruzarComRel322), formatar direto imprimiria
