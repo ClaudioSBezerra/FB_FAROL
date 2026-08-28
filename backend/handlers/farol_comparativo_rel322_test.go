@@ -1597,6 +1597,67 @@ func TestComparativoRel322_Handler_FormatoPDF(t *testing.T) {
 	}
 }
 
+// jsonReqRel322 — monta uma request POST com corpo JSON, já autenticada
+// (mesmo atalho de multipartPDFReqRel322).
+func jsonReqRel322(t *testing.T, url string, body any, empresaID string) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, url, &buf)
+	r.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(r.Context(), SpContextKey, &FarolContext{
+		UserID: "teste", SpRole: "gestor_geral", EmpresaID: empresaID,
+		AllFiliais: true, Modulos: []string{"vendas"},
+	})
+	return r.WithContext(ctx)
+}
+
+// TestComparativoRel322_Handler_FormatoPDF_DoResultadoJSON — "Baixar PDF"
+// reenvia o resultado JÁ CALCULADO (JSON) em vez de re-subir o PDF do
+// WinThor, pra não pagar de novo o custo da consulta à VM (~1-2min fixo).
+// Esse caminho não reprocessa nada — só desenha o PDF a partir do corpo.
+func TestComparativoRel322_Handler_FormatoPDF_DoResultadoJSON(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	resultado := comparativoRel322Resposta{
+		Periodo: "01/08/2026 a 26/08/2026", DataInicio: "2026-08-01", DataFim: "2026-08-26",
+		Fluxo: "faturado", Filiais: []string{},
+		Linhas: []linhaComparativoRel322{
+			{CodSupervisor: "124", Supervisor: "TESTE", VlVendidoPDF: f64p(1000), LiquidoFarol: f64p(1000), Status: "ok", Origem: "ambos"},
+		},
+		TotalVlVendidoPDF: 1000, TotalLiquidoFarol: 1000, QtdSupervisoresPDF: 1,
+	}
+
+	r := jsonReqRel322(t, "/api/v2/farol/relatorio/comparativo-rel322?formato=pdf", resultado, empresaID)
+	w := httptest.NewRecorder()
+	ComparativoRel322Handler(db)(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, corpo: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type = %q, want application/pdf", ct)
+	}
+	if !bytes.HasPrefix(w.Body.Bytes(), []byte("%PDF")) {
+		t.Errorf("corpo da resposta não começa com %%PDF")
+	}
+}
+
+// TestComparativoRel322_Handler_JSONSemFormatoPDF_Rejeitado — corpo JSON só
+// faz sentido com ?formato=pdf (é sempre "renderiza este resultado já
+// pronto"); sem isso, não há nada de novo a devolver.
+func TestComparativoRel322_Handler_JSONSemFormatoPDF_Rejeitado(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	r := jsonReqRel322(t, "/api/v2/farol/relatorio/comparativo-rel322", comparativoRel322Resposta{}, empresaID)
+	w := httptest.NewRecorder()
+	ComparativoRel322Handler(db)(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (corpo JSON exige ?formato=pdf): %s", w.Code, w.Body.String())
+	}
+}
+
 // TestComparativoRel322_Handler_FormatoJSONPadrao — o "Never" da spec: sem
 // ?formato (ou formato diferente de pdf), o contrato antigo não pode
 // quebrar. Mesmo upload do teste acima, sem a querystring.

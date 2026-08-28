@@ -45,6 +45,9 @@ interface ComparativoResposta {
   total_vl_vendido_pdf: number
   total_liquido_farol: number
   total_liquido_vm: number | null
+  total_diferenca_pdf_vm_pct: number | null
+  total_diferenca_pdf_farol_pct: number | null
+  total_diferenca_vm_farol_pct: number | null
   qtd_supervisores_pdf: number
   qtd_divergencias: number
   qtd_orfaos: number
@@ -216,19 +219,23 @@ export default function FarolComparativoRel322() {
   // backend reprocessa o upload no mesmo request (nada fica salvo, mesmo
   // padrão do resto da feature) e devolve o PDF do RESULTADO do comparativo.
   // Não é um <a href> simples: a rota exige o cabeçalho de autorização.
+  // baixarPDF — reenvia o RESULTADO JÁ CALCULADO (JSON) em vez de re-subir o
+  // PDF do WinThor: o backend só desenha o PDF a partir desses dados, sem
+  // reprocessar o upload nem refazer as consultas ao Farol/VM. Antes disso,
+  // "Baixar PDF" pagava de novo o custo da consulta à VM (~1-2min fixo) só
+  // pra gerar o mesmo resultado que a tela já mostrava — por isso exige um
+  // "Comparar" primeiro (não dá mais pra baixar sem antes ver o resultado).
   async function baixarPDF() {
-    if (!arquivo) {
-      toast.error('Selecione o PDF do REL 322 (WinThor)')
+    if (!resultado) {
+      toast.error('Clique em "Comparar" primeiro')
       return
     }
     setBaixandoPDF(true)
     try {
-      const form = new FormData()
-      form.append('file', arquivo)
-      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?formato=pdf&${queryString()}`, {
+      const res = await fetch(`/api/v2/farol/relatorio/comparativo-rel322?formato=pdf`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(resultado),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => null)
@@ -242,11 +249,10 @@ export default function FarolComparativoRel322() {
       const a = document.createElement('a')
       a.href = url
       // O nome inclui o período do PDF de origem — vem do Content-Disposition
-      // que o backend já monta com data_inicio/data_fim, então funciona mesmo
-      // se "Baixar PDF" for clicado antes de "Comparar" (resultado ainda nulo).
+      // que o backend já monta com data_inicio/data_fim.
       const disposicao = res.headers.get('content-disposition') ?? ''
       const nomeMatch = disposicao.match(/filename="?([^"]+)"?/)
-      const periodo = resultado ? `${resultado.data_inicio}_a_${resultado.data_fim}` : new Date().toISOString().slice(0, 10)
+      const periodo = `${resultado.data_inicio}_a_${resultado.data_fim}`
       a.download = nomeMatch?.[1] || `comparativo-rel322_${periodo}.pdf`
       // Precisa estar no DOM antes do clique — em alguns navegadores um <a>
       // solto não dispara o download. Revoga a URL blob: um pouco depois
@@ -373,7 +379,7 @@ export default function FarolComparativoRel322() {
             <Upload className="h-4 w-4" />
             {carregando ? 'Consultando (PDF, Farol e base de origem)…' : 'Comparar'}
           </Button>
-          <Button variant="outline" onClick={baixarPDF} disabled={!arquivo || carregando || baixandoPDF} className="gap-2">
+          <Button variant="outline" onClick={baixarPDF} disabled={!resultado || carregando || baixandoPDF} className="gap-2" title={!resultado ? 'Clique em "Comparar" primeiro' : undefined}>
             <Download className="h-4 w-4" />
             {baixandoPDF ? 'Gerando…' : 'Baixar PDF'}
           </Button>
@@ -417,41 +423,60 @@ export default function FarolComparativoRel322() {
 
       {resultado && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
               <div className="text-xs uppercase tracking-wide text-slate-500">Período (do PDF)</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{resultado.periodo}</div>
-              <span
-                className={`mt-2 inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
-                  resultado.fluxo === 'transmitido'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                }`}
-              >
-                Fluxo: {fluxoLabel(resultado.fluxo)}
-              </span>
-              {resultado.filiais.length > 0 && (
-                <div className="mt-2 text-xs text-slate-400">Filial(is): {resultado.filiais.join(', ')}</div>
-              )}
+              <div className="text-sm font-bold text-slate-900">{resultado.periodo}</div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Total Vl.Vendido (PDF)</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_vl_vendido_pdf)}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (Farol)</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_farol)}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Total Líquido (VM)</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_vm)}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Divergências / Órfãs</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">
-                {resultado.qtd_divergencias} / {resultado.qtd_orfaos}
+            <span
+              className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-semibold uppercase tracking-wide ${
+                resultado.fluxo === 'transmitido'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+            >
+              Fluxo: {fluxoLabel(resultado.fluxo)}
+            </span>
+            {resultado.filiais.length > 0 && (
+              <span className="text-xs text-slate-500">Filial(is): {resultado.filiais.join(', ')}</span>
+            )}
+            <span className="text-xs text-slate-500 ml-auto">
+              {resultado.qtd_supervisores_pdf} supervisores no PDF · {resultado.qtd_divergencias} divergência(s) · {resultado.qtd_orfaos} órfã(s)
+            </span>
+          </div>
+
+          {/* Quadro comparativo TOTAL — mesma estrutura das linhas (3 valores +
+              3 diferenças), sobre a soma de tudo: é o primeiro número que o
+              gestor bate contra o "N Supervisores Listados" do WinThor. */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-3">Totais</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <div>
+                <div className="text-xs text-slate-500">Vl.Vendido (PDF)</div>
+                <div className="text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_vl_vendido_pdf)}</div>
               </div>
-              <div className="text-xs text-slate-400">{resultado.qtd_supervisores_pdf} supervisores no PDF</div>
+              <div>
+                <div className="text-xs text-slate-500">Líquido (Farol)</div>
+                <div className="text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_farol)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Líquido (VM)</div>
+                <div className="text-2xl font-bold text-slate-900">{fmtBRL(resultado.total_liquido_vm)}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-100">
+              <div>
+                <div className="text-xs text-slate-500">% PDF × VM</div>
+                <div className="text-lg font-semibold text-slate-700">{fmtPct(resultado.total_diferenca_pdf_vm_pct)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">% PDF × Farol</div>
+                <div className="text-lg font-semibold text-slate-700">{fmtPct(resultado.total_diferenca_pdf_farol_pct)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">% VM × Farol</div>
+                <div className="text-lg font-semibold text-slate-700">{fmtPct(resultado.total_diferenca_vm_farol_pct)}</div>
+              </div>
             </div>
           </div>
 

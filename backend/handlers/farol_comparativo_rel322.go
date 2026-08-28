@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/johnfercher/maroto/v2"
@@ -124,15 +125,21 @@ type comparativoRel322Resposta struct {
 	// Filiais — códigos do cabeçalho "Filiai(s) :" do PDF, aplicados como
 	// filtro na consulta ao Farol e à VM. Vazio = todas as filiais (PDF sem
 	// recorte, ou o campo não foi encontrado no cabeçalho).
-	Filiais               []string                 `json:"filiais"`
-	Linhas                []linhaComparativoRel322 `json:"linhas"`
-	TotalVlVendidoPDF     float64                  `json:"total_vl_vendido_pdf"`
-	TotalLiquidoFarol     float64                  `json:"total_liquido_farol"`
-	TotalLiquidoVM        *float64                 `json:"total_liquido_vm"`
-	QtdSupervisoresPDF    int                      `json:"qtd_supervisores_pdf"`
-	QtdDivergencias       int                      `json:"qtd_divergencias"`
-	QtdOrfaos             int                      `json:"qtd_orfaos"`
-	SemDadoFarolNoPeriodo bool                     `json:"sem_dado_farol_no_periodo"`
+	Filiais           []string                 `json:"filiais"`
+	Linhas            []linhaComparativoRel322 `json:"linhas"`
+	TotalVlVendidoPDF float64                  `json:"total_vl_vendido_pdf"`
+	TotalLiquidoFarol float64                  `json:"total_liquido_farol"`
+	TotalLiquidoVM    *float64                 `json:"total_liquido_vm"`
+	// As três diferenças percentuais, agora também no TOTAL (não só por
+	// linha) — é o "quadro comparativo total" que faltava: 322 x VM, 322 x
+	// Farol, VM x Farol, sobre a soma de todas as linhas.
+	TotalDiferencaPDFxVMPct    *float64 `json:"total_diferenca_pdf_vm_pct"`
+	TotalDiferencaPDFxFarolPct *float64 `json:"total_diferenca_pdf_farol_pct"`
+	TotalDiferencaVMxFarolPct  *float64 `json:"total_diferenca_vm_farol_pct"`
+	QtdSupervisoresPDF         int      `json:"qtd_supervisores_pdf"`
+	QtdDivergencias            int      `json:"qtd_divergencias"`
+	QtdOrfaos                  int      `json:"qtd_orfaos"`
+	SemDadoFarolNoPeriodo      bool     `json:"sem_dado_farol_no_periodo"`
 	// VMIndisponivel — a consulta à base de origem falhou (Oracle
 	// inalcançável, credenciais ausentes, timeout). O comparativo PDF×Farol
 	// continua valendo — a VM é só um diagnóstico a mais, nunca bloqueia o
@@ -605,12 +612,29 @@ SELECT COALESCE(fat.cod_supervisor, ccd.cod_supervisor) AS cod_supervisor,
 func montarComparativo(ctx context.Context, db *sql.DB, empresaID string, parsed *rel322Parsed, tiposVendaSelecao []string, escopo escopoRecorte, fluxo fluxoCtx) (*comparativoRel322Resposta, error) {
 	tiposVenda := tipoVendaSelecionado(tiposVendaSelecao, fluxo)
 
-	farol, err := farolLiquidoPorSupervisor(ctx, db, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
-	if err != nil {
-		return nil, err
-	}
+	// Farol (Postgres, rápido) e VM (Oracle, ~1-2min fixo) rodam em
+	// PARALELO — sequencial pagaria o tempo dos dois somados à toa, já que
+	// são consultas independentes (bases diferentes, nenhuma usa o
+	// resultado da outra).
+	var farol map[string]float64
+	var farolErr error
+	var vm map[string]float64
+	var vmErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		farol, farolErr = farolLiquidoPorSupervisor(ctx, db, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
+	}()
+	go func() {
+		defer wg.Done()
+		vm, vmErr = vmLiquidoPorSupervisor(ctx, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
+	}()
+	wg.Wait()
 
-	vm, vmErr := vmLiquidoPorSupervisor(ctx, empresaID, parsed.DataInicio, parsed.DataFim, parsed.Filiais, tiposVenda, escopo, fluxo)
+	if farolErr != nil {
+		return nil, farolErr
+	}
 	if vmErr != nil {
 		log.Printf("[comparativo322] VM indisponível: %v", vmErr)
 	}
@@ -762,11 +786,20 @@ func cruzarComRel322(farol map[string]float64, vm map[string]float64, vmErr erro
 		QtdOrfaos:             qtdOrfaos,
 		SemDadoFarolNoPeriodo: semDadoNoPeriodo,
 	}
+	if !math.IsInf(percentDiffRel322(totalLiquido, totalPDF), 0) {
+		resp.TotalDiferencaPDFxFarolPct = f64p(percentDiffRel322(totalLiquido, totalPDF) * 100)
+	}
 	if vmErr != nil {
 		resp.VMIndisponivel = true
 		resp.VMErro = "não foi possível consultar a base de origem (VM) agora — tente novamente em instantes"
 	} else if temVM {
 		resp.TotalLiquidoVM = f64p(totalVM)
+		if !math.IsInf(percentDiffRel322(totalVM, totalPDF), 0) {
+			resp.TotalDiferencaPDFxVMPct = f64p(percentDiffRel322(totalVM, totalPDF) * 100)
+		}
+		if !math.IsInf(percentDiffRel322(totalLiquido, totalVM), 0) {
+			resp.TotalDiferencaVMxFarolPct = f64p(percentDiffRel322(totalLiquido, totalVM) * 100)
+		}
 	}
 	return resp
 }
@@ -819,6 +852,29 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 		spCtx := GetSpContext(r)
 		if spCtx == nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		// Corpo JSON (Content-Type: application/json) reaproveita um
+		// resultado JÁ CALCULADO — a própria resposta de um "Comparar"
+		// anterior, reenviada pela tela — pra só desenhar o PDF, sem
+		// reprocessar o PDF do WinThor nem refazer as consultas ao
+		// Farol/VM. Existe porque a VM custa ~1-2min fixo: sem isto,
+		// "Baixar PDF" logo depois de "Comparar" pagava esse custo de novo
+		// à toa, só pra gerar o mesmo resultado que a tela já mostrava. Só
+		// serve com ?formato=pdf — não há um "resultado json" a devolver de
+		// um resultado que já é json.
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			if !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("formato")), "pdf") {
+				http.Error(w, jsonErrorRel322("corpo JSON só é aceito com ?formato=pdf"), http.StatusBadRequest)
+				return
+			}
+			var resultado comparativoRel322Resposta
+			if err := json.NewDecoder(r.Body).Decode(&resultado); err != nil {
+				http.Error(w, jsonErrorRel322("corpo JSON inválido"), http.StatusBadRequest)
+				return
+			}
+			escreverPDFComparativo(w, db, spCtx.EmpresaID, &resultado)
 			return
 		}
 
@@ -902,19 +958,7 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 		// Sem persistência, igual ao resto da feature. Default (json) mantém
 		// o contrato já em produção intocado.
 		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("formato")), "pdf") {
-			logo, ext := logoRelatorio(db, spCtx.EmpresaID)
-			pdfBytes, gerr := comparativoRel322PDF(resultado, logo, ext)
-			if gerr != nil {
-				log.Printf("[comparativo322] PDF ERRO: %v", gerr)
-				http.Error(w, jsonErrorRel322("falha ao gerar PDF"), http.StatusInternalServerError)
-				return
-			}
-			nome := fmt.Sprintf("comparativo-rel322_%s_a_%s", resultado.DataInicio, resultado.DataFim)
-			w.Header().Set("Content-Type", "application/pdf")
-			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, nome))
-			if _, werr := w.Write(pdfBytes); werr != nil {
-				log.Printf("[comparativo322] falha ao escrever resposta PDF: %v", werr)
-			}
+			escreverPDFComparativo(w, db, spCtx.EmpresaID, resultado)
 			return
 		}
 
@@ -931,6 +975,26 @@ func ComparativoRel322Handler(db *sql.DB) http.HandlerFunc {
 func jsonErrorRel322(msg string) string {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	return string(b)
+}
+
+// escreverPDFComparativo — gera e escreve o PDF do RESULTADO do comparativo
+// (nunca do PDF do WinThor enviado). Compartilhada pelos dois caminhos que
+// chegam a ?formato=pdf: upload novo (reprocessa tudo) e corpo JSON
+// (reaproveita um resultado já calculado, sem pagar de novo a VM).
+func escreverPDFComparativo(w http.ResponseWriter, db *sql.DB, empresaID string, resultado *comparativoRel322Resposta) {
+	logo, ext := logoRelatorio(db, empresaID)
+	pdfBytes, gerr := comparativoRel322PDF(resultado, logo, ext)
+	if gerr != nil {
+		log.Printf("[comparativo322] PDF ERRO: %v", gerr)
+		http.Error(w, jsonErrorRel322("falha ao gerar PDF"), http.StatusInternalServerError)
+		return
+	}
+	nome := fmt.Sprintf("comparativo-rel322_%s_a_%s", resultado.DataInicio, resultado.DataFim)
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, nome))
+	if _, werr := w.Write(pdfBytes); werr != nil {
+		log.Printf("[comparativo322] falha ao escrever resposta PDF: %v", werr)
+	}
 }
 
 // ─── PDF ──────────────────────────────────────────────────────────────────────
@@ -1024,6 +1088,27 @@ func comparativoRel322PDF(resultado *comparativoRel322Resposta, logo []byte, ext
 			col.New(1).Add(text.New(statusTextoRel322(l.Status), cel)),
 		))
 	}
+
+	// Quadro comparativo TOTAL — mesma estrutura das linhas (3 valores + 3
+	// diferenças), mas sobre a soma de tudo. Destacado (fundo/negrito) por
+	// ser o número que o gestor bate primeiro contra o "N Supervisores
+	// Listados" do WinThor.
+	totNum := props.Text{Size: 6.5, Style: fontstyle.Bold}
+	totDir := props.Text{Size: 6.5, Style: fontstyle.Bold, Align: align.Right}
+	pg.Add(row.New(6).Add(col.New(12).Add(
+		text.New("TOTAIS", props.Text{Size: 8, Style: fontstyle.Bold, Top: 3}),
+	)))
+	pg.Add(row.New(7).Add(
+		col.New(4).Add(text.New("Vl.Vendido (PDF) / Líquido (Farol) / Líquido (VM)", totNum)),
+		col.New(3).Add(text.New(
+			fmt.Sprintf("%s / %s / %s",
+				moedaBR(resultado.TotalVlVendidoPDF), moedaBR(resultado.TotalLiquidoFarol), valorOuTracoRel322(resultado.TotalLiquidoVM)),
+			totDir)),
+		col.New(1).Add(text.New(pctOuTracoRel322(resultado.TotalDiferencaPDFxVMPct), totDir)),
+		col.New(1).Add(text.New(pctOuTracoRel322(resultado.TotalDiferencaPDFxFarolPct), totDir)),
+		col.New(1).Add(text.New(pctOuTracoRel322(resultado.TotalDiferencaVMxFarolPct), totDir)),
+		col.New(2).Add(text.New("% PDF×VM · % PDF×Farol · % VM×Farol", props.Text{Size: 6, Align: align.Left})),
+	))
 
 	pg.Add(row.New(10).Add(col.New(12).Add(
 		text.New("OK = Líquido (Farol) está a até 0,5% do Vl.Vendido do PDF. DIVERGÊNCIA = fora dessa tolerância. "+
