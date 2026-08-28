@@ -840,10 +840,12 @@ function useDimsCli(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: 
   })
 }
 
-// useIndustrias — opções do filtro cruzado "Indústria" (canônico,
+// useIndustrias — opções do filtro cruzado "FORN DIST" (canônico,
 // deduplicado — cadastro em /gestao/industrias, distinto do FORN.GERAL cru
-// de cod_fornec). Lista fixa por empresa, não depende de período/fluxo como
-// os outros dims — por isso hook próprio, sem passar por useDims.
+// de cod_fornec; rótulo do chip era "Indústria", renomeado pra "FORN DIST"
+// em 28/08/2026 a pedido do Heverton, pra manter o padrão com "FORN.GERAL").
+// Lista fixa por empresa, não depende de período/fluxo como os outros dims
+// — por isso hook próprio, sem passar por useDims.
 function useIndustrias() {
   return useQuery<{ id: number; nome: string }[]>({
     queryKey: ['farol-industrias-filtro'],
@@ -1025,7 +1027,9 @@ export default function FarolExecutivo() {
   const FILTER_DIMS: { col: string; label: string; from: keyof DimsResponse }[] = [
     // Rótulo era "Indústria" até 28/08/2026 — cod_fornec cru (mesmo fabricante
     // pode ter 2+ códigos). Renomeado pra "FORN.GERAL" pra liberar "Indústria"
-    // pro filtro canônico novo (chip separado, ver industriaOptions abaixo).
+    // pro filtro canônico novo (chip separado, ver industriaOptions abaixo —
+    // esse chip virou "FORN DIST" no mesmo dia, a pedido do Heverton, pra
+    // manter o padrão com "FORN.GERAL").
     { col: 'cod_fornec',     label: 'FORN.GERAL', from: 'fornec' },
     { col: 'cod_gerente',    label: 'Gerente',    from: 'gerente' },
     { col: 'cod_supervisor', label: 'Supervisor', from: 'supervisor' },
@@ -1150,9 +1154,10 @@ export default function FarolExecutivo() {
             // esta hierarquia agrupa por cod_fornec CRU (o mesmo fabricante pode
             // ter 2+ códigos, um por grupo de filiais — ver cadastro em
             // /gestao/industrias). O rótulo "Por Indústria" ficou livre pro
-            // filtro cruzado novo (canônico, deduplicado — chip "Indústria" logo
-            // abaixo), que é o conceito que o gestor realmente quer dizer com
-            // "indústria".
+            // filtro cruzado novo (canônico, deduplicado — chip "FORN DIST" logo
+            // abaixo, renomeado de "Indústria" em 28/08/2026 a pedido do
+            // Heverton, pra manter o padrão com "FORN.GERAL"), que é o conceito
+            // que o gestor realmente quer dizer com "indústria".
             { id: 'V01' as const, label: 'Por FORN.GERAL' },
             { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V02' as const, label: 'Por Equipe' },
@@ -1211,7 +1216,7 @@ export default function FarolExecutivo() {
             Filial). */}
         {(industriasQ.data?.length ?? 0) > 0 && (
           <MultiSelect
-            label="Indústria"
+            label="FORN DIST"
             options={(industriasQ.data ?? []).map(i => ({ key: String(i.id), label: i.nome }))}
             selected={filters['cod_industria'] ?? []}
             onChange={vs => setFilter('cod_industria', vs)}
