@@ -4374,18 +4374,6 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
-		// Decisão do Heverton 28/08/2026: RCA/Supervisor no painel público só
-		// devem ver fornecedores cadastrados como indústria (/gestao/industrias),
-		// não a lista crua de cod_fornec (que inclui fornecedores avulsos sem
-		// relevância pro gestor de campo). Vale pra QUALQUER lugar do painel
-		// público que chegue no nível cod_fornec — V05 "Por Indústria" (direto
-		// no Supervisor) E V02 "Por RCA" (o RCA vê isso de cara ao abrir o
-		// próprio link, e o Supervisor vê ao entrar numa RCA específica).
-		// Restringe só nesse nível — depois de escolhido um cod_fornec, o drill
-		// já é sobre ele e a restrição não precisa mais ser reaplicada.
-		if currentLevel.Level == "cod_fornec" {
-			filters["cod_fornec"] = industriaMappedFornecs(db, empresaID)
-		}
 		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
@@ -4394,6 +4382,30 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 			if currentLevel.Level == "cod_fornec" {
 				fixOverlappingBaseCards(cards, kpi, !pr.CompInicio.IsZero() && !pr.CompFim.IsZero())
 			}
+		}
+		// Decisão do Heverton 28/08/2026: RCA/Supervisor no painel público só
+		// devem VER fornecedores cadastrados como indústria (/gestao/industrias)
+		// na LISTA de cards — V05 "Por Indústria" (direto no Supervisor) e V02
+		// "Por RCA" (o RCA vê isso de cara ao abrir o próprio link, e o
+		// Supervisor vê ao entrar numa RCA específica). Pós-filtro DEPOIS de
+		// kpi/positivados/mix calculados: entra em `filters` (como tentativa
+		// inicial) faria o totalizador do topo (Faturado/Transmitido) também
+		// excluir os fornecedores avulsos, dando um total MENOR que "Por RCA"
+		// pro MESMO recorte — reportado pelo Claudio 28/08/2026 (valores
+		// diferentes entre visões pro mesmo Supervisor/RCA). O totalizador tem
+		// que refletir o recorte inteiro; só a lista de cards é que se restringe.
+		if currentLevel.Level == "cod_fornec" {
+			mapeados := map[string]bool{}
+			for _, cod := range industriaMappedFornecs(db, empresaID) {
+				mapeados[cod] = true
+			}
+			restritos := cards[:0]
+			for _, c := range cards {
+				if mapeados[c.Key] {
+					restritos = append(restritos, c)
+				}
+			}
+			cards = restritos
 		}
 		curLabel, antLabel, plabel := buildPeriodoLabels(pr)
 
