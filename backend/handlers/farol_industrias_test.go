@@ -47,8 +47,8 @@ func TestIndustrias_CriarComFornecedores(t *testing.T) {
 	body := IndustriaRequest{
 		Nome: nome,
 		Fornecedores: []IndustriaFornecedorDTO{
-			{CodFornec: "47753", Rotulo: "MTZ/MS/BA"},
-			{CodFornec: "44957"},
+			{CodFornec: "99991", Rotulo: "MTZ/MS/BA"},
+			{CodFornec: "99992"},
 		},
 	}
 	w := httptest.NewRecorder()

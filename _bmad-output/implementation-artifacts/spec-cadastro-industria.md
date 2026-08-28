@@ -87,3 +87,7 @@ Não existe tabela mestra de fornecedores no schema atual (`cod_fornec` é sempr
 
 **Manual checks:**
 - Rodar a migration local, abrir `/gestao/industrias`, cadastrar as ~20 linhas da imagem enviada (`/home/claudio/uploads/WhatsApp Image 2026-08-27 at 11.30.57.jpeg`) manualmente pela tela, conferir que aparecem na lista.
+
+## Spec Change Log
+
+- **2026-08-28 — renegociação do "Never: não popula via migration/seed".** O Claudio pediu pra já entrar carregado com as 21 linhas da imagem, em vez de digitar manualmente. `backend/migrations/210_industrias_seed_inicial.sql` insere essas linhas (nome/razão social/cod_fornec/rótulo transcritos da imagem), uma vez, com `ON CONFLICT DO NOTHING` pra não duplicar nem sobrescrever cadastro manual feito antes do deploy. Depois deste seed, o "Never" original volta a valer — qualquer ajuste é pela tela, sem migration nova.
