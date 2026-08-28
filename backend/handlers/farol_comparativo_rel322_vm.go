@@ -19,17 +19,20 @@ package handlers
 // falhar ou estourar o tempo, o comparativo PDF×Farol continua valendo
 // (VMIndisponivel=true na resposta) — nunca bloqueia o resultado principal.
 //
-// AVISO — esta query NUNCA foi exercitada contra o Oracle real (ambiente de
-// dev não tem as credenciais JC_ORACLE_*): a sintaxe (binds posicionais
-// `:N`, CASE WHEN, LIKE, UPPER) é Oracle padrão e foi revisada com cuidado,
-// mas vale confirmar contra a base real (ou com quem mantém a integração da
-// JC) antes de confiar cegamente no primeiro resultado em produção.
+// VALIDADO em 28/08/2026 contra o Oracle real: o Claudio rodou um probe
+// manual (JC_USER=IAUSER) comparando 322 (WinThor) x VM x Farol pro mesmo
+// recorte (Transmitido, tipo_venda=1, 4 filiais, 5 fornecedores, jan-abr
+// 2026) — VM e Farol bateram a poucos centavos um do outro (140.937.111,13
+// x 140.937.108,43, sobre R$140M). Duas correções vieram desse probe:
+//   - a coluna de valor é PVENDA_TOTAL, não PVENDA (PVENDA é preço unitário;
+//     PVENDA_TOTAL é o valor da linha — o mesmo que farol_v2_import.go grava
+//     na coluna `pvenda` do Postgres, apesar do nome).
+//   - CONDVENDA compara contra STRING ('1', não 1) — sem cast numérico.
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -107,24 +110,18 @@ func montarQueryVM(objeto string, dataInicio, dataFim time.Time, filiais, tiposV
 		if len(tiposVenda) > 0 {
 			var ph []string
 			for _, tv := range tiposVenda {
-				n, convErr := strconv.Atoi(tv)
-				if convErr != nil {
-					continue // código não-numérico: ignora em vez de quebrar a query inteira
-				}
-				ph = append(ph, bind(n))
+				ph = append(ph, bind(tv))
 			}
-			if len(ph) > 0 {
-				condvendaCond = " AND CONDVENDA IN (" + strings.Join(ph, ", ") + ")"
-			}
+			condvendaCond = " AND CONDVENDA IN (" + strings.Join(ph, ", ") + ")"
 		}
-		somaNumerador = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) LIKE %s%s THEN PVENDA ELSE 0 END)",
+		somaNumerador = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) LIKE %s%s THEN PVENDA_TOTAL ELSE 0 END)",
 			transPH, condvendaCond)
 		// Subtrai Cortado: só entra quando NÃO é Transmitido (mesma
 		// precedência do detectEvento — TRANS é checado primeiro). Os dois
 		// bind() aqui são argumentos diretos do mesmo Sprintf — Go avalia
 		// argumentos de função da esquerda pra direita, então a ordem já
 		// bate com o texto sem precisar de variável intermediária.
-		somaSubtrai = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) NOT LIKE %s AND UPPER(ESTADO) LIKE %s THEN PVENDA ELSE 0 END)",
+		somaSubtrai = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) NOT LIKE %s AND UPPER(ESTADO) LIKE %s THEN PVENDA_TOTAL ELSE 0 END)",
 			bind("%TRANS%"), bind("%CORT%"))
 	} else {
 		// Faturado: numerador é "venda real" — linhas que NÃO são
@@ -139,20 +136,16 @@ func montarQueryVM(objeto string, dataInicio, dataFim time.Time, filiais, tiposV
 		cortPH := bind("%CORT%")
 		var tvPH []string
 		for _, tv := range tiposVenda {
-			n, convErr := strconv.Atoi(tv)
-			if convErr != nil {
-				continue
-			}
-			tvPH = append(tvPH, bind(n))
+			tvPH = append(tvPH, bind(tv))
 		}
 		condvendaCond := "1 = 0" // nenhum tipo válido selecionado: não conta nada, em vez de contar tudo por engano
 		if len(tvPH) > 0 {
 			condvendaCond = "CONDVENDA IN (" + strings.Join(tvPH, ", ") + ")"
 		}
 		somaNumerador = fmt.Sprintf(
-			"SUM(CASE WHEN UPPER(ESTADO) NOT LIKE %s AND UPPER(ESTADO) NOT LIKE %s AND %s THEN PVENDA ELSE 0 END)",
+			"SUM(CASE WHEN UPPER(ESTADO) NOT LIKE %s AND UPPER(ESTADO) NOT LIKE %s AND %s THEN PVENDA_TOTAL ELSE 0 END)",
 			transPH, cortPH, condvendaCond)
-		somaSubtrai = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) LIKE %s OR UPPER(ESTADO) LIKE %s THEN PVENDA ELSE 0 END)",
+		somaSubtrai = fmt.Sprintf("SUM(CASE WHEN UPPER(ESTADO) LIKE %s OR UPPER(ESTADO) LIKE %s THEN PVENDA_TOTAL ELSE 0 END)",
 			bind("%CANCEL%"), bind("%DEVOL%"))
 	}
 
