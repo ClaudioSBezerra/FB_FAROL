@@ -4383,6 +4383,60 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 				fixOverlappingBaseCards(cards, kpi, !pr.CompInicio.IsZero() && !pr.CompFim.IsZero())
 			}
 		}
+		// Bug estrutural achado 28/08/2026 (reportado pelo Claudio: Faturado
+		// R$ 3.056.526,93 em "Por RCA" vs R$ 2.347.249,83 em "Por Indústria",
+		// pro MESMO Supervisor/mês — e o mesmo vale pro Transmitido). Causa:
+		// as tabelas agg agrupadas por fornecedor (agg_fat_v02_l2_mes,
+		// agg_fat_v05_l1_mes em diante — migrations 167/172) exigem
+		// `cod_fornec <> ''` no upsert; qualquer venda com cod_fornec em
+		// branco desaparece da SOMA nesse nível, mas continua contando no
+		// nível RCA/Supervisor (agg_fat_v02_l0/l1_mes, que não exige
+		// cod_fornec). Isso afeta QUALQUER tela de cards de fornecedor, não só
+		// V05: V02 "Por RCA" tem o mesmo furo ao descer até um RCA específico.
+		//
+		// Fix: quando currentLevel.Level == "cod_fornec", o VALOR do
+		// totalizador (Faturado/Transmitido/Líquido/composição) não pode vir
+		// de computeKPI(cards,...) — refaz a partir da tabela V02 de RCA
+		// (nunca exige cod_fornec), reaproveitando fetchCards+computeKPI (o
+		// mesmo par usado pela tela "Por RCA" de verdade) em vez de reescrever
+		// a lógica de líquido/composição na mão. drillPath[:1] = só o
+		// Supervisor → busca a lista de RCAs dele:
+		//   - drillPath tem 1 elemento (V05 direto no Supervisor): soma TODOS
+		//     os RCAs = total do Supervisor.
+		//   - drillPath tem 2 (V02 já drilado num RCA): usa só o card do RCA
+		//     que bate com drillPath[1].Value — é o mesmo card que a tela
+		//     anterior (lista de RCAs) já mostrava, então bate por
+		//     construção. Nunca fica "não encontrado": a tabela de RCA é
+		//     estritamente menos restritiva que a de fornecedor (não exige
+		//     cod_fornec<>''), então todo RCA com card de fornecedor
+		//     necessariamente aparece aqui.
+		// Positivação/Mix ficam como já calculado por fixOverlappingBaseKPI —
+		// não são afetados por este bug (aquelas queries usam COUNT(DISTINCT
+		// cnpj)/SUM(mix) direto na folha de fornecedor, que é o grão certo
+		// pra elas; só o valor de venda é que soma errado no agregado
+		// intermediário).
+		if currentLevel.Level == "cod_fornec" {
+			hier02 := hierarquias["V02"]
+			refCards, _ := fetchCards(db, empresaID, fluxo, "V02", pr, 1, hier02[1], drillPath[:1], filters)
+			var refKPI kpiSummary
+			if len(drillPath) == 1 {
+				refKPI = computeKPI(refCards, fluxo.name, false)
+			} else {
+				var match []cardItem
+				for _, c := range refCards {
+					if c.Key == drillPath[1].Value {
+						match = append(match, c)
+						break
+					}
+				}
+				refKPI = computeKPI(match, fluxo.name, false)
+			}
+			kpi.TotalAtual, kpi.TotalAnt = refKPI.TotalAtual, refKPI.TotalAnt
+			kpi.TotalPct, kpi.TotalCor = refKPI.TotalPct, refKPI.TotalCor
+			kpi.TotalFaturado, kpi.TotalTransmitido = refKPI.TotalFaturado, refKPI.TotalTransmitido
+			kpi.TotalPlucro, kpi.TotalPlucroAnt = refKPI.TotalPlucro, refKPI.TotalPlucroAnt
+			kpi.Comp, kpi.CompAnt = refKPI.Comp, refKPI.CompAnt
+		}
 		// Decisão do Heverton 28/08/2026: RCA/Supervisor no painel público só
 		// devem VER fornecedores cadastrados como indústria (/gestao/industrias)
 		// na LISTA de cards — V05 "Por Indústria" (direto no Supervisor) e V02
