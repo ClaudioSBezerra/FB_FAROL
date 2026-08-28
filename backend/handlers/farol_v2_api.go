@@ -2421,17 +2421,35 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 	return count
 }
 
-// queryDistinctCliMix — Mix Médio real do recorte (drillPath+filtros), direto
-// da folha (grão cnpj), igual padrão de queryDistinctCliPositivados.
+// queryDistinctCliMix — Mix Médio do recorte (drillPath+filtros), direto na
+// folha (grão cliente×fornecedor — ver leafForPositivados), sem depender de
+// agrupamento nenhum (mesmo padrão de queryDistinctCliPositivados). Corrige
+// o mesmo tipo de bug que motivou fixOverlappingBaseKPI: o KPI totalizador
+// antes fazia média simples dos Mix de cada card (mixTotal/mixCount em
+// computeKPI), o que variava conforme a visão agrupava os dados — "Por RCA"
+// (poucos cards, mix individual alto) e "Por Fornecedor" (~280 cards, muitos
+// de mix baixo) davam números bem diferentes pro MESMO recorte (visto por
+// Heverton 27/08/2026: 25,8 vs 1,6 itens/cli no mesmo Supervisor).
 //
-// Corrige o mesmo tipo de bug que motivou fixOverlappingBaseKPI: o KPI
-// totalizador antes fazia média simples dos Mix de cada card (mixTotal /
-// mixCount em computeKPI). Isso depende de QUANTOS cards existem e de como a
-// visão agrupa — "Por RCA" (poucos cards, mix individual alto) e "Por
-// Fornecedor" (~280 cards, muitos de mix baixo) davam números bem diferentes
-// pro MESMO recorte (visto por Heverton 27/08/2026: 25,8 vs 1,6 itens/cli no
-// mesmo Supervisor). SUM(mix)/COUNT(DISTINCT cnpj) na folha não depende de
-// agrupamento nenhum — mesmo número nas duas visões.
+// Denominador COUNT(*) (não COUNT(DISTINCT v.cnpj)) — decisão do Claudio em
+// 28/08/2026, revisão da primeira versão desta função. Cada linha da folha é
+// uma combinação (cliente,fornecedor) com compra no mês, e v.mix nela já é
+// "produtos distintos daquele fornecedor pro cliente". COUNT(*) conta essas
+// linhas = soma os positivados de CADA indústria no recorte, dando:
+//
+//	SUM(mix_por_industria * positivados_da_industria) / SUM(positivados_da_industria)
+//	  = SUM(mix da linha cliente×fornecedor) / COUNT(linhas cliente×fornecedor)
+//
+// ou seja, média ponderada pelos clientes positivados de cada indústria —
+// não a média simples entre indústrias, nem o "carrinho inteiro" somando
+// tudo (que era o que COUNT(DISTINCT v.cnpj) dava: 78,9 no Sup 701 em
+// Ago/2026, número que o Heverton achou grande demais pra fazer sentido
+// como "Mix Médio"). Efeito colateral bom: quando o recorte já está
+// restrito a UM fornecedor (drill até a indústria), COUNT(*) =
+// COUNT(DISTINCT cnpj) automaticamente (só existe 1 linha por cliente pra
+// esse fornecedor) — a fórmula converge sozinha pro mix "dentro da
+// indústria" sem caso especial, e sobe certo por Supervisor/GGV/Diretoria
+// (soma direta na folha, nunca média de médias).
 func queryDistinctCliMix(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) float64 {
 	leafTable, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
 	if !ok {
@@ -2446,7 +2464,7 @@ func queryDistinctCliMix(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empr
 	}
 
 	q := fmt.Sprintf(`
-SELECT COALESCE(SUM(v.mix), 0) / NULLIF(COUNT(DISTINCT v.cnpj), 0)
+SELECT COALESCE(SUM(v.mix), 0) / NULLIF(COUNT(*), 0)
 FROM %s v
 WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 		leafTable, mesCond, cond)
