@@ -597,7 +597,10 @@ export default function FarolV2Dashboard() {
         {/* ── Configuração de visão ── */}
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {([
-            { id: 'V01' as const, label: 'Por Indústria' },
+            // Renomeado de "Por Indústria" em 28/08/2026 — este nível agrupa por
+            // cod_fornec cru (ver App.tsx FarolExecutivo.tsx pro histórico
+            // completo da decisão e o novo cross-filter "Indústria" canônico).
+            { id: 'V01' as const, label: 'Por FORN.GERAL' },
             { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V02' as const, label: 'Por Equipe' },
           ]).map(v => (

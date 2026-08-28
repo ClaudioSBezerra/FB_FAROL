@@ -681,6 +681,11 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
+		// Indústria (cadastro /gestao/industrias) — cross-filter novo,
+		// resolvido pro cod_fornec por trás (ver resolveIndustriaFilter).
+		if ci := q.Get("cod_industria"); ci != "" {
+			resolveIndustriaFilter(db, spCtx.EmpresaID, ci, filters)
+		}
 		// Recorte da persona — SOBRESCREVE o que veio na URL (ver farol_escopo.go).
 		// Vale para qualquer view: o GGV abre Indústrias e vê as indústrias todas,
 		// mas com os números apenas da equipe dele.
@@ -870,6 +875,78 @@ func parseMultiFilters(q map[string][]string) multiFilters {
 		}
 	}
 	return mf
+}
+
+// resolveIndustriaFilter — traduz o filtro cruzado "Indústria" (?cod_industria=1,2,
+// IDs de farol.industrias, cadastro em /gestao/industrias) pros cod_fornec
+// mapeados em farol.industria_fornecedores, e funde no filtro `cod_fornec`
+// já existente (union — não sobrescreve um filtro manual de cod_fornec
+// bruto, se algum dia coexistirem).
+//
+// Nenhuma mudança em pickAggForCrossFilter/queryAggregatedVendas: como
+// cod_fornec não faz parte do grão pré-agregado de V02/V03/V06/V07 (só
+// V01/V05 têm), filtrar por ele nessas views JÁ cai sempre no scan ao vivo
+// (queryAggregatedVendas) — COUNT(DISTINCT cnpj) roda numa ÚNICA passada
+// sobre TODOS os cod_fornec resolvidos, então um cliente que compra de 2+
+// cod_fornec da MESMA indústria conta uma vez só, sem o problema de
+// duplicidade que Filial/UF tiveram (migrations 197/199) e sem precisar de
+// tabelas pré-agregadas novas — decisão do Claudio em 28/08/2026: caminho
+// ao vivo, não replicar o padrão V10/V11 (~30-40 tabelas novas).
+//
+// Falha fechado: indústria(s) selecionada(s) sem NENHUM cod_fornec mapeado
+// (cadastro incompleto, ou erro na consulta) força um cod_fornec sentinela
+// que não bate com nada real — o filtro tem que devolver ZERO resultados
+// nesse caso, nunca "sem filtro" (que mostraria a empresa inteira por engano).
+func resolveIndustriaFilter(db *sql.DB, empresaID, raw string, filters multiFilters) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	var industriaIDs []int
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(p); err == nil {
+			industriaIDs = append(industriaIDs, n)
+		}
+	}
+	if len(industriaIDs) == 0 {
+		filters["cod_fornec"] = []string{"__industria_invalida__"}
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT cod_fornec FROM farol.industria_fornecedores
+		WHERE empresa_id = $1 AND industria_id = ANY($2)
+	`, empresaID, pq.Array(industriaIDs))
+	if err != nil {
+		log.Printf("[farol:industria] resolver filtro cod_industria ERRO: %v", err)
+		filters["cod_fornec"] = []string{"__industria_erro_consulta__"}
+		return
+	}
+	defer rows.Close()
+
+	existentes := map[string]bool{}
+	for _, c := range filters["cod_fornec"] {
+		existentes[c] = true
+	}
+	achouAlgum := false
+	for rows.Next() {
+		var cod string
+		if rows.Scan(&cod) != nil {
+			continue
+		}
+		achouAlgum = true
+		if !existentes[cod] {
+			filters["cod_fornec"] = append(filters["cod_fornec"], cod)
+			existentes[cod] = true
+		}
+	}
+	if !achouAlgum && len(filters["cod_fornec"]) == 0 {
+		filters["cod_fornec"] = []string{"__industria_sem_fornecedores__"}
+	}
 }
 
 // buildMultiFilterCond — gera `AND v.col = ANY($N::text[])` por dimensão.
@@ -1470,6 +1547,21 @@ func pickAggForCrossFilter(db *sql.DB, fluxo fluxoCtx, groupCol string, drillPat
 	// selecionadas seguimos no scan de vendas_*: mais lento, porém correto.
 	filialReady := aggFilialReady(db) && len(filters["empresa"]) == 1
 
+	// cod_fornec: MESMO problema de filial (não UF) — um cliente pode comprar
+	// de 2+ fornecedores, então uma tabela agg cujo grão TENHA cod_fornec
+	// (ex: agg_fat_v01_l1_mes, fornecedor×gerente) não pode servir um filtro
+	// com 2+ valores: queryAggregatedMes faria AVG/SUM de positivados
+	// pré-computados POR FORNECEDOR, contando esse cliente mais de uma vez (ou
+	// diluindo a média, dependendo da coluna) — nenhum dos dois é a resposta
+	// certa. Achado ao ligar o filtro cruzado "Indústria" (28/08/2026): como
+	// uma indústria costuma mapear pra 2+ cod_fornec (é o motivo dela
+	// existir), esse bug -- já latente pro filtro cru de fornecedor com 2+
+	// selecionados manualmente -- virava a regra, não a exceção. O guard
+	// abaixo força SEMPRE o scan ao vivo (queryAggregatedVendas) quando 2+
+	// fornecedores estão em jogo, do mesmo jeito que filialReady já faz —
+	// nunca tenta achar uma tabela "melhor" que sirva errado mais rápido.
+	fornecMultiValor := len(filters["cod_fornec"]) >= 2
+
 	required := map[string]bool{groupCol: true}
 	for col := range filters {
 		required[col] = true
@@ -1519,6 +1611,11 @@ func pickAggForCrossFilter(db *sql.DB, fluxo fluxoCtx, groupCol string, drillPat
 				continue
 			}
 			cols := colsInAggTable(view, drillIdx)
+			// 2+ cod_fornec filtrados + esta tabela TEM cod_fornec no grão (e não
+			// é o próprio groupCol) → descarta, mesmo raciocínio de filialReady.
+			if fornecMultiValor && groupCol != "cod_fornec" && cols["cod_fornec"] {
+				continue
+			}
 			ok := true
 			for r := range required { // precisa conter tudo que a query referencia
 				if !cols[r] {

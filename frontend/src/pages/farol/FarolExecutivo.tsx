@@ -840,6 +840,23 @@ function useDimsCli(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: 
   })
 }
 
+// useIndustrias — opções do filtro cruzado "Indústria" (canônico,
+// deduplicado — cadastro em /gestao/industrias, distinto do FORN.GERAL cru
+// de cod_fornec). Lista fixa por empresa, não depende de período/fluxo como
+// os outros dims — por isso hook próprio, sem passar por useDims.
+function useIndustrias() {
+  return useQuery<{ id: number; nome: string }[]>({
+    queryKey: ['farol-industrias-filtro'],
+    queryFn: async () => {
+      const r = await fetch('/api/farol/industrias')
+      if (!r.ok) throw new Error('Falha ao carregar indústrias')
+      return r.json()
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
 function useUltimoPeriodo() {
   return useQuery<{ ref_ano?: number; ref_mes?: number; periodos: string[] }>({
     queryKey: ['farol-v2-periodos'],
@@ -934,6 +951,7 @@ export default function FarolExecutivo() {
   // Lazy-load do dropdown de Cliente: só ativa após o usuário abri-lo uma vez.
   const [cliEnabled, setCliEnabled] = useState(false)
   const dimsCliQ = useDimsCli(fluxo, refInicio, refFim, cliEnabled)
+  const industriasQ = useIndustrias()
 
   const handleDrill = (card: CardItem) => {
     if (card.level === 'cod_prod') return
@@ -1005,7 +1023,10 @@ export default function FarolExecutivo() {
   // handleRefreshViews removido junto com o botão Consolidar.
 
   const FILTER_DIMS: { col: string; label: string; from: keyof DimsResponse }[] = [
-    { col: 'cod_fornec',     label: 'Indústria',  from: 'fornec' },
+    // Rótulo era "Indústria" até 28/08/2026 — cod_fornec cru (mesmo fabricante
+    // pode ter 2+ códigos). Renomeado pra "FORN.GERAL" pra liberar "Indústria"
+    // pro filtro canônico novo (chip separado, ver industriaOptions abaixo).
+    { col: 'cod_fornec',     label: 'FORN.GERAL', from: 'fornec' },
     { col: 'cod_gerente',    label: 'Gerente',    from: 'gerente' },
     { col: 'cod_supervisor', label: 'Supervisor', from: 'supervisor' },
     { col: 'cod_rca',        label: 'RCA',        from: 'rca' },
@@ -1125,7 +1146,14 @@ export default function FarolExecutivo() {
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <div className="flex rounded-md border border-slate-300 overflow-hidden bg-white shadow-sm">
           {([
-            { id: 'V01' as const, label: 'Por Indústria' },
+            // "Por Indústria" foi renomeado pra "Por FORN.GERAL" em 28/08/2026:
+            // esta hierarquia agrupa por cod_fornec CRU (o mesmo fabricante pode
+            // ter 2+ códigos, um por grupo de filiais — ver cadastro em
+            // /gestao/industrias). O rótulo "Por Indústria" ficou livre pro
+            // filtro cruzado novo (canônico, deduplicado — chip "Indústria" logo
+            // abaixo), que é o conceito que o gestor realmente quer dizer com
+            // "indústria".
+            { id: 'V01' as const, label: 'Por FORN.GERAL' },
             { id: 'V03' as const, label: 'Por Gerência' },
             { id: 'V02' as const, label: 'Por Equipe' },
             { id: 'V06' as const, label: 'Por Rede' },
@@ -1170,6 +1198,23 @@ export default function FarolExecutivo() {
             />
           )
         })}
+
+        {/* Indústria (canônica, deduplicada — cadastro /gestao/industrias) —
+            cross-filter novo de 28/08/2026, pedido do Claudio. Só nas visões
+            V02/V03/V06/V07: em V01 (FORN.GERAL) o próprio nível já é o
+            cod_fornec cru, filtrar por indústria ali seria redundante com o
+            que a hierarquia já mostra. Resolvido pro filtro cod_fornec por
+            trás (resolveIndustriaFilter, farol_v2_api.go) — sempre cai no
+            scan ao vivo, nunca nas tabelas pré-agregadas (decisão: caminho
+            ao vivo em vez de replicar o padrão V10/V11 de Filial). */}
+        {view !== 'V01' && (industriasQ.data?.length ?? 0) > 0 && (
+          <MultiSelect
+            label="Indústria"
+            options={(industriasQ.data ?? []).map(i => ({ key: String(i.id), label: i.nome }))}
+            selected={filters['cod_industria'] ?? []}
+            onChange={vs => setFilter('cod_industria', vs)}
+          />
+        )}
 
         <DateRangeFilter
           label="Período Anterior"
