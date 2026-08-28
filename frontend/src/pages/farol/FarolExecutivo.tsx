@@ -1200,14 +1200,16 @@ export default function FarolExecutivo() {
         })}
 
         {/* Indústria (canônica, deduplicada — cadastro /gestao/industrias) —
-            cross-filter novo de 28/08/2026, pedido do Claudio. Só nas visões
-            V02/V03/V06/V07: em V01 (FORN.GERAL) o próprio nível já é o
-            cod_fornec cru, filtrar por indústria ali seria redundante com o
-            que a hierarquia já mostra. Resolvido pro filtro cod_fornec por
-            trás (resolveIndustriaFilter, farol_v2_api.go) — sempre cai no
-            scan ao vivo, nunca nas tabelas pré-agregadas (decisão: caminho
-            ao vivo em vez de replicar o padrão V10/V11 de Filial). */}
-        {view !== 'V01' && (industriasQ.data?.length ?? 0) > 0 && (
+            cross-filter novo de 28/08/2026, pedido do Claudio. Em TODAS as
+            visões, inclusive V01 (FORN.GERAL) — útil ali também pra restringir
+            a hierarquia de cod_fornec cru aos códigos de uma indústria
+            específica (pedido explícito do Claudio em 28/08/2026, não é
+            redundante como parecia à primeira vista). Resolvido pro filtro
+            cod_fornec por trás (resolveIndustriaFilter, farol_v2_api.go) —
+            sempre cai no scan ao vivo, nunca nas tabelas pré-agregadas
+            (decisão: caminho ao vivo em vez de replicar o padrão V10/V11 de
+            Filial). */}
+        {(industriasQ.data?.length ?? 0) > 0 && (
           <MultiSelect
             label="Indústria"
             options={(industriasQ.data ?? []).map(i => ({ key: String(i.id), label: i.nome }))}
