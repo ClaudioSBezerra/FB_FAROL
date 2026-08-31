@@ -1794,7 +1794,7 @@ type vendasPeriodoOutcome struct {
 	err error
 }
 
-func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nameCol string,
+func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, nameCol string,
 	periodIni, periodFim time.Time, drillPath []drillStep, filters multiFilters) vendasPeriodoOutcome {
 
 	key := vendasPeriodoCacheKey(empresaID, fluxo.name, groupCol, periodIni, periodFim, drillPath, filters)
@@ -1812,6 +1812,17 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, groupCol, nam
 	vendasPeriodoCacheMu.RUnlock()
 
 	t1 := time.Now()
+
+	// Atalho Indústria/Fornecedor (Por Equipe/Por Gerência) — ver comentário
+	// grande em tryValorRapidoViaV01. Evita o scan de vendas_* inteiro quando
+	// aplicável; cacheia igual ao caminho normal.
+	if fast, ok := tryValorRapidoViaV01(db, empresaID, fluxo, view, groupCol, drillPath, filters, periodIni, periodFim); ok {
+		vendasPeriodoCacheMu.Lock()
+		vendasPeriodoCache[key] = vendasPeriodoCacheEntry{data: fast, at: time.Now()}
+		vendasPeriodoCacheMu.Unlock()
+		return vendasPeriodoOutcome{result: cloneAggMap(fast), cached: false, elapsed: time.Since(t1)}
+	}
+
 	result := make(map[string]aggResult)
 	args := []any{empresaID}
 	rangeCond := buildRangeCond(fluxo.dateCol, periodIni, periodFim, &args)
@@ -1860,6 +1871,198 @@ GROUP BY v.%s`,
 	return vendasPeriodoOutcome{result: cloneAggMap(result), cached: false, elapsed: time.Since(t1)}
 }
 
+// ─── Atalho pro filtro cruzado de Indústria/Fornecedor (Por Equipe/Por Gerência) ──
+//
+// Decisão do Claudio 31/08/2026, depois de relato do Heverton: filtrar
+// "Por Equipe" (V02) ou "Por Gerência" (V03) por Indústria caía sempre no
+// scan de vendas_* (aggServesFilters=false: cod_fornec não existe nessas
+// tabelas fora do nível folha) — 120s quando a indústria mapeia pra muitos
+// cod_fornec, ou quando 2+ indústrias/"Todas" estão selecionadas.
+//
+// Cogitamos réplicar o padrão V08-V11 (tabelas novas com FILIAL/UF no grão) —
+// mas pra Indústria isso teria a MESMA limitação que Filial já tem: só serve
+// com 1 valor selecionado (2+ duplicaria cliente ao SOMAR positivados/mix
+// pré-computados por linha). Com "Todas" indústrias virando o caso comum
+// (ver checkbox "Todas" no MultiSelect), isso deixaria de fora justamente o
+// uso mais frequente.
+//
+// Ideia do Claudio: nem toda métrica tem esse problema. Só positivados/mix
+// (contagem de cliente DISTINTO) duplicam ao somar linhas pré-agrupadas por
+// fornecedor — valor (pvenda/plucro/composição) é soma pura, nunca duplica,
+// não importa quantos fornecedores estejam selecionados. E positivados/mix já
+// têm caminho seguro pra múltiplos valores: COUNT(DISTINCT cnpj)/SUM(mix)
+// direto na FOLHA (grão cnpj×fornecedor), não a soma dos números
+// pré-computados por fornecedor — ver queryDistinctPositivados/
+// queryDistinctCliMix, já usados em outros lugares deste arquivo.
+//
+// Resultado: nenhuma tabela nova. Valor sai da V01 (já agrupada por
+// fornecedor + hierarquia organizacional — existe desde a mig 158/172).
+// Mix sai da folha da própria view (agg_fat_v02_l3_mes / agg_fat_v03_l3_mes,
+// que também já têm cod_fornec). Positivados já usava a folha (Q2 em
+// queryAggregatedVendas, abaixo) — não precisou mudar.
+
+// v01TableForGroupCol — índice (em aggTablesFat/Trans["V01"]) da tabela V01
+// cuja coluna mais profunda é groupCol. V01 é fornec→gerente→supervisor→rca;
+// l1/l2/l3 cobrem os 3 níveis organizacionais que V02/V03 usam como card.
+var v01TableForGroupCol = map[string]int{
+	"cod_gerente":    1, // agg_fat_v01_l1_mes (cod_fornec, cod_gerente)
+	"cod_supervisor": 2, // agg_fat_v01_l2_mes (+ cod_supervisor)
+	"cod_rca":        3, // agg_fat_v01_l3_mes (+ cod_rca)
+}
+
+// tryValorRapidoViaV01 — soma valor/plucro/composição na V01 em vez de
+// escanear vendas_*. Só se aplica quando:
+//   - view é V02 ou V03 (únicas cujo groupCol organizacional a V01 cobre)
+//   - cod_fornec é o ÚNICO filtro ativo (V01 não tem tipo_venda/uf/etc — um
+//     filtro extra quebraria a query ou daria resultado errado)
+//   - o período cabe em agregado mensal (mesmo guard de `refDiario` em
+//     fetchCards — "Dia Anterior"/"7 dias" não pode usar tabela de grão
+//     mensal, expandiria pro mês inteiro e falsearia o resultado)
+//
+// Fora disso devolve ok=false — o chamador cai no scan de vendas_* de sempre
+// (comportamento inalterado pros demais filtros cruzados, ex: UF/Filial sem
+// V08-V11 prontas).
+func tryValorRapidoViaV01(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters, periodIni, periodFim time.Time) (map[string]aggResult, bool) {
+	if fluxo.isCCD || (view != "V02" && view != "V03") {
+		return nil, false
+	}
+	idx, ok := v01TableForGroupCol[groupCol]
+	if !ok {
+		return nil, false
+	}
+	if len(filters) != 1 || len(filters["cod_fornec"]) == 0 {
+		return nil, false
+	}
+	rangeDias := int(periodFim.Sub(periodIni).Hours()/24) + 1
+	refDiario := rangeDias <= 31 && !isCompleteMonthRange(periodIni, periodFim) &&
+		(rangeDias == 1 || periodIni.Day() != 1)
+	if refDiario {
+		return nil, false
+	}
+
+	tables := aggTablesFat
+	if fluxo.name == "transmitido" {
+		tables = aggTablesTrans
+	}
+	lvls, ok := tables["V01"]
+	if !ok || idx >= len(lvls) {
+		return nil, false
+	}
+	table := "farol." + lvls[idx]
+	nameCol := "nome_" + strings.TrimPrefix(groupCol, "cod_")
+	// agg_trans_v01_* não tem liquido/pv_* (mig 189 é só fat — "Líquido" é
+	// conceito exclusivo do faturado). No transmitido, valor = pvenda bruto,
+	// igual ao resto do código (ver montagem de card em fetchCards).
+	hasLiquido := fluxo.name == "faturado"
+
+	args := []any{empresaID}
+	mesCond := buildMesCond(ym(periodIni), ym(periodFim), &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+	liqSelect := "0::numeric, 0::numeric, 0::numeric, 0::numeric, 0::numeric, 0::numeric"
+	if hasLiquido {
+		liqSelect = "COALESCE(SUM(v.liquido),0), COALESCE(SUM(v.pv_bonif),0), COALESCE(SUM(v.pv_transf),0), COALESCE(SUM(v.pv_remessa),0), COALESCE(SUM(v.pv_devol),0), COALESCE(SUM(v.pv_cancel),0)"
+	}
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, %s AS label,
+       COALESCE(SUM(v.pvenda),0) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
+       %s
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
+GROUP BY v.%s`,
+		groupCol, scanLabelExpr(nameCol), liqSelect, table, groupCol, mesCond, cond, groupCol)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:agg] tryValorRapidoViaV01 nível=%s ERRO: %v", groupCol, err)
+		return nil, false
+	}
+	defer rows.Close()
+	out := map[string]aggResult{}
+	for rows.Next() {
+		var key, label string
+		var r aggResult
+		var liquido, bonif, transf, remessa, devol, cancel sql.NullFloat64
+		if err := rows.Scan(&key, &label, &r.valor, &r.plucro, &liquido, &bonif, &transf, &remessa, &devol, &cancel); err != nil {
+			continue
+		}
+		r.label = label
+		if hasLiquido {
+			r.liquido = liquido.Float64
+			r.bonif, r.transf, r.remessa, r.devol, r.cancel = bonif.Float64, transf.Float64, remessa.Float64, devol.Float64, cancel.Float64
+		} else {
+			r.liquido = r.valor // transmitido: sem composição, líquido = bruto (mesmo padrão do resto do código)
+		}
+		out[key] = r
+	}
+
+	// Mix: direto na folha da própria view (tem cod_fornec) — SUM(mix)/COUNT(*)
+	// por groupCol, mesma fórmula (ponderada) da queryDistinctCliMix, só que
+	// agrupada em vez de colapsada num único número.
+	mixMap := queryDistinctMixPorGrupo(db, empresaID, fluxo, view, groupCol, ym(periodIni), ym(periodFim), drillPath, filters)
+	for k, m := range mixMap {
+		r := out[k]
+		r.mix = m
+		out[k] = r
+	}
+
+	// Positivados DO PERÍODO (ymStart..ymEnd deste período — não confundir com
+	// o baseCli rolling-12m que Q2 em queryAggregatedVendas calcula depois; são
+	// dois números diferentes, ambos vêm da query original que este atalho
+	// substitui). Mesma queryDistinctPositivados que Q2 usa pro rolling-12m,
+	// só que com o range do período em vez de rolling-12m — já é segura pra
+	// múltiplos cod_fornec (COUNT DISTINCT na folha, não soma pré-computada).
+	positMap := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ym(periodIni), ym(periodFim), drillPath, filters)
+	for k, p := range positMap {
+		r := out[k]
+		r.positivados = p
+		out[k] = r
+	}
+
+	return out, true
+}
+
+// queryDistinctMixPorGrupo — Mix Médio por valor de groupCol, direto na folha
+// (mesma tabela e mesmo padrão de queryDistinctPositivados/queryDistinctCliMix
+// — SUM(mix)/COUNT(*), nunca duplica cliente mesmo com 2+ cod_fornec no
+// filtro). Usado por tryValorRapidoViaV01 pra evitar scan de vendas_* também
+// pro mix.
+func queryDistinctMixPorGrupo(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) map[string]float64 {
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
+	if !ok {
+		return nil
+	}
+	args := []any{empresaID}
+	mesCond := buildMesCond(ymStart, ymEnd, &args)
+	cond := buildDrillCond(drillPath, &args)
+	if fc := buildMultiFilterCond(filters, &args); fc != "" {
+		cond += " " + fc
+	}
+	q := fmt.Sprintf(`
+SELECT v.%s AS key, COALESCE(SUM(v.mix), 0) / NULLIF(COUNT(*), 0) AS mix
+FROM %s v
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.positivados > 0 AND %s %s
+GROUP BY v.%s`, groupCol, leaf, groupCol, mesCond, cond, groupCol)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		log.Printf("[farol:mix] queryDistinctMixPorGrupo nível=%s ERRO: %v", groupCol, err)
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var key string
+		var mix sql.NullFloat64
+		if rows.Scan(&key, &mix) == nil {
+			out[key] = mix.Float64
+		}
+	}
+	return out
+}
+
 // queryAggregatedVendas devolve também o erro da consulta: um mapa vazio pode
 // significar "recorte sem venda" OU "a consulta falhou", e a UI precisa
 // distinguir os dois (incidente de shm em 27/07/2026 mostrava painel vazio).
@@ -1869,7 +2072,7 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 	t0 := time.Now()
 
 	// Q1 — métricas do período, com cache por range.
-	out := vendasPeriodoQ1(db, empresaID, fluxo, groupCol, nameCol, periodIni, periodFim, drillPath, filters)
+	out := vendasPeriodoQ1(db, empresaID, fluxo, view, groupCol, nameCol, periodIni, periodFim, drillPath, filters)
 	result := out.result
 	durQ1 := out.elapsed
 	q1Hit := out.cached

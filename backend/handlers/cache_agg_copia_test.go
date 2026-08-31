@@ -111,7 +111,7 @@ func TestVendasPeriodoQ1DevolveCopia(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out := vendasPeriodoQ1(nil, emp, fat, "cod_fornec", "nome_fornec", ini, fim, nil, nil)
+			out := vendasPeriodoQ1(nil, emp, fat, "V01", "cod_fornec", "nome_fornec", ini, fim, nil, nil)
 			if !out.cached {
 				t.Error("esperado acerto de cache — com miss a consulta tocaria o banco (db nil)")
 				return
