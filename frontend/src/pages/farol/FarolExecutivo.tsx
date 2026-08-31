@@ -673,9 +673,17 @@ interface MultiSelectProps {
   // — quem garante a regra é o setFilter. Sem isto o usuário veria caixas de
   // marcar e a anterior "desmarcando sozinha" ao clicar na próxima.
   single?: boolean
+  // showSelectAll: checkbox "Todas (N)" no topo da lista, marca/desmarca o
+  // conjunto INTEIRO de options de uma vez (ignora busca ativa — "Todas" é
+  // literal). Pedido do Heverton 31/08/2026 pro filtro FORN DIST: com 40+
+  // indústrias cadastradas, marcar uma por uma pra "quero ver todas as que
+  // têm cadastro" era o caso de uso mais comum. Opt-in (não vem em todo
+  // MultiSelect) pra não mudar o comportamento dos filtros existentes
+  // (Gerente/Supervisor/RCA/etc.) sem terem pedido.
+  showSelectAll?: boolean
 }
 
-function MultiSelect({ label, options, selected, onChange, onOpen, loading, single }: MultiSelectProps) {
+function MultiSelect({ label, options, selected, onChange, onOpen, loading, single, showSelectAll }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -696,6 +704,11 @@ function MultiSelect({ label, options, selected, onChange, onOpen, loading, sing
 
   const toggle = (k: string) => {
     onChange(selected.includes(k) ? selected.filter(x => x !== k) : [...selected, k])
+  }
+
+  const allSelected = options.length > 0 && selected.length === options.length
+  const toggleAll = () => {
+    onChange(allSelected ? [] : options.map(o => o.key))
   }
 
   return (
@@ -731,6 +744,17 @@ function MultiSelect({ label, options, selected, onChange, onOpen, loading, sing
               />
             </div>
           </div>
+          {showSelectAll && !single && options.length > 0 && (
+            <label className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-100 hover:bg-slate-50 cursor-pointer text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                className="w-3.5 h-3.5 accent-slate-700"
+              />
+              Todas ({options.length})
+            </label>
+          )}
           <div className="max-h-64 overflow-y-auto">
             {loading && (
               <div className="px-3 py-4 text-center text-sm text-slate-400">Carregando...</div>
@@ -1220,6 +1244,7 @@ export default function FarolExecutivo() {
             options={(industriasQ.data ?? []).map(i => ({ key: String(i.id), label: i.nome }))}
             selected={filters['cod_industria'] ?? []}
             onChange={vs => setFilter('cod_industria', vs)}
+            showSelectAll
           />
         )}
 
