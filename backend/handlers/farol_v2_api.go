@@ -1833,17 +1833,25 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCo
 	if fluxo.eventoFilter != "" {
 		cond += " " + fluxo.eventoFilter // fluxos CCD (cancdev/cortado)
 	}
+	// V06/V07 (Rede/Departamento) não mostram positivação nem mix — mesma
+	// exclusão que queryAggregatedVendas já faz pro base_cli (Q2) logo abaixo.
+	// Pular os 3 COUNT(DISTINCT...) aqui evita o custo deles à toa quando o
+	// resultado nem chega a aparecer na tela.
+	metricsSelect := `COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0) AS positivados,
+       COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
+         / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix,
+       COUNT(DISTINCT v.cod_prod) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '') AS mix_total`
+	if view == "V06" || view == "V07" {
+		metricsSelect = `0::int AS positivados, 0::numeric AS mix, 0::int AS mix_total`
+	}
 	q := fmt.Sprintf(`
 SELECT v.%s AS key, %s AS label,
        SUM(v.pvenda) AS valor, COALESCE(SUM(v.plucro),0) AS plucro,
-       COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0) AS positivados,
-       COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
-         / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix,
-       COUNT(DISTINCT v.cod_prod) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '') AS mix_total
+       %s
 FROM %s v
 WHERE v.empresa_id=$1 AND v.%s <> '' AND %s %s
 GROUP BY v.%s`,
-		groupCol, scanLabelExpr(nameCol), fluxo.tableName, groupCol, rangeCond, cond, groupCol)
+		groupCol, scanLabelExpr(nameCol), metricsSelect, fluxo.tableName, groupCol, rangeCond, cond, groupCol)
 	err := queryWithHigherWorkMem(db, q, args, func(rows *sql.Rows) error {
 		for rows.Next() {
 			var key string
