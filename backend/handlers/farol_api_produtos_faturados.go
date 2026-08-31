@@ -24,6 +24,12 @@ type produtoFaturadoAPI struct {
 	Empresa         string  `json:"empresa"`
 	DataFaturamento string  `json:"data_faturamento"`
 	Qt              float64 `json:"qt"`
+	// CodDepto/CodSec (mig 184, coluna direta de vendas_faturadas) — adicionados
+	// 31/08/2026 pro SmartPick casar produto→Seção e cruzar com o índice
+	// sazonal de /api/farol/sazonalidade-secao, sem precisar de uma segunda
+	// chamada de "dimensão de produto" que não existe hoje.
+	CodDepto string `json:"cod_depto,omitempty"`
+	CodSec   string `json:"cod_sec,omitempty"`
 }
 
 // FarolAPIKeyAuth valida o header X-API-Key contra FAROL_API_KEY (comparação em
@@ -83,7 +89,7 @@ func ProdutosFaturadosAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc 
 		}
 
 		rows, err := db.Query(`
-			SELECT cod_prod, empresa, data_faturamento, qt
+			SELECT cod_prod, empresa, data_faturamento, qt, cod_depto, cod_sec
 			  FROM vendas_faturadas
 			 WHERE empresa_id = $1 AND empresa = $2
 			   AND data_faturamento >= $3 AND data_faturamento <= $4
@@ -100,7 +106,7 @@ func ProdutosFaturadosAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc 
 		for rows.Next() {
 			var p produtoFaturadoAPI
 			var data time.Time
-			if err := rows.Scan(&p.CodProd, &p.Empresa, &data, &p.Qt); err != nil {
+			if err := rows.Scan(&p.CodProd, &p.Empresa, &data, &p.Qt, &p.CodDepto, &p.CodSec); err != nil {
 				log.Printf("[farol-api] erro no scan de vendas_faturadas: %v", err)
 				http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
 				return
@@ -115,5 +121,126 @@ func ProdutosFaturadosAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc 
 		}
 
 		json.NewEncoder(w).Encode(produtos)
+	}
+}
+
+// ─── Sazonalidade por Seção ──────────────────────────────────────────────────
+//
+// GET /api/farol/sazonalidade-secao?empresa={cod_filial}
+// Header: X-API-Key: {FAROL_API_KEY}  (mesmo esquema do endpoint acima)
+//
+// Índice sazonal = venda do mês / média mensal do ano, calculado sobre 2025
+// (único ano fechado hoje — 31/08/2026). Nível Seção, não Categoria (Claudio
+// reportou que o cadastro de Categoria não está saneado — muitos produtos sem
+// categoria correta) nem Indústria (mistura produtos de sazonalidade bem
+// diferente sob o mesmo fornecedor — ex: Alpargatas vende sandália de verão E
+// bota de inverno). Por FILIAL, não por empresa inteira: sazonalidade pode ser
+// regional (ex: Protetor Solar pica em julho em Goiás/Tocantins por causa da
+// temporada de praia fluvial do Rio Araguaia — o oposto do padrão litorâneo de
+// verão — achado real analisando os dados em 31/08/2026, não teria aparecido
+// numa média nacional).
+//
+// Consumido pelo SmartPick (Monitor de Faturamento sem Calibragem) pra marcar
+// produtos cujo pico de faturamento é sazonal (não necessariamente falta de
+// calibragem de picking) — ver spec/memória do lado do SmartPick. Plano de
+// longo prazo (Claudio, 31/08/2026): o SmartPick vai ter um CRUD próprio de
+// índices por Departamento×Seção, ajustável manualmente; este endpoint é o
+// valor calculado que alimenta esse cadastro até ele existir.
+type sazonalidadeSecaoAPI struct {
+	CodDepto   string      `json:"cod_depto"`
+	Depto      string      `json:"depto"`
+	CodSec     string      `json:"cod_sec"`
+	Secao      string      `json:"secao"`
+	Indices    [12]float64 `json:"indices"`  // indices[0] = janeiro ... indices[11] = dezembro
+	MesPico    int         `json:"mes_pico"` // 1-12; 0 se não há dado suficiente
+	IndicePico float64     `json:"indice_pico"`
+}
+
+func SazonalidadeSecaoAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		empresaFilial := r.URL.Query().Get("empresa")
+		if empresaFilial == "" {
+			http.Error(w, `{"error":"parâmetro obrigatório: empresa"}`, http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(`
+			WITH mensal AS (
+				SELECT cod_depto, cod_sec, EXTRACT(MONTH FROM data_faturamento)::int AS mes,
+				       SUM(pvenda) AS venda_mes
+				  FROM vendas_faturadas
+				 WHERE empresa_id = $1 AND empresa = $2
+				   AND data_faturamento >= '2025-01-01' AND data_faturamento < '2026-01-01'
+				   AND cod_sec <> ''
+				 GROUP BY cod_depto, cod_sec, EXTRACT(MONTH FROM data_faturamento)
+			),
+			media AS (
+				SELECT cod_depto, cod_sec, AVG(venda_mes) AS media_anual
+				  FROM mensal
+				 GROUP BY cod_depto, cod_sec
+			),
+			labels AS (
+				SELECT DISTINCT ON (cod_depto, cod_sec) cod_depto, depto, cod_sec, secao
+				  FROM vendas_faturadas
+				 WHERE empresa_id = $1 AND empresa = $2 AND cod_sec <> ''
+				 ORDER BY cod_depto, cod_sec, data_faturamento DESC
+			)
+			SELECT l.cod_depto, l.depto, l.cod_sec, l.secao, m.mes,
+			       ROUND((m.venda_mes / NULLIF(a.media_anual,0))::numeric, 3) AS indice
+			  FROM mensal m
+			  JOIN media a USING (cod_depto, cod_sec)
+			  JOIN labels l USING (cod_depto, cod_sec)
+			 ORDER BY l.cod_depto, l.cod_sec, m.mes
+		`, empresaID, empresaFilial)
+		if err != nil {
+			log.Printf("[farol-api] erro consultando sazonalidade por seção: %v", err)
+			http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		porSecao := map[string]*sazonalidadeSecaoAPI{}
+		var ordem []string
+		for rows.Next() {
+			var codDepto, depto, codSec, secao string
+			var mes int
+			var indice sql.NullFloat64
+			if err := rows.Scan(&codDepto, &depto, &codSec, &secao, &mes, &indice); err != nil {
+				log.Printf("[farol-api] erro no scan de sazonalidade por seção: %v", err)
+				http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+				return
+			}
+			key := codDepto + "|" + codSec
+			s, ok := porSecao[key]
+			if !ok {
+				s = &sazonalidadeSecaoAPI{CodDepto: codDepto, Depto: depto, CodSec: codSec, Secao: secao}
+				porSecao[key] = s
+				ordem = append(ordem, key)
+			}
+			if mes >= 1 && mes <= 12 {
+				s.Indices[mes-1] = indice.Float64
+				if indice.Float64 > s.IndicePico {
+					s.IndicePico = indice.Float64
+					s.MesPico = mes
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[farol-api] erro iterando sazonalidade por seção: %v", err)
+			http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+			return
+		}
+
+		out := make([]sazonalidadeSecaoAPI, 0, len(ordem))
+		for _, key := range ordem {
+			out = append(out, *porSecao[key])
+		}
+		json.NewEncoder(w).Encode(out)
 	}
 }

@@ -559,6 +559,14 @@ func main() {
 		}
 		handlers.FarolAPIKeyAuth(handlers.ProdutosFaturadosAPIHandler)(database)(w, r)
 	})
+	http.HandleFunc("/api/farol/sazonalidade-secao", func(w http.ResponseWriter, r *http.Request) {
+		database := getDB()
+		if database == nil {
+			http.Error(w, "Database initializing...", http.StatusServiceUnavailable)
+			return
+		}
+		handlers.FarolAPIKeyAuth(handlers.SazonalidadeSecaoAPIHandler)(database)(w, r)
+	})
 	http.HandleFunc("/api/v2/farol/cards", gz(withSP(handlers.FarolV2CardsHandler, "gestor_filial")))
 	http.HandleFunc("/api/v2/farol/periodos", withSP(handlers.FarolV2PeriodosHandler, "gestor_filial"))
 	http.HandleFunc("/api/v2/farol/dims", gz(withSP(handlers.FarolV2DimsHandler, "gestor_filial")))
