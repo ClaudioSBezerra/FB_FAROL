@@ -124,7 +124,7 @@ const Login = () => {
 
       {/* ── Painel direito — formulário de login ─────────────────────────── */}
       <div className="flex-1 flex items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-[480px]">
+        <div className="w-full max-w-[600px]">
 
           {/* Logo mobile (só aparece em telas pequenas) */}
           <div className="flex lg:hidden items-center justify-center gap-2 mb-8">
@@ -136,14 +136,14 @@ const Login = () => {
           </div>
 
           <Card className="w-full shadow-md border-0">
-            <CardHeader className="flex flex-col items-center gap-2 space-y-0 pt-10 pb-6">
-              <CardTitle className="text-3xl font-bold">Acesse sua conta</CardTitle>
-              <CardDescription className="text-base">
+            <CardHeader className="flex flex-col items-center gap-3 space-y-0 pt-14 pb-8">
+              <CardTitle className="text-5xl font-bold">Acesse sua conta</CardTitle>
+              <CardDescription className="text-xl">
                 Entre com suas credenciais para continuar
               </CardDescription>
             </CardHeader>
 
-            <CardContent>
+            <CardContent className="px-10 pb-10">
               {errorMsg && (
                 <Alert variant="destructive" className="mb-4">
                   <AlertCircle className="h-4 w-4" />
@@ -152,9 +152,9 @@ const Login = () => {
                 </Alert>
               )}
 
-              <form onSubmit={handleLogin} className="space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-base font-medium">E-mail</Label>
+              <form onSubmit={handleLogin} className="space-y-7">
+                <div className="space-y-2.5">
+                  <Label htmlFor="email" className="text-lg font-medium">E-mail</Label>
                   <Input
                     id="email"
                     type="email"
@@ -162,29 +162,29 @@ const Login = () => {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="seu@email.com"
-                    className="h-12 text-base"
+                    className="h-14 text-lg"
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-base font-medium">Senha</Label>
+                <div className="space-y-2.5">
+                  <Label htmlFor="password" className="text-lg font-medium">Senha</Label>
                   <Input
                     id="password"
                     type="password"
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="h-12 text-base"
+                    className="h-14 text-lg"
                   />
                 </div>
 
                 <div className="flex justify-end">
-                  <Link to="/forgot-password" className="text-sm text-primary hover:underline">
+                  <Link to="/forgot-password" className="text-base text-primary hover:underline">
                     Esqueci minha senha
                   </Link>
                 </div>
 
-                <Button type="submit" className="w-full h-12 text-base font-semibold" disabled={isLoading}>
+                <Button type="submit" className="w-full h-14 text-lg font-semibold" disabled={isLoading}>
                   {isLoading ? "Entrando..." : "Entrar"}
                 </Button>
               </form>
