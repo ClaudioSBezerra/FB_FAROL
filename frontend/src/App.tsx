@@ -26,6 +26,7 @@ import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolPublicPanel from './pages/farol/FarolPublicPanel'
 import LimparDados from './pages/LimparDados'
+import ConfigSazonalidade from './pages/ConfigSazonalidade'
 import GestaoIndustrias from './pages/GestaoIndustrias'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
@@ -297,6 +298,7 @@ function AppLayout() {
               <Route path="/config/audit-log"   element={<MasterRoute><SpAuditLog /></MasterRoute>} />
               <Route path="/config/empresas-bloqueio" element={<MasterRoute><SpEmpresasBloqueio /></MasterRoute>} />
               <Route path="/config/limpar-dados" element={<AdminFbtaxRoute><LimparDados /></AdminFbtaxRoute>} />
+              <Route path="/config/sazonalidade" element={<AdminFbtaxRoute><ConfigSazonalidade /></AdminFbtaxRoute>} />
               <Route path="/config/uso"         element={<MasterRoute><SpUsoSistema /></MasterRoute>} />
               <Route path="/config/destinatarios" element={<MasterRoute><SpDestinatarios /></MasterRoute>} />
 

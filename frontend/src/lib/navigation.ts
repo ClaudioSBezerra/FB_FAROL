@@ -69,6 +69,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Bloqueio Empresas', path: '/config/empresas-bloqueio', masterOnly: true },
       { label: 'Uso do Sistema',    path: '/config/uso',              masterOnly: true },
       { label: 'Limpar Dados',      path: '/config/limpar-dados',     adminOnly: true,  danger: true },
+      { label: 'Sazonalidade',      path: '/config/sazonalidade',     adminOnly: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
     ],
