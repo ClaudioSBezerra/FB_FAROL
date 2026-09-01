@@ -3265,6 +3265,12 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v10_v11($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V10/V11 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
+				// V12 (mig 211) — Produto × Filial, grão mensal. Base pro rollup
+				// anual de sazonalidade (upsert_sazonalidade_produto_ano, chamado
+				// à parte, uma vez por ano tocado — não por mês, ver mig 212).
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v12($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT V12 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
 				// l5 da V11 (mig 200) — grão FILIAL x CNPJ. Depois da v10_v11 e
 				// antes da venda_liquida, que preenche liquido/pv_* nela também.
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v11_l5($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
@@ -3294,6 +3300,20 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 	wg.Wait()
 	log.Printf("[farol:agg] upsertAggsMesParallel: %d meses, %d workers, total %v",
 		len(meses), workers, time.Since(tStart))
+}
+
+// upsertSazonalidadeProdutoAnos chama farol.upsert_sazonalidade_produto_ano
+// (mig 212) uma vez por ano em `anos` — grão ANO, não mês, por isso fica fora
+// do loop de upsertAggsMesParallel. Chamada nos 3 pontos que já disparam
+// upsertAggsMesParallel (import de CSV, refresh manual, carga histórica),
+// reusando o conjunto de anos tocados que cada um já computa pra
+// create_agg_year_partitions.
+func upsertSazonalidadeProdutoAnos(db *sql.DB, empresaID string, anos map[int]struct{}) {
+	for ano := range anos {
+		if _, e := db.Exec(`SELECT farol.upsert_sazonalidade_produto_ano($1,$2)`, empresaID, ano); e != nil {
+			log.Printf("[farol:agg] upsert_sazonalidade_produto_ano(%d) ERRO: %v", ano, e)
+		}
+	}
 }
 
 // refreshAllFarolViews: após mig 165, só restam mv_*_carteira_rca como MVs
@@ -3399,6 +3419,14 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 				}
 			}
 			upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
+
+			// Sazonalidade Produto×Filial×Ano (mig 212) — grão ANO, uma chamada
+			// por ano tocado (não por mês), reusando anosVistos já computado acima.
+			anosSaz := map[int]struct{}{}
+			for ano := range anosVistos {
+				anosSaz[ano] = struct{}{}
+			}
+			upsertSazonalidadeProdutoAnos(db, spCtx.EmpresaID, anosSaz)
 
 			// P1 — materializa mix_total (universo de SKUs) dos meses consolidados.
 			for _, m := range meses {

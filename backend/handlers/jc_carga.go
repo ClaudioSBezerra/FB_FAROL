@@ -298,6 +298,14 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		}
 		upsertAggsMesParallel(db, empresaID, lista, 4)
 
+		// Sazonalidade Produto×Filial×Ano (mig 212) — grão ANO, derivado dos
+		// meses tocados por esta carga.
+		anosSaz := map[int]struct{}{}
+		for m := range meses {
+			anosSaz[m.Ano] = struct{}{}
+		}
+		upsertSazonalidadeProdutoAnos(db, empresaID, anosSaz)
+
 		// mv_fat_uf_mes — alimenta o filtro de UF. No import normal ela é
 		// refeita pelo processImportJob; com skipRefresh=true isso NÃO acontece,
 		// e eu havia esquecido de chamá-la aqui. Resultado do backfill de 06/08:

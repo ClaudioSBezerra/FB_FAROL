@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -241,6 +242,126 @@ func SazonalidadeSecaoAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc 
 		for _, key := range ordem {
 			out = append(out, *porSecao[key])
 		}
+		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// ─── Sazonalidade por Produto ────────────────────────────────────────────────
+//
+// GET /api/farol/sazonalidade-produto?empresa={cod_filial}&ano={opcional}
+// Header: X-API-Key: {FAROL_API_KEY}  (mesmo esquema dos endpoints acima)
+//
+// Diferente de SazonalidadeSecaoAPIHandler (calculado ao vivo, ano 2025
+// hardcoded), este endpoint só LÊ farol.agg_sazonalidade_produto_ano (mig
+// 212) — persistida, atualizada de forma assíncrona pelo pipeline de import
+// (upsertSazonalidadeProdutoAnos). SELECT indexado, rápido, sem agregação em
+// tempo real; não sofre do mesmo risco de timeout já visto na versão por
+// Seção sob carga pesada.
+//
+// ano opcional: quando ausente, resolve o último ano com o ano fechado (12
+// meses de dado) — sem hardcode de calendário, migra sozinho pro ano
+// seguinte assim que ele fechar.
+type sazonalidadeProdutoAPI struct {
+	CodProd        string   `json:"cod_prod"`
+	NomeProd       string   `json:"nome_prod"`
+	Empresa        string   `json:"empresa"`
+	Ano            int      `json:"ano"`
+	CodDepto       string   `json:"cod_depto"`
+	CodSec         string   `json:"cod_sec"`
+	Sazonal        bool     `json:"sazonal"`
+	MesPico        *int     `json:"mes_pico,omitempty"` // 1-12; ausente se sem dado suficiente
+	IndicePico     *float64 `json:"indice_pico,omitempty"`
+	QtMesPico      float64  `json:"qt_mes_pico"`
+	QtTotalAno     float64  `json:"qt_total_ano"`
+	PvendaMesPico  float64  `json:"pvenda_mes_pico"`
+	PvendaTotalAno float64  `json:"pvenda_total_ano"`
+	MesesComDado   int      `json:"meses_com_dado"`
+}
+
+func SazonalidadeProdutoAPIHandler(db *sql.DB, empresaID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		empresaFilial := r.URL.Query().Get("empresa")
+		if empresaFilial == "" {
+			http.Error(w, `{"error":"parâmetro obrigatório: empresa"}`, http.StatusBadRequest)
+			return
+		}
+
+		var ano int
+		if anoStr := r.URL.Query().Get("ano"); anoStr != "" {
+			v, err := strconv.Atoi(anoStr)
+			if err != nil {
+				http.Error(w, `{"error":"parâmetro ano inválido"}`, http.StatusBadRequest)
+				return
+			}
+			ano = v
+		} else {
+			// Sem hardcode de calendário: último ano com os 12 meses presentes
+			// pra essa empresa — pula sozinho pro ano seguinte assim que ele
+			// fechar, sem deploy. Se nenhum ano estiver totalmente fechado ainda
+			// (empresa nova), cai no ano mais recente disponível (parcial).
+			err := db.QueryRow(`
+				SELECT COALESCE(
+					(SELECT MAX(ano) FROM farol.agg_sazonalidade_produto_ano
+					  WHERE empresa_id = $1 AND meses_com_dado = 12),
+					(SELECT MAX(ano) FROM farol.agg_sazonalidade_produto_ano
+					  WHERE empresa_id = $1)
+				)
+			`, empresaID).Scan(&ano)
+			if err != nil || ano == 0 {
+				http.Error(w, `{"error":"nenhum dado de sazonalidade disponível ainda"}`, http.StatusNotFound)
+				return
+			}
+		}
+
+		rows, err := db.Query(`
+			SELECT cod_prod, nome_prod, empresa, ano, cod_depto, cod_sec, sazonal,
+			       mes_pico, indice_pico, qt_mes_pico, qt_total_ano,
+			       pvenda_mes_pico, pvenda_total_ano, meses_com_dado
+			  FROM farol.agg_sazonalidade_produto_ano
+			 WHERE empresa_id = $1 AND empresa = $2 AND ano = $3
+		`, empresaID, empresaFilial, ano)
+		if err != nil {
+			log.Printf("[farol-api] erro consultando sazonalidade por produto: %v", err)
+			http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := []sazonalidadeProdutoAPI{}
+		for rows.Next() {
+			var it sazonalidadeProdutoAPI
+			var mesPico sql.NullInt64
+			var indicePico sql.NullFloat64
+			if err := rows.Scan(
+				&it.CodProd, &it.NomeProd, &it.Empresa, &it.Ano, &it.CodDepto, &it.CodSec, &it.Sazonal,
+				&mesPico, &indicePico, &it.QtMesPico, &it.QtTotalAno,
+				&it.PvendaMesPico, &it.PvendaTotalAno, &it.MesesComDado,
+			); err != nil {
+				log.Printf("[farol-api] erro no scan de sazonalidade por produto: %v", err)
+				http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+				return
+			}
+			if mesPico.Valid {
+				v := int(mesPico.Int64)
+				it.MesPico = &v
+			}
+			if indicePico.Valid {
+				it.IndicePico = &indicePico.Float64
+			}
+			out = append(out, it)
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[farol-api] erro iterando sazonalidade por produto: %v", err)
+			http.Error(w, `{"error":"Erro interno"}`, http.StatusInternalServerError)
+			return
+		}
+
 		json.NewEncoder(w).Encode(out)
 	}
 }

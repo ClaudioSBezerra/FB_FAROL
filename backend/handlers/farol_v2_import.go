@@ -1010,6 +1010,9 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			meses = append(meses, aggMesYM{Ano: ym[0], Mes: ym[1]})
 		}
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
+		// Sazonalidade Produto×Filial×Ano (mig 212) — grão ANO, reusa
+		// anosTocados já computado acima pra create_agg_year_partitions.
+		upsertSazonalidadeProdutoAnos(db, spCtx.EmpresaID, anosTocados)
 		go refreshUFMV(db)                     // MV de UF em background (não bloqueia o import)
 		marcaConsolidacao(db, spCtx.EmpresaID) // carimbo "dados de" do Painel BI
 		// Invalida só os períodos que a carga tocou — a carga diária mexe no mês
