@@ -459,6 +459,34 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
   const qc = useQueryClient()
   const [form, setForm] = useState(EMPTY_VIGENCIA_FORM)
   const [showForm, setShowForm] = useState(false)
+  const clientesFileInputRef = useRef<HTMLInputElement>(null)
+  const [clientesUploadTarget, setClientesUploadTarget] = useState<number | null>(null)
+
+  const importarClientes = useMutation({
+    mutationFn: async ({ vigenciaId, file }: { vigenciaId: number; file: File }) => {
+      const body = new FormData()
+      body.append('file', file)
+      const r = await fetch(`/api/farol/metas-clientes-validos-importar-csv?vinculo_id=${vinculo.id}&vigencia_id=${vigenciaId}`, {
+        method: 'POST', headers, body,
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        const erros = Array.isArray(data?.erros)
+          ? data.erros.map((e: { linha: number; erro: string }) => `Linha ${e.linha || '-'}: ${e.erro}`).join('\n')
+          : (data?.error ?? 'Erro ao importar Clientes Válidos')
+        throw new Error(erros)
+      }
+      return data as { clientes_importados: number }
+    },
+    onSuccess: data => toast.success(`${data.clientes_importados} cliente(s) válido(s) importado(s)`),
+    onError: (e: Error) => toast.error(e.message, { style: { whiteSpace: 'pre-line' } }),
+  })
+
+  function onClientesCSVSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file && clientesUploadTarget) importarClientes.mutate({ vigenciaId: clientesUploadTarget, file })
+    e.target.value = ''
+  }
 
   const { data: vigencias = [], isLoading } = useQuery<Vigencia[]>({
     queryKey: ['farol-metas-vigencias', vinculo.id],
@@ -545,16 +573,27 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                 </div>
               </div>
               {v.status === 'aberta' && (
-                <Button
-                  variant="outline" size="sm"
-                  disabled={fechar.isPending}
-                  onClick={() => fechar.mutate(v.id)}
-                >
-                  <Lock className="w-3.5 h-3.5 mr-1" /> Fechar
-                </Button>
+                <div className="flex gap-1.5">
+                  <Button
+                    variant="outline" size="sm"
+                    disabled={importarClientes.isPending}
+                    onClick={() => { setClientesUploadTarget(v.id); clientesFileInputRef.current?.click() }}
+                    title="Importar Clientes Válidos (CSV): rede_nome;cnpj;cod_rca"
+                  >
+                    <Upload className="w-3.5 h-3.5 mr-1" /> Clientes
+                  </Button>
+                  <Button
+                    variant="outline" size="sm"
+                    disabled={fechar.isPending}
+                    onClick={() => fechar.mutate(v.id)}
+                  >
+                    <Lock className="w-3.5 h-3.5 mr-1" /> Fechar
+                  </Button>
+                </div>
               )}
             </div>
           ))}
+          <input ref={clientesFileInputRef} type="file" accept=".csv" className="hidden" onChange={onClientesCSVSelected} />
 
           {!showForm && (
             <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
