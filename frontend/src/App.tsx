@@ -30,6 +30,7 @@ import ConfigSazonalidade from './pages/ConfigSazonalidade'
 import GestaoIndustrias from './pages/GestaoIndustrias'
 import ConfigTiposMetrica from './pages/ConfigTiposMetrica'
 import ConfigMetasVinculos from './pages/ConfigMetasVinculos'
+import FarolPainelMetas from './pages/FarolPainelMetas'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
@@ -292,6 +293,7 @@ function AppLayout() {
               <Route path="/gestao/industrias" element={<ProtectedRoute><GestaoIndustrias /></ProtectedRoute>} />
               <Route path="/gestao/tipos-metrica" element={<ProtectedRoute><ConfigTiposMetrica /></ProtectedRoute>} />
               <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
+              <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
 
               {/* Configurações (admin) */}
               <Route path="/config/planos"      element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />

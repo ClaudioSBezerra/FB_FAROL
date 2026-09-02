@@ -580,6 +580,9 @@ func main() {
 	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
 	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
 
+	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
+	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────
