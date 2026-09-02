@@ -284,6 +284,8 @@ Como admin,
 Eu quero fazer upload de um CSV com as Redes válidas de um vínculo/vigência, cada CNPJ com o RCA responsável,
 Para que a hierarquia de drill-down (GGV→CRV→RCA→Rede→Cliente) tem a atribuição correta de responsável para aquele período.
 
+*(Decisão de arquitetura da Story 1.4, a aplicar aqui: tabela com `vinculo_id`/`vigencia_id` FK pro Épico 2, `rede_nome TEXT` livre — não FK pra tabela mestra de Redes, porque a definição de Rede varia por fornecedor — e resolução CRV/GGV via JOIN com a hierarquia organizacional já existente, sem duplicar dado. Ver `_bmad-output/implementation-artifacts/1-4-hierarquia-rede-organograma.md`.)*
+
 **Critérios de Aceite:**
 
 **Dado** um arquivo CSV com Rede, CNPJ, RCA responsável
