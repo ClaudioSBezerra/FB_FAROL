@@ -30,15 +30,16 @@ type PainelVigencia struct {
 }
 
 type PainelResponse struct {
-	VinculoID       int                 `json:"vinculo_id"`
-	IndustriaNome   string              `json:"industria_nome"`
-	TipoMetricaNome string              `json:"tipo_metrica_nome"`
-	Vigencia        PainelVigencia      `json:"vigencia"`
-	Realizado       *RealizadoResultado `json:"realizado"`
-	Faixas          []PainelFaixa       `json:"faixas"`
-	FaixaAtual      *PainelFaixa        `json:"faixa_atual"`   // maior faixa já atingida (nil se nenhuma)
-	ProximaFaixa    *PainelFaixa        `json:"proxima_faixa"` // menor faixa ainda não atingida (nil se já bateu todas)
-	Delta           float64             `json:"delta"`         // quanto falta pra bater a próxima faixa (FR19a) — 0 se já bateu tudo
+	VinculoID       int                            `json:"vinculo_id"`
+	IndustriaNome   string                         `json:"industria_nome"`
+	TipoMetricaNome string                         `json:"tipo_metrica_nome"`
+	Vigencia        PainelVigencia                 `json:"vigencia"`
+	Realizado       *RealizadoResultado            `json:"realizado"`
+	Faixas          []PainelFaixa                  `json:"faixas"`
+	FaixaAtual      *PainelFaixa                   `json:"faixa_atual"`        // maior faixa já atingida (nil se nenhuma)
+	ProximaFaixa    *PainelFaixa                   `json:"proxima_faixa"`      // menor faixa ainda não atingida (nil se já bateu todas)
+	Delta           float64                        `json:"delta"`              // quanto falta pra bater a próxima faixa (FR19a) — 0 se já bateu tudo
+	Recortes        map[string]*RealizadoResultado `json:"recortes,omitempty"` // FR21: dia_anterior/semana/mes/ano_corrente, só quando pedido (?recortes=1)
 }
 
 // MetasPainelHandler — GET /api/farol/metas-painel?vinculo_id=&vigencia_id=&fluxo=&nivel=
@@ -123,6 +124,23 @@ func MetasPainelHandler(db *sql.DB) http.HandlerFunc {
 		}
 		if resp.ProximaFaixa != nil {
 			resp.Delta = resp.ProximaFaixa.ValorMeta - realizado.RealizadoTotal
+		}
+
+		if r.URL.Query().Get("recortes") == "1" {
+			resp.Recortes = map[string]*RealizadoResultado{}
+			for _, rec := range []string{"dia_anterior", "semana", "mes", "ano_corrente"} {
+				di, df, rerr := calcularRecorteDatas(rec)
+				if rerr != nil {
+					continue
+				}
+				// Recortes são sempre ao vivo — não passam pelo congelamento
+				// (Story 4.3): "dia anterior"/"semana" são leitura de momentum
+				// recente, não o número oficial mensal que precisa ficar estável.
+				rr, rerr2 := CalcularRealizadoComPeriodo(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel, di, df)
+				if rerr2 == nil {
+					resp.Recortes[rec] = rr
+				}
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

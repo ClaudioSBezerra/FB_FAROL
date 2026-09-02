@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func painelReq(url, empresaID, userID string) *http.Request {
@@ -110,6 +111,50 @@ func TestMetasPainel_AlternanciaFluxo(t *testing.T) {
 	}
 	if respTrans.Realizado.RealizadoTotal != 0 {
 		t.Errorf("fluxo transmitido: RealizadoTotal = %.0f, want 0 (sem venda transmitida, não deveria herdar o faturado)", respTrans.Realizado.RealizadoTotal)
+	}
+}
+
+// TestMetasPainel_Recortes cobre a Story 5.3 (FR21): ?recortes=1 retorna
+// os 4 recortes de tempo, cada um com seu próprio Realizado.
+func TestMetasPainel_Recortes(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TPAINEL Recortes", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -20)
+	fim := hoje.AddDate(0, 0, 20)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+
+	loja := "60606060000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE RECORTES", loja, "TCALC-RCARR")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCARR", "1", 200, 1, hoje.Format("2006-01-02"))
+
+	url := fmt.Sprintf("/api/farol/metas-painel?vinculo_id=%d&vigencia_id=%d&fluxo=faturado&nivel=rede&recortes=1", vinculoID, vigenciaID)
+	w := httptest.NewRecorder()
+	MetasPainelHandler(db)(w, painelReq(url, empresaID, userID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET painel com recortes → status %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp PainelResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	for _, rec := range []string{"dia_anterior", "semana", "mes", "ano_corrente"} {
+		if resp.Recortes[rec] == nil {
+			t.Errorf("recorte %q ausente na resposta", rec)
+		}
+	}
+	// A venda foi hoje — "dia_anterior" (ontem) não deveria capturar nada.
+	if resp.Recortes["dia_anterior"] != nil && resp.Recortes["dia_anterior"].RealizadoTotal != 0 {
+		t.Errorf("dia_anterior deveria ser 0 (venda foi hoje, não ontem) — veio %.0f", resp.Recortes["dia_anterior"].RealizadoTotal)
+	}
+	// "semana" (últimos 7 dias) inclui hoje — deveria capturar a Rede coberta.
+	if resp.Recortes["semana"] != nil && resp.Recortes["semana"].RealizadoTotal != 1 {
+		t.Errorf("semana deveria ser 1 (venda de hoje está nos últimos 7 dias) — veio %.0f", resp.Recortes["semana"].RealizadoTotal)
 	}
 }
 

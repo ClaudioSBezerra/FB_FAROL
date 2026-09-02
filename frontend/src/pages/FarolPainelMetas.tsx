@@ -8,7 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,7 +63,15 @@ interface Painel {
   faixa_atual: PainelFaixa | null
   proxima_faixa: PainelFaixa | null
   delta: number
+  recortes?: Record<string, Realizado>
 }
+
+const RECORTES = [
+  { value: 'dia_anterior', label: 'Dia anterior' },
+  { value: 'semana', label: 'Última semana' },
+  { value: 'mes', label: 'Mês corrente' },
+  { value: 'ano_corrente', label: 'Ano corrente' },
+]
 
 const NIVEIS = [
   { value: 'rede', label: 'Redes' },
@@ -88,6 +96,7 @@ export default function FarolPainelMetas() {
   const [vigenciaID, setVigenciaID] = useState('')
   const [nivel, setNivel] = useState('rede')
   const [fluxo, setFluxo] = useState('faturado')
+  const [aba, setAba] = useState<'oficiais' | 'projecao'>('oficiais')
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
     queryKey: ['farol-metas-vinculos'],
@@ -111,7 +120,7 @@ export default function FarolPainelMetas() {
   const { data: painel, isLoading, isFetching } = useQuery<Painel>({
     queryKey: ['farol-metas-painel', vinculoID, vigenciaID, nivel, fluxo],
     queryFn: async () => {
-      const r = await fetch(`/api/farol/metas-painel?vinculo_id=${vinculoID}&vigencia_id=${vigenciaID}&fluxo=${fluxo}&nivel=${nivel}`, { headers })
+      const r = await fetch(`/api/farol/metas-painel?vinculo_id=${vinculoID}&vigencia_id=${vigenciaID}&fluxo=${fluxo}&nivel=${nivel}&recortes=1`, { headers })
       if (!r.ok) throw new Error(await r.text())
       return r.json()
     },
@@ -180,6 +189,65 @@ export default function FarolPainelMetas() {
         <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
       ) : painel ? (
         <>
+          <div className="flex gap-1 border-b">
+            <button
+              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${aba === 'oficiais' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground'}`}
+              onClick={() => setAba('oficiais')}
+            >
+              Indicadores oficiais
+            </button>
+            <button
+              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${aba === 'projecao' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground'}`}
+              onClick={() => setAba('projecao')}
+            >
+              Projeção
+            </button>
+          </div>
+
+          {aba === 'projecao' ? (
+            <div className="space-y-4">
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>
+                  Projeção de fechamento — <strong>estimativa</strong> com base no ritmo de realização até hoje (não é um número oficial do
+                  programa; os indicadores oficiais ficam na outra aba).
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="border rounded-lg p-4">
+                  <div className="text-muted-foreground text-xs mb-1">Realizado até hoje</div>
+                  <div className="text-2xl font-semibold">{painel.realizado.realizado_total.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</div>
+                </div>
+                <div className="border rounded-lg p-4 bg-slate-50">
+                  <div className="text-muted-foreground text-xs mb-1">Projeção de fechamento (estimativa)</div>
+                  <div className="text-2xl font-semibold">{painel.realizado.projecao.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</div>
+                </div>
+              </div>
+
+              {painel.recortes && (
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Recorte</TableHead>
+                        <TableHead className="text-right">Realizado no período</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {RECORTES.map(r => (
+                        <TableRow key={r.value}>
+                          <TableCell className="font-medium">{r.label}</TableCell>
+                          <TableCell className="text-right">
+                            {painel.recortes?.[r.value]?.realizado_total.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) ?? '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="border rounded-lg p-4">
               <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -234,6 +302,7 @@ export default function FarolPainelMetas() {
               </TableBody>
             </Table>
           </div>
+          )}
         </>
       ) : null}
     </div>

@@ -81,9 +81,20 @@ type itemInfo struct {
 // ─── Ponto de entrada — dispatch por formula_codigo ───────────────────────────
 
 // CalcularRealizado calcula o Realizado de um vínculo/vigência, no nível
-// hierárquico pedido, lendo o fluxo indicado (faturado/transmitido/soma).
+// hierárquico pedido, lendo o fluxo indicado (faturado/transmitido/soma),
+// sobre o período INTEIRO da vigência — uso normal (Épicos 4/5.1/5.2).
 func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, nivel string) (*RealizadoResultado, error) {
-	var formulaCodigo, dataInicio, dataFim string
+	return CalcularRealizadoComPeriodo(db, empresaID, vinculoID, vigenciaID, fluxo, nivel, "", "")
+}
+
+// CalcularRealizadoComPeriodo permite sobrescrever a janela de datas usada
+// pra ler vendas (Story 5.3, FR21 — "recortes de tempo": dia anterior,
+// semana, mês, ano corrente) sem mudar a vigência em si. A PROJEÇÃO de
+// fechamento continua sempre calculada sobre o período INTEIRO da vigência
+// — projetar o fechamento da vigência com base só em "ontem" não faria
+// sentido; recorte afeta o Realizado exibido, não a base da projeção.
+func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, nivel, dataInicioOverride, dataFimOverride string) (*RealizadoResultado, error) {
+	var formulaCodigo, dataInicioVigencia, dataFimVigencia string
 	var tiposVendaValidos []string
 	err := db.QueryRow(`
 		SELECT tm.formula_codigo, v.data_inicio::text, v.data_fim::text
@@ -91,9 +102,13 @@ func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, 
 		JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 		WHERE v.id = $1 AND v.vinculo_id = $2 AND v.empresa_id = $3
-	`, vigenciaID, vinculoID, empresaID).Scan(&formulaCodigo, &dataInicio, &dataFim)
+	`, vigenciaID, vinculoID, empresaID).Scan(&formulaCodigo, &dataInicioVigencia, &dataFimVigencia)
 	if err != nil {
 		return nil, fmt.Errorf("vínculo/vigência não encontrado: %w", err)
+	}
+	dataInicio, dataFim := dataInicioVigencia, dataFimVigencia
+	if dataInicioOverride != "" && dataFimOverride != "" {
+		dataInicio, dataFim = dataInicioOverride, dataFimOverride
 	}
 	if err := db.QueryRow(`SELECT tipos_venda_validos FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).
 		Scan(pq.Array(&tiposVendaValidos)); err != nil {
@@ -158,7 +173,7 @@ func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, 
 		}
 	}
 
-	resultado.Projecao = projetarFechamento(resultado.RealizadoTotal, dataInicio, dataFim)
+	resultado.Projecao = projetarFechamento(resultado.RealizadoTotal, dataInicioVigencia, dataFimVigencia)
 
 	if nivel != "rede" && nivel != "" {
 		resultado.Grupos, err = agregarPorNivel(db, empresaID, redes, nivel, formulaCodigo)
@@ -168,7 +183,7 @@ func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, 
 		// FR18a: projeção de cada grupo a partir do REALIZADO PRÓPRIO daquele
 		// grupo — nunca somando as projeções das Redes que o compõem.
 		for i := range resultado.Grupos {
-			resultado.Grupos[i].Projecao = projetarFechamento(resultado.Grupos[i].RealizadoTotal, dataInicio, dataFim)
+			resultado.Grupos[i].Projecao = projetarFechamento(resultado.Grupos[i].RealizadoTotal, dataInicioVigencia, dataFimVigencia)
 		}
 	}
 
@@ -587,6 +602,29 @@ func projetarFechamento(realizado float64, dataInicio, dataFim string) float64 {
 		return realizado
 	}
 	return realizado / float64(diasDecorridos) * float64(diasTotais)
+}
+
+// calcularRecorteDatas resolve os 4 recortes de tempo do FR21 (dia
+// anterior, semana, mês, ano corrente) em [data_inicio, data_fim] —
+// independente da vigência, sempre relativo a hoje.
+func calcularRecorteDatas(recorte string) (dataInicio, dataFim string, err error) {
+	hoje := time.Now().Truncate(24 * time.Hour)
+	fmtd := func(t time.Time) string { return t.Format("2006-01-02") }
+	switch recorte {
+	case "dia_anterior":
+		ontem := hoje.AddDate(0, 0, -1)
+		return fmtd(ontem), fmtd(ontem), nil
+	case "semana":
+		return fmtd(hoje.AddDate(0, 0, -6)), fmtd(hoje), nil
+	case "mes":
+		inicioMes := time.Date(hoje.Year(), hoje.Month(), 1, 0, 0, 0, 0, hoje.Location())
+		return fmtd(inicioMes), fmtd(hoje), nil
+	case "ano_corrente":
+		inicioAno := time.Date(hoje.Year(), 1, 1, 0, 0, 0, 0, hoje.Location())
+		return fmtd(inicioAno), fmtd(hoje), nil
+	default:
+		return "", "", fmt.Errorf("recorte inválido: %q (use dia_anterior, semana, mes ou ano_corrente)", recorte)
+	}
 }
 
 // periodoIncluiHoje diz se o período apurado ainda está "em andamento" —

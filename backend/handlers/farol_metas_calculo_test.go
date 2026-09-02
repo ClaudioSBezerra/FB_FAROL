@@ -333,6 +333,101 @@ func TestCalcularRealizado_FluxoSoma(t *testing.T) {
 // TestProjetarFechamento_ExemploDoPRD reproduz o exemplo exato do FR18:
 // "realizado de R$45.000 em 15 dias de um mês de 30 dias → projeção de
 // fechamento = R$90.000".
+// TestCalcularRecorteDatas cobre a Story 5.3 (FR21): os 4 recortes de
+// tempo resolvem em janelas de data corretas, sempre relativas a hoje.
+func TestCalcularRecorteDatas(t *testing.T) {
+	hoje := time.Now().Truncate(24 * time.Hour)
+
+	di, df, err := calcularRecorteDatas("dia_anterior")
+	if err != nil {
+		t.Fatalf("dia_anterior: %v", err)
+	}
+	ontem := hoje.AddDate(0, 0, -1).Format("2006-01-02")
+	if di != ontem || df != ontem {
+		t.Errorf("dia_anterior = [%s, %s], want [%s, %s]", di, df, ontem, ontem)
+	}
+
+	di, df, err = calcularRecorteDatas("semana")
+	if err != nil {
+		t.Fatalf("semana: %v", err)
+	}
+	if df != hoje.Format("2006-01-02") {
+		t.Errorf("semana deveria terminar hoje, terminou em %s", df)
+	}
+	inicioEsperado := hoje.AddDate(0, 0, -6).Format("2006-01-02")
+	if di != inicioEsperado {
+		t.Errorf("semana deveria começar em %s (7 dias incluindo hoje), começou em %s", inicioEsperado, di)
+	}
+
+	di, df, err = calcularRecorteDatas("mes")
+	if err != nil {
+		t.Fatalf("mes: %v", err)
+	}
+	inicioMesEsperado := time.Date(hoje.Year(), hoje.Month(), 1, 0, 0, 0, 0, hoje.Location()).Format("2006-01-02")
+	if di != inicioMesEsperado {
+		t.Errorf("mes deveria começar em %s (dia 1 do mês corrente), veio %s", inicioMesEsperado, di)
+	}
+
+	di, df, err = calcularRecorteDatas("ano_corrente")
+	if err != nil {
+		t.Fatalf("ano_corrente: %v", err)
+	}
+	inicioAnoEsperado := time.Date(hoje.Year(), 1, 1, 0, 0, 0, 0, hoje.Location()).Format("2006-01-02")
+	if di != inicioAnoEsperado {
+		t.Errorf("ano_corrente deveria começar em %s (1º de janeiro), veio %s", inicioAnoEsperado, di)
+	}
+
+	if _, _, err := calcularRecorteDatas("invalido"); err == nil {
+		t.Error("recorte inválido deveria dar erro")
+	}
+}
+
+// TestCalcularRealizadoComPeriodo_RecorteNaoAfetaProjecao confirma que a
+// projeção de fechamento sempre usa o período INTEIRO da vigência, mesmo
+// quando o Realizado exibido é de um recorte curto (ex: "dia anterior") —
+// projetar o fechamento do mês com base só em 1 dia não faria sentido.
+func TestCalcularRealizadoComPeriodo_RecorteNaoAfetaProjecao(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC RecorteProjecao", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -9)
+	fim := inicio.AddDate(0, 0, 19)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+
+	loja := "50505050000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE RECORTE", loja, "TCALC-RCAR")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCAR", "1", 200, 1, hoje.Format("2006-01-02"))
+
+	// período inteiro (sem override)
+	rSemRecorte, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("sem recorte: %v", err)
+	}
+
+	// recorte "semana" (últimos 7 dias) TAMBÉM inclui a venda de hoje — então
+	// o Realizado bate igual nos dois casos, isolando o que queremos provar:
+	// a PROJEÇÃO usa os dias da VIGÊNCIA (20 dias, dia 10) como base, não os
+	// dias do recorte (7 dias) — se usasse a base do recorte, o resultado
+	// seria bem diferente (proporção de dias totalmente outra).
+	di, df, _ := calcularRecorteDatas("semana")
+	rComRecorte, err := CalcularRealizadoComPeriodo(db, empresaID, vinculoID, vigenciaID, "faturado", "rede", di, df)
+	if err != nil {
+		t.Fatalf("com recorte: %v", err)
+	}
+
+	if rComRecorte.RealizadoTotal != rSemRecorte.RealizadoTotal {
+		t.Fatalf("pré-condição do teste falhou: os dois deveriam ter o mesmo Realizado (venda de hoje está nas duas janelas) — sem_recorte=%.0f com_recorte=%.0f", rSemRecorte.RealizadoTotal, rComRecorte.RealizadoTotal)
+	}
+	if rComRecorte.Projecao != rSemRecorte.Projecao {
+		t.Errorf("projeção deveria ser igual nos dois casos (mesma base de dias da vigência, mesmo Realizado) — sem_recorte=%.2f com_recorte=%.2f", rSemRecorte.Projecao, rComRecorte.Projecao)
+	}
+}
+
 func TestProjetarFechamento_ExemploDoPRD(t *testing.T) {
 	hoje := time.Now()
 	inicio := hoje.AddDate(0, 0, -14) // hoje é o 15º dia do período (14 dias atrás + hoje = 15)
