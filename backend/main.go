@@ -573,6 +573,12 @@ func main() {
 	http.HandleFunc("/api/farol/metas-itens-validos", withSP(handlers.MetasItensValidosHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-itens-validos-importar-csv", withSP(handlers.MetasItensValidosImportarCSVHandler, "gestor_geral"))
 
+	// Motor de Apuração — Épico 4 Story 4.1. Leitura só — GGV/Supervisor
+	// (Épico 5/6, painel de visualização) também precisam acessar, então
+	// somente_leitura (o nível mais permissivo), diferente da configuração
+	// admin acima (NFR2: edição restrita, visualização ampla).
+	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

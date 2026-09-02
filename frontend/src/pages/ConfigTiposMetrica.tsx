@@ -38,6 +38,7 @@ interface TipoMetrica {
   parametros_schema: ParametroSchema[]
   ativo: boolean
   created_at: string
+  formula_codigo?: string
 }
 
 const NIVEIS_AGREGACAO = [
@@ -60,6 +61,7 @@ const EMPTY_FORM = {
   nivel_agregacao: 'rede',
   ativo: true,
   parametros_schema: [{ key: '', label: '', type: 'number' }] as ParametroSchema[],
+  formula_codigo: '',
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -90,6 +92,7 @@ export default function ConfigTiposMetrica() {
       nivel_agregacao: form.nivel_agregacao,
       ativo: form.ativo,
       parametros_schema: form.parametros_schema.filter(p => p.key.trim() !== ''),
+      formula_codigo: form.formula_codigo.trim(),
     }
   }
 
@@ -140,6 +143,7 @@ export default function ConfigTiposMetrica() {
       parametros_schema: t.parametros_schema.length > 0
         ? t.parametros_schema.map(p => ({ ...p }))
         : [{ key: '', label: '', type: 'number' }],
+      formula_codigo: t.formula_codigo ?? '',
     })
     setShowDialog(true)
   }
@@ -260,6 +264,18 @@ export default function ConfigTiposMetrica() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Código da calculadora (opcional)</Label>
+              <Input
+                value={form.formula_codigo}
+                onChange={e => setForm(f => ({ ...f, formula_codigo: e.target.value }))}
+                placeholder="ex: cobertura_rede — vazio = ainda sem calculadora implementada"
+              />
+              <p className="text-xs text-muted-foreground">
+                Identifica qual algoritmo do motor de apuração calcula este tipo. Um Tipo de Métrica novo pode não ter calculadora ainda —
+                ele fica no catálogo normalmente, só não é apurado até alguém implementar o código correspondente.
+              </p>
             </div>
 
             <div className="space-y-1.5">

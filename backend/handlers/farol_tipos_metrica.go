@@ -46,6 +46,7 @@ type TipoMetricaRequest struct {
 	NivelAgregacao   string               `json:"nivel_agregacao"`
 	ParametrosSchema []ParametroSchemaDTO `json:"parametros_schema"`
 	Ativo            *bool                `json:"ativo"`
+	FormulaCodigo    string               `json:"formula_codigo"`
 }
 
 type TipoMetricaResponse struct {
@@ -56,6 +57,7 @@ type TipoMetricaResponse struct {
 	ParametrosSchema []ParametroSchemaDTO `json:"parametros_schema"`
 	Ativo            bool                 `json:"ativo"`
 	CreatedAt        string               `json:"created_at"`
+	FormulaCodigo    string               `json:"formula_codigo,omitempty"`
 }
 
 // ─── Validação ────────────────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ func scanTipoMetrica(row interface{ Scan(...any) error }) (*TipoMetricaResponse,
 		descricao     sql.NullString
 		parametrosRaw []byte
 	)
-	if err := row.Scan(&t.ID, &t.Nome, &descricao, &t.NivelAgregacao, &parametrosRaw, &t.Ativo, &t.CreatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.Nome, &descricao, &t.NivelAgregacao, &parametrosRaw, &t.Ativo, &t.CreatedAt, &t.FormulaCodigo); err != nil {
 		return nil, err
 	}
 	t.Descricao = descricao.String
@@ -118,7 +120,7 @@ func TiposMetricaHandler(db *sql.DB) http.HandlerFunc {
 		switch r.Method {
 		case http.MethodGet:
 			rows, err := db.Query(`
-				SELECT id, nome, descricao, nivel_agregacao, parametros_schema, ativo, created_at
+				SELECT id, nome, descricao, nivel_agregacao, parametros_schema, ativo, created_at, formula_codigo
 				FROM farol.tipos_metrica
 				WHERE empresa_id = $1
 				ORDER BY nome ASC
@@ -175,10 +177,10 @@ func TiposMetricaHandler(db *sql.DB) http.HandlerFunc {
 			var id int
 			var createdAt string
 			err = tx.QueryRow(`
-				INSERT INTO farol.tipos_metrica (empresa_id, nome, descricao, nivel_agregacao, parametros_schema, ativo)
-				VALUES ($1, $2, NULLIF($3,''), $4, $5, $6)
+				INSERT INTO farol.tipos_metrica (empresa_id, nome, descricao, nivel_agregacao, parametros_schema, ativo, formula_codigo)
+				VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7)
 				RETURNING id, created_at
-			`, spCtx.EmpresaID, req.Nome, req.Descricao, req.NivelAgregacao, parametrosJSON, ativo).Scan(&id, &createdAt)
+			`, spCtx.EmpresaID, req.Nome, req.Descricao, req.NivelAgregacao, parametrosJSON, ativo, req.FormulaCodigo).Scan(&id, &createdAt)
 			if err != nil {
 				if strings.Contains(err.Error(), "uq_farol_tipos_metrica_empresa_nome") {
 					http.Error(w, "Já existe um Tipo de Métrica com esse nome", http.StatusConflict)
@@ -264,7 +266,7 @@ func TipoMetricaItemHandler(db *sql.DB) http.HandlerFunc {
 			// audit log (NFR1) e também serve pra detectar 404 antes de gastar
 			// um UPDATE.
 			antes, err := scanTipoMetrica(tx.QueryRow(`
-				SELECT id, nome, descricao, nivel_agregacao, parametros_schema, ativo, created_at
+				SELECT id, nome, descricao, nivel_agregacao, parametros_schema, ativo, created_at, formula_codigo
 				FROM farol.tipos_metrica WHERE id = $1 AND empresa_id = $2
 			`, id, spCtx.EmpresaID))
 			if err != nil {
@@ -279,9 +281,9 @@ func TipoMetricaItemHandler(db *sql.DB) http.HandlerFunc {
 			_, err = tx.Exec(`
 				UPDATE farol.tipos_metrica
 				SET nome = $1, descricao = NULLIF($2,''), nivel_agregacao = $3,
-				    parametros_schema = $4, ativo = $5, updated_at = now()
-				WHERE id = $6 AND empresa_id = $7
-			`, req.Nome, req.Descricao, req.NivelAgregacao, parametrosJSON, ativo, id, spCtx.EmpresaID)
+				    parametros_schema = $4, ativo = $5, updated_at = now(), formula_codigo = $6
+				WHERE id = $7 AND empresa_id = $8
+			`, req.Nome, req.Descricao, req.NivelAgregacao, parametrosJSON, ativo, req.FormulaCodigo, id, spCtx.EmpresaID)
 			if err != nil {
 				if strings.Contains(err.Error(), "uq_farol_tipos_metrica_empresa_nome") {
 					http.Error(w, "Já existe um Tipo de Métrica com esse nome", http.StatusConflict)
