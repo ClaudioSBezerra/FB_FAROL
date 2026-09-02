@@ -11,6 +11,7 @@ package handlers
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // inserirVendaFaturadaFixture insere uma linha crua em vendas_faturadas —
@@ -326,6 +327,69 @@ func TestCalcularRealizado_FluxoSoma(t *testing.T) {
 	}
 	if rFat.Redes[0].Valor != 3000 {
 		t.Errorf("fluxo faturado isolado = %.2f, want 3000 (não deveria incluir o transmitido)", rFat.Redes[0].Valor)
+	}
+}
+
+// TestProjetarFechamento_ExemploDoPRD reproduz o exemplo exato do FR18:
+// "realizado de R$45.000 em 15 dias de um mês de 30 dias → projeção de
+// fechamento = R$90.000".
+func TestProjetarFechamento_ExemploDoPRD(t *testing.T) {
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -14) // hoje é o 15º dia do período (14 dias atrás + hoje = 15)
+	fim := inicio.AddDate(0, 0, 29)   // período de 30 dias no total
+
+	projecao := projetarFechamento(45000, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+	if projecao != 90000 {
+		t.Errorf("projeção = %.2f, want 90000.00 (exemplo exato do FR18)", projecao)
+	}
+}
+
+func TestProjetarFechamento_PeriodoJaEncerrado_ProjecaoEhORealizado(t *testing.T) {
+	// período totalmente no passado — não há mais nada a extrapolar
+	projecao := projetarFechamento(50000, "2020-01-01", "2020-01-31")
+	if projecao != 50000 {
+		t.Errorf("período encerrado: projeção deveria ser o próprio realizado (50000), veio %.2f", projecao)
+	}
+}
+
+// TestCalcularRealizado_ProjecaoPorGrupo_NaoSomaProjecoesFilhas cobre FR18a:
+// a projeção de um RCA vem do REALIZADO PRÓPRIO dele (agregado das Redes),
+// não da soma das projeções individuais das Redes.
+func TestCalcularRealizado_ProjecaoPorGrupo_NaoSomaProjecoesFilhas(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC ProjecaoGrupo", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -9) // dia 10 de um período de 20 dias
+	fim := inicio.AddDate(0, 0, 19)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+
+	loja1, loja2 := "12121212000101", "12121212000102"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1, loja2}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE P1", loja1, "TCALC-RCA11")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE P2", loja2, "TCALC-RCA11") // mesmo RCA
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PROD1", "TCALC-RCA11", "1", 200, 1, hoje.Format("2006-01-02"))
+	inserirVendaFaturadaFixture(t, empresaID, loja2, "PROD1", "TCALC-RCA11", "1", 300, 1, hoje.Format("2006-01-02"))
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rca")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if len(resultado.Grupos) != 1 {
+		t.Fatalf("esperava 1 grupo, veio %d", len(resultado.Grupos))
+	}
+	// RealizadoTotal do RCA = 2 Redes cobertas (ambas >= 100). Projeção do
+	// grupo = 2 (realizado do GRUPO) ÷ 10 dias decorridos × 20 dias totais = 4.
+	grupo := resultado.Grupos[0]
+	if grupo.RealizadoTotal != 2 {
+		t.Fatalf("RealizadoTotal do grupo = %.0f, want 2", grupo.RealizadoTotal)
+	}
+	esperada := grupo.RealizadoTotal / 10 * 20
+	if grupo.Projecao != esperada {
+		t.Errorf("projeção do grupo = %.2f, want %.2f (a partir do realizado PRÓPRIO do grupo, não soma de projeções de Rede)", grupo.Projecao, esperada)
 	}
 }
 

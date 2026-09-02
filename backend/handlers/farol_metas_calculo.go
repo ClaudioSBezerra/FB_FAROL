@@ -41,6 +41,7 @@ type RealizadoGrupo struct {
 	Nome           string  `json:"nome"`
 	RealizadoTotal float64 `json:"realizado_total"`
 	QtdRedes       int     `json:"qtd_redes"`
+	Projecao       float64 `json:"projecao"` // fechamento projetado deste nível — calculado a partir do RealizadoTotal DESTE grupo, nunca somando projeções de Redes/níveis filhos (FR18a)
 }
 
 type RealizadoResultado struct {
@@ -49,6 +50,7 @@ type RealizadoResultado struct {
 	Fluxo          string           `json:"fluxo"`
 	Nivel          string           `json:"nivel"`
 	RealizadoTotal float64          `json:"realizado_total"`
+	Projecao       float64          `json:"projecao"` // FR18: ritmo linear (realizado ÷ dias decorridos × dias totais do período)
 	Redes          []RealizadoRede  `json:"redes"`
 	Grupos         []RealizadoGrupo `json:"grupos,omitempty"`
 	Parcial        bool             `json:"parcial"` // true quando o período pedido inclui o mês corrente (ainda em andamento)
@@ -156,10 +158,17 @@ func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, 
 		}
 	}
 
+	resultado.Projecao = projetarFechamento(resultado.RealizadoTotal, dataInicio, dataFim)
+
 	if nivel != "rede" && nivel != "" {
 		resultado.Grupos, err = agregarPorNivel(db, empresaID, redes, nivel, formulaCodigo)
 		if err != nil {
 			return nil, err
+		}
+		// FR18a: projeção de cada grupo a partir do REALIZADO PRÓPRIO daquele
+		// grupo — nunca somando as projeções das Redes que o compõem.
+		for i := range resultado.Grupos {
+			resultado.Grupos[i].Projecao = projetarFechamento(resultado.Grupos[i].RealizadoTotal, dataInicio, dataFim)
 		}
 	}
 
@@ -550,6 +559,34 @@ func numeroDeParametro(parametros map[string]any, chave string) (float64, bool) 
 		}
 	}
 	return 0, false
+}
+
+// projetarFechamento aplica o método v1 (ritmo linear) do FR18:
+// projeção = realizado ÷ dias decorridos no período × dias totais do
+// período. Exemplo do PRD: R$45.000 em 15 dias de um mês de 30 → projeção
+// R$90.000. Se o período já terminou, dias decorridos = dias totais, e a
+// projeção vira o próprio realizado (nada a extrapolar).
+func projetarFechamento(realizado float64, dataInicio, dataFim string) float64 {
+	inicio, err1 := time.Parse("2006-01-02", dataInicio)
+	fim, err2 := time.Parse("2006-01-02", dataFim)
+	if err1 != nil || err2 != nil || !fim.After(inicio.Add(-24*time.Hour)) {
+		return realizado
+	}
+	hoje := time.Now().Truncate(24 * time.Hour)
+
+	diasTotais := int(fim.Sub(inicio).Hours()/24) + 1
+	diasDecorridos := diasTotais
+	if hoje.Before(fim) {
+		d := int(hoje.Sub(inicio).Hours()/24) + 1
+		if d < 1 {
+			d = 1
+		}
+		diasDecorridos = d
+	}
+	if diasDecorridos <= 0 || diasTotais <= 0 {
+		return realizado
+	}
+	return realizado / float64(diasDecorridos) * float64(diasTotais)
 }
 
 // periodoIncluiHoje diz se o período apurado ainda está "em andamento" —
