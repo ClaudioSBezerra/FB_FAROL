@@ -36,6 +36,28 @@ func limparVendasFaturadasFixture(t *testing.T, empresaID string, cnpjs []string
 	}
 }
 
+// inserirVendaTransmitidaFixture — mesmo papel de inserirVendaFaturadaFixture,
+// pro fluxo Transmitido (Story 4.2, FR15).
+func inserirVendaTransmitidaFixture(t *testing.T, empresaID, codCli, codProd, codRCA, tipoVenda string, pvenda, qt float64, data string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	_, err := db.Exec(`
+		INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cnpj, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
+		VALUES ($1, $2, $3, $4, $5, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $6, $7, $8)
+	`, empresaID, data, codCli, codProd, codRCA, tipoVenda, pvenda, qt)
+	if err != nil {
+		t.Fatalf("inserir fixture de venda transmitida: %v", err)
+	}
+}
+
+func limparVendasTransmitidasFixture(t *testing.T, empresaID string, cnpjs []string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	for _, c := range cnpjs {
+		db.Exec(`DELETE FROM vendas_transmitidas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca LIKE 'TCALC%'`, empresaID, c)
+	}
+}
+
 func inserirClienteValidoFixture(t *testing.T, empresaID string, vinculoID, vigenciaID int, redeNome, cnpj, codRCA string) {
 	t.Helper()
 	db, _ := biTestDB(t)
@@ -242,6 +264,68 @@ func TestCalcularRealizado_AgregacaoPorRCA(t *testing.T) {
 	}
 	if resultado.Grupos[0].RealizadoTotal != 2 {
 		t.Errorf("RCA com 2 Redes cobertas (ambas >= limiar 100) deveria ter RealizadoTotal=2, veio %.0f", resultado.Grupos[0].RealizadoTotal)
+	}
+}
+
+// TestCalcularRealizado_FluxoTransmitido cobre a Story 4.2 (FR15): o fluxo
+// "transmitido" lê vendas_transmitidas, não vendas_faturadas.
+func TestCalcularRealizado_FluxoTransmitido(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Transmitido", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
+
+	loja := "77777777000101"
+	t.Cleanup(func() { limparVendasTransmitidasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE TRANS", loja, "TCALC-RCA7")
+	inserirVendaTransmitidaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA7", "1", 5000, 1, "2026-07-10")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "transmitido", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado fluxo=transmitido: %v", err)
+	}
+	if resultado.Redes[0].Valor != 5000 {
+		t.Errorf("fluxo transmitido = %.2f, want 5000 (só transmitido, sem misturar faturado)", resultado.Redes[0].Valor)
+	}
+}
+
+// TestCalcularRealizado_FluxoSoma cobre FR15: "Soma" combina Faturado +
+// Transmitido — capacidade nova que o Farol hoje não tem (só alterna).
+func TestCalcularRealizado_FluxoSoma(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Soma", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	loja := "88888888000101"
+	t.Cleanup(func() {
+		limparVendasFaturadasFixture(t, empresaID, []string{loja})
+		limparVendasTransmitidasFixture(t, empresaID, []string{loja})
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SOMA", loja, "TCALC-RCA8")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA8", "1", 3000, 1, "2026-08-05")
+	inserirVendaTransmitidaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA8", "1", 2000, 1, "2026-08-06")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado fluxo=soma: %v", err)
+	}
+	if resultado.Redes[0].Valor != 5000 {
+		t.Errorf("fluxo soma = %.2f, want 5000 (3000 faturado + 2000 transmitido)", resultado.Redes[0].Valor)
+	}
+
+	// Confirma que os fluxos individuais continuam corretos isoladamente —
+	// trocar fluxo não é acumulativo/com efeito colateral.
+	rFat, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado fluxo=faturado: %v", err)
+	}
+	if rFat.Redes[0].Valor != 3000 {
+		t.Errorf("fluxo faturado isolado = %.2f, want 3000 (não deveria incluir o transmitido)", rFat.Redes[0].Valor)
 	}
 }
 
