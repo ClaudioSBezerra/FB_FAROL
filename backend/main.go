@@ -569,6 +569,10 @@ func main() {
 	http.HandleFunc("/api/farol/metas-clientes-validos", withSP(handlers.MetasClientesValidosHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-clientes-validos-importar-csv", withSP(handlers.MetasClientesValidosImportarCSVHandler, "gestor_geral"))
 
+	// Itens Válidos (EAN + embalagem) — Épico 3 Story 3.3.
+	http.HandleFunc("/api/farol/metas-itens-validos", withSP(handlers.MetasItensValidosHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-itens-validos-importar-csv", withSP(handlers.MetasItensValidosImportarCSVHandler, "gestor_geral"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

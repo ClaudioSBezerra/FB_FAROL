@@ -488,6 +488,35 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
     e.target.value = ''
   }
 
+  const itensFileInputRef = useRef<HTMLInputElement>(null)
+  const [itensUploadTarget, setItensUploadTarget] = useState<number | null>(null)
+
+  const importarItens = useMutation({
+    mutationFn: async ({ vigenciaId, file }: { vigenciaId: number; file: File }) => {
+      const body = new FormData()
+      body.append('file', file)
+      const r = await fetch(`/api/farol/metas-itens-validos-importar-csv?vinculo_id=${vinculo.id}&vigencia_id=${vigenciaId}`, {
+        method: 'POST', headers, body,
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        const erros = Array.isArray(data?.erros)
+          ? data.erros.map((e: { linha: number; erro: string }) => `Linha ${e.linha || '-'}: ${e.erro}`).join('\n')
+          : (data?.error ?? 'Erro ao importar Itens Válidos')
+        throw new Error(erros)
+      }
+      return data as { itens_importados: number }
+    },
+    onSuccess: data => toast.success(`${data.itens_importados} item(ns) válido(s) importado(s)`),
+    onError: (e: Error) => toast.error(e.message, { style: { whiteSpace: 'pre-line' } }),
+  })
+
+  function onItensCSVSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file && itensUploadTarget) importarItens.mutate({ vigenciaId: itensUploadTarget, file })
+    e.target.value = ''
+  }
+
   const { data: vigencias = [], isLoading } = useQuery<Vigencia[]>({
     queryKey: ['farol-metas-vigencias', vinculo.id],
     queryFn: async () => {
@@ -584,6 +613,14 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                   </Button>
                   <Button
                     variant="outline" size="sm"
+                    disabled={importarItens.isPending}
+                    onClick={() => { setItensUploadTarget(v.id); itensFileInputRef.current?.click() }}
+                    title="Importar Itens Válidos (CSV): ean;cod_prod;tipo_embalagem"
+                  >
+                    <Upload className="w-3.5 h-3.5 mr-1" /> Itens
+                  </Button>
+                  <Button
+                    variant="outline" size="sm"
                     disabled={fechar.isPending}
                     onClick={() => fechar.mutate(v.id)}
                   >
@@ -594,6 +631,7 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
             </div>
           ))}
           <input ref={clientesFileInputRef} type="file" accept=".csv" className="hidden" onChange={onClientesCSVSelected} />
+          <input ref={itensFileInputRef} type="file" accept=".csv" className="hidden" onChange={onItensCSVSelected} />
 
           {!showForm && (
             <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
