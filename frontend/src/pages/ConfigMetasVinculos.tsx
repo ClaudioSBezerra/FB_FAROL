@@ -19,7 +19,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, CalendarClock, Lock, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,6 +37,20 @@ interface TipoMetrica {
   nome: string
   nivel_agregacao: string
   parametros_schema: ParametroSchema[]
+}
+
+interface Faixa {
+  faixa: number
+  valor_meta: number
+}
+
+interface Vigencia {
+  id: number
+  vinculo_id: number
+  data_inicio: string
+  data_fim: string
+  status: 'aberta' | 'fechada'
+  faixas: Faixa[]
 }
 
 interface MetaVinculo {
@@ -68,6 +82,7 @@ export default function ConfigMetasVinculos() {
   const [deleteTarget, setDeleteTarget] = useState<MetaVinculo | null>(null)
   const [showDialog, setShowDialog] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [vigenciasTarget, setVigenciasTarget] = useState<MetaVinculo | null>(null)
 
   const { data: vinculos = [], isLoading } = useQuery<MetaVinculo[]>({
     queryKey: ['farol-metas-vinculos'],
@@ -220,6 +235,9 @@ export default function ConfigMetasVinculos() {
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
+                    <Button variant="ghost" size="icon" title="Vigências e metas" onClick={() => setVigenciasTarget(v)}>
+                      <CalendarClock className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(v)}>
                       <Pencil className="w-4 h-4" />
                     </Button>
@@ -328,6 +346,198 @@ export default function ConfigMetasVinculos() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* Vigências e faixas do vínculo selecionado */}
+      {vigenciasTarget && (
+        <VigenciasDialog
+          vinculo={vigenciasTarget}
+          headers={headers}
+          onClose={() => setVigenciasTarget(null)}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── VigenciasDialog — gestão de vigências e faixas de um vínculo ─────────────
+
+const EMPTY_VIGENCIA_FORM = {
+  data_inicio: '',
+  data_fim: '',
+  faixas: [{ faixa: 1, valor_meta: '' }] as { faixa: number; valor_meta: string }[],
+}
+
+function VigenciasDialog({ vinculo, headers, onClose }: {
+  vinculo: MetaVinculo
+  headers: Record<string, string>
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState(EMPTY_VIGENCIA_FORM)
+  const [showForm, setShowForm] = useState(false)
+
+  const { data: vigencias = [], isLoading } = useQuery<Vigencia[]>({
+    queryKey: ['farol-metas-vigencias', vinculo.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/metas-vigencias?vinculo_id=${vinculo.id}`, { headers })
+      if (!r.ok) throw new Error('Erro ao carregar vigências')
+      return r.json()
+    },
+  })
+
+  const criar = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/farol/metas-vigencias', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vinculo_id: vinculo.id,
+          data_inicio: form.data_inicio,
+          data_fim: form.data_fim,
+          faixas: form.faixas
+            .filter(f => f.valor_meta !== '')
+            .map(f => ({ faixa: f.faixa, valor_meta: Number(f.valor_meta) })),
+        }),
+      })
+      if (!r.ok) throw new Error((await r.text()) || 'Erro ao criar vigência')
+    },
+    onSuccess: () => {
+      toast.success('Vigência criada')
+      qc.invalidateQueries({ queryKey: ['farol-metas-vigencias', vinculo.id] })
+      setForm(EMPTY_VIGENCIA_FORM)
+      setShowForm(false)
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const fechar = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`/api/farol/metas-vigencias/${id}/fechar`, { method: 'POST', headers })
+      if (!r.ok) throw new Error((await r.text()) || 'Erro ao fechar vigência')
+    },
+    onSuccess: () => {
+      toast.success('Vigência fechada — congelada, só reprocessamento manual altera o resultado dela')
+      qc.invalidateQueries({ queryKey: ['farol-metas-vigencias', vinculo.id] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  function addFaixaRow() {
+    const proximaFaixa = Math.max(0, ...form.faixas.map(f => f.faixa)) + 1
+    setForm(f => ({ ...f, faixas: [...f.faixas, { faixa: proximaFaixa, valor_meta: '' }] }))
+  }
+
+  function removeFaixaRow(idx: number) {
+    setForm(f => ({ ...f, faixas: f.faixas.filter((_, i) => i !== idx) }))
+  }
+
+  return (
+    <Dialog open onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Vigências — {vinculo.industria_nome} / {vinculo.tipo_metrica_nome}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
+          {!isLoading && vigencias.length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhuma vigência cadastrada ainda.</p>
+          )}
+          {vigencias.map(v => (
+            <div key={v.id} className="border rounded-lg p-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">{v.data_inicio} — {v.data_fim}</span>
+                  <Badge variant={v.status === 'aberta' ? 'default' : 'secondary'}>
+                    {v.status === 'aberta' ? 'Aberta' : 'Fechada'}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {v.faixas.map(f => (
+                    <span key={f.faixa} className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
+                      Faixa {f.faixa}: {f.valor_meta}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {v.status === 'aberta' && (
+                <Button
+                  variant="outline" size="sm"
+                  disabled={fechar.isPending}
+                  onClick={() => fechar.mutate(v.id)}
+                >
+                  <Lock className="w-3.5 h-3.5 mr-1" /> Fechar
+                </Button>
+              )}
+            </div>
+          ))}
+
+          {!showForm && (
+            <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
+              <Plus className="w-4 h-4 mr-1" /> Nova Vigência
+            </Button>
+          )}
+
+          {showForm && (
+            <div className="border rounded-lg p-3 space-y-3">
+              <div className="flex gap-3">
+                <div className="space-y-1 flex-1">
+                  <Label className="text-xs">Início</Label>
+                  <Input type="date" value={form.data_inicio} onChange={e => setForm(f => ({ ...f, data_inicio: e.target.value }))} />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <Label className="text-xs">Fim</Label>
+                  <Input type="date" value={form.data_fim} onChange={e => setForm(f => ({ ...f, data_fim: e.target.value }))} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Faixas de meta</Label>
+                {form.faixas.map((row, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <Input
+                      className="w-20"
+                      type="number"
+                      value={row.faixa}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        faixas: f.faixas.map((r, i) => i === idx ? { ...r, faixa: Number(e.target.value) } : r),
+                      }))}
+                      placeholder="Faixa"
+                    />
+                    <Input
+                      value={row.valor_meta}
+                      type="number"
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        faixas: f.faixas.map((r, i) => i === idx ? { ...r, valor_meta: e.target.value } : r),
+                      }))}
+                      placeholder="Valor da meta"
+                    />
+                    <Button variant="ghost" size="icon" disabled={form.faixas.length === 1} onClick={() => removeFaixaRow(idx)}>
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={addFaixaRow}>
+                  <Plus className="w-4 h-4 mr-1" /> Adicionar faixa
+                </Button>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => { setShowForm(false); setForm(EMPTY_VIGENCIA_FORM) }}>Cancelar</Button>
+                <Button
+                  onClick={() => criar.mutate()}
+                  disabled={!form.data_inicio || !form.data_fim || criar.isPending}
+                >
+                  {criar.isPending ? 'Salvando...' : 'Salvar Vigência'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
