@@ -145,24 +145,12 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 
 		// Realizado ao nível de Rede (grão atômico), depois filtra pro
 		// escopo pedido — nunca expõe Redes de fora do Supervisor/RCA da URL.
-		realizadoCompleto, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, fluxo, "rede")
+		realizadoEscopo, err := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, "", "")
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		redesEscopo, err := filtrarRedesPorEscopo(db, empresaID, realizadoCompleto.Redes, scope, cod)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		realizadoEscopo := recalcularTotalDeRedes(redesEscopo, formulaCodigo)
-		realizadoEscopo.VinculoID = vinculoID
-		realizadoEscopo.VigenciaID = vigenciaID
-		realizadoEscopo.Fluxo = fluxo
-		realizadoEscopo.Nivel = "rede"
-		realizadoEscopo.Parcial = realizadoCompleto.Parcial
-		realizadoEscopo.Projecao = projetarFechamento(realizadoEscopo.RealizadoTotal, vig.DataInicio, vig.DataFim)
 
 		rows, err := db.Query(`SELECT faixa, valor_meta FROM farol.metas_faixas WHERE vigencia_id = $1 AND empresa_id = $2`, vigenciaID, empresaID)
 		if err != nil {
@@ -197,8 +185,52 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 			resp.Delta = resp.ProximaFaixa.ValorMeta - realizadoEscopo.RealizadoTotal
 		}
 
+		if q.Get("recortes") == "1" {
+			resp.Recortes = map[string]*RealizadoResultado{}
+			for _, rec := range []string{"dia_anterior", "semana", "mes", "ano_corrente"} {
+				di, df, rerr := calcularRecorteDatas(rec)
+				if rerr != nil {
+					continue
+				}
+				rr, rerr2 := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, di, df)
+				if rerr2 == nil {
+					resp.Recortes[rec] = rr
+				}
+			}
+		}
+
 		json.NewEncoder(w).Encode(resp)
 	}
+}
+
+// calcularRealizadoEscopoPublico calcula o Realizado (ao vivo via
+// CalcularRealizadoComPeriodo — recortes de tempo nunca passam pelo
+// congelamento, mesma regra da Story 5.3) e já filtra pro escopo
+// Supervisor/RCA. dataInicioOverride/dataFimOverride vazios = período
+// inteiro da vigência (uso normal); preenchidos = recorte (Story 6.2).
+func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, scope, cod, formulaCodigo, dataInicioVigencia, dataFimVigencia, dataInicioOverride, dataFimOverride string) (*RealizadoResultado, error) {
+	var realizadoCompleto *RealizadoResultado
+	var err error
+	if dataInicioOverride == "" {
+		realizadoCompleto, err = obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, fluxo, "rede")
+	} else {
+		realizadoCompleto, err = CalcularRealizadoComPeriodo(db, empresaID, vinculoID, vigenciaID, fluxo, "rede", dataInicioOverride, dataFimOverride)
+	}
+	if err != nil {
+		return nil, err
+	}
+	redesEscopo, err := filtrarRedesPorEscopo(db, empresaID, realizadoCompleto.Redes, scope, cod)
+	if err != nil {
+		return nil, err
+	}
+	realizadoEscopo := recalcularTotalDeRedes(redesEscopo, formulaCodigo)
+	realizadoEscopo.VinculoID = vinculoID
+	realizadoEscopo.VigenciaID = vigenciaID
+	realizadoEscopo.Fluxo = fluxo
+	realizadoEscopo.Nivel = "rede"
+	realizadoEscopo.Parcial = realizadoCompleto.Parcial
+	realizadoEscopo.Projecao = projetarFechamento(realizadoEscopo.RealizadoTotal, dataInicioVigencia, dataFimVigencia)
+	return realizadoEscopo, nil
 }
 
 // filtrarRedesPorEscopo restringe a lista de Redes ao Supervisor/RCA

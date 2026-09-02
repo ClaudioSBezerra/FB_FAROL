@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Target, TrendingDown, TrendingUp } from 'lucide-react'
+import { Target, TrendingDown, TrendingUp, AlertTriangle } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,14 +30,29 @@ interface PainelFaixa {
   atingida: boolean
 }
 
+interface Realizado {
+  realizado_total: number
+  projecao: number
+  parcial: boolean
+  redes: RealizadoRede[]
+}
+
 interface Painel {
   industria_nome: string
   tipo_metrica_nome: string
-  realizado: { realizado_total: number; parcial: boolean; redes: RealizadoRede[] }
+  realizado: Realizado
   faixa_atual: PainelFaixa | null
   proxima_faixa: PainelFaixa | null
   delta: number
+  recortes?: Record<string, Realizado>
 }
+
+const RECORTES = [
+  { value: 'dia_anterior', label: 'Ontem' },
+  { value: 'semana', label: 'Semana' },
+  { value: 'mes', label: 'Mês' },
+  { value: 'ano_corrente', label: 'Ano' },
+]
 
 // ─── Page — painel mobile público, mesmo padrão sem login de FarolPublicPanel ──
 
@@ -50,6 +65,7 @@ export default function FarolPublicMetasPanel() {
 
   const [vinculoID, setVinculoID] = useState('')
   const [vigenciaID, setVigenciaID] = useState('')
+  const [aba, setAba] = useState<'oficiais' | 'projecao'>('oficiais')
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
     queryKey: ['public-metas-vinculos', cnpj],
@@ -74,7 +90,7 @@ export default function FarolPublicMetasPanel() {
   const { data: painel, isLoading } = useQuery<Painel>({
     queryKey: ['public-metas-painel', cnpj, scope, scopeCod, vinculoID, vigenciaID],
     queryFn: async () => {
-      const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, vinculo_id: vinculoID, vigencia_id: vigenciaID })
+      const p = new URLSearchParams({ cnpj, scope, cod: scopeCod, vinculo_id: vinculoID, vigencia_id: vigenciaID, recortes: '1' })
       const r = await fetch(`/api/farol/public/metas-painel?${p}`)
       if (!r.ok) throw new Error(await r.text())
       return r.json()
@@ -123,38 +139,78 @@ export default function FarolPublicMetasPanel() {
 
       {painel && (
         <div className="space-y-3">
-          <div className="bg-white border rounded-xl p-4">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-              <Target className="w-4 h-4" /> Realizado
-            </div>
-            <div className="text-3xl font-bold">{painel.realizado.realizado_total.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</div>
-            {painel.realizado.parcial && <span className="text-xs text-amber-600">Mês em andamento</span>}
+          <div className="flex gap-1 border-b">
+            <button
+              className={`flex-1 px-3 py-2.5 text-sm font-bold uppercase border-b-2 ${aba === 'oficiais' ? 'border-slate-800 text-slate-900' : 'border-transparent text-muted-foreground'}`}
+              onClick={() => setAba('oficiais')}
+            >
+              Oficial
+            </button>
+            <button
+              className={`flex-1 px-3 py-2.5 text-sm font-bold uppercase border-b-2 ${aba === 'projecao' ? 'border-slate-800 text-slate-900' : 'border-transparent text-muted-foreground'}`}
+              onClick={() => setAba('projecao')}
+            >
+              Projeção
+            </button>
           </div>
 
-          <div className={`rounded-xl p-4 border ${painel.delta > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
-            <div className="flex items-center gap-2 text-xs mb-1">
-              {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
-              {painel.delta > 0 ? `Falta ${painel.delta.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} pra bater a meta` : 'Meta batida!'}
-            </div>
-            {painel.proxima_faixa && (
-              <div className="text-xs text-muted-foreground">Próxima meta (Faixa {painel.proxima_faixa.faixa}): {painel.proxima_faixa.valor_meta}</div>
-            )}
-          </div>
-
-          <div className="bg-white border rounded-xl overflow-hidden">
-            <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">Suas Redes</div>
-            {painel.realizado.redes.length === 0 && (
-              <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
-            )}
-            {painel.realizado.redes.map((r, i) => (
-              <div key={i} className="px-3 py-2 flex items-center justify-between border-b last:border-0 text-sm">
-                <span>{r.rede_nome}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${r.atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {r.atingiu ? 'Coberta' : 'Não coberta'}
-                </span>
+          {aba === 'oficiais' ? (
+            <>
+              <div className="bg-white border rounded-xl p-4">
+                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                  <Target className="w-4 h-4" /> Realizado
+                </div>
+                <div className="text-3xl font-bold">{painel.realizado.realizado_total.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</div>
+                {painel.realizado.parcial && <span className="text-xs text-amber-600">Mês em andamento</span>}
               </div>
-            ))}
-          </div>
+
+              <div className={`rounded-xl p-4 border ${painel.delta > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                <div className="flex items-center gap-2 text-xs mb-1">
+                  {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
+                  {painel.delta > 0 ? `Falta ${painel.delta.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} pra bater a meta` : 'Meta batida!'}
+                </div>
+                {painel.proxima_faixa && (
+                  <div className="text-xs text-muted-foreground">Próxima meta (Faixa {painel.proxima_faixa.faixa}): {painel.proxima_faixa.valor_meta}</div>
+                )}
+              </div>
+
+              <div className="bg-white border rounded-xl overflow-hidden">
+                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">Suas Redes</div>
+                {painel.realizado.redes.length === 0 && (
+                  <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
+                )}
+                {painel.realizado.redes.map((r, i) => (
+                  <div key={i} className="px-3 py-2 flex items-center justify-between border-b last:border-0 text-sm">
+                    <span>{r.rede_nome}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                      {r.atingiu ? 'Coberta' : 'Não coberta'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>Estimativa com base no ritmo até hoje — não é um número oficial do programa.</span>
+              </div>
+              <div className="bg-white border rounded-xl p-4">
+                <div className="text-muted-foreground text-xs mb-1">Projeção de fechamento</div>
+                <div className="text-3xl font-bold">{painel.realizado.projecao.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</div>
+              </div>
+              {painel.recortes && (
+                <div className="bg-white border rounded-xl overflow-hidden">
+                  {RECORTES.map(r => (
+                    <div key={r.value} className="px-3 py-2 flex items-center justify-between border-b last:border-0 text-sm">
+                      <span>{r.label}</span>
+                      <span className="font-semibold">{painel.recortes?.[r.value]?.realizado_total.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) ?? '—'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
