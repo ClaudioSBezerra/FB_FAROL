@@ -66,6 +66,53 @@ func TestMetasPainel_DeltaExplicito(t *testing.T) {
 	}
 }
 
+// TestMetasPainel_AlternanciaFluxo cobre a Story 5.2 (FR20): trocar de
+// fluxo no painel recalcula Realizado/delta corretamente, sem perder o
+// nível de drill-down pedido na mesma consulta.
+func TestMetasPainel_AlternanciaFluxo(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TPAINEL Fluxo", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-03-01", "2026-03-31")
+	db.Exec(`INSERT INTO farol.metas_faixas (empresa_id, vigencia_id, faixa, valor_meta) VALUES ($1,$2,1,1)`, empresaID, vigenciaID)
+
+	loja := "40404040000101"
+	t.Cleanup(func() {
+		limparVendasFaturadasFixture(t, empresaID, []string{loja})
+		limparVendasTransmitidasFixture(t, empresaID, []string{loja})
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE FLUXO", loja, "TCALC-RCAF")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCAF", "1", 1000, 1, "2026-03-05")
+	// sem venda transmitida — fluxo transmitido deve dar 0, não vazar o faturado
+
+	urlFat := fmt.Sprintf("/api/farol/metas-painel?vinculo_id=%d&vigencia_id=%d&fluxo=faturado&nivel=rca", vinculoID, vigenciaID)
+	wFat := httptest.NewRecorder()
+	MetasPainelHandler(db)(wFat, painelReq(urlFat, empresaID, userID))
+	var respFat PainelResponse
+	json.Unmarshal(wFat.Body.Bytes(), &respFat)
+	if respFat.Realizado.Nivel != "rca" {
+		t.Errorf("nível deveria continuar 'rca' com fluxo=faturado, veio %q", respFat.Realizado.Nivel)
+	}
+	if respFat.Realizado.RealizadoTotal != 1 {
+		t.Fatalf("fluxo faturado: RealizadoTotal = %.0f, want 1", respFat.Realizado.RealizadoTotal)
+	}
+
+	urlTrans := fmt.Sprintf("/api/farol/metas-painel?vinculo_id=%d&vigencia_id=%d&fluxo=transmitido&nivel=rca", vinculoID, vigenciaID)
+	wTrans := httptest.NewRecorder()
+	MetasPainelHandler(db)(wTrans, painelReq(urlTrans, empresaID, userID))
+	var respTrans PainelResponse
+	json.Unmarshal(wTrans.Body.Bytes(), &respTrans)
+	if respTrans.Realizado.Nivel != "rca" {
+		t.Errorf("nível deveria continuar 'rca' com fluxo=transmitido, veio %q", respTrans.Realizado.Nivel)
+	}
+	if respTrans.Realizado.RealizadoTotal != 0 {
+		t.Errorf("fluxo transmitido: RealizadoTotal = %.0f, want 0 (sem venda transmitida, não deveria herdar o faturado)", respTrans.Realizado.RealizadoTotal)
+	}
+}
+
 func TestMetasPainel_TodasFaixasAtingidas_DeltaZero(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)
