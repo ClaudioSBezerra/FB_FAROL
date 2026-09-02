@@ -66,3 +66,4 @@ Claude Sonnet 5
 ### Change Log
 
 - 2026-09-02: Recortes de tempo e aba de Projeção separada implementados.
+- 2026-09-02 (correção): erro de sintaxe JSX introduzido nesta story (dois `<div>` irmãos sem `<>...</>` envolvendo, no branch "oficiais" do ternário de abas) só foi pego no fechamento do módulo, ao rodar `npm run build` de verdade — `tsc --noEmit` (usado como verificação em toda a sessão) **não acusou o erro**. Corrigido e o build de produção confirmado limpo. Lição registrada: `tsc --noEmit` verifica tipos, não garante que o JSX é sintaticamente válido pro bundler (esbuild/Vite) — `npm run build` é a verificação que importa de verdade pra frontend, não só type-check.

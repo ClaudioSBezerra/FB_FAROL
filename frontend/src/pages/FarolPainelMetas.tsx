@@ -248,6 +248,7 @@ export default function FarolPainelMetas() {
               )}
             </div>
           ) : (
+          <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="border rounded-lg p-4">
               <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -302,6 +303,7 @@ export default function FarolPainelMetas() {
               </TableBody>
             </Table>
           </div>
+          </>
           )}
         </>
       ) : null}
