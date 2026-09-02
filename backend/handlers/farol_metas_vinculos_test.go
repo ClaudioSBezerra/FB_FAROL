@@ -225,6 +225,48 @@ func TestMetasVinculos_RecorteOrganizacional(t *testing.T) {
 	}
 }
 
+// TestMetasVinculos_TipoVendaValido cobre a Story 2.4 (FR6): tipo de venda
+// válido pra apuração é configurável por vínculo (ex: só "1" e "9" no caso
+// Unilever), independente do "Líquido" padrão do Farol.
+func TestMetasVinculos_TipoVendaValido(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	industriaID := criarIndustriaFixture(t, db, empresaID, "TMV TipoVenda")
+	tipoID := criarTipoMetricaFixture(t, db, empresaID, "TMV Tipo TipoVenda", "rede",
+		[]ParametroSchemaDTO{{Key: "x", Label: "X", Type: "number"}})
+	t.Cleanup(func() {
+		limparMetaVinculoFixture(t, db, empresaID, industriaID, tipoID)
+		db.Exec(`DELETE FROM farol.industrias WHERE id = $1`, industriaID)
+		db.Exec(`DELETE FROM farol.tipos_metrica WHERE id = $1`, tipoID)
+	})
+
+	wc := httptest.NewRecorder()
+	MetasVinculosHandler(db)(wc, metaVinculoReq(http.MethodPost, "/api/farol/metas-vinculos", empresaID, userID, MetaVinculoRequest{
+		IndustriaID: industriaID, TipoMetricaID: tipoID, ParametrosValores: map[string]any{"x": 1},
+		TiposVendaValidos: []string{"1", "9"},
+	}))
+	if wc.Code != http.StatusCreated {
+		t.Fatalf("POST com tipos_venda_validos → status %d, body=%s", wc.Code, wc.Body.String())
+	}
+
+	w2 := httptest.NewRecorder()
+	MetasVinculosHandler(db)(w2, metaVinculoReq(http.MethodGet, "/api/farol/metas-vinculos", empresaID, userID, nil))
+	var lista []MetaVinculoResponse
+	json.Unmarshal(w2.Body.Bytes(), &lista)
+	var achado *MetaVinculoResponse
+	for i := range lista {
+		if lista[i].IndustriaID == industriaID {
+			achado = &lista[i]
+		}
+	}
+	if achado == nil {
+		t.Fatalf("vínculo não encontrado")
+	}
+	if len(achado.TiposVendaValidos) != 2 || achado.TiposVendaValidos[0] != "1" || achado.TiposVendaValidos[1] != "9" {
+		t.Errorf("tipos_venda_validos não persistiu corretamente: %v", achado.TiposVendaValidos)
+	}
+}
+
 func TestMetasVinculos_MesmaIndustriaMesmoTipo_Conflito409(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)

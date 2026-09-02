@@ -64,6 +64,7 @@ interface MetaVinculo {
   ativo: boolean
   recorte_uf: string
   recorte_ggvs: string[]
+  tipos_venda_validos: string[]
 }
 
 const EMPTY_FORM = {
@@ -73,6 +74,7 @@ const EMPTY_FORM = {
   parametros_valores: {} as Record<string, string>,
   recorte_uf: '',
   recorte_ggvs: '', // texto separado por vírgula na UI, vira array só no submit
+  tipos_venda_validos: '', // idem — vazio = usa o "Líquido" padrão do Farol
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -135,6 +137,7 @@ export default function ConfigMetasVinculos() {
           parametros_valores: parametrosValores,
           recorte_uf: form.recorte_uf.trim().toUpperCase(),
           recorte_ggvs: form.recorte_ggvs.split(',').map(s => s.trim()).filter(Boolean),
+          tipos_venda_validos: form.tipos_venda_validos.split(',').map(s => s.trim()).filter(Boolean),
         }),
       })
       if (!r.ok) throw new Error((await r.text()) || 'Erro ao salvar vínculo')
@@ -179,6 +182,7 @@ export default function ConfigMetasVinculos() {
       parametros_valores: valores,
       recorte_uf: v.recorte_uf ?? '',
       recorte_ggvs: (v.recorte_ggvs ?? []).join(', '),
+      tipos_venda_validos: (v.tipos_venda_validos ?? []).join(', '),
     })
     setShowDialog(true)
   }
@@ -336,6 +340,15 @@ export default function ConfigMetasVinculos() {
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-sm">Tipos de venda válidos (opcional — vazio = "Líquido" padrão do Farol)</Label>
+              <Input
+                value={form.tipos_venda_validos}
+                onChange={e => setForm(f => ({ ...f, tipos_venda_validos: e.target.value }))}
+                placeholder="1, 9"
+              />
             </div>
 
             <div className="flex items-center gap-2">
