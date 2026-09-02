@@ -125,6 +125,31 @@ func TestMetasImportarCSV_ColunaObrigatoriaAusente_400(t *testing.T) {
 	}
 }
 
+// TestMetasImportarCSV_SobreposicaoComVigenciaFechada_409 cobre a Story 3.4
+// (FR13/snapshot congelado): mesmo a importação de metas (Story 3.1, que
+// cria vigências NOVAS) não consegue criar nada que se sobreponha a uma
+// vigência já fechada — a constraint EXCLUDE protege independente de qual
+// handler tenta escrever.
+func TestMetasImportarCSV_SobreposicaoComVigenciaFechada_409(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	vinculoID, cleanup := criarVinculoFixture(t, db, empresaID, "TCSV Fechada")
+	t.Cleanup(cleanup)
+
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-01-01", "2026-01-31")
+	db.Exec(`UPDATE farol.metas_vigencias SET status = 'fechada' WHERE id = $1`, vigenciaID)
+
+	csvContent := fmt.Sprintf("vinculo_id;data_inicio;data_fim;faixa;valor_meta\n%d;2026-01-01;2026-01-31;1;999\n", vinculoID)
+	w := httptest.NewRecorder()
+	MetasImportarCSVHandler(db)(w, csvImportReq(empresaID, userID, csvContent))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("CSV tentando recriar vigência sobre uma já fechada → status %d, want 409, body=%s", w.Code, w.Body.String())
+	}
+	if n := contarVigencias(t, db, vinculoID); n != 1 {
+		t.Errorf("deveria continuar existindo só a vigência fechada original (1), veio %d", n)
+	}
+}
+
 func TestMetasImportarCSV_SobreposicaoComVigenciaExistente_409(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)
