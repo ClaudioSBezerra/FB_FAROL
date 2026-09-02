@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
@@ -27,6 +29,8 @@ type MetaVinculoRequest struct {
 	TipoMetricaID     int            `json:"tipo_metrica_id"`
 	ParametrosValores map[string]any `json:"parametros_valores"`
 	Ativo             *bool          `json:"ativo"`
+	RecorteUF         string         `json:"recorte_uf"`
+	RecorteGGVs       []string       `json:"recorte_ggvs"`
 }
 
 type MetaVinculoResponse struct {
@@ -40,6 +44,8 @@ type MetaVinculoResponse struct {
 	ParametrosValores map[string]any       `json:"parametros_valores"`
 	Ativo             bool                 `json:"ativo"`
 	CreatedAt         string               `json:"created_at"`
+	RecorteUF         string               `json:"recorte_uf,omitempty"`
+	RecorteGGVs       []string             `json:"recorte_ggvs"`
 }
 
 // ─── Validação ────────────────────────────────────────────────────────────────
@@ -89,13 +95,18 @@ func scanMetaVinculo(row interface{ Scan(...any) error }) (*MetaVinculoResponse,
 		nivel         string
 		schemaRaw     []byte
 		parametrosRaw []byte
+		recorteUF     sql.NullString
 	)
-	if err := row.Scan(&v.ID, &v.IndustriaID, &industriaNome, &v.TipoMetricaID, &tipoNome, &nivel, &schemaRaw, &parametrosRaw, &v.Ativo, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.IndustriaID, &industriaNome, &v.TipoMetricaID, &tipoNome, &nivel, &schemaRaw, &parametrosRaw, &v.Ativo, &v.CreatedAt, &recorteUF, pq.Array(&v.RecorteGGVs)); err != nil {
 		return nil, err
 	}
 	v.IndustriaNome = industriaNome
 	v.TipoMetricaNome = tipoNome
 	v.NivelAgregacao = nivel
+	v.RecorteUF = recorteUF.String
+	if v.RecorteGGVs == nil {
+		v.RecorteGGVs = []string{}
+	}
 	v.ParametrosSchema = []ParametroSchemaDTO{}
 	if len(schemaRaw) > 0 {
 		_ = json.Unmarshal(schemaRaw, &v.ParametrosSchema)
@@ -109,7 +120,8 @@ func scanMetaVinculo(row interface{ Scan(...any) error }) (*MetaVinculoResponse,
 
 const metaVinculoSelectBase = `
 	SELECT mv.id, mv.industria_id, i.nome, mv.tipo_metrica_id, tm.nome, tm.nivel_agregacao,
-	       tm.parametros_schema, mv.parametros_valores, mv.ativo, mv.created_at
+	       tm.parametros_schema, mv.parametros_valores, mv.ativo, mv.created_at,
+	       mv.recorte_uf, mv.recorte_ggvs
 	FROM farol.metas_vinculos mv
 	JOIN farol.industrias i ON i.id = mv.industria_id
 	JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
@@ -191,6 +203,9 @@ func MetasVinculosHandler(db *sql.DB) http.HandlerFunc {
 			if req.Ativo != nil {
 				ativo = *req.Ativo
 			}
+			if req.RecorteGGVs == nil {
+				req.RecorteGGVs = []string{}
+			}
 			valoresJSON, _ := json.Marshal(req.ParametrosValores)
 
 			tx, err := db.Begin()
@@ -202,10 +217,10 @@ func MetasVinculosHandler(db *sql.DB) http.HandlerFunc {
 
 			var id int
 			err = tx.QueryRow(`
-				INSERT INTO farol.metas_vinculos (empresa_id, industria_id, tipo_metrica_id, parametros_valores, ativo)
-				VALUES ($1, $2, $3, $4, $5)
+				INSERT INTO farol.metas_vinculos (empresa_id, industria_id, tipo_metrica_id, parametros_valores, ativo, recorte_uf, recorte_ggvs)
+				VALUES ($1, $2, $3, $4, $5, NULLIF($6,''), $7)
 				RETURNING id
-			`, spCtx.EmpresaID, req.IndustriaID, req.TipoMetricaID, valoresJSON, ativo).Scan(&id)
+			`, spCtx.EmpresaID, req.IndustriaID, req.TipoMetricaID, valoresJSON, ativo, req.RecorteUF, pq.Array(req.RecorteGGVs)).Scan(&id)
 			if err != nil {
 				if strings.Contains(err.Error(), "uq_farol_metas_vinculos_empresa_industria_tipo") {
 					http.Error(w, "Já existe um vínculo dessa indústria com esse Tipo de Métrica", http.StatusConflict)
@@ -218,6 +233,7 @@ func MetasVinculosHandler(db *sql.DB) http.HandlerFunc {
 			auditPayload := map[string]any{
 				"industria_id": req.IndustriaID, "tipo_metrica_id": req.TipoMetricaID,
 				"parametros_valores": req.ParametrosValores, "ativo": ativo,
+				"recorte_uf": req.RecorteUF, "recorte_ggvs": req.RecorteGGVs,
 			}
 			if err := writeAuditLogTx(tx, spCtx.EmpresaID, spCtx.UserID, "metas_vinculos", strconv.Itoa(id), "criar", auditPayload); err != nil {
 				http.Error(w, "Erro ao gravar auditoria", http.StatusInternalServerError)
@@ -304,13 +320,22 @@ func MetaVinculoItemHandler(db *sql.DB) http.HandlerFunc {
 			if req.Ativo != nil {
 				ativo = *req.Ativo
 			}
+			recorteUF := antes.RecorteUF
+			if req.RecorteUF != "" {
+				recorteUF = req.RecorteUF
+			}
+			recorteGGVs := req.RecorteGGVs
+			if recorteGGVs == nil {
+				recorteGGVs = antes.RecorteGGVs
+			}
 			valoresJSON, _ := json.Marshal(req.ParametrosValores)
 
 			_, err = tx.Exec(`
 				UPDATE farol.metas_vinculos
-				SET tipo_metrica_id = $1, parametros_valores = $2, ativo = $3, updated_at = now()
-				WHERE id = $4 AND empresa_id = $5
-			`, tipoMetricaID, valoresJSON, ativo, id, spCtx.EmpresaID)
+				SET tipo_metrica_id = $1, parametros_valores = $2, ativo = $3, updated_at = now(),
+				    recorte_uf = NULLIF($4,''), recorte_ggvs = $5
+				WHERE id = $6 AND empresa_id = $7
+			`, tipoMetricaID, valoresJSON, ativo, recorteUF, pq.Array(recorteGGVs), id, spCtx.EmpresaID)
 			if err != nil {
 				if strings.Contains(err.Error(), "uq_farol_metas_vinculos_empresa_industria_tipo") {
 					http.Error(w, "Já existe um vínculo dessa indústria com esse Tipo de Métrica", http.StatusConflict)
@@ -321,8 +346,11 @@ func MetaVinculoItemHandler(db *sql.DB) http.HandlerFunc {
 			}
 
 			auditPayload := map[string]any{
-				"antes":  antes,
-				"depois": map[string]any{"tipo_metrica_id": tipoMetricaID, "parametros_valores": req.ParametrosValores, "ativo": ativo},
+				"antes": antes,
+				"depois": map[string]any{
+					"tipo_metrica_id": tipoMetricaID, "parametros_valores": req.ParametrosValores, "ativo": ativo,
+					"recorte_uf": recorteUF, "recorte_ggvs": recorteGGVs,
+				},
 			}
 			if err := writeAuditLogTx(tx, spCtx.EmpresaID, spCtx.UserID, "metas_vinculos", strconv.Itoa(id), "editar", auditPayload); err != nil {
 				http.Error(w, "Erro ao gravar auditoria", http.StatusInternalServerError)

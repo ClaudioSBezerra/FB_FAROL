@@ -62,6 +62,8 @@ interface MetaVinculo {
   parametros_schema: ParametroSchema[]
   parametros_valores: Record<string, unknown>
   ativo: boolean
+  recorte_uf: string
+  recorte_ggvs: string[]
 }
 
 const EMPTY_FORM = {
@@ -69,6 +71,8 @@ const EMPTY_FORM = {
   tipo_metrica_id: '',
   ativo: true,
   parametros_valores: {} as Record<string, string>,
+  recorte_uf: '',
+  recorte_ggvs: '', // texto separado por vírgula na UI, vira array só no submit
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -129,6 +133,8 @@ export default function ConfigMetasVinculos() {
           tipo_metrica_id: Number(form.tipo_metrica_id),
           ativo: form.ativo,
           parametros_valores: parametrosValores,
+          recorte_uf: form.recorte_uf.trim().toUpperCase(),
+          recorte_ggvs: form.recorte_ggvs.split(',').map(s => s.trim()).filter(Boolean),
         }),
       })
       if (!r.ok) throw new Error((await r.text()) || 'Erro ao salvar vínculo')
@@ -171,6 +177,8 @@ export default function ConfigMetasVinculos() {
       tipo_metrica_id: String(v.tipo_metrica_id),
       ativo: v.ativo,
       parametros_valores: valores,
+      recorte_uf: v.recorte_uf ?? '',
+      recorte_ggvs: (v.recorte_ggvs ?? []).join(', '),
     })
     setShowDialog(true)
   }
@@ -206,16 +214,17 @@ export default function ConfigMetasVinculos() {
               <TableHead>Indústria</TableHead>
               <TableHead>Tipo de Métrica</TableHead>
               <TableHead>Parâmetros</TableHead>
+              <TableHead>Recorte</TableHead>
               <TableHead className="w-20 text-center">Status</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
-              <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow>
             )}
             {!isLoading && vinculos.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhum vínculo cadastrado</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhum vínculo cadastrado</TableCell></TableRow>
             )}
             {vinculos.map(v => (
               <TableRow key={v.id}>
@@ -229,6 +238,11 @@ export default function ConfigMetasVinculos() {
                       </span>
                     ))}
                   </div>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {v.recorte_uf || v.recorte_ggvs.length > 0
+                    ? [v.recorte_uf, ...v.recorte_ggvs].filter(Boolean).join(' · ')
+                    : 'Empresa toda'}
                 </TableCell>
                 <TableCell className="text-center">
                   <Badge variant={v.ativo ? 'default' : 'secondary'}>{v.ativo ? 'Ativo' : 'Inativo'}</Badge>
@@ -300,6 +314,29 @@ export default function ConfigMetasVinculos() {
                 ))}
               </div>
             )}
+
+            <div className="space-y-2 border-t pt-3">
+              <Label className="text-xs text-muted-foreground">Recorte organizacional (opcional — vazio = empresa toda)</Label>
+              <div className="flex gap-2">
+                <div className="space-y-1 w-24">
+                  <Label className="text-sm">UF</Label>
+                  <Input
+                    value={form.recorte_uf}
+                    onChange={e => setForm(f => ({ ...f, recorte_uf: e.target.value }))}
+                    placeholder="GO"
+                    maxLength={2}
+                  />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <Label className="text-sm">GGVs (separados por vírgula)</Label>
+                  <Input
+                    value={form.recorte_ggvs}
+                    onChange={e => setForm(f => ({ ...f, recorte_ggvs: e.target.value }))}
+                    placeholder="GO, GO FOOD, V7, DF"
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="flex items-center gap-2">
               <input
