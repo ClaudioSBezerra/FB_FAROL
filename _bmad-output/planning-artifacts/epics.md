@@ -216,6 +216,8 @@ Para que cada fornecedor pode ter suas próprias metas mesmo dentro da mesma ind
 **Quando** crio um vínculo para o fornecedor 131-Foods com "Cobertura por Rede" e outro vínculo para o fornecedor 396-HC com o mesmo tipo
 **Então** os dois vínculos existem de forma independente, cada um com seus próprios parâmetros e metas — objetivo de um não interfere no outro
 
+*(Nota adicionada na implementação da Story 1.3: o AC de reuso do FR3/Story 1.3 foi transferido pra cá, porque só a partir daqui a tabela de vínculo existe de verdade pra testar. Ver `_bmad-output/implementation-artifacts/1-3-reuso-tipo-metrica.md`.)*
+
 ### Story 2.2: Metas por faixa e histórico de vigências
 
 Como admin,
