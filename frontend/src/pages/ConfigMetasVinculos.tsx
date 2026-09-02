@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -19,7 +19,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, CalendarClock, Lock, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, CalendarClock, Lock, X, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -163,6 +163,35 @@ export default function ConfigMetasVinculos() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const importarCSV = useMutation({
+    mutationFn: async (file: File) => {
+      const body = new FormData()
+      body.append('file', file)
+      const r = await fetch('/api/farol/metas-vinculos-importar-csv', { method: 'POST', headers, body })
+      const data = await r.json()
+      if (!r.ok) {
+        const erros = Array.isArray(data?.erros)
+          ? data.erros.map((e: { linha: number; erro: string }) => `Linha ${e.linha || '-'}: ${e.erro}`).join('\n')
+          : (data?.error ?? 'Erro ao importar CSV')
+        throw new Error(erros)
+      }
+      return data as { vigencias_criadas: number; linhas_processadas: number }
+    },
+    onSuccess: data => {
+      toast.success(`${data.vigencias_criadas} vigência(s) criada(s) a partir de ${data.linhas_processadas} linha(s)`)
+      qc.invalidateQueries({ queryKey: ['farol-metas-vigencias'] })
+    },
+    onError: (e: Error) => toast.error(e.message, { style: { whiteSpace: 'pre-line' } }),
+  })
+
+  function onCSVSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) importarCSV.mutate(file)
+    e.target.value = ''
+  }
+
   function openCreate() {
     setEditTarget(null)
     setForm(EMPTY_FORM)
@@ -206,9 +235,15 @@ export default function ConfigMetasVinculos() {
             Valores de meta por faixa/vigência ficam em outra tela.
           </p>
         </div>
-        <Button onClick={openCreate} size="sm" disabled={industrias.length === 0 || tiposMetrica.length === 0}>
-          <Plus className="w-4 h-4 mr-1" /> Novo Vínculo
-        </Button>
+        <div className="flex gap-2">
+          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={onCSVSelected} />
+          <Button variant="outline" size="sm" disabled={importarCSV.isPending} onClick={() => fileInputRef.current?.click()}>
+            <Upload className="w-4 h-4 mr-1" /> {importarCSV.isPending ? 'Importando...' : 'Importar Metas (CSV)'}
+          </Button>
+          <Button onClick={openCreate} size="sm" disabled={industrias.length === 0 || tiposMetrica.length === 0}>
+            <Plus className="w-4 h-4 mr-1" /> Novo Vínculo
+          </Button>
+        </div>
       </div>
 
       <div className="border rounded-lg overflow-hidden">

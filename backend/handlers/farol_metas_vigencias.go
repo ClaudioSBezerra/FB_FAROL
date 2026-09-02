@@ -99,6 +99,28 @@ type querierMulti interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
+// inserirVigenciaTx insere uma vigência + suas faixas dentro da transação
+// do caller. Reaproveitada pelo POST normal e pela importação CSV (Story
+// 3.1) — mesma regra de negócio, dois pontos de entrada.
+func inserirVigenciaTx(tx *sql.Tx, empresaID string, vinculoID int, dataInicio, dataFim string, faixas []FaixaDTO) (int, error) {
+	var id int
+	err := tx.QueryRow(`
+		INSERT INTO farol.metas_vigencias (empresa_id, vinculo_id, data_inicio, data_fim)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, empresaID, vinculoID, dataInicio, dataFim).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	for _, f := range faixas {
+		if _, err := tx.Exec(`INSERT INTO farol.metas_faixas (empresa_id, vigencia_id, faixa, valor_meta) VALUES ($1, $2, $3, $4)`,
+			empresaID, id, f.Faixa, f.ValorMeta); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
+}
+
 // ─── MetasVigenciasHandler — GET/POST /api/farol/metas-vigencias ──────────
 
 func MetasVigenciasHandler(db *sql.DB) http.HandlerFunc {
@@ -183,12 +205,7 @@ func MetasVigenciasHandler(db *sql.DB) http.HandlerFunc {
 			}
 			defer tx.Rollback()
 
-			var id int
-			err = tx.QueryRow(`
-				INSERT INTO farol.metas_vigencias (empresa_id, vinculo_id, data_inicio, data_fim)
-				VALUES ($1, $2, $3, $4)
-				RETURNING id
-			`, spCtx.EmpresaID, req.VinculoID, req.DataInicio, req.DataFim).Scan(&id)
+			id, err := inserirVigenciaTx(tx, spCtx.EmpresaID, req.VinculoID, req.DataInicio, req.DataFim, req.Faixas)
 			if err != nil {
 				if strings.Contains(err.Error(), "ex_farol_metas_vigencias_sem_overlap") {
 					http.Error(w, "Já existe uma vigência deste vínculo que se sobrepõe a este período", http.StatusConflict)
@@ -196,14 +213,6 @@ func MetasVigenciasHandler(db *sql.DB) http.HandlerFunc {
 				}
 				http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 				return
-			}
-
-			for _, f := range req.Faixas {
-				if _, err := tx.Exec(`INSERT INTO farol.metas_faixas (empresa_id, vigencia_id, faixa, valor_meta) VALUES ($1, $2, $3, $4)`,
-					spCtx.EmpresaID, id, f.Faixa, f.ValorMeta); err != nil {
-					http.Error(w, "Database error ao salvar faixas", http.StatusInternalServerError)
-					return
-				}
 			}
 
 			auditPayload := map[string]any{"vinculo_id": req.VinculoID, "data_inicio": req.DataInicio, "data_fim": req.DataFim, "faixas": req.Faixas}

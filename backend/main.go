@@ -562,6 +562,9 @@ func main() {
 	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
 
+	// Importação de metas via CSV — Épico 3 Story 3.1.
+	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────
