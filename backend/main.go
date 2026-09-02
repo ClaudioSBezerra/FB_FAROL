@@ -578,6 +578,7 @@ func main() {
 	// somente_leitura (o nível mais permissivo), diferente da configuração
 	// admin acima (NFR2: edição restrita, visualização ampla).
 	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
 
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação

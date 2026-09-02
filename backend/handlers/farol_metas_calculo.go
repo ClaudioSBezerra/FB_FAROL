@@ -594,7 +594,7 @@ func MetasRealizadoHandler(db *sql.DB) http.HandlerFunc {
 			nivel = "rede"
 		}
 
-		resultado, err := CalcularRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel)
+		resultado, err := obterOuCongelarRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
