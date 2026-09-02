@@ -25,6 +25,7 @@ import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolPublicPanel from './pages/farol/FarolPublicPanel'
+import FarolPublicMetasPanel from './pages/farol/FarolPublicMetasPanel'
 import LimparDados from './pages/LimparDados'
 import ConfigSazonalidade from './pages/ConfigSazonalidade'
 import GestaoIndustrias from './pages/GestaoIndustrias'
@@ -342,9 +343,11 @@ function App() {
                 A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU CNPJ). */}
             <Route path="/m/:cnpj/sup/:cod"                 element={<FarolPublicPanel />} />
             <Route path="/m/:cnpj/sup/:cod/forn/:codFornec" element={<FarolPublicPanel />} />
+            <Route path="/m/:cnpj/sup/:cod/metas-industria" element={<FarolPublicMetasPanel />} />
             <Route path="/m/:cod"                           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/forn/:codFornec"           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/rca/:codRca"               element={<FarolPublicPanel />} />
+            <Route path="/m/:cod/rca/:codRca/metas-industria" element={<FarolPublicMetasPanel />} />
 
             {/* Quadro por token, sem login — o link que vai por WhatsApp.
                 Fica junto das rotas /m/... porque é o mesmo padrão: token na

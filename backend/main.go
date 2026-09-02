@@ -622,6 +622,13 @@ func main() {
 	http.HandleFunc("/api/v2/farol/ai/chat", withSP(handlers.FarolAjudaChatHandler, "")) // assistente de treinamento (chat)
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
 	http.HandleFunc("/api/v2/farol/public/cards", gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
+
+	// Painel Mobile de Metas por Indústria — Épico 6 Story 6.1. Mesmo padrão
+	// de acesso público (sem login) do painel de vendas acima, sempre
+	// recortado pro Supervisor/RCA da URL (nunca a empresa toda).
+	http.HandleFunc("/api/farol/public/metas-vinculos", publicHandler(handlers.MetasPublicVinculosHandler))
+	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
+	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))
