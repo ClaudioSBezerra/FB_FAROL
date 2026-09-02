@@ -554,6 +554,10 @@ func main() {
 	http.HandleFunc("/api/farol/tipos-metrica", withSP(handlers.TiposMetricaHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/tipos-metrica/", withSP(handlers.TipoMetricaItemHandler, "gestor_geral"))
 
+	// Vínculo Indústria × Tipo de Métrica — Épico 2 Story 2.1.
+	http.HandleFunc("/api/farol/metas-vinculos", withSP(handlers.MetasVinculosHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-vinculos/", withSP(handlers.MetaVinculoItemHandler, "gestor_geral"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

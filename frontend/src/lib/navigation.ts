@@ -73,6 +73,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
       { label: 'Tipos de Métrica',  path: '/gestao/tipos-metrica'     },
+      { label: 'Metas por Indústria', path: '/gestao/metas-vinculos' },
     ],
   },
 }
