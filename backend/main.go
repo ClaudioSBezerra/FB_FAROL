@@ -548,6 +548,12 @@ func main() {
 	http.HandleFunc("/api/farol/industrias", withSP(handlers.IndustriasHandler, "gestor_filial"))
 	http.HandleFunc("/api/farol/industrias/", withSP(handlers.IndustriaItemHandler, "gestor_filial"))
 
+	// Catálogo de Tipos de Métrica — Épico 1 do Painel de Gestão de Metas por
+	// Indústria (_bmad-output/planning-artifacts/epics.md). gestor_geral (não
+	// gestor_filial): catálogo transversal, não por filial.
+	http.HandleFunc("/api/farol/tipos-metrica", withSP(handlers.TiposMetricaHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/tipos-metrica/", withSP(handlers.TipoMetricaItemHandler, "gestor_geral"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

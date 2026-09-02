@@ -72,6 +72,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Sazonalidade',      path: '/config/sazonalidade',     adminOnly: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
+      { label: 'Tipos de Métrica',  path: '/gestao/tipos-metrica'     },
     ],
   },
 }
