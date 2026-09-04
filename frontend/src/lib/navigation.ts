@@ -34,6 +34,13 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel BI',
     tabs: [],
   },
+  // ── Metas por Indústria — visão de campo pra GGV/Supervisor (Épico 5) ────
+  metas_industria: {
+    label: 'Metas Indústria',
+    tabs: [
+      { label: 'Painel', path: '/farol/metas-industria' },
+    ],
+  },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
   importar: {
     label: 'Importar dados',
@@ -72,6 +79,8 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Sazonalidade',      path: '/config/sazonalidade',     adminOnly: true },
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
+      { label: 'Tipos de Métrica',  path: '/gestao/tipos-metrica'     },
+      { label: 'Metas por Indústria', path: '/gestao/metas-vinculos' },
     ],
   },
 }
@@ -79,6 +88,7 @@ export const modules: Record<string, ModuleConfig> = {
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/bi'))              return 'bi'
+  if (pathname.startsWith('/farol/metas-industria')) return 'metas_industria'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'

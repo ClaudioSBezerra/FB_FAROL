@@ -106,6 +106,46 @@ func escopoDoUsuario(db *sql.DB, spCtx *FarolContext, escopoPedido string) escop
 	}
 }
 
+// escopoHierarquiaMetas resolve o recorte OBRIGATÓRIO de login pro módulo
+// de Metas por Indústria (Épico 5, ajuste 2026-09-04) — mesmo princípio
+// deste arquivo (o usuário nunca escolhe o próprio escopo; o request só
+// pode ESTREITAR dentro dele), mas aplicado sobre os códigos GGV/CRV/RCA
+// que vêm embutidos em cada RealizadoRede (importados do CSV de Clientes
+// Válidos — ver farol_metas_calculo.go), não sobre a hierarquia
+// denormalizada das linhas de venda que o resto do Farol usa.
+//
+// Devolve o código a filtrar (só um dos três, o mais específico da
+// persona) e `negar` quando o cadastro do usuário está incompleto — mesma
+// regra de ouro: erro cai pro lado de negar acesso, nunca de liberar.
+func escopoHierarquiaMetas(spCtx *FarolContext) (codGGV, codCRV, codRCA string, negar bool) {
+	if spCtx == nil {
+		return "", "", "", true
+	}
+	if spCtx.IsAdminFbtax() {
+		return "", "", "", false
+	}
+	switch spCtx.TipoPersona {
+	case "ggv":
+		if strings.TrimSpace(spCtx.CodReferencia) == "" {
+			return "", "", "", true
+		}
+		return spCtx.CodReferencia, "", "", false
+	case "supervisor":
+		if strings.TrimSpace(spCtx.CodReferencia) == "" {
+			return "", "", "", true
+		}
+		return "", spCtx.CodReferencia, "", false
+	case "rca":
+		if strings.TrimSpace(spCtx.CodReferencia) == "" {
+			return "", "", "", true
+		}
+		return "", "", spCtx.CodReferencia, false
+	}
+	// Personas sem restrição (ceo/diretor/gerente_geral/ti/admin/analista):
+	// veem a empresa inteira, landing na lista de GGVs (nível 1).
+	return "", "", "", false
+}
+
 func contemString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

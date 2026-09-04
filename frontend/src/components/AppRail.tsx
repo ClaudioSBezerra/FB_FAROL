@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText, Factory } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -46,6 +46,13 @@ interface RailItem {
 const mainItems: RailItem[] = [
   { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
   { id: 'bi',             icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
+  // Metas Indústria — logo abaixo de Painel BI no rail (pedido do Claudio,
+  // 04/09/2026). Rota/módulo (navigation.ts) já existiam desde o Épico 5;
+  // faltava só o ícone aqui — sem ele, só quem soubesse a URL direta
+  // (/farol/metas-industria) chegava na tela. Sem requiredModulo: qualquer
+  // usuário Farol autenticado já podia acessar via URL (ProtectedRoute
+  // simples); isto só torna visível o que já era alcançável.
+  { id: 'metas_industria', icon: Factory,    label: 'Metas Indústria',     path: '/farol/metas-industria', dev: false },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   // Relatórios: visível pra QUALQUER usuário (Comparativo REL 322 é de uso
   // geral, pedido do Claudio em 28/08/2026) — o recorte admin/TI só se

@@ -548,6 +548,45 @@ func main() {
 	http.HandleFunc("/api/farol/industrias", withSP(handlers.IndustriasHandler, "gestor_filial"))
 	http.HandleFunc("/api/farol/industrias/", withSP(handlers.IndustriaItemHandler, "gestor_filial"))
 
+	// Catálogo de Tipos de Métrica — Épico 1 do Painel de Gestão de Metas por
+	// Indústria (_bmad-output/planning-artifacts/epics.md). gestor_geral (não
+	// gestor_filial): catálogo transversal, não por filial.
+	http.HandleFunc("/api/farol/tipos-metrica", withSP(handlers.TiposMetricaHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/tipos-metrica/", withSP(handlers.TipoMetricaItemHandler, "gestor_geral"))
+
+	// Vínculo Indústria × Tipo de Métrica — Épico 2 Story 2.1.
+	http.HandleFunc("/api/farol/metas-vinculos", withSP(handlers.MetasVinculosHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-vinculos/", withSP(handlers.MetaVinculoItemHandler, "gestor_geral"))
+
+	// Vigências e Faixas de meta — Épico 2 Story 2.2.
+	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
+
+	// Importação de metas via CSV — Épico 3 Story 3.1.
+	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))
+
+	// Clientes Válidos (Redes + RCA responsável) — Épico 3 Story 3.2.
+	http.HandleFunc("/api/farol/metas-clientes-validos", withSP(handlers.MetasClientesValidosHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-clientes-validos-importar-csv", withSP(handlers.MetasClientesValidosImportarCSVHandler, "gestor_geral"))
+
+	// Itens Válidos (EAN + embalagem) — Épico 3 Story 3.3.
+	http.HandleFunc("/api/farol/metas-itens-validos", withSP(handlers.MetasItensValidosHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-itens-validos-importar-csv", withSP(handlers.MetasItensValidosImportarCSVHandler, "gestor_geral"))
+
+	// Motor de Apuração — Épico 4 Story 4.1. Leitura só — GGV/Supervisor
+	// (Épico 5/6, painel de visualização) também precisam acessar, então
+	// somente_leitura (o nível mais permissivo), diferente da configuração
+	// admin acima (NFR2: edição restrita, visualização ampla).
+	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
+
+	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
+	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
+
+	// Painel combinado Cobertura + Sortimento numa linha por Rede — pedido
+	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
+	http.HandleFunc("/api/farol/metas-painel-combinado", withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────
@@ -587,6 +626,14 @@ func main() {
 	http.HandleFunc("/api/v2/farol/ai/chat", withSP(handlers.FarolAjudaChatHandler, "")) // assistente de treinamento (chat)
 	// Acesso público ION VENDAS (sem login) — painel novo escopado por CNPJ + SUPV/RCA
 	http.HandleFunc("/api/v2/farol/public/cards", gz(publicHandler(handlers.FarolV2PublicCardsHandler)))
+
+	// Painel Mobile de Metas por Indústria — Épico 6 Story 6.1. Mesmo padrão
+	// de acesso público (sem login) do painel de vendas acima, sempre
+	// recortado pro Supervisor/RCA da URL (nunca a empresa toda).
+	http.HandleFunc("/api/farol/public/metas-vinculos", publicHandler(handlers.MetasPublicVinculosHandler))
+	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
+	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
+	http.HandleFunc("/api/farol/public/metas-painel-combinado", publicHandler(handlers.MetasPublicPainelCombinadoHandler))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))

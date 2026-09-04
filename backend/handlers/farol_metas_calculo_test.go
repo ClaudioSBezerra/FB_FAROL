@@ -1,0 +1,558 @@
+package handlers
+
+// farol_metas_calculo_test.go — cobre a I/O Matrix da Story 4.1
+// (_bmad-output/implementation-artifacts/4-1-calculo-realizado.md).
+//
+// TestCalcularRealizado_Cobertura_ExemploDoPRD é o teste mais importante:
+// reproduz EXATAMENTE o exemplo numérico do PRD (Rede 1, 4 lojas, compras
+// R$1.000/0/20.000/40.000 → média R$15.250) — prova que a matemática bate
+// com a especificação de referência, não só que o código "roda sem erro".
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+// inserirVendaFaturadaFixture insere uma linha crua em vendas_faturadas —
+// não existe handler de import aqui, os testes de cálculo precisam
+// popular a base diretamente, como o job de importação faria.
+func inserirVendaFaturadaFixture(t *testing.T, empresaID, codCli, codProd, codRCA, tipoVenda string, pvenda, qt float64, data string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	_, err := db.Exec(`
+		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
+		VALUES ($1, $2, $3, $4, $5, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $6, $7, $8)
+	`, empresaID, data, codCli, codProd, codRCA, tipoVenda, pvenda, qt)
+	if err != nil {
+		t.Fatalf("inserir fixture de venda faturada: %v", err)
+	}
+}
+
+func limparVendasFaturadasFixture(t *testing.T, empresaID string, cnpjs []string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	for _, c := range cnpjs {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca LIKE 'TCALC%'`, empresaID, c)
+	}
+}
+
+// inserirVendaTransmitidaFixture — mesmo papel de inserirVendaFaturadaFixture,
+// pro fluxo Transmitido (Story 4.2, FR15).
+func inserirVendaTransmitidaFixture(t *testing.T, empresaID, codCli, codProd, codRCA, tipoVenda string, pvenda, qt float64, data string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	_, err := db.Exec(`
+		INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cnpj, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
+		VALUES ($1, $2, $3, $4, $5, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $6, $7, $8)
+	`, empresaID, data, codCli, codProd, codRCA, tipoVenda, pvenda, qt)
+	if err != nil {
+		t.Fatalf("inserir fixture de venda transmitida: %v", err)
+	}
+}
+
+func limparVendasTransmitidasFixture(t *testing.T, empresaID string, cnpjs []string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	for _, c := range cnpjs {
+		db.Exec(`DELETE FROM vendas_transmitidas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca LIKE 'TCALC%'`, empresaID, c)
+	}
+}
+
+// inserirClienteValidoFixture insere um CNPJ na lista de Clientes Válidos —
+// desde 2026-09-04 (migration 224) o trio GGV/CRV/RCA vem embutido aqui
+// (não é mais derivado por JOIN em vendas), mas os testes que só agregam
+// por RCA/Rede não precisam de GGV/CRV distintos — usam um código fixo.
+func inserirClienteValidoFixture(t *testing.T, empresaID string, vinculoID, vigenciaID int, codPrinc, cnpj, codRCA string) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	_, err := db.Exec(`
+		INSERT INTO farol.metas_clientes_validos (empresa_id, vinculo_id, vigencia_id, cod_princ, cnpj, cod_ggv, cod_crv, cod_rca)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, empresaID, vinculoID, vigenciaID, codPrinc, cnpj, "TCALC-GGV", "TCALC-CRV", codRCA)
+	if err != nil {
+		t.Fatalf("inserir fixture de cliente válido: %v", err)
+	}
+}
+
+func criarVinculoComFormula(t *testing.T, empresaID, prefixo, formulaCodigo, nivelAgregacao string, schema []ParametroSchemaDTO, parametrosValores map[string]any) (vinculoID int, cleanup func()) {
+	t.Helper()
+	db, _ := biTestDB(t)
+	industriaID := criarIndustriaFixture(t, db, empresaID, prefixo+" Industria")
+	tipoID := criarTipoMetricaFixture(t, db, empresaID, prefixo+" Tipo", nivelAgregacao, schema)
+	db.Exec(`UPDATE farol.tipos_metrica SET formula_codigo = $1 WHERE id = $2`, formulaCodigo, tipoID)
+
+	valoresJSON := marshalOrEmpty(parametrosValores)
+	var id int
+	if err := db.QueryRow(`
+		INSERT INTO farol.metas_vinculos (empresa_id, industria_id, tipo_metrica_id, parametros_valores)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, empresaID, industriaID, tipoID, valoresJSON).Scan(&id); err != nil {
+		t.Fatalf("criar fixture de vínculo: %v", err)
+	}
+	return id, func() {
+		db.Exec(`DELETE FROM farol.metas_vinculos WHERE id = $1`, id)
+		db.Exec(`DELETE FROM farol.industrias WHERE id = $1`, industriaID)
+		db.Exec(`DELETE FROM farol.tipos_metrica WHERE id = $1`, tipoID)
+	}
+}
+
+func marshalOrEmpty(m map[string]any) []byte {
+	if m == nil {
+		return []byte(`{}`)
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// TestCalcularRealizado_Cobertura_ExemploDoPRD reproduz o exemplo exato do
+// PRD (contexto de referência Unilever, colado pelo Claudio na sessão):
+// "REDE 1 TEM 4 LOJAS/CNPJS... LOJA A COMPROU R$1000, LOJA B R$0, LOJA C
+// R$20.000 E LOJA D R$40.000, NA MEDIA COMPROU R$15.250"
+func TestCalcularRealizado_Cobertura_ExemploDoPRD(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	_ = userID
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Cobertura", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 9100.0}) // limiar do FORN 396 usado no exemplo real do PRD
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-01-01", "2026-01-31")
+
+	lojaA, lojaB, lojaC, lojaD := "11111111000101", "11111111000102", "11111111000103", "11111111000104"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{lojaA, lojaB, lojaC, lojaD}) })
+
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE 1", lojaA, "TCALC-RCA1")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE 1", lojaB, "TCALC-RCA1")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE 1", lojaC, "TCALC-RCA1")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE 1", lojaD, "TCALC-RCA1")
+
+	inserirVendaFaturadaFixture(t, empresaID, lojaA, "PROD1", "TCALC-RCA1", "1", 1000, 1, "2026-01-10")
+	// lojaB não compra nada — sem linha em vendas_faturadas, conta como R$0
+	inserirVendaFaturadaFixture(t, empresaID, lojaC, "PROD1", "TCALC-RCA1", "1", 20000, 1, "2026-01-15")
+	inserirVendaFaturadaFixture(t, empresaID, lojaD, "PROD1", "TCALC-RCA1", "1", 40000, 1, "2026-01-20")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if len(resultado.Redes) != 1 {
+		t.Fatalf("esperava 1 Rede, veio %d: %+v", len(resultado.Redes), resultado.Redes)
+	}
+	rede := resultado.Redes[0]
+	if rede.Valor != 15250 {
+		t.Errorf("média da Rede 1 = %.2f, want 15250.00 (exemplo exato do PRD)", rede.Valor)
+	}
+	if !rede.Atingiu {
+		t.Errorf("15250 >= limiar 9100 deveria marcar Atingiu=true")
+	}
+	if resultado.RealizadoTotal != 1 {
+		t.Errorf("RealizadoTotal (contagem de Redes cobertas) = %.0f, want 1", resultado.RealizadoTotal)
+	}
+}
+
+func TestCalcularRealizado_Cobertura_AbaixoDoLimiar_NaoAtinge(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC AbaixoLimiar", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 9100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-02-01", "2026-02-28")
+
+	loja1 := "22222222000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE FRACA", loja1, "TCALC-RCA2")
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PROD1", "TCALC-RCA2", "1", 500, 1, "2026-02-10")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if resultado.Redes[0].Atingiu {
+		t.Errorf("R$500 abaixo do limiar R$9100 não deveria marcar Atingiu")
+	}
+	if resultado.RealizadoTotal != 0 {
+		t.Errorf("RealizadoTotal = %.0f, want 0 (nenhuma Rede coberta)", resultado.RealizadoTotal)
+	}
+}
+
+// TestCalcularRealizado_RespeitaTipoVendaDoVinculo cobre FR16: vendas com
+// tipo_venda fora da lista configurada no vínculo não entram no cálculo.
+func TestCalcularRealizado_RespeitaTipoVendaDoVinculo(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC TipoVenda", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	db.Exec(`UPDATE farol.metas_vinculos SET tipos_venda_validos = '{1,9}' WHERE id = $1`, vinculoID)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-03-01", "2026-03-31")
+
+	loja1 := "33333333000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE X", loja1, "TCALC-RCA3")
+	// tipo_venda "20" não está na lista válida do vínculo — não deveria contar
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PROD1", "TCALC-RCA3", "20", 50000, 1, "2026-03-10")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if resultado.Redes[0].Valor != 0 {
+		t.Errorf("venda com tipo_venda=20 não deveria contar (vínculo só aceita 1,9) — valor = %.2f, want 0", resultado.Redes[0].Valor)
+	}
+}
+
+// TestCalcularRealizado_Sortimento_ExemploDoPRD reproduz o exemplo do PRD:
+// "REDE MAIS: LOJA 1 COMPROU 50 EANS E LOJA 2 COMPROU 30 EANS DIFERENTES...
+// NA MEDIA A REDE COMPROU 40 EANS" — aqui simplificado pra 2 EANs/2 lojas
+// mantendo a mesma mecânica de média + regra de quantidade mínima.
+func TestCalcularRealizado_Sortimento_RegraQuantidadeMinima(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Sortimento", "sortimento_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "qtd_minima_positivacao", Label: "Qtd mínima", Type: "integer"}},
+		map[string]any{"qtd_minima_positivacao": 3.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-04-01", "2026-04-30")
+
+	loja1, loja2 := "44444444000101", "44444444000102"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1, loja2}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SORT", loja1, "TCALC-RCA4")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SORT", loja2, "TCALC-RCA4")
+
+	db, _ = biTestDB(t)
+	db.Exec(`DELETE FROM farol.metas_itens_validos WHERE vigencia_id = $1`, vigenciaID)
+	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod) VALUES
+		($1,$2,$3,'EAN001','PRODA'), ($1,$2,$3,'EAN002','PRODB')`, empresaID, vinculoID, vigenciaID)
+
+	// loja1: compra 5un de PRODA (>= mínimo 3, positiva) e 2un de PRODB (< mínimo, NÃO positiva) → 1 EAN
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PRODA", "TCALC-RCA4", "1", 500, 5, "2026-04-05")
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PRODB", "TCALC-RCA4", "1", 200, 2, "2026-04-05")
+	// loja2: compra 4un de PRODA e 3un de PRODB → 2 EANs
+	inserirVendaFaturadaFixture(t, empresaID, loja2, "PRODA", "TCALC-RCA4", "1", 400, 4, "2026-04-06")
+	inserirVendaFaturadaFixture(t, empresaID, loja2, "PRODB", "TCALC-RCA4", "1", 300, 3, "2026-04-06")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	// média = (1 + 2) / 2 = 1.5
+	if resultado.Redes[0].Valor != 1.5 {
+		t.Errorf("média de EANs positivados = %.2f, want 1.5 (loja1=1, loja2=2)", resultado.Redes[0].Valor)
+	}
+}
+
+func TestCalcularRealizado_AgregacaoPorRCA(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Rollup", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-05-01", "2026-05-31")
+
+	loja1, loja2 := "55555555000101", "55555555000102"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1, loja2}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A", loja1, "TCALC-RCA5")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE B", loja2, "TCALC-RCA5") // mesmo RCA, Rede diferente
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PROD1", "TCALC-RCA5", "1", 1000, 1, "2026-05-05")
+	inserirVendaFaturadaFixture(t, empresaID, loja2, "PROD1", "TCALC-RCA5", "1", 2000, 1, "2026-05-06")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rca")
+	if err != nil {
+		t.Fatalf("CalcularRealizado nível rca: %v", err)
+	}
+	if len(resultado.Grupos) != 1 {
+		t.Fatalf("esperava 1 grupo (mesmo RCA pras 2 Redes), veio %d: %+v", len(resultado.Grupos), resultado.Grupos)
+	}
+	if resultado.Grupos[0].QtdRedes != 2 {
+		t.Errorf("RCA deveria agregar 2 Redes, veio %d", resultado.Grupos[0].QtdRedes)
+	}
+	if resultado.Grupos[0].RealizadoTotal != 2 {
+		t.Errorf("RCA com 2 Redes cobertas (ambas >= limiar 100) deveria ter RealizadoTotal=2, veio %.0f", resultado.Grupos[0].RealizadoTotal)
+	}
+}
+
+// TestCalcularRealizado_FluxoTransmitido cobre a Story 4.2 (FR15): o fluxo
+// "transmitido" lê vendas_transmitidas, não vendas_faturadas.
+func TestCalcularRealizado_FluxoTransmitido(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Transmitido", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
+
+	loja := "77777777000101"
+	t.Cleanup(func() { limparVendasTransmitidasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE TRANS", loja, "TCALC-RCA7")
+	inserirVendaTransmitidaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA7", "1", 5000, 1, "2026-07-10")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "transmitido", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado fluxo=transmitido: %v", err)
+	}
+	if resultado.Redes[0].Valor != 5000 {
+		t.Errorf("fluxo transmitido = %.2f, want 5000 (só transmitido, sem misturar faturado)", resultado.Redes[0].Valor)
+	}
+}
+
+// TestCalcularRealizado_FluxoInvalido_Erro cobre a remoção do fluxo "soma"
+// (orientação do Heverton, 2026-09-04: "somente 2 visões... mesma
+// filosofia do Farol V1 em uso hoje") — só faturado/transmitido são
+// aceitos agora; "soma" (que chegou a existir por uma sessão) precisa
+// devolver erro claro, não ser silenciosamente aceito.
+func TestCalcularRealizado_FluxoInvalido_Erro(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC FluxoInvalido", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	loja := "88888888000101"
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SOMA", loja, "TCALC-RCA8")
+
+	if _, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede"); err == nil {
+		t.Error("fluxo 'soma' deveria dar erro — só faturado/transmitido são suportados")
+	}
+}
+
+// TestCalcularRealizado_FiltraPorCodFornecDaIndustria cobre a correção de
+// 2026-09-04: o Realizado só pode contar venda do(s) cod_fornec mapeados
+// pra Indústria do vínculo (farol.industria_fornecedores) — antes desse
+// ajuste, a "média de compras" da Rede somava QUALQUER fornecedor.
+func TestCalcularRealizado_FiltraPorCodFornecDaIndustria(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC CodFornec", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	var industriaID int
+	if err := db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID); err != nil {
+		t.Fatalf("ler industria_id do vínculo: %v", err)
+	}
+	const codFornecTeste = "TCALC-FORNEC-9"
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`, empresaID, industriaID, codFornecTeste); err != nil {
+		t.Fatalf("mapear cod_fornec: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM farol.industria_fornecedores WHERE industria_id = $1`, industriaID) })
+
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-09-01", "2026-09-30")
+	loja := "39639639000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE FORNEC", loja, "TCALC-RCA9")
+
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 1000, 1, "2026-09-05")
+	if _, err := db.Exec(`UPDATE vendas_faturadas SET cod_fornec = $1 WHERE cnpj = $2 AND cod_rca = 'TCALC-RCA9' AND pvenda = 1000`, codFornecTeste, loja); err != nil {
+		t.Fatalf("marcar venda do fornecedor mapeado: %v", err)
+	}
+	// venda de OUTRO fornecedor pro mesmo CNPJ — não deveria contar.
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD2", "TCALC-RCA9", "1", 9000, 1, "2026-09-06")
+	if _, err := db.Exec(`UPDATE vendas_faturadas SET cod_fornec = '999' WHERE cnpj = $1 AND cod_rca = 'TCALC-RCA9' AND pvenda = 9000`, loja); err != nil {
+		t.Fatalf("marcar venda de outro fornecedor: %v", err)
+	}
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if resultado.Redes[0].Valor != 1000 {
+		t.Errorf("valor da Rede = %.2f, want 1000 (só o fornecedor 396 mapeado à Indústria — os 9000 de outro fornecedor não deveriam contar)", resultado.Redes[0].Valor)
+	}
+}
+
+// TestProjetarFechamento_ExemploDoPRD reproduz o exemplo exato do FR18:
+// "realizado de R$45.000 em 15 dias de um mês de 30 dias → projeção de
+// fechamento = R$90.000".
+// TestCalcularRecorteDatas cobre a Story 5.3 (FR21): os 4 recortes de
+// tempo resolvem em janelas de data corretas, sempre relativas a hoje.
+func TestCalcularRecorteDatas(t *testing.T) {
+	hoje := time.Now().Truncate(24 * time.Hour)
+
+	di, df, err := calcularRecorteDatas("dia_anterior")
+	if err != nil {
+		t.Fatalf("dia_anterior: %v", err)
+	}
+	ontem := hoje.AddDate(0, 0, -1).Format("2006-01-02")
+	if di != ontem || df != ontem {
+		t.Errorf("dia_anterior = [%s, %s], want [%s, %s]", di, df, ontem, ontem)
+	}
+
+	di, df, err = calcularRecorteDatas("semana")
+	if err != nil {
+		t.Fatalf("semana: %v", err)
+	}
+	if df != hoje.Format("2006-01-02") {
+		t.Errorf("semana deveria terminar hoje, terminou em %s", df)
+	}
+	inicioEsperado := hoje.AddDate(0, 0, -6).Format("2006-01-02")
+	if di != inicioEsperado {
+		t.Errorf("semana deveria começar em %s (7 dias incluindo hoje), começou em %s", inicioEsperado, di)
+	}
+
+	di, df, err = calcularRecorteDatas("mes")
+	if err != nil {
+		t.Fatalf("mes: %v", err)
+	}
+	inicioMesEsperado := time.Date(hoje.Year(), hoje.Month(), 1, 0, 0, 0, 0, hoje.Location()).Format("2006-01-02")
+	if di != inicioMesEsperado {
+		t.Errorf("mes deveria começar em %s (dia 1 do mês corrente), veio %s", inicioMesEsperado, di)
+	}
+
+	di, df, err = calcularRecorteDatas("ano_corrente")
+	if err != nil {
+		t.Fatalf("ano_corrente: %v", err)
+	}
+	inicioAnoEsperado := time.Date(hoje.Year(), 1, 1, 0, 0, 0, 0, hoje.Location()).Format("2006-01-02")
+	if di != inicioAnoEsperado {
+		t.Errorf("ano_corrente deveria começar em %s (1º de janeiro), veio %s", inicioAnoEsperado, di)
+	}
+
+	if _, _, err := calcularRecorteDatas("invalido"); err == nil {
+		t.Error("recorte inválido deveria dar erro")
+	}
+}
+
+// TestCalcularRealizadoComPeriodo_RecorteNaoAfetaProjecao confirma que a
+// projeção de fechamento sempre usa o período INTEIRO da vigência, mesmo
+// quando o Realizado exibido é de um recorte curto (ex: "dia anterior") —
+// projetar o fechamento do mês com base só em 1 dia não faria sentido.
+func TestCalcularRealizadoComPeriodo_RecorteNaoAfetaProjecao(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC RecorteProjecao", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -9)
+	fim := inicio.AddDate(0, 0, 19)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+
+	loja := "50505050000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE RECORTE", loja, "TCALC-RCAR")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCAR", "1", 200, 1, hoje.Format("2006-01-02"))
+
+	// período inteiro (sem override)
+	rSemRecorte, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("sem recorte: %v", err)
+	}
+
+	// recorte "semana" (últimos 7 dias) TAMBÉM inclui a venda de hoje — então
+	// o Realizado bate igual nos dois casos, isolando o que queremos provar:
+	// a PROJEÇÃO usa os dias da VIGÊNCIA (20 dias, dia 10) como base, não os
+	// dias do recorte (7 dias) — se usasse a base do recorte, o resultado
+	// seria bem diferente (proporção de dias totalmente outra).
+	di, df, _ := calcularRecorteDatas("semana")
+	rComRecorte, err := CalcularRealizadoComPeriodo(db, empresaID, vinculoID, vigenciaID, "faturado", "rede", di, df)
+	if err != nil {
+		t.Fatalf("com recorte: %v", err)
+	}
+
+	if rComRecorte.RealizadoTotal != rSemRecorte.RealizadoTotal {
+		t.Fatalf("pré-condição do teste falhou: os dois deveriam ter o mesmo Realizado (venda de hoje está nas duas janelas) — sem_recorte=%.0f com_recorte=%.0f", rSemRecorte.RealizadoTotal, rComRecorte.RealizadoTotal)
+	}
+	if rComRecorte.Projecao != rSemRecorte.Projecao {
+		t.Errorf("projeção deveria ser igual nos dois casos (mesma base de dias da vigência, mesmo Realizado) — sem_recorte=%.2f com_recorte=%.2f", rSemRecorte.Projecao, rComRecorte.Projecao)
+	}
+}
+
+func TestProjetarFechamento_ExemploDoPRD(t *testing.T) {
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -14) // hoje é o 15º dia do período (14 dias atrás + hoje = 15)
+	fim := inicio.AddDate(0, 0, 29)   // período de 30 dias no total
+
+	projecao := projetarFechamento(45000, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+	if projecao != 90000 {
+		t.Errorf("projeção = %.2f, want 90000.00 (exemplo exato do FR18)", projecao)
+	}
+}
+
+func TestProjetarFechamento_PeriodoJaEncerrado_ProjecaoEhORealizado(t *testing.T) {
+	// período totalmente no passado — não há mais nada a extrapolar
+	projecao := projetarFechamento(50000, "2020-01-01", "2020-01-31")
+	if projecao != 50000 {
+		t.Errorf("período encerrado: projeção deveria ser o próprio realizado (50000), veio %.2f", projecao)
+	}
+}
+
+// TestCalcularRealizado_ProjecaoPorGrupo_NaoSomaProjecoesFilhas cobre FR18a:
+// a projeção de um RCA vem do REALIZADO PRÓPRIO dele (agregado das Redes),
+// não da soma das projeções individuais das Redes.
+func TestCalcularRealizado_ProjecaoPorGrupo_NaoSomaProjecoesFilhas(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC ProjecaoGrupo", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	hoje := time.Now()
+	inicio := hoje.AddDate(0, 0, -9) // dia 10 de um período de 20 dias
+	fim := inicio.AddDate(0, 0, 19)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, inicio.Format("2006-01-02"), fim.Format("2006-01-02"))
+
+	loja1, loja2 := "12121212000101", "12121212000102"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja1, loja2}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE P1", loja1, "TCALC-RCA11")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE P2", loja2, "TCALC-RCA11") // mesmo RCA
+	inserirVendaFaturadaFixture(t, empresaID, loja1, "PROD1", "TCALC-RCA11", "1", 200, 1, hoje.Format("2006-01-02"))
+	inserirVendaFaturadaFixture(t, empresaID, loja2, "PROD1", "TCALC-RCA11", "1", 300, 1, hoje.Format("2006-01-02"))
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rca")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if len(resultado.Grupos) != 1 {
+		t.Fatalf("esperava 1 grupo, veio %d", len(resultado.Grupos))
+	}
+	// RealizadoTotal do RCA = 2 Redes cobertas (ambas >= 100). Projeção do
+	// grupo = 2 (realizado do GRUPO) ÷ 10 dias decorridos × 20 dias totais = 4.
+	grupo := resultado.Grupos[0]
+	if grupo.RealizadoTotal != 2 {
+		t.Fatalf("RealizadoTotal do grupo = %.0f, want 2", grupo.RealizadoTotal)
+	}
+	esperada := grupo.RealizadoTotal / 10 * 20
+	if grupo.Projecao != esperada {
+		t.Errorf("projeção do grupo = %.2f, want %.2f (a partir do realizado PRÓPRIO do grupo, não soma de projeções de Rede)", grupo.Projecao, esperada)
+	}
+}
+
+func TestCalcularRealizado_MesCorrenteEhParcial(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Parcial", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	// vigência que já fechou no passado — não deveria ser parcial
+	vigenciaPassada := criarVigenciaFixture(t, db, empresaID, vinculoID, "2020-01-01", "2020-01-31")
+	loja := "66666666000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaPassada, "REDE PARCIAL", loja, "TCALC-RCA6")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA6", "1", 100, 1, "2020-01-10")
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaPassada, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if resultado.Parcial {
+		t.Errorf("vigência de 2020 (encerrada) não deveria ser marcada como parcial")
+	}
+}
+
+func TestCalcularRealizado_SemClientesValidos_ErroClaro(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC SemClientes", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-06-01", "2026-06-30")
+
+	_, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err == nil {
+		t.Fatal("esperava erro claro quando não há Clientes Válidos importados, veio nil")
+	}
+}

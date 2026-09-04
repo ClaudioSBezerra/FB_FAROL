@@ -25,9 +25,13 @@ import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import FarolPublicPanel from './pages/farol/FarolPublicPanel'
+import FarolPublicMetasPanel from './pages/farol/FarolPublicMetasPanel'
 import LimparDados from './pages/LimparDados'
 import ConfigSazonalidade from './pages/ConfigSazonalidade'
 import GestaoIndustrias from './pages/GestaoIndustrias'
+import ConfigTiposMetrica from './pages/ConfigTiposMetrica'
+import ConfigMetasVinculos from './pages/ConfigMetasVinculos'
+import FarolPainelMetas from './pages/FarolPainelMetas'
 import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
 import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
 import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
@@ -288,6 +292,9 @@ function AppLayout() {
               <Route path="/gestao/filiais" element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
               <Route path="/gestao/regras"  element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
               <Route path="/gestao/industrias" element={<ProtectedRoute><GestaoIndustrias /></ProtectedRoute>} />
+              <Route path="/gestao/tipos-metrica" element={<ProtectedRoute><ConfigTiposMetrica /></ProtectedRoute>} />
+              <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
+              <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
 
               {/* Configurações (admin) */}
               <Route path="/config/planos"      element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
@@ -336,9 +343,11 @@ function App() {
                 A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU CNPJ). */}
             <Route path="/m/:cnpj/sup/:cod"                 element={<FarolPublicPanel />} />
             <Route path="/m/:cnpj/sup/:cod/forn/:codFornec" element={<FarolPublicPanel />} />
+            <Route path="/m/:cnpj/sup/:cod/metas-industria" element={<FarolPublicMetasPanel />} />
             <Route path="/m/:cod"                           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/forn/:codFornec"           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/rca/:codRca"               element={<FarolPublicPanel />} />
+            <Route path="/m/:cod/rca/:codRca/metas-industria" element={<FarolPublicMetasPanel />} />
 
             {/* Quadro por token, sem login — o link que vai por WhatsApp.
                 Fica junto das rotas /m/... porque é o mesmo padrão: token na

@@ -21,10 +21,25 @@ import (
 	"net/http/httptest"
 	"os"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
 	_ "github.com/lib/pq"
+)
+
+// testDBPool é compartilhado por TODOS os testes do pacote — biTestDB
+// costumava abrir um *sql.DB (= um pool novo) a cada chamada; com centenas
+// de chamadas (um pool por fixture, em vários arquivos de teste), o
+// Postgres local batia em max_connections ("too many clients already"),
+// e falhas silenciosas de DELETE de limpeza (db.Exec sem checar erro)
+// deixavam dado de um teste vazar pro próximo. sync.Once garante uma
+// conexão real (um pool, gerenciado pelo próprio database/sql) reusada por
+// todo o binário de teste.
+var (
+	testDBPoolOnce sync.Once
+	testDBPool     *sql.DB
+	testDBPoolErr  error
 )
 
 func biTestDB(t *testing.T) (*sql.DB, string) {
@@ -33,18 +48,27 @@ func biTestDB(t *testing.T) (*sql.DB, string) {
 	if dsn == "" {
 		t.Skip("DATABASE_URL não definida — teste de integração pulado")
 	}
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("abrir conexão: %v", err)
-	}
-	if err := db.Ping(); err != nil {
-		t.Skipf("banco inacessível (%v) — teste pulado", err)
+	testDBPoolOnce.Do(func() {
+		db, err := sql.Open("postgres", dsn)
+		if err != nil {
+			testDBPoolErr = err
+			return
+		}
+		db.SetMaxOpenConns(10)
+		if err := db.Ping(); err != nil {
+			testDBPoolErr = err
+			return
+		}
+		testDBPool = db
+	})
+	if testDBPoolErr != nil {
+		t.Skipf("banco inacessível (%v) — teste pulado", testDBPoolErr)
 	}
 	var empresaID string
-	if err := db.QueryRow(`SELECT id::text FROM companies ORDER BY created_at LIMIT 1`).Scan(&empresaID); err != nil {
+	if err := testDBPool.QueryRow(`SELECT id::text FROM companies ORDER BY created_at LIMIT 1`).Scan(&empresaID); err != nil {
 		t.Skipf("nenhuma empresa na base (%v) — teste pulado", err)
 	}
-	return db, empresaID
+	return testDBPool, empresaID
 }
 
 // biReq monta uma request já autenticada, injetando o FarolContext direto —
@@ -93,7 +117,6 @@ func quaseIgual(a, b float64) bool { return math.Abs(a-b) < 0.01 }
 // TestBIParidadeComCards — o critério de aceite central da mudança.
 func TestBIParidadeComCards(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	defer db.Close()
 
 	for _, modo := range []string{"ytd", "mtd"} {
 		t.Run(modo, func(t *testing.T) {
@@ -165,7 +188,6 @@ func TestBIParidadeComCards(t *testing.T) {
 // TestBICache — segunda chamada sai do cache; nocache=1 e invalidação furam.
 func TestBICache(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	defer db.Close()
 
 	invalidateBICache(empresaID)
 	_, frio := biGet(t, db, "/api/v2/farol/bi?comp_mode=ytd", empresaID)
@@ -187,8 +209,7 @@ func TestBICache(t *testing.T) {
 // TestBIInvalidacaoDescartaCalculoVelho — o cálculo que começou ANTES de uma
 // invalidação não pode gravar no cache depois dela.
 func TestBIInvalidacaoDescartaCalculoVelho(t *testing.T) {
-	db, empresaID := biTestDB(t)
-	defer db.Close()
+	_, empresaID := biTestDB(t)
 
 	invalidateBICache(empresaID)
 	gen := biGeneration(empresaID)
@@ -208,7 +229,6 @@ func TestBIInvalidacaoDescartaCalculoVelho(t *testing.T) {
 // linha da empresa real (a tabela não tem FK para companies).
 func TestBICarimboPrefereConsolidacao(t *testing.T) {
 	db, _ := biTestDB(t)
-	defer db.Close()
 
 	var existe bool
 	_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.tables
@@ -253,7 +273,6 @@ func TestBICarimboPrefereConsolidacao(t *testing.T) {
 // SUM(pvenda) total do período, e vir ordenada desc, com cor pela régua YoY.
 func TestBIFaturadoPorUF(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	defer db.Close()
 
 	// Faturado lê a MV mv_fat_uf_mes (mig 194), que depende de vendas_ccd +
 	// tipo_venda — só existe num banco com migrations em dia. Onde a MV não
@@ -326,7 +345,6 @@ func TestBIFaturadoPorUF(t *testing.T) {
 // TestBIFluxoInvalidoNaoVaraParaCCD — ?fluxo=cancdev cairia em scan da base.
 func TestBIFluxoInvalidoNaoVaraParaCCD(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	defer db.Close()
 
 	invalidateBICache(empresaID)
 	out, _ := biGet(t, db, "/api/v2/farol/bi?comp_mode=ytd&fluxo=cancdev", empresaID)
@@ -339,7 +357,6 @@ func TestBIFluxoInvalidoNaoVaraParaCCD(t *testing.T) {
 // fluxo transmitido) zerava donut e ranking inteiros.
 func TestBITransmitidoTemValores(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	defer db.Close()
 
 	invalidateBICache(empresaID)
 	out, _ := biGet(t, db, "/api/v2/farol/bi?comp_mode=ytd&fluxo=transmitido", empresaID)

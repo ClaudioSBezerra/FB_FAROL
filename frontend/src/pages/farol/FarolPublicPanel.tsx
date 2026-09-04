@@ -468,6 +468,13 @@ export default function FarolPublicPanel() {
               </button>
             </div>
           )}
+
+          <a
+            href={scope === 'sup' ? `/m/${cnpj}/sup/${scopeCod}/metas-industria` : `/m/${cnpj}/rca/${scopeCod}/metas-industria`}
+            className="px-4 py-2.5 text-base font-bold uppercase tracking-wide rounded-lg border-2 border-slate-300 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
+          >
+            Metas Indústria
+          </a>
         </div>
       </div>
 
