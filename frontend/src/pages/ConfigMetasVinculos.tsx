@@ -607,7 +607,7 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                     variant="outline" size="sm"
                     disabled={importarClientes.isPending}
                     onClick={() => { setClientesUploadTarget(v.id); clientesFileInputRef.current?.click() }}
-                    title="Importar Clientes Válidos (CSV): rede_nome;cnpj;cod_rca"
+                    title="Importar Clientes Válidos (CSV): cnpj;cod_princ;razao;fantasia;cod_ggv;nome_ggv;cod_crv;nome_crv;cod_rca;nome_rca (obrigatórios: cnpj, cod_princ, cod_ggv, cod_crv, cod_rca)"
                   >
                     <Upload className="w-3.5 h-3.5 mr-1" /> Clientes
                   </Button>
@@ -615,7 +615,7 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                     variant="outline" size="sm"
                     disabled={importarItens.isPending}
                     onClick={() => { setItensUploadTarget(v.id); itensFileInputRef.current?.click() }}
-                    title="Importar Itens Válidos (CSV): ean;cod_prod;tipo_embalagem"
+                    title="Importar Itens Válidos (CSV): ean;cod_prod (embalagem/qt_unit_cx vêm do cadastro de produto, não deste arquivo)"
                   >
                     <Upload className="w-3.5 h-3.5 mr-1" /> Itens
                   </Button>
