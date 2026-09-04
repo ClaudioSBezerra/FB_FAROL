@@ -1,20 +1,28 @@
 package handlers
 
 // farol_metas_clientes_validos_csv.go — Importação de Clientes Válidos
-// (Redes + RCA responsável) — Épico 3, Story 3.2, módulo Painel de Gestão
-// de Metas por Indústria.
+// (Redes + hierarquia GGV/CRV/RCA responsável) — Épico 3, Story 3.2, módulo
+// Painel de Gestão de Metas por Indústria.
 //
-// Executa o modelo decidido na Story 1.4: lista escopada por vínculo +
-// vigência (FR11), rede_nome livre (não FK), cod_rca só guardado (subir
-// pra CRV/GGV é responsabilidade de quem consome, via JOIN com a hierarquia
-// organizacional já existente). Mesmo padrão de atomicidade estrita da
-// Story 3.1 (FR9): valida tudo, aplica tudo ou nada.
+// Formato reformulado em 2026-09-04 (orientação direta do Heverton +
+// confronto com o modelo real da JC, aba "BASE DE LOJAS" do arquivo "Unico
+// Acompanhamento Ponderadas Unilever HC_V1.xlsx"): a lista mensal não traz
+// só "rede_nome" livre e "cod_rca" (formato original da Story 3.2) — ela
+// traz o COD PRINC (chave real da Rede — Claudio confirmou "Rede é
+// COD_PRINC, inclusive podem ter clientes que são redes apontando para ele
+// mesmo") e o trio GGV/CRV/RCA (código+nome) já resolvido por CNPJ. Ver
+// migration 224 pro racional completo da mudança de schema.
 //
-// Uma nova importação SUBSTITUI a lista anterior da mesma vigência (mesmo
-// princípio do PUT-replace de farol_industrias.go) — a lista é sempre "o
-// que vale agora pra esta vigência", não um acréscimo incremental.
+// Mesmo padrão de atomicidade estrita da Story 3.1 (FR9): valida tudo,
+// aplica tudo ou nada. Uma nova importação SUBSTITUI a lista anterior da
+// mesma vigência (mesmo princípio do PUT-replace de farol_industrias.go).
 //
-// Formato CSV (';'): rede_nome;cnpj;cod_rca
+// Formato CSV (';'): cnpj;cod_princ;razao;fantasia;cod_ggv;nome_ggv;cod_crv;nome_crv;cod_rca;nome_rca
+// Colunas obrigatórias (não-vazias): cnpj, cod_princ, cod_ggv, cod_crv, cod_rca
+// (são as chaves usadas pro rollup GGV→CRV→RCA→Rede — sem elas o painel não
+// tem como agrupar). razao/fantasia/nome_ggv/nome_crv/nome_rca são só
+// rótulo de exibição — podem vir vazios sem travar a importação.
+//
 // Rota: POST /api/farol/metas-clientes-validos-importar-csv?vinculo_id=&vigencia_id=
 
 import (
@@ -31,6 +39,7 @@ import (
 )
 
 var cnpjSoDigitos = regexp.MustCompile(`^\d{14}$`)
+var digitosApenas = regexp.MustCompile(`\D`)
 
 type clienteValidoLinhaErro struct {
 	Linha int    `json:"linha"`
@@ -39,9 +48,16 @@ type clienteValidoLinhaErro struct {
 
 type clienteValidoRow struct {
 	linha    int
-	redeNome string
 	cnpj     string
+	codPrinc string
+	razao    string
+	fantasia string
+	codGGV   string
+	nomeGGV  string
+	codCRV   string
+	nomeCRV  string
 	codRCA   string
+	nomeRCA  string
 }
 
 // MetasClientesValidosImportarCSVHandler — POST .../metas-clientes-validos-importar-csv
@@ -108,7 +124,8 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		for i, h := range headerRow {
 			colIdx[norm(h)] = i
 		}
-		for _, c := range []string{"rede_nome", "cnpj", "cod_rca"} {
+		colunasObrigatorias := []string{"cnpj", "cod_princ", "cod_ggv", "cod_crv", "cod_rca"}
+		for _, c := range colunasObrigatorias {
 			if _, ok := colIdx[c]; !ok {
 				http.Error(w, `{"error":"coluna obrigatória ausente no CSV: `+c+`"}`, http.StatusBadRequest)
 				return
@@ -137,23 +154,41 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 				}
 				return ""
 			}
-			row := clienteValidoRow{linha: linhaAtual, redeNome: get("rede_nome"), cnpj: get("cnpj"), codRCA: get("cod_rca")}
+			row := clienteValidoRow{
+				linha: linhaAtual, cnpj: get("cnpj"), codPrinc: get("cod_princ"),
+				razao: get("razao"), fantasia: get("fantasia"),
+				codGGV: get("cod_ggv"), nomeGGV: get("nome_ggv"),
+				codCRV: get("cod_crv"), nomeCRV: get("nome_crv"),
+				codRCA: get("cod_rca"), nomeRCA: get("nome_rca"),
+			}
 			linhaErro := false
 
-			if row.redeNome == "" {
-				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: "rede_nome é obrigatório"})
-				linhaErro = true
-			}
-			cnpjLimpo := regexp.MustCompile(`\D`).ReplaceAllString(row.cnpj, "")
+			cnpjLimpo := digitosApenas.ReplaceAllString(row.cnpj, "")
 			if !cnpjSoDigitos.MatchString(cnpjLimpo) {
 				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: "cnpj inválido (precisa ter 14 dígitos): " + row.cnpj})
 				linhaErro = true
 			}
 			row.cnpj = cnpjLimpo
-			// FR11: todo CNPJ deve ter RCA vinculado — regra de qualidade de
-			// dado validada AQUI na importação, não tratada como fallback depois.
+			// Rede = COD_PRINC (decisão 2026-09-04) — uma Rede pode ter 1 CNPJ
+			// só, apontando pra si mesma (COD_PRINC == COD_CL do próprio
+			// cliente), mas o campo em si nunca pode faltar.
+			if row.codPrinc == "" {
+				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: "cod_princ é obrigatório"})
+				linhaErro = true
+			}
+			// FR11 (ampliado): todo CNPJ precisa vir com o trio GGV/CRV/RCA já
+			// resolvido — não é mais derivado por JOIN na hierarquia de vendas
+			// (ver racional na migration 224), então precisa vir completo aqui.
+			if row.codGGV == "" {
+				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem cod_ggv — todo CNPJ deve ter GGV vinculado", row.cnpj)})
+				linhaErro = true
+			}
+			if row.codCRV == "" {
+				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem cod_crv — todo CNPJ deve ter CRV vinculado", row.cnpj)})
+				linhaErro = true
+			}
 			if row.codRCA == "" {
-				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem RCA vinculado — todo CNPJ deve ter RCA (FR11)", row.cnpj)})
+				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem cod_rca — todo CNPJ deve ter RCA vinculado (FR11)", row.cnpj)})
 				linhaErro = true
 			}
 			if !linhaErro {
@@ -193,9 +228,11 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		}
 		for _, row := range rows {
 			if _, err := tx.Exec(`
-				INSERT INTO farol.metas_clientes_validos (empresa_id, vinculo_id, vigencia_id, rede_nome, cnpj, cod_rca)
-				VALUES ($1, $2, $3, $4, $5, $6)
-			`, spCtx.EmpresaID, vinculoID, vigenciaID, row.redeNome, row.cnpj, row.codRCA); err != nil {
+				INSERT INTO farol.metas_clientes_validos
+					(empresa_id, vinculo_id, vigencia_id, cnpj, cod_princ, razao, fantasia, cod_ggv, nome_ggv, cod_crv, nome_crv, cod_rca, nome_rca)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			`, spCtx.EmpresaID, vinculoID, vigenciaID, row.cnpj, row.codPrinc, row.razao, row.fantasia,
+				row.codGGV, row.nomeGGV, row.codCRV, row.nomeCRV, row.codRCA, row.nomeRCA); err != nil {
 				http.Error(w, `{"error":"database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 				return
 			}
@@ -235,9 +272,10 @@ func MetasClientesValidosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		rows, err := db.Query(`
-			SELECT rede_nome, cnpj, cod_rca FROM farol.metas_clientes_validos
+			SELECT cnpj, cod_princ, razao, fantasia, cod_ggv, nome_ggv, cod_crv, nome_crv, cod_rca, nome_rca
+			FROM farol.metas_clientes_validos
 			WHERE vigencia_id = $1 AND empresa_id = $2
-			ORDER BY rede_nome, cnpj
+			ORDER BY cod_princ, cnpj
 		`, vigenciaID, spCtx.EmpresaID)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -245,14 +283,21 @@ func MetasClientesValidosHandler(db *sql.DB) http.HandlerFunc {
 		}
 		defer rows.Close()
 		type item struct {
-			RedeNome string `json:"rede_nome"`
 			CNPJ     string `json:"cnpj"`
+			CodPrinc string `json:"cod_princ"`
+			Razao    string `json:"razao"`
+			Fantasia string `json:"fantasia"`
+			CodGGV   string `json:"cod_ggv"`
+			NomeGGV  string `json:"nome_ggv"`
+			CodCRV   string `json:"cod_crv"`
+			NomeCRV  string `json:"nome_crv"`
 			CodRCA   string `json:"cod_rca"`
+			NomeRCA  string `json:"nome_rca"`
 		}
 		lista := []item{}
 		for rows.Next() {
 			var it item
-			if err := rows.Scan(&it.RedeNome, &it.CNPJ, &it.CodRCA); err != nil {
+			if err := rows.Scan(&it.CNPJ, &it.CodPrinc, &it.Razao, &it.Fantasia, &it.CodGGV, &it.NomeGGV, &it.CodCRV, &it.NomeCRV, &it.CodRCA, &it.NomeRCA); err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
 			}

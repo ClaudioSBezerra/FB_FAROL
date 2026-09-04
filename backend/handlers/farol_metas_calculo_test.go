@@ -59,13 +59,17 @@ func limparVendasTransmitidasFixture(t *testing.T, empresaID string, cnpjs []str
 	}
 }
 
-func inserirClienteValidoFixture(t *testing.T, empresaID string, vinculoID, vigenciaID int, redeNome, cnpj, codRCA string) {
+// inserirClienteValidoFixture insere um CNPJ na lista de Clientes Válidos —
+// desde 2026-09-04 (migration 224) o trio GGV/CRV/RCA vem embutido aqui
+// (não é mais derivado por JOIN em vendas), mas os testes que só agregam
+// por RCA/Rede não precisam de GGV/CRV distintos — usam um código fixo.
+func inserirClienteValidoFixture(t *testing.T, empresaID string, vinculoID, vigenciaID int, codPrinc, cnpj, codRCA string) {
 	t.Helper()
 	db, _ := biTestDB(t)
 	_, err := db.Exec(`
-		INSERT INTO farol.metas_clientes_validos (empresa_id, vinculo_id, vigencia_id, rede_nome, cnpj, cod_rca)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, empresaID, vinculoID, vigenciaID, redeNome, cnpj, codRCA)
+		INSERT INTO farol.metas_clientes_validos (empresa_id, vinculo_id, vigencia_id, cod_princ, cnpj, cod_ggv, cod_crv, cod_rca)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, empresaID, vinculoID, vigenciaID, codPrinc, cnpj, "TCALC-GGV", "TCALC-CRV", codRCA)
 	if err != nil {
 		t.Fatalf("inserir fixture de cliente válido: %v", err)
 	}
@@ -218,8 +222,8 @@ func TestCalcularRealizado_Sortimento_RegraQuantidadeMinima(t *testing.T) {
 
 	db, _ = biTestDB(t)
 	db.Exec(`DELETE FROM farol.metas_itens_validos WHERE vigencia_id = $1`, vigenciaID)
-	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod, tipo_embalagem) VALUES
-		($1,$2,$3,'EAN001','PRODA','UN'), ($1,$2,$3,'EAN002','PRODB','UN')`, empresaID, vinculoID, vigenciaID)
+	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod) VALUES
+		($1,$2,$3,'EAN001','PRODA'), ($1,$2,$3,'EAN002','PRODB')`, empresaID, vinculoID, vigenciaID)
 
 	// loja1: compra 5un de PRODA (>= mínimo 3, positiva) e 2un de PRODB (< mínimo, NÃO positiva) → 1 EAN
 	inserirVendaFaturadaFixture(t, empresaID, loja1, "PRODA", "TCALC-RCA4", "1", 500, 5, "2026-04-05")
@@ -292,41 +296,69 @@ func TestCalcularRealizado_FluxoTransmitido(t *testing.T) {
 	}
 }
 
-// TestCalcularRealizado_FluxoSoma cobre FR15: "Soma" combina Faturado +
-// Transmitido — capacidade nova que o Farol hoje não tem (só alterna).
-func TestCalcularRealizado_FluxoSoma(t *testing.T) {
+// TestCalcularRealizado_FluxoInvalido_Erro cobre a remoção do fluxo "soma"
+// (orientação do Heverton, 2026-09-04: "somente 2 visões... mesma
+// filosofia do Farol V1 em uso hoje") — só faturado/transmitido são
+// aceitos agora; "soma" (que chegou a existir por uma sessão) precisa
+// devolver erro claro, não ser silenciosamente aceito.
+func TestCalcularRealizado_FluxoInvalido_Erro(t *testing.T) {
 	db, empresaID := biTestDB(t)
-	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC Soma", "cobertura_rede", "rede",
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC FluxoInvalido", "cobertura_rede", "rede",
 		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
 		map[string]any{"limiar_valor_medio": 100.0})
 	t.Cleanup(cleanup)
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
 
 	loja := "88888888000101"
-	t.Cleanup(func() {
-		limparVendasFaturadasFixture(t, empresaID, []string{loja})
-		limparVendasTransmitidasFixture(t, empresaID, []string{loja})
-	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SOMA", loja, "TCALC-RCA8")
-	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA8", "1", 3000, 1, "2026-08-05")
-	inserirVendaTransmitidaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA8", "1", 2000, 1, "2026-08-06")
 
-	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede")
-	if err != nil {
-		t.Fatalf("CalcularRealizado fluxo=soma: %v", err)
+	if _, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede"); err == nil {
+		t.Error("fluxo 'soma' deveria dar erro — só faturado/transmitido são suportados")
 	}
-	if resultado.Redes[0].Valor != 5000 {
-		t.Errorf("fluxo soma = %.2f, want 5000 (3000 faturado + 2000 transmitido)", resultado.Redes[0].Valor)
+}
+
+// TestCalcularRealizado_FiltraPorCodFornecDaIndustria cobre a correção de
+// 2026-09-04: o Realizado só pode contar venda do(s) cod_fornec mapeados
+// pra Indústria do vínculo (farol.industria_fornecedores) — antes desse
+// ajuste, a "média de compras" da Rede somava QUALQUER fornecedor.
+func TestCalcularRealizado_FiltraPorCodFornecDaIndustria(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC CodFornec", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+
+	var industriaID int
+	if err := db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID); err != nil {
+		t.Fatalf("ler industria_id do vínculo: %v", err)
+	}
+	const codFornecTeste = "TCALC-FORNEC-9"
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`, empresaID, industriaID, codFornecTeste); err != nil {
+		t.Fatalf("mapear cod_fornec: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM farol.industria_fornecedores WHERE industria_id = $1`, industriaID) })
+
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-09-01", "2026-09-30")
+	loja := "39639639000101"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE FORNEC", loja, "TCALC-RCA9")
+
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 1000, 1, "2026-09-05")
+	if _, err := db.Exec(`UPDATE vendas_faturadas SET cod_fornec = $1 WHERE cnpj = $2 AND cod_rca = 'TCALC-RCA9' AND pvenda = 1000`, codFornecTeste, loja); err != nil {
+		t.Fatalf("marcar venda do fornecedor mapeado: %v", err)
+	}
+	// venda de OUTRO fornecedor pro mesmo CNPJ — não deveria contar.
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD2", "TCALC-RCA9", "1", 9000, 1, "2026-09-06")
+	if _, err := db.Exec(`UPDATE vendas_faturadas SET cod_fornec = '999' WHERE cnpj = $1 AND cod_rca = 'TCALC-RCA9' AND pvenda = 9000`, loja); err != nil {
+		t.Fatalf("marcar venda de outro fornecedor: %v", err)
 	}
 
-	// Confirma que os fluxos individuais continuam corretos isoladamente —
-	// trocar fluxo não é acumulativo/com efeito colateral.
-	rFat, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
 	if err != nil {
-		t.Fatalf("CalcularRealizado fluxo=faturado: %v", err)
+		t.Fatalf("CalcularRealizado: %v", err)
 	}
-	if rFat.Redes[0].Valor != 3000 {
-		t.Errorf("fluxo faturado isolado = %.2f, want 3000 (não deveria incluir o transmitido)", rFat.Redes[0].Valor)
+	if resultado.Redes[0].Valor != 1000 {
+		t.Errorf("valor da Rede = %.2f, want 1000 (só o fornecedor 396 mapeado à Indústria — os 9000 de outro fornecedor não deveriam contar)", resultado.Redes[0].Valor)
 	}
 }
 

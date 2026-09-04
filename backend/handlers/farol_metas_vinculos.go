@@ -40,6 +40,7 @@ type MetaVinculoResponse struct {
 	IndustriaNome     string               `json:"industria_nome"`
 	TipoMetricaID     int                  `json:"tipo_metrica_id"`
 	TipoMetricaNome   string               `json:"tipo_metrica_nome"`
+	FormulaCodigo     string               `json:"formula_codigo"`
 	NivelAgregacao    string               `json:"nivel_agregacao"`
 	ParametrosSchema  []ParametroSchemaDTO `json:"parametros_schema"`
 	ParametrosValores map[string]any       `json:"parametros_valores"`
@@ -99,7 +100,7 @@ func scanMetaVinculo(row interface{ Scan(...any) error }) (*MetaVinculoResponse,
 		parametrosRaw []byte
 		recorteUF     sql.NullString
 	)
-	if err := row.Scan(&v.ID, &v.IndustriaID, &industriaNome, &v.TipoMetricaID, &tipoNome, &nivel, &schemaRaw, &parametrosRaw, &v.Ativo, &v.CreatedAt, &recorteUF, pq.Array(&v.RecorteGGVs), pq.Array(&v.TiposVendaValidos)); err != nil {
+	if err := row.Scan(&v.ID, &v.IndustriaID, &industriaNome, &v.TipoMetricaID, &tipoNome, &v.FormulaCodigo, &nivel, &schemaRaw, &parametrosRaw, &v.Ativo, &v.CreatedAt, &recorteUF, pq.Array(&v.RecorteGGVs), pq.Array(&v.TiposVendaValidos)); err != nil {
 		return nil, err
 	}
 	v.IndustriaNome = industriaNome
@@ -124,7 +125,7 @@ func scanMetaVinculo(row interface{ Scan(...any) error }) (*MetaVinculoResponse,
 }
 
 const metaVinculoSelectBase = `
-	SELECT mv.id, mv.industria_id, i.nome, mv.tipo_metrica_id, tm.nome, tm.nivel_agregacao,
+	SELECT mv.id, mv.industria_id, i.nome, mv.tipo_metrica_id, tm.nome, tm.formula_codigo, tm.nivel_agregacao,
 	       tm.parametros_schema, mv.parametros_valores, mv.ativo, mv.created_at,
 	       mv.recorte_uf, mv.recorte_ggvs, mv.tipos_venda_validos
 	FROM farol.metas_vinculos mv

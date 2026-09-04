@@ -32,7 +32,7 @@ func MetasPublicVinculosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		rows, err := db.Query(`
-			SELECT mv.id, i.nome, tm.nome
+			SELECT mv.id, mv.industria_id, i.nome, tm.nome, tm.formula_codigo
 			FROM farol.metas_vinculos mv
 			JOIN farol.industrias i ON i.id = mv.industria_id
 			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
@@ -46,13 +46,15 @@ func MetasPublicVinculosHandler(db *sql.DB) http.HandlerFunc {
 		defer rows.Close()
 		type item struct {
 			ID              int    `json:"id"`
+			IndustriaID     int    `json:"industria_id"`
 			IndustriaNome   string `json:"industria_nome"`
 			TipoMetricaNome string `json:"tipo_metrica_nome"`
+			FormulaCodigo   string `json:"formula_codigo"`
 		}
 		lista := []item{}
 		for rows.Next() {
 			var it item
-			if err := rows.Scan(&it.ID, &it.IndustriaNome, &it.TipoMetricaNome); err == nil {
+			if err := rows.Scan(&it.ID, &it.IndustriaID, &it.IndustriaNome, &it.TipoMetricaNome, &it.FormulaCodigo); err == nil {
 				lista = append(lista, it)
 			}
 		}
@@ -219,10 +221,7 @@ func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vig
 	if err != nil {
 		return nil, err
 	}
-	redesEscopo, err := filtrarRedesPorEscopo(db, empresaID, realizadoCompleto.Redes, scope, cod)
-	if err != nil {
-		return nil, err
-	}
+	redesEscopo := filtrarRedesPorEscopo(realizadoCompleto.Redes, scope, cod)
 	realizadoEscopo := recalcularTotalDeRedes(redesEscopo, formulaCodigo)
 	realizadoEscopo.VinculoID = vinculoID
 	realizadoEscopo.VigenciaID = vigenciaID
@@ -234,68 +233,18 @@ func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vig
 }
 
 // filtrarRedesPorEscopo restringe a lista de Redes ao Supervisor/RCA
-// pedido — nunca expõe dado de fora daquele recorte organizacional
-// (mesma preocupação de segurança do painel público de vendas existente,
-// que já restringe por escopo via baseDrill fixo na URL).
-func filtrarRedesPorEscopo(db *sql.DB, empresaID string, redes []RealizadoRede, scope, cod string) ([]RealizadoRede, error) {
+// pedido — nunca expõe dado de fora daquele recorte organizacional (mesma
+// preocupação de segurança do painel público de vendas existente, que já
+// restringe por escopo via baseDrill fixo na URL).
+//
+// Desde 2026-09-04 não faz mais JOIN em vendas pra resolver o Supervisor de
+// um RCA — o dono (GGV/CRV/RCA) já vem embutido em cada RealizadoRede,
+// importado do CSV de Clientes Válidos (farol_metas_calculo.go) — por isso
+// vira um simples filtro em memória via filtrarRedesPorHierarquia.
+func filtrarRedesPorEscopo(redes []RealizadoRede, scope, cod string) []RealizadoRede {
 	if scope == "rca" {
-		var out []RealizadoRede
-		for _, r := range redes {
-			if r.CodRCA == cod {
-				out = append(out, r)
-			}
-		}
-		return out, nil
+		return filtrarRedesPorHierarquia(redes, "", "", cod)
 	}
-	// scope == "sup": inclui toda Rede cujo RCA representante esteja sob
-	// este Supervisor.
-	cacheSupervisorPorRCA := map[string]string{}
-	var out []RealizadoRede
-	for _, r := range redes {
-		if r.CodRCA == "" {
-			continue
-		}
-		sup, ok := cacheSupervisorPorRCA[r.CodRCA]
-		if !ok {
-			_, resolvido, _, _, _, err := resolverHierarquiaRCA(db, empresaID, r.CodRCA)
-			if err != nil {
-				return nil, err
-			}
-			sup = resolvido
-			cacheSupervisorPorRCA[r.CodRCA] = sup
-		}
-		if sup == cod {
-			out = append(out, r)
-		}
-	}
-	return out, nil
-}
-
-// recalcularTotalDeRedes reconstrói RealizadoTotal a partir de uma lista
-// (já filtrada) de Redes — mesma lógica de agregação usada em
-// CalcularRealizadoComPeriodo, extraída aqui pra reuso sem duplicar regra.
-func recalcularTotalDeRedes(redes []RealizadoRede, formulaCodigo string) *RealizadoResultado {
-	resultado := &RealizadoResultado{Redes: redes}
-	if redes == nil {
-		resultado.Redes = []RealizadoRede{}
-	}
-	switch formulaCodigo {
-	case "cobertura_rede":
-		count := 0
-		for _, r := range redes {
-			if r.Atingiu {
-				count++
-			}
-		}
-		resultado.RealizadoTotal = float64(count)
-	case "sortimento_rede":
-		var soma float64
-		for _, r := range redes {
-			soma += r.Valor
-		}
-		if len(redes) > 0 {
-			resultado.RealizadoTotal = soma / float64(len(redes))
-		}
-	}
-	return resultado
+	// scope == "sup": toda Rede cujo CRV (dono importado) seja este código.
+	return filtrarRedesPorHierarquia(redes, "", cod, "")
 }

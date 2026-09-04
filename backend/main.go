@@ -583,6 +583,10 @@ func main() {
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
 	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
 
+	// Painel combinado Cobertura + Sortimento numa linha por Rede — pedido
+	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
+	http.HandleFunc("/api/farol/metas-painel-combinado", withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────
@@ -629,6 +633,7 @@ func main() {
 	http.HandleFunc("/api/farol/public/metas-vinculos", publicHandler(handlers.MetasPublicVinculosHandler))
 	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
 	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
+	http.HandleFunc("/api/farol/public/metas-painel-combinado", publicHandler(handlers.MetasPublicPainelCombinadoHandler))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))

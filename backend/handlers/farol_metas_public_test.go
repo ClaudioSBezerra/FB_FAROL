@@ -97,8 +97,8 @@ func TestMetasPublicPainel_EscopoPorRCA_NaoVazaOutrasRedes(t *testing.T) {
 	if len(resp.Realizado.Redes) != 1 {
 		t.Fatalf("escopo do RCA-A deveria ter só 1 Rede, veio %d: %+v", len(resp.Realizado.Redes), resp.Realizado.Redes)
 	}
-	if resp.Realizado.Redes[0].RedeNome != "REDE RCA-A" {
-		t.Errorf("VAZAMENTO: painel do RCA-A mostrou a Rede %q (deveria ser só REDE RCA-A)", resp.Realizado.Redes[0].RedeNome)
+	if resp.Realizado.Redes[0].CodPrinc != "REDE RCA-A" {
+		t.Errorf("VAZAMENTO: painel do RCA-A mostrou a Rede %q (deveria ser só REDE RCA-A)", resp.Realizado.Redes[0].CodPrinc)
 	}
 }
 
@@ -144,8 +144,8 @@ func TestMetasPublicPainel_RecortesRespeitaEscopo(t *testing.T) {
 			continue
 		}
 		for _, r := range resp.Recortes[rec].Redes {
-			if r.RedeNome != "REDE A" {
-				t.Errorf("VAZAMENTO no recorte %q: apareceu %q (deveria ser só REDE A)", rec, r.RedeNome)
+			if r.CodPrinc != "REDE A" {
+				t.Errorf("VAZAMENTO no recorte %q: apareceu %q (deveria ser só REDE A)", rec, r.CodPrinc)
 			}
 		}
 	}

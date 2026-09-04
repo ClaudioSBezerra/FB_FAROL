@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type PainelFaixa struct {
@@ -69,26 +70,53 @@ func MetasPainelHandler(db *sql.DB) http.HandlerFunc {
 			nivel = "rede"
 		}
 
-		var industriaNome, tipoMetricaNome string
+		var industriaNome, tipoMetricaNome, formulaCodigo string
 		var vig PainelVigencia
 		vig.ID = vigenciaID
 		err := db.QueryRow(`
-			SELECT i.nome, tm.nome, v.data_inicio::text, v.data_fim::text, v.status
+			SELECT i.nome, tm.nome, tm.formula_codigo, v.data_inicio::text, v.data_fim::text, v.status
 			FROM farol.metas_vigencias v
 			JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 			JOIN farol.industrias i ON i.id = mv.industria_id
 			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 			WHERE v.id = $1 AND v.vinculo_id = $2 AND v.empresa_id = $3
-		`, vigenciaID, vinculoID, spCtx.EmpresaID).Scan(&industriaNome, &tipoMetricaNome, &vig.DataInicio, &vig.DataFim, &vig.Status)
+		`, vigenciaID, vinculoID, spCtx.EmpresaID).Scan(&industriaNome, &tipoMetricaNome, &formulaCodigo, &vig.DataInicio, &vig.DataFim, &vig.Status)
 		if err != nil {
 			http.Error(w, "Vínculo/vigência não encontrado", http.StatusNotFound)
 			return
 		}
 
+		// Escopo obrigatório de login (farol_escopo.go) + drill-down pedido
+		// na URL (?cod_ggv=&cod_crv=&cod_rca=) — o request só pode estreitar
+		// dentro do escopo do usuário, nunca escapar dele.
+		codGGV, codCRV, codRCA, negarEscopo := escopoHierarquiaMetas(spCtx)
+		if negarEscopo {
+			http.Error(w, "acesso negado: cadastro de organograma incompleto pra este usuário", http.StatusForbidden)
+			return
+		}
+		codGGV, codCRV, codRCA = resolverFiltroDrillDown(r.URL.Query(), codGGV, codCRV, codRCA)
+
 		realizado, err := obterOuCongelarRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if err := aplicarFiltroHierarquiaEEscopo(realizado, formulaCodigo, nivel, codGGV, codCRV, codRCA, vig.DataInicio, vig.DataFim); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Nível 5 do painel ("Rede/CNPJ", ver modelo V1 da JC, aba "Resumo
+		// Rede Cliente"): drill-down explícito numa única Rede — o cliente
+		// abre a lista de CNPJs dela (já vem em RealizadoRede.Clientes,
+		// calculado junto, sem round-trip extra).
+		if codPrinc := strings.TrimSpace(r.URL.Query().Get("cod_princ")); codPrinc != "" && nivel == "rede" {
+			filtradas := make([]RealizadoRede, 0, 1)
+			for _, rede := range realizado.Redes {
+				if rede.CodPrinc == codPrinc {
+					filtradas = append(filtradas, rede)
+				}
+			}
+			realizado.Redes = filtradas
 		}
 
 		rows, err := db.Query(`SELECT faixa, valor_meta FROM farol.metas_faixas WHERE vigencia_id = $1 AND empresa_id = $2`, vigenciaID, spCtx.EmpresaID)
@@ -138,6 +166,7 @@ func MetasPainelHandler(db *sql.DB) http.HandlerFunc {
 				// recente, não o número oficial mensal que precisa ficar estável.
 				rr, rerr2 := CalcularRealizadoComPeriodo(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel, di, df)
 				if rerr2 == nil {
+					_ = aplicarFiltroHierarquiaEEscopo(rr, formulaCodigo, nivel, codGGV, codCRV, codRCA, vig.DataInicio, vig.DataFim)
 					resp.Recortes[rec] = rr
 				}
 			}

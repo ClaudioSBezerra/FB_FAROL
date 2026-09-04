@@ -1,17 +1,24 @@
 package handlers
 
-// farol_metas_itens_validos_csv.go — Importação de Itens Válidos
-// (EAN + embalagem) — Épico 3, Story 3.3, módulo Painel de Gestão de Metas
-// por Indústria.
+// farol_metas_itens_validos_csv.go — Importação de Itens Válidos (EAN) —
+// Épico 3, Story 3.3, módulo Painel de Gestão de Metas por Indústria.
 //
 // Mesmo modelo/padrão de atomicidade das Stories 3.1/3.2: escopo por
 // vinculo_id/vigencia_id (query string), validação completa antes de
 // qualquer escrita, reimportação substitui a lista da vigência, vigência
 // fechada bloqueia.
 //
-// Formato CSV (';'): ean;cod_prod;tipo_embalagem (UN/CX/PACOTE/DISPLAY)
+// Formato CSV (';'): ean;cod_prod
 // Um EAN pode aparecer em várias linhas (mapeando pra cod_prod diferentes —
-// variantes/embalagens do mesmo item).
+// variantes/embalagens do mesmo item; sem limite de quantas — BASE EANS da
+// JC já mostra itens com mais de 2 códigos JC pro mesmo EAN).
+//
+// A coluna tipo_embalagem que existia aqui até 2026-09-04 foi REMOVIDA
+// (migration 225) — orientação direta do Heverton: essa informação nunca
+// deveria ter sido pedida à JC no CSV mensal, ela já existe no cadastro de
+// produto importado todo dia na carga de vendas (embalagem/qt_unit_cx,
+// migration 168). O motor de apuração (farol_metas_calculo.go) resolve
+// isso via JOIN com vendas_faturadas/transmitidas, não mais por aqui.
 //
 // Rota: POST /api/farol/metas-itens-validos-importar-csv?vinculo_id=&vigencia_id=
 
@@ -27,18 +34,15 @@ import (
 	"strings"
 )
 
-var embalagensValidas = map[string]bool{"UN": true, "CX": true, "PACOTE": true, "DISPLAY": true}
-
 type itemValidoLinhaErro struct {
 	Linha int    `json:"linha"`
 	Erro  string `json:"erro"`
 }
 
 type itemValidoRow struct {
-	linha         int
-	ean           string
-	codProd       string
-	tipoEmbalagem string
+	linha   int
+	ean     string
+	codProd string
 }
 
 // MetasItensValidosImportarCSVHandler — POST .../metas-itens-validos-importar-csv
@@ -105,7 +109,7 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		for i, h := range headerRow {
 			colIdx[norm(h)] = i
 		}
-		for _, c := range []string{"ean", "cod_prod", "tipo_embalagem"} {
+		for _, c := range []string{"ean", "cod_prod"} {
 			if _, ok := colIdx[c]; !ok {
 				http.Error(w, `{"error":"coluna obrigatória ausente no CSV: `+c+`"}`, http.StatusBadRequest)
 				return
@@ -136,7 +140,6 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 			}
 			row := itemValidoRow{
 				linha: linhaAtual, ean: get("ean"), codProd: get("cod_prod"),
-				tipoEmbalagem: strings.ToUpper(get("tipo_embalagem")),
 			}
 			linhaErro := false
 
@@ -146,12 +149,6 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 			}
 			if row.codProd == "" {
 				erros = append(erros, itemValidoLinhaErro{Linha: linhaAtual, Erro: "cod_prod é obrigatório"})
-				linhaErro = true
-			}
-			// FR12: tipo de embalagem é atributo obrigatório — decide se a
-			// regra de quantidade mínima do Sortimento (FR2) se aplica.
-			if !embalagensValidas[row.tipoEmbalagem] {
-				erros = append(erros, itemValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("tipo_embalagem inválido: %q (use UN, CX, PACOTE ou DISPLAY)", row.tipoEmbalagem)})
 				linhaErro = true
 			}
 			if !linhaErro {
@@ -192,9 +189,9 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		}
 		for _, row := range rows {
 			if _, err := tx.Exec(`
-				INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod, tipo_embalagem)
-				VALUES ($1, $2, $3, $4, $5, $6)
-			`, spCtx.EmpresaID, vinculoID, vigenciaID, row.ean, row.codProd, row.tipoEmbalagem); err != nil {
+				INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod)
+				VALUES ($1, $2, $3, $4, $5)
+			`, spCtx.EmpresaID, vinculoID, vigenciaID, row.ean, row.codProd); err != nil {
 				http.Error(w, `{"error":"database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 				return
 			}
@@ -234,7 +231,7 @@ func MetasItensValidosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		rows, err := db.Query(`
-			SELECT ean, cod_prod, tipo_embalagem FROM farol.metas_itens_validos
+			SELECT ean, cod_prod FROM farol.metas_itens_validos
 			WHERE vigencia_id = $1 AND empresa_id = $2
 			ORDER BY ean, cod_prod
 		`, vigenciaID, spCtx.EmpresaID)
@@ -244,14 +241,13 @@ func MetasItensValidosHandler(db *sql.DB) http.HandlerFunc {
 		}
 		defer rows.Close()
 		type item struct {
-			EAN           string `json:"ean"`
-			CodProd       string `json:"cod_prod"`
-			TipoEmbalagem string `json:"tipo_embalagem"`
+			EAN     string `json:"ean"`
+			CodProd string `json:"cod_prod"`
 		}
 		lista := []item{}
 		for rows.Next() {
 			var it item
-			if err := rows.Scan(&it.EAN, &it.CodProd, &it.TipoEmbalagem); err != nil {
+			if err := rows.Scan(&it.EAN, &it.CodProd); err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
 			}
