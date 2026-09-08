@@ -833,10 +833,10 @@ function useCards(a: UseCardsArgs) {
       if (a.comp_inicio && a.comp_fim) { p.set('comp_inicio', a.comp_inicio); p.set('comp_fim', a.comp_fim) }
       if (a.drillPath.length > 0) p.set('drill', JSON.stringify(a.drillPath))
       Object.entries(a.filters).forEach(([k, v]) => { if (v.length > 0) p.set(k, v.join(',')) })
-      // "Somente Indústrias" (mig 228) — só faz sentido em V02/V03 (ver
-      // backend, FarolV2CardsHandler); nas demais visões o parâmetro é
-      // ignorado, então nem vale a pena mandar.
-      if (a.somenteIndustria && (a.view === 'V02' || a.view === 'V03')) p.set('somente_industria', '1')
+      // "Somente Indústrias" (mig 228/229) — as 5 visões deste painel
+      // (V01/V02/V03/V06/V07) já são todas suportadas no backend
+      // (FarolV2CardsHandler) — sempre manda quando ligado.
+      if (a.somenteIndustria) p.set('somente_industria', '1')
       const r = await fetch(`/api/v2/farol/cards?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar dados')
       return r.json()
@@ -923,10 +923,13 @@ export default function FarolExecutivo() {
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
-  // "Somente Indústrias" (mig 228, planejado 08/09/2026) — só tem efeito em
-  // Por Gerência/Por Equipe (V02/V03); fica "lembrado" ao trocar de visão,
-  // mas o backend ignora o parâmetro fora dessas duas (ver useCards).
-  const [somenteIndustria, setSomenteIndustria] = useState(false)
+  // "Somente Indústrias" (mig 228/229, 08/09/2026) — já entra LIGADO por
+  // padrão (pedido do Claudio: mesma lógica do "Faturado" já vir
+  // selecionado; o projeto nasceu pra acompanhar só as indústrias
+  // cadastradas, "importar todos os fornecedores" veio depois) — o gestor
+  // "destarja" se quiser ver todos os fornecedores, não o contrário. Vale
+  // pras 5 visões deste painel (V01/V02/V03/V06/V07).
+  const [somenteIndustria, setSomenteIndustria] = useState(true)
   // Toggles "Incluir X" (venda líquida). Vazio = Líquido puro (padrão).
   const [incluir, setIncluir] = useState<Set<CompKey>>(() => new Set())
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
@@ -1146,25 +1149,21 @@ export default function FarolExecutivo() {
           ))}
         </div>
 
-        {/* "Somente Indústrias" (mig 228) — só filtra em Por Gerência/Por
-            Equipe (V02/V03); nas demais visões fica visível mas desativado,
-            pra não sumir/reaparecer trocando de aba. Cor azul (pedido do
-            Claudio) — distinta do verde/vermelho do farol e do cinza dos
-            outros botões, pra chamar atenção como um modo à parte. */}
+        {/* "Somente Indústrias" (mig 228/229) — já filtra nas 5 visões deste
+            painel (Por FORN.GERAL, Por Gerência, Por Equipe, Por Rede, Por
+            Departamento). Cor azul (pedido do Claudio) — distinta do
+            verde/vermelho do farol e do cinza dos outros botões, pra chamar
+            atenção como um modo à parte. Já entra LIGADO por padrão (mesma
+            lógica do "Faturado" já vir selecionado) — o gestor "destarja"
+            se quiser ver todos os fornecedores, não o contrário. */}
         <button
           onClick={() => setSomenteIndustria(v => !v)}
-          disabled={view !== 'V02' && view !== 'V03'}
-          title={
-            view === 'V02' || view === 'V03'
-              ? 'Considera só a venda dos fornecedores cadastrados como indústria (/gestao/industrias)'
-              : 'Só tem efeito em "Por Gerência" e "Por Equipe"'
-          }
+          title="Considera só a venda dos fornecedores cadastrados como indústria (/gestao/industrias)"
           className={cn(
             'ml-2 inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-bold uppercase tracking-wide rounded-md border-2 transition-colors',
             somenteIndustria
               ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
               : 'bg-white border-blue-300 text-blue-700 hover:bg-blue-50',
-            (view !== 'V02' && view !== 'V03') && 'opacity-40 cursor-not-allowed hover:bg-white',
           )}
         >
           <Factory className="h-3.5 w-3.5" /> Somente Indústrias

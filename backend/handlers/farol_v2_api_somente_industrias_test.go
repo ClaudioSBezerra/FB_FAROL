@@ -139,3 +139,179 @@ func TestFarolV2Cards_SomenteIndustrias_V02_L2_FiltraFornecedorNaoCadastrado(t *
 		t.Errorf("card do fornecedor NÃO cadastrado (%s) apareceu com o toggle ligado — filtro não foi aplicado", codOutro)
 	}
 }
+
+// TestFarolV2Cards_SomenteIndustrias_V01_FiltraFornecedorNaoCadastrado —
+// "Por FORN.GERAL" (V01) nunca precisou de tabela nova: cod_fornec é a raiz
+// da hierarquia, já está em agg_fat_v01_l0_mes. O toggle só injeta o
+// filtro — um fornecedor não cadastrado como indústria some da lista.
+func TestFarolV2Cards_SomenteIndustrias_V01_FiltraFornecedorNaoCadastrado(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	nome := "TV2SI V01 L0"
+	codIndustria, codOutro := "T2SIV01IND", "T2SIV01OUT"
+	ano, mes := 2026, 8
+
+	limpar := func() {
+		db.Exec(`DELETE FROM farol.industrias WHERE empresa_id = $1 AND nome = $2`, empresaID, nome)
+		db.Exec(`DELETE FROM farol.agg_fat_v01_l0_mes WHERE empresa_id = $1 AND cod_fornec IN ($2, $3)`,
+			empresaID, codIndustria, codOutro)
+	}
+	limpar()
+	t.Cleanup(limpar)
+
+	var industriaID int
+	if err := db.QueryRow(`INSERT INTO farol.industrias (empresa_id, nome) VALUES ($1, $2) RETURNING id`, empresaID, nome).Scan(&industriaID); err != nil {
+		t.Fatalf("criar indústria: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`,
+		empresaID, industriaID, codIndustria); err != nil {
+		t.Fatalf("vincular %s: %v", codIndustria, err)
+	}
+
+	for _, cod := range []string{codIndustria, codOutro} {
+		if _, err := db.Exec(`
+			INSERT INTO farol.agg_fat_v01_l0_mes (empresa_id, ano, mes, cod_fornec, nome_fornec, pvenda, base_cli, positivados, mix)
+			VALUES ($1,$2,$3,$4,$4,777, 10, 1, 1)
+		`, empresaID, ano, mes, cod); err != nil {
+			t.Fatalf("insert agg_fat_v01_l0_mes %s: %v", cod, err)
+		}
+	}
+
+	url := "/api/v2/farol/cards?view=V01&fluxo=faturado&somente_industria=1&ref_inicio=2026-08-01&ref_fim=2026-08-31"
+	resp := cardsGet(t, db, url, empresaID)
+
+	achouIndustria, achouOutro := false, false
+	for _, c := range resp.Cards {
+		if c.Key == codIndustria {
+			achouIndustria = true
+		}
+		if c.Key == codOutro {
+			achouOutro = true
+		}
+	}
+	if !achouIndustria {
+		t.Errorf("card do fornecedor cadastrado (%s) devia aparecer, cards: %+v", codIndustria, resp.Cards)
+	}
+	if achouOutro {
+		t.Errorf("card do fornecedor NÃO cadastrado (%s) apareceu com o toggle ligado", codOutro)
+	}
+}
+
+// TestFarolV2Cards_SomenteIndustrias_V06_SoContaFornecedorIndustria — "Por
+// Rede" (V06) L0 lê de agg_fat_v06_ind_l0_mes (tabela nova, mig 229): o
+// card da Rede só pode refletir a venda do fornecedor indústria.
+func TestFarolV2Cards_SomenteIndustrias_V06_SoContaFornecedorIndustria(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	nome := "TV2SI V06 REDE"
+	rede := "T2SIREDE"
+	codIndustria, codOutro := "T2SIV06IND", "T2SIV06OUT"
+	cnpjA, cnpjB := "33111111000100", "34222222000100"
+	ano, mes := 2026, 8
+
+	limpar := func() {
+		db.Exec(`DELETE FROM farol.industrias WHERE empresa_id = $1 AND nome = $2`, empresaID, nome)
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_cliprinc = $2`, empresaID, rede)
+		db.Exec(`DELETE FROM farol.agg_fat_v06_ind_l0_mes WHERE empresa_id = $1 AND cod_cliprinc = $2`, empresaID, rede)
+	}
+	limpar()
+	t.Cleanup(limpar)
+
+	var industriaID int
+	if err := db.QueryRow(`INSERT INTO farol.industrias (empresa_id, nome) VALUES ($1, $2) RETURNING id`, empresaID, nome).Scan(&industriaID); err != nil {
+		t.Fatalf("criar indústria: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`,
+		empresaID, industriaID, codIndustria); err != nil {
+		t.Fatalf("vincular %s: %v", codIndustria, err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_cliprinc, cod_fornec, cod_cli, cnpj, qt, pvenda, tipo_venda)
+		VALUES
+			($1, $2, $3, $4, 'CLIA', $5, 1, 1000, '1'),
+			($1, $2, $3, $6, 'CLIB', $7, 1, 2000, '1')
+	`, empresaID, mustParseData(t, "2026-08-15"), rede, codIndustria, cnpjA, codOutro, cnpjB); err != nil {
+		t.Fatalf("insert vendas_faturadas: %v", err)
+	}
+
+	if _, err := db.Exec(`SELECT farol.upsert_aggs_mes_ind($1, $2, $3)`, empresaID, ano, mes); err != nil {
+		t.Fatalf("upsert_aggs_mes_ind: %v", err)
+	}
+
+	url := "/api/v2/farol/cards?view=V06&fluxo=faturado&somente_industria=1&ref_inicio=2026-08-01&ref_fim=2026-08-31"
+	resp := cardsGet(t, db, url, empresaID)
+
+	var card *cardItem
+	for i := range resp.Cards {
+		if resp.Cards[i].Key == rede {
+			card = &resp.Cards[i]
+		}
+	}
+	if card == nil {
+		t.Fatalf("card da rede %s não apareceu: %+v", rede, resp.Cards)
+	}
+	if card.ValorAtual != 1000 {
+		t.Errorf("ValorAtual = %v, want 1000 (só o fornecedor indústria; os R$2000 do avulso não podem entrar)", card.ValorAtual)
+	}
+}
+
+// TestFarolV2Cards_SomenteIndustrias_V07_SoContaFornecedorIndustria — "Por
+// Departamento" (V07) L0 lê de agg_fat_v07_ind_l0_mes (tabela nova, mig
+// 229) — é taxonomia de produto, nunca teve fornecedor no grão em nível
+// nenhum, então essa é a visão que mais dependia de tabela nova.
+func TestFarolV2Cards_SomenteIndustrias_V07_SoContaFornecedorIndustria(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	nome := "TV2SI V07 DEPTO"
+	depto := "T2SIDEPTO"
+	codIndustria, codOutro := "T2SIV07IND", "T2SIV07OUT"
+	cnpjA, cnpjB := "35111111000100", "36222222000100"
+	ano, mes := 2026, 8
+
+	limpar := func() {
+		db.Exec(`DELETE FROM farol.industrias WHERE empresa_id = $1 AND nome = $2`, empresaID, nome)
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_depto = $2`, empresaID, depto)
+		db.Exec(`DELETE FROM farol.agg_fat_v07_ind_l0_mes WHERE empresa_id = $1 AND cod_depto = $2`, empresaID, depto)
+	}
+	limpar()
+	t.Cleanup(limpar)
+
+	var industriaID int
+	if err := db.QueryRow(`INSERT INTO farol.industrias (empresa_id, nome) VALUES ($1, $2) RETURNING id`, empresaID, nome).Scan(&industriaID); err != nil {
+		t.Fatalf("criar indústria: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`,
+		empresaID, industriaID, codIndustria); err != nil {
+		t.Fatalf("vincular %s: %v", codIndustria, err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_depto, cod_fornec, cod_cli, cnpj, qt, pvenda, tipo_venda)
+		VALUES
+			($1, $2, $3, $4, 'CLIA', $5, 1, 1000, '1'),
+			($1, $2, $3, $6, 'CLIB', $7, 1, 2000, '1')
+	`, empresaID, mustParseData(t, "2026-08-15"), depto, codIndustria, cnpjA, codOutro, cnpjB); err != nil {
+		t.Fatalf("insert vendas_faturadas: %v", err)
+	}
+
+	if _, err := db.Exec(`SELECT farol.upsert_aggs_mes_ind($1, $2, $3)`, empresaID, ano, mes); err != nil {
+		t.Fatalf("upsert_aggs_mes_ind: %v", err)
+	}
+
+	url := "/api/v2/farol/cards?view=V07&fluxo=faturado&somente_industria=1&ref_inicio=2026-08-01&ref_fim=2026-08-31"
+	resp := cardsGet(t, db, url, empresaID)
+
+	var card *cardItem
+	for i := range resp.Cards {
+		if resp.Cards[i].Key == depto {
+			card = &resp.Cards[i]
+		}
+	}
+	if card == nil {
+		t.Fatalf("card do departamento %s não apareceu: %+v", depto, resp.Cards)
+	}
+	if card.ValorAtual != 1000 {
+		t.Errorf("ValorAtual = %v, want 1000 (só o fornecedor indústria; os R$2000 do avulso não podem entrar)", card.ValorAtual)
+	}
+}

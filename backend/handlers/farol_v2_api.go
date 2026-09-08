@@ -210,13 +210,40 @@ var aggTablesTrans = map[string][]string{
 // agg_fat_v02_l2/l3_mes originais: o handler injeta um filtro
 // cod_fornec=ANY(industrias) nesses níveis em vez de trocar de tabela (já
 // têm cod_fornec no grão, filtrar não exige somar entre fornecedores).
+//
+// V01 "Por FORN.GERAL" (mig 229) NÃO precisa de pseudo-view: cod_fornec é a
+// RAIZ da hierarquia, está em toda tabela agg_fat/trans_v01_* já — o
+// handler só injeta o filtro direto em "V01" mesmo, sem trocar de view.
+//
+// V06I (Rede, mig 229) só tem tabela nova em L0 — L1/L2 (Fornecedor/
+// Cliente sob a Rede) já não usam mais tabela pronta desde 21/07/2026 (ver
+// mig 226: "escreve mas não lê"), sempre caem no scan ao vivo, que já lida
+// com qualquer filtro sem risco de contar errado — o handler só injeta o
+// filtro ali também.
+//
+// V07I (Departamento, mig 229) cobre L0-L2 inteiros — é taxonomia de
+// produto, nunca teve fornecedor em nível nenhum (atravessa fornecedores).
 func init() {
 	hierarquias["V03I"] = hierarquias["V03"]
 	hierarquias["V02I"] = hierarquias["V02"]
+	hierarquias["V06I"] = hierarquias["V06"]
+	hierarquias["V07I"] = hierarquias["V07"]
 	aggTablesFat["V03I"] = []string{"agg_fat_v03_ind_l0_mes", "agg_fat_v03_ind_l1_mes", "agg_fat_v03_ind_l2_mes", "agg_fat_v03_ind_l3_mes"}
 	aggTablesTrans["V03I"] = []string{"agg_trans_v03_ind_l0_mes", "agg_trans_v03_ind_l1_mes", "agg_trans_v03_ind_l2_mes", "agg_trans_v03_ind_l3_mes"}
 	aggTablesFat["V02I"] = []string{"agg_fat_v02_ind_l0_mes", "agg_fat_v02_ind_l1_mes", "agg_fat_v02_l2_mes", "agg_fat_v02_l3_mes"}
 	aggTablesTrans["V02I"] = []string{"agg_trans_v02_ind_l0_mes", "agg_trans_v02_ind_l1_mes", "agg_trans_v02_l2_mes", "agg_trans_v02_l3_mes"}
+	aggTablesFat["V06I"] = []string{"agg_fat_v06_ind_l0_mes"}
+	aggTablesTrans["V06I"] = []string{"agg_trans_v06_ind_l0_mes"}
+	aggTablesFat["V07I"] = []string{"agg_fat_v07_ind_l0_mes", "agg_fat_v07_ind_l1_mes", "agg_fat_v07_ind_l2_mes"}
+	aggTablesTrans["V07I"] = []string{"agg_trans_v07_ind_l0_mes", "agg_trans_v07_ind_l1_mes", "agg_trans_v07_ind_l2_mes"}
+}
+
+// aggSemPositivacao — Rede (V06) e Departamento (V07), incluindo suas
+// pseudo-views "Somente Indústrias" (V06I/V07I, mig 229), nunca tiveram
+// métricas de positivação (Fase 2, decisão de simplificação) — mesmas
+// colunas, mesmo guard.
+func aggSemPositivacao(view string) bool {
+	return view == "V06" || view == "V06I" || view == "V07" || view == "V07I"
 }
 
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
@@ -675,15 +702,18 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// "Somente Indústrias" (mig 228, 08/09/2026) — pra V02/V03, troca as
-		// tabelas agg lidas por versões pré-filtradas só nos fornecedores
-		// cadastrados como indústria (evita o scan ao vivo que um filtro
-		// cod_fornec de dezenas de valores forçaria — ver fornecMultiValor em
-		// pickAggForCrossFilter). `view` (devolvido no JSON) nunca muda — só
-		// viewInterno, usado daqui pra baixo em toda lookup de tabela/hier.
+		// "Somente Indústrias" (mig 228/229, 08/09/2026) — em V01/V02/V03/V06/
+		// V07, troca as tabelas agg lidas por versões pré-filtradas só nos
+		// fornecedores cadastrados como indústria (evita o scan ao vivo que um
+		// filtro cod_fornec de dezenas de valores forçaria — ver
+		// fornecMultiValor em pickAggForCrossFilter). `view` (devolvido no
+		// JSON) nunca muda — só viewInterno, usado daqui pra baixo em toda
+		// lookup de tabela/hier. V01 não troca de view (cod_fornec já está em
+		// toda tabela sua) — só V02/V03/V06/V07 têm pseudo-view "I".
 		viewInterno := view
-		somenteIndustria := q.Get("somente_industria") == "1" && (view == "V02" || view == "V03")
-		if somenteIndustria {
+		somenteIndustria := q.Get("somente_industria") == "1" &&
+			(view == "V01" || view == "V02" || view == "V03" || view == "V06" || view == "V07")
+		if somenteIndustria && view != "V01" {
 			viewInterno = view + "I"
 		}
 		hier := hierarquias[viewInterno]
@@ -736,14 +766,22 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
-		// V02I L2/L3 (Fornecedor[+Cliente]) reaproveitam as tabelas ORIGINAIS
-		// (já têm cod_fornec no grão) — só injeta o filtro pros fornecedores
-		// de indústria aqui. L0/L1 usam tabela nova (sem cod_fornec no grão),
-		// então NÃO leva esse filtro — colocá-lo lá forçaria aggServesFilters
-		// a rejeitar a tabela (coluna ausente) e cair num roteamento errado.
+		// Injeta o filtro cod_fornec=indústrias SÓ nos níveis cuja tabela
+		// ainda tem cod_fornec no grão (senão aggServesFilters rejeitaria a
+		// tabela nova, sem essa coluna, e cairia num roteamento errado):
+		//   V01 — cod_fornec é a raiz da hierarquia, está em TODO nível.
+		//   V02 — só L2/L3 (Fornecedor[+Cliente]); L0/L1 usam tabela nova.
+		//   V06 — só L1/L2 (Fornecedor/Cliente sob a Rede); esses níveis já
+		//     não usam tabela pronta nenhuma desde a mig 226 (sempre scan ao
+		//     vivo), então o filtro aqui não custa nada a mais.
+		//   V03/V07 — NUNCA: a pseudo-view cobre a hierarquia INTEIRA com
+		//     tabela nova, não sobra nível pra filtrar.
 		// Se o usuário já filtrou uma indústria específica (FORN DIST manual),
 		// essa escolha mais específica prevalece — não sobrescreve.
-		if somenteIndustria && view == "V02" && drillIdx >= 2 {
+		injetaFiltroFornec := somenteIndustria && ((view == "V01") ||
+			(view == "V02" && drillIdx >= 2) ||
+			(view == "V06" && drillIdx >= 1))
+		if injetaFiltroFornec {
 			if _, jaTemFiltro := filters["cod_fornec"]; !jaTemFiltro {
 				filters["cod_fornec"] = industriaMappedFornecs(db, spCtx.EmpresaID)
 			}
@@ -1889,7 +1927,7 @@ func vendasPeriodoQ1(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCo
        COALESCE(COUNT(DISTINCT (v.cnpj, v.cod_prod)) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '')::numeric
          / NULLIF(COUNT(DISTINCT v.cnpj) FILTER (WHERE v.qt > 0),0)::numeric, 0) AS mix,
        COUNT(DISTINCT v.cod_prod) FILTER (WHERE v.qt > 0 AND v.cod_prod <> '') AS mix_total`
-	if view == "V06" || view == "V07" {
+	if aggSemPositivacao(view) {
 		metricsSelect = `0::int AS positivados, 0::numeric AS mix, 0::int AS mix_total`
 	}
 	q := fmt.Sprintf(`
@@ -2145,7 +2183,7 @@ func queryAggregatedVendas(db *sql.DB, empresaID string, fluxo fluxoCtx, view, g
 	ymStart := base12mIni.Year()*100 + int(base12mIni.Month())
 	ymEnd := periodFim.Year()*100 + int(periodFim.Month())
 
-	if fluxo.isCCD || view == "V06" || view == "V07" {
+	if fluxo.isCCD || aggSemPositivacao(view) {
 		// CCD e V06/V07 (Rede/Departamento) não têm positivação — pula base_cli
 		// (evita scan caro; a positivação é escondida na UI nesses casos).
 	} else if leafServesPositivados(fluxo, view, groupCol, drillPath, filters) {
@@ -2814,7 +2852,7 @@ func leafServesPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []dr
 // somar filiais é exato — é a agregação de positivados no read (que SOMA
 // linhas do grão) que precisa do guard, não esta contagem.
 func leafForPositivados(fluxo fluxoCtx, view, groupCol string, drillPath []drillStep, filters multiFilters) (string, bool) {
-	if fluxo.isCCD || view == "V06" || view == "V07" {
+	if fluxo.isCCD || aggSemPositivacao(view) {
 		return "", false // CCD e V06/V07 não têm métricas de positivação
 	}
 	cobre := func(v string, idx int) bool {
