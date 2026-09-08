@@ -3632,6 +3632,39 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 // o prewarm rodava). FOI ESSA fase que causou a regressão, não a de períodos.
 // Ela continua rodando só depois de um import (via prewarmAggMes, chamado por
 // RefreshViewsHandler) e no aquecimento diário das 07:30 (PrewarmDiario).
+// prewarmPosView — uma combinação (view, groupCol[, filtro extra]) que os
+// prewarms de positivação (baseCache) precisam aquecer.
+type prewarmPosView struct {
+	view    string
+	group   string
+	filters multiFilters // nil = sem filtro extra
+}
+
+// posViewsComIndustria — as 3 combinações originais (toggle "Somente
+// Indústrias" desligado) MAIS as variantes com o toggle ligado (padrão desde
+// 08/09/2026, ver somente_industrias_plano). V02/V03 trocam de TABELA sozinhos
+// (pseudo-views V02I/V03I, sem filtro extra — a tabela já vem pré-filtrada).
+// V01 não tem pseudo-view (cod_fornec é a raiz da hierarquia): o toggle só
+// injeta um filtro cod_fornec na MESMA tabela, então aquecemos essa variante
+// à parte. Sem isto, todo login com o toggle ligado (o padrão) pagava cache
+// MISS na positivação — o prewarm aquecia só a chave do toggle desligado, que
+// ninguém mais pede.
+func posViewsComIndustria(db *sql.DB, empresaID string) []prewarmPosView {
+	out := []prewarmPosView{
+		{"V01", "cod_fornec", nil},
+		{"V02", "cod_supervisor", nil},
+		{"V03", "cod_gerente", nil},
+	}
+	if cods := industriaMappedFornecs(db, empresaID); len(cods) > 0 {
+		out = append(out,
+			prewarmPosView{"V01", "cod_fornec", multiFilters{"cod_fornec": cods}},
+			prewarmPosView{"V02I", "cod_supervisor", nil},
+			prewarmPosView{"V03I", "cod_gerente", nil},
+		)
+	}
+	return out
+}
+
 func PrewarmStartup(db *sql.DB, empresaID string) {
 	prewarmAggMesCore(db, empresaID)
 	prewarmPeriodKeys(db, empresaID)
@@ -3672,6 +3705,17 @@ func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 		{"agg_trans_v02_l0_mes", "cod_supervisor"},
 		{"agg_trans_v03_l0_mes", "cod_gerente"},
 	}
+	// Variantes "Somente Indústrias" (pseudo-views V02I/V03I) — mesmo motivo do
+	// posViewsComIndustria abaixo: sem isto, o disco/shared_buffers do Postgres
+	// nunca esquenta pra essas tabelas antes do 1º acesso real do dia.
+	if len(industriaMappedFornecs(db, empresaID)) > 0 {
+		views = append(views,
+			struct{ leaf, group string }{"agg_fat_v02_ind_l0_mes", "cod_supervisor"},
+			struct{ leaf, group string }{"agg_fat_v03_ind_l0_mes", "cod_gerente"},
+			struct{ leaf, group string }{"agg_trans_v02_ind_l0_mes", "cod_supervisor"},
+			struct{ leaf, group string }{"agg_trans_v03_ind_l0_mes", "cod_gerente"},
+		)
+	}
 	var wg sync.WaitGroup
 	for _, v := range views {
 		for _, ym := range []int{ymAtual, ymAnt} {
@@ -3699,11 +3743,7 @@ func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 	// AGORA: chama queryBasePositivados de verdade, que por baixo passa por
 	// cachedDistinctPositivados e GRAVA no baseCache com a mesma chave que uma
 	// request real vai procurar. A 1ª visualização do usuário vira cache HIT.
-	posViews := []struct{ view, group string }{
-		{"V01", "cod_fornec"},
-		{"V02", "cod_supervisor"},
-		{"V03", "cod_gerente"},
-	}
+	posViews := posViewsComIndustria(db, empresaID)
 	posFluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
 	for _, fl := range posFluxos {
 		for _, v := range posViews {
@@ -3711,7 +3751,7 @@ func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 			fl, v := fl, v
 			go func() {
 				defer wg.Done()
-				queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, nil)
+				queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, v.filters)
 			}()
 		}
 	}
@@ -3750,11 +3790,7 @@ func periodosComuns(agora time.Time) []ymRange {
 // Complementa prewarmAggMesCore (que cobre só o "histórico completo").
 func prewarmPeriodKeys(db *sql.DB, empresaID string) {
 	t0 := time.Now()
-	posViews := []struct{ view, group string }{
-		{"V01", "cod_fornec"},
-		{"V02", "cod_supervisor"},
-		{"V03", "cod_gerente"},
-	}
+	posViews := posViewsComIndustria(db, empresaID)
 	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
 	periodos := periodosComuns(time.Now())
 
@@ -3770,7 +3806,7 @@ func prewarmPeriodKeys(db *sql.DB, empresaID string) {
 					defer wg.Done()
 					sem <- struct{}{}
 					defer func() { <-sem }()
-					cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, nil)
+					cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, v.filters)
 				}()
 			}
 		}
@@ -3796,6 +3832,15 @@ func prewarmCliprincCache(db *sql.DB, empresaID string) {
 	views := []aggView{
 		{"farol.agg_fat_v06_l0_mes", "faturado"},
 		{"farol.agg_trans_v06_l0_mes", "transmitido"},
+	}
+	// Variante "Somente Indústrias" (pseudo-view V06I, mesmo nível L0/Rede) —
+	// mesma cache key que uma request real com o toggle ligado (padrão) usa,
+	// via aggName distinto (ver aggMesCacheKey).
+	if len(industriaMappedFornecs(db, empresaID)) > 0 {
+		views = append(views,
+			aggView{"farol.agg_fat_v06_ind_l0_mes", "faturado"},
+			aggView{"farol.agg_trans_v06_ind_l0_mes", "transmitido"},
+		)
 	}
 	periodos := periodosComuns(time.Now())
 
@@ -3866,23 +3911,31 @@ func fetchFiliaisParaPrewarm(db *sql.DB, empresaID string) []string {
 // divergirem, o prewarm aquece chaves que ninguém consulta e o ganho some sem
 // nenhum sinal de erro.
 func prewarmFilialRecorte(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol string,
-	ymIni, ymFim int, filiais []string) {
+	ymIni, ymFim int, filiais []string, filtroExtra multiFilters) {
 
 	// Resolve a folha exatamente como a request resolveria: com filtro de
 	// Filial presente, leafForPositivados desvia da folha da própria view
-	// (V01-V07 não têm a coluna `empresa`) para a da V11.
-	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, multiFilters{"empresa": filiais[:1]})
+	// (V01-V07 não têm a coluna `empresa`) para a da V11. filtroExtra (ex:
+	// cod_fornec da variante "Somente Indústrias" do V01) entra no mesmo mapa
+	// pra leafForPositivados recusar (ok=false) se a folha resolvida não tiver
+	// a coluna — mesma checagem que uma request real faria.
+	resolveFilters := multiFilters{"empresa": filiais[:1]}
+	for k, v := range filtroExtra {
+		resolveFilters[k] = v
+	}
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, resolveFilters)
 	if !ok {
 		return
 	}
 
 	args := []any{empresaID}
 	mesCond := buildMesCond(ymIni, ymFim, &args)
+	extraCond := buildMultiFilterCond(filtroExtra, &args)
 	q := fmt.Sprintf(`
 SELECT v.empresa, v.%s AS key, COUNT(DISTINCT v.cnpj) AS positivados
 FROM %s v
-WHERE v.empresa_id=$1 AND v.%s <> '' AND v.empresa <> '' AND v.positivados > 0 AND %s
-GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, groupCol)
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.empresa <> '' AND v.positivados > 0 AND %s %s
+GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, extraCond, groupCol)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -3922,8 +3975,11 @@ GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, groupCol)
 	agora := time.Now()
 	baseCacheMu.Lock()
 	for filial, data := range porFilial {
-		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil,
-			multiFilters{"empresa": {filial}})
+		filters := multiFilters{"empresa": {filial}}
+		for k, v := range filtroExtra {
+			filters[k] = v
+		}
+		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil, filters)
 		baseCache[k] = baseCacheEntry{data: data, at: agora}
 	}
 	baseCacheMu.Unlock()
@@ -3940,9 +3996,9 @@ GROUP BY v.empresa, v.%s`, groupCol, leaf, groupCol, mesCond, groupCol)
 // Uma query agrupada por escopoCol alimenta a entrada de cache de TODAS as
 // pessoas daquele nível de uma vez.
 func prewarmEscopoPessoaRecorte(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, escopoCol string,
-	ymIni, ymFim int, codigos []string) {
+	ymIni, ymFim int, codigos []string, filtroExtra multiFilters) {
 
-	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, nil)
+	leaf, ok := leafForPositivados(fluxo, view, groupCol, nil, filtroExtra)
 	if !ok {
 		return
 	}
@@ -3954,11 +4010,12 @@ func prewarmEscopoPessoaRecorte(db *sql.DB, empresaID string, fluxo fluxoCtx, vi
 
 	args := []any{empresaID}
 	mesCond := buildMesCond(ymIni, ymFim, &args)
+	extraCond := buildMultiFilterCond(filtroExtra, &args)
 	q := fmt.Sprintf(`
 SELECT v.%s AS escopo, v.%s AS key, COUNT(DISTINCT v.cnpj) AS positivados
 FROM %s v
-WHERE v.empresa_id=$1 AND v.%s <> '' AND v.%s <> '' AND v.positivados > 0 AND %s
-GROUP BY v.%s, v.%s`, escopoCol, groupCol, leaf, groupCol, escopoCol, mesCond, escopoCol, groupCol)
+WHERE v.empresa_id=$1 AND v.%s <> '' AND v.%s <> '' AND v.positivados > 0 AND %s %s
+GROUP BY v.%s, v.%s`, escopoCol, groupCol, leaf, groupCol, escopoCol, mesCond, extraCond, escopoCol, groupCol)
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -3995,8 +4052,11 @@ GROUP BY v.%s, v.%s`, escopoCol, groupCol, leaf, groupCol, escopoCol, mesCond, e
 	agora := time.Now()
 	baseCacheMu.Lock()
 	for pessoa, data := range porPessoa {
-		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil,
-			multiFilters{escopoCol: {pessoa}})
+		filters := multiFilters{escopoCol: {pessoa}}
+		for k, v := range filtroExtra {
+			filters[k] = v
+		}
+		k := baseCacheKey(empresaID, fluxo.name, view, groupCol, ymIni, ymFim, nil, filters)
 		baseCache[k] = baseCacheEntry{data: data, at: agora}
 	}
 	baseCacheMu.Unlock()
@@ -4030,11 +4090,7 @@ func prewarmEscopoPessoaCache(db *sql.DB, empresaID string) {
 		{"cod_gerente", "gerente"},
 		{"cod_supervisor", "supervisor"},
 	}
-	posViews := []struct{ view, group string }{
-		{"V01", "cod_fornec"},
-		{"V02", "cod_supervisor"},
-		{"V03", "cod_gerente"},
-	}
+	posViews := posViewsComIndustria(db, empresaID)
 	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
 	recortes := append([]ymRange{{0, 999912}}, periodosComuns(time.Now())...)
 
@@ -4057,7 +4113,7 @@ func prewarmEscopoPessoaCache(db *sql.DB, empresaID string) {
 						defer wg.Done()
 						sem <- struct{}{}
 						defer func() { <-sem }()
-						prewarmEscopoPessoaRecorte(db, empresaID, fl, v.view, v.group, e.col, p.ini, p.fim, codigos)
+						prewarmEscopoPessoaRecorte(db, empresaID, fl, v.view, v.group, e.col, p.ini, p.fim, codigos, v.filters)
 					}()
 				}
 			}
@@ -4108,11 +4164,7 @@ func prewarmFilialCache(db *sql.DB, empresaID string) {
 		return
 	}
 
-	posViews := []struct{ view, group string }{
-		{"V01", "cod_fornec"},
-		{"V02", "cod_supervisor"},
-		{"V03", "cod_gerente"},
-	}
+	posViews := posViewsComIndustria(db, empresaID)
 	fluxos := []fluxoCtx{resolveFluxo("faturado"), resolveFluxo("transmitido")}
 	// base (histórico inteiro) + os mesmos períodos do prewarmPeriodKeys.
 	recortes := append([]ymRange{{0, 999912}}, periodosComuns(time.Now())...)
@@ -4129,7 +4181,7 @@ func prewarmFilialCache(db *sql.DB, empresaID string) {
 					defer wg.Done()
 					sem <- struct{}{}
 					defer func() { <-sem }()
-					prewarmFilialRecorte(db, empresaID, fl, v.view, v.group, p.ini, p.fim, filiais)
+					prewarmFilialRecorte(db, empresaID, fl, v.view, v.group, p.ini, p.fim, filiais, v.filters)
 				}()
 			}
 		}

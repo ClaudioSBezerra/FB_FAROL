@@ -315,3 +315,55 @@ func TestFarolV2Cards_SomenteIndustrias_V07_SoContaFornecedorIndustria(t *testin
 		t.Errorf("ValorAtual = %v, want 1000 (só o fornecedor indústria; os R$2000 do avulso não podem entrar)", card.ValorAtual)
 	}
 }
+
+// TestPrewarmAggMesCore_AquecePosViewsComIndustria — sem isto, o prewarm de
+// boot/diário só aquecia a chave do toggle DESLIGADO (view="V03", sem
+// filtro), mas o toggle entra LIGADO por padrão desde 08/09/2026: todo login
+// pagava cache MISS na positivação mesmo logo após o prewarm rodar. Prova que
+// prewarmAggMesCore grava, no baseCache, exatamente as chaves que uma request
+// real com somente_industria=1 vai procurar — para V03 (pseudo-view V03I,
+// sem filtro) e para V01 (mesma tabela, filtro cod_fornec injetado).
+func TestPrewarmAggMesCore_AquecePosViewsComIndustria(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	nome := "TV2SI PREWARM"
+	codIndustria := "T2SIPREWARM"
+
+	limpar := func() {
+		db.Exec(`DELETE FROM farol.industrias WHERE empresa_id = $1 AND nome = $2`, empresaID, nome)
+	}
+	limpar()
+	t.Cleanup(limpar)
+
+	var industriaID int
+	if err := db.QueryRow(`INSERT INTO farol.industrias (empresa_id, nome) VALUES ($1, $2) RETURNING id`, empresaID, nome).Scan(&industriaID); err != nil {
+		t.Fatalf("criar indústria: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1, $2, $3)`,
+		empresaID, industriaID, codIndustria); err != nil {
+		t.Fatalf("vincular %s: %v", codIndustria, err)
+	}
+
+	baseCacheMu.Lock()
+	baseCache = map[string]baseCacheEntry{}
+	baseCacheMu.Unlock()
+
+	prewarmAggMesCore(db, empresaID)
+
+	fat := fluxoCtx{name: "faturado"}
+	cods := industriaMappedFornecs(db, empresaID)
+	if len(cods) == 0 {
+		t.Fatal("industriaMappedFornecs não devolveu o fornecedor recém-vinculado")
+	}
+
+	// V03I — pseudo-view, sem filtro extra. Mesma chamada que
+	// queryDistinctCliPositivados faria com viewInterno="V03I".
+	if _, hit := cachedDistinctPositivados(nil, empresaID, fat, "V03I", "cod_gerente", 0, 999912, nil, nil); !hit {
+		t.Error("prewarmAggMesCore não aqueceu V03I (pseudo-view) — 1º login com o toggle ligado pagaria o miss")
+	}
+	// V01 com o toggle ligado — mesma tabela, filtro cod_fornec injetado
+	// (FarolV2CardsHandler faz isso via industriaMappedFornecs).
+	if _, hit := cachedDistinctPositivados(nil, empresaID, fat, "V01", "cod_fornec", 0, 999912, nil, multiFilters{"cod_fornec": cods}); !hit {
+		t.Error("prewarmAggMesCore não aqueceu V01+cod_fornec (toggle ligado) — 1º login pagaria o miss")
+	}
+}
