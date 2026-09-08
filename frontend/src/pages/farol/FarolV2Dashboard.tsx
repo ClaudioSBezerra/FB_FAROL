@@ -674,7 +674,7 @@ export default function FarolV2Dashboard() {
             </span>
           </div>
           <span className="text-sm text-slate-500 tabular-nums shrink-0">
-            {data.cards.length} {data.cards.length === 1 ? 'item' : 'itens'}
+            {data.cards.length} {data.cards.length === 1 ? 'linha' : 'linhas'}
           </span>
         </div>
       )}

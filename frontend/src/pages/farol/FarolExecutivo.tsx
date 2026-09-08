@@ -1413,7 +1413,7 @@ export default function FarolExecutivo() {
             </span>
           </div>
           <span className="text-sm text-slate-500 tabular-nums shrink-0">
-            {visibleCards.length} {visibleCards.length === 1 ? 'item' : 'itens'}
+            {visibleCards.length} {visibleCards.length === 1 ? 'linha' : 'linhas'}
           </span>
         </div>
       )}
