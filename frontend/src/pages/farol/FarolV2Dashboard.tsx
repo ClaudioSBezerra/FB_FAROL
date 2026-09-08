@@ -1,14 +1,14 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, Users, Package, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { ChevronDown, Users, Package, TrendingUp, TrendingDown, Minus, Factory } from 'lucide-react'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 import { FilialSelector } from '@/components/FilialSelector'
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover'
-import FarolExecutivo from './FarolExecutivo'
+import FarolExecutivo, { useIndustrias } from './FarolExecutivo'
 import { useSortedCards } from '@/components/farol/SortToggle'
 
 // Personas que abrem o painel em TABELA (FarolExecutivo) — hoje o painel web
@@ -249,10 +249,11 @@ function useCards(
   refAno: number, refMes: number,
   compAno: number, compMes: number,
   drillPath: DrillStep[], enabled = true,
+  somenteIndustria = false,
 ) {
   const drillParam = JSON.stringify(drillPath)
   return useQuery<CardsResponse>({
-    queryKey: ['farol-v2-cards', view, compMode, refAno, refMes, compAno, compMes, drillParam],
+    queryKey: ['farol-v2-cards', view, compMode, refAno, refMes, compAno, compMes, drillParam, somenteIndustria],
     queryFn: async () => {
       const params = new URLSearchParams({
         view,
@@ -261,6 +262,11 @@ function useCards(
         ...(refMes > 0 && { ref_mes: String(refMes) }),
         ...(compAno > 0 && compMes > 0 && { comp_ano: String(compAno), comp_mes: String(compMes) }),
         ...(drillPath.length > 0 && { drill: drillParam }),
+        // "Somente Indústrias" (mig 228/229) — mesmo mecanismo do
+        // FarolExecutivo (tela em tabela); esta é a tela em cards (legado,
+        // ainda usada por quem cai fora de PERSONAS_EXECUTIVO), precisa do
+        // mesmo controle pra quem cai aqui não ficar sem jeito de desligar.
+        ...(somenteIndustria && { somente_industria: '1' }),
       })
       const r = await fetch(`/api/v2/farol/cards?${params}`)
       if (!r.ok) throw new Error('Falha ao carregar dados do Farol')
@@ -526,6 +532,12 @@ export default function FarolV2Dashboard() {
   // Override do período de comparação (só para mom). 0 = automático (mês anterior).
   const [compAno, setCompAno]     = useState(0)
   const [compMes, setCompMes]     = useState(0)
+  // "Somente Indústrias" (mig 228/229, 08/09/2026) — já entra LIGADO por
+  // padrão, mesmo critério do FarolExecutivo: quem cai nesta tela (fora de
+  // PERSONAS_EXECUTIVO) precisa do mesmo controle, senão fica sem jeito de
+  // desligar.
+  const [somenteIndustria, setSomenteIndustria] = useState(true)
+  const industriasQ = useIndustrias()
 
   const isExecutivo = !!(
     (tipoPersona && PERSONAS_EXECUTIVO.has(tipoPersona)) || spRole === 'admin_fbtax'
@@ -535,7 +547,7 @@ export default function FarolV2Dashboard() {
     view, compMode, refAno, refMes,
     compMode === 'mom' ? compAno : 0,
     compMode === 'mom' ? compMes : 0,
-    drillPath, !isExecutivo,
+    drillPath, !isExecutivo, somenteIndustria,
   )
 
   // Sincroniza seleção de período quando dados chegam pela primeira vez
@@ -618,6 +630,26 @@ export default function FarolV2Dashboard() {
             </button>
           ))}
         </div>
+
+        {/* "Somente Indústrias" (mig 228/229) — já entra LIGADO por padrão
+            (mesmo critério do FarolExecutivo). Quem cai nesta tela em cards
+            (fora de PERSONAS_EXECUTIVO) precisa do mesmo controle. */}
+        <button
+          onClick={() => setSomenteIndustria(v => !v)}
+          title="Considera só a venda dos fornecedores cadastrados como indústria (/gestao/industrias)"
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border-2 shadow-sm shrink-0 transition-colors ${
+            somenteIndustria
+              ? 'bg-blue-600 border-blue-600 text-white'
+              : 'bg-white border-blue-300 text-blue-700 hover:bg-blue-50'
+          }`}
+        >
+          <Factory className="h-3.5 w-3.5" /> Somente Indústrias
+          {somenteIndustria && (industriasQ.data?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-white text-blue-700 text-sm font-bold">
+              {industriasQ.data!.length}
+            </span>
+          )}
+        </button>
 
         <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm shrink-0">
           {[

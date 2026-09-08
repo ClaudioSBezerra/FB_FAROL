@@ -885,7 +885,7 @@ function useDimsCli(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: 
 // em 28/08/2026 a pedido do Heverton, pra manter o padrão com "FORN.GERAL").
 // Lista fixa por empresa, não depende de período/fluxo como os outros dims
 // — por isso hook próprio, sem passar por useDims.
-function useIndustrias() {
+export function useIndustrias() {
   return useQuery<{ id: number; nome: string }[]>({
     queryKey: ['farol-industrias-filtro'],
     queryFn: async () => {
@@ -1155,7 +1155,11 @@ export default function FarolExecutivo() {
             verde/vermelho do farol e do cinza dos outros botões, pra chamar
             atenção como um modo à parte. Já entra LIGADO por padrão (mesma
             lógica do "Faturado" já vir selecionado) — o gestor "destarja"
-            se quiser ver todos os fornecedores, não o contrário. */}
+            se quiser ver todos os fornecedores, não o contrário.
+            O filtro real acontece no servidor (nunca passa pelo estado do
+            chip FORN DIST — ver farol_v2_api.go), então o chip fica sem
+            nenhuma indústria marcada mesmo com o toggle ligado. O contador
+            aqui existe só pra não parecer que "sumiu" a seleção. */}
         <button
           onClick={() => setSomenteIndustria(v => !v)}
           title="Considera só a venda dos fornecedores cadastrados como indústria (/gestao/industrias)"
@@ -1167,6 +1171,11 @@ export default function FarolExecutivo() {
           )}
         >
           <Factory className="h-3.5 w-3.5" /> Somente Indústrias
+          {somenteIndustria && (industriasQ.data?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-white text-blue-700 text-sm font-bold normal-case">
+              {industriasQ.data!.length}
+            </span>
+          )}
         </button>
       </div>
 
