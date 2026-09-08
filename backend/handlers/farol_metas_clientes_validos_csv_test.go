@@ -77,9 +77,13 @@ func TestMetasClientesValidos_ImportarLoteValido(t *testing.T) {
 	}
 }
 
-// TestMetasClientesValidos_CNPJSemRCA_FR11 é o teste central do FR11: todo
-// CNPJ deve ter RCA vinculado — linha sem RCA rejeita o lote inteiro (FR9).
-func TestMetasClientesValidos_CNPJSemRCA_FR11(t *testing.T) {
+// TestMetasClientesValidos_CNPJSemRCA_ImportaParcialComAviso — FR11 (todo
+// CNPJ precisa de RCA) continua valendo por LINHA, mas desde 08/09/2026
+// (decisão do Heverton, pra aprovar o MVP com a planilha real da JC, que tem
+// pendência conhecida de RCA faltando em algumas linhas) uma linha inválida
+// não trava mais o lote inteiro (era FR9/Story 3.1) — vira só um aviso, e o
+// resto do arquivo entra normalmente.
+func TestMetasClientesValidos_CNPJSemRCA_ImportaParcialComAviso(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)
 	vinculoID, cleanup := criarVinculoFixture(t, db, empresaID, "TCV SemRCA")
@@ -91,11 +95,39 @@ func TestMetasClientesValidos_CNPJSemRCA_FR11(t *testing.T) {
 		"11222333000182;REDEMAIS;;;G1;;C1;;;\n"
 	w := httptest.NewRecorder()
 	MetasClientesValidosImportarCSVHandler(db)(w, clientesValidosImportReq(empresaID, userID, fmt.Sprint(vinculoID), fmt.Sprint(vigenciaID), csvContent))
+	if w.Code != http.StatusOK {
+		t.Fatalf("1 linha válida + 1 sem RCA → status %d, want 200 (importação parcial), body=%s", w.Code, w.Body.String())
+	}
+	if n := contarClientesValidos(t, db, vigenciaID); n != 1 {
+		t.Errorf("esperava 1 cliente importado (a linha com RCA), veio %d", n)
+	}
+	var resp map[string]json.RawMessage
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if _, ok := resp["avisos"]; !ok {
+		t.Errorf("resposta deveria listar a linha sem RCA em 'avisos': %s", w.Body.String())
+	}
+}
+
+// TestMetasClientesValidos_TodasLinhasInvalidas_400NadaApagado — se NENHUMA
+// linha for válida, ainda recusa de vez (não apaga a lista antiga da
+// vigência sem nenhum substituto).
+func TestMetasClientesValidos_TodasLinhasInvalidas_400NadaApagado(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	userID := tipoMetricaTestUserID(t, db)
+	vinculoID, cleanup := criarVinculoFixture(t, db, empresaID, "TCV TodasInvalidas")
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	csvContent := clientesValidosHeader + "\n" +
+		"11222333000181;REDEMAIS;;;G1;;C1;;;\n" +
+		"11222333000182;REDEMAIS;;;;;C1;;RCA001;\n"
+	w := httptest.NewRecorder()
+	MetasClientesValidosImportarCSVHandler(db)(w, clientesValidosImportReq(empresaID, userID, fmt.Sprint(vinculoID), fmt.Sprint(vigenciaID), csvContent))
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CNPJ sem RCA → status %d, want 400, body=%s", w.Code, w.Body.String())
+		t.Fatalf("nenhuma linha válida → status %d, want 400, body=%s", w.Code, w.Body.String())
 	}
 	if n := contarClientesValidos(t, db, vigenciaID); n != 0 {
-		t.Errorf("FR9 violado: deveria ter 0 clientes (lote todo rejeitado), veio %d", n)
+		t.Errorf("esperava 0 clientes (nada válido pra importar), veio %d", n)
 	}
 }
 
@@ -175,7 +207,11 @@ func TestMetasClientesValidos_VigenciaFechada_403(t *testing.T) {
 	}
 }
 
-func TestMetasClientesValidos_CNPJDuplicadoNoArquivo_400(t *testing.T) {
+// TestMetasClientesValidos_CNPJDuplicadoNoArquivo_ImportaPrimeiraOcorrencia —
+// desde 08/09/2026, duplicata também é só aviso: a PRIMEIRA ocorrência do
+// CNPJ entra, as seguintes ficam de fora (com aviso), em vez de rejeitar o
+// arquivo inteiro.
+func TestMetasClientesValidos_CNPJDuplicadoNoArquivo_ImportaPrimeiraOcorrencia(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)
 	vinculoID, cleanup := criarVinculoFixture(t, db, empresaID, "TCV Duplicado")
@@ -187,12 +223,15 @@ func TestMetasClientesValidos_CNPJDuplicadoNoArquivo_400(t *testing.T) {
 		"11222333000181;REDEB;;;G1;;C1;;RCA002;\n"
 	w := httptest.NewRecorder()
 	MetasClientesValidosImportarCSVHandler(db)(w, clientesValidosImportReq(empresaID, userID, fmt.Sprint(vinculoID), fmt.Sprint(vigenciaID), csvContent))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CNPJ duplicado no mesmo arquivo → status %d, want 400, body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("CNPJ duplicado no mesmo arquivo → status %d, want 200 (1ª ocorrência importada), body=%s", w.Code, w.Body.String())
+	}
+	if n := contarClientesValidos(t, db, vigenciaID); n != 1 {
+		t.Errorf("esperava 1 cliente importado (a 1ª ocorrência do CNPJ duplicado), veio %d", n)
 	}
 	var resp map[string]json.RawMessage
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if _, ok := resp["erros"]; !ok {
-		t.Errorf("resposta deveria listar o erro de duplicata: %s", w.Body.String())
+	if _, ok := resp["avisos"]; !ok {
+		t.Errorf("resposta deveria listar a duplicata em 'avisos': %s", w.Body.String())
 	}
 }

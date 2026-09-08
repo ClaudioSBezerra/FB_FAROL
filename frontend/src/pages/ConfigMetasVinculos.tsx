@@ -578,9 +578,20 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
           : (data?.error ?? 'Erro ao importar Clientes Válidos')
         throw new Error(erros)
       }
-      return data as { clientes_importados: number }
+      return data as { clientes_importados: number; avisos?: { linha: number; erro: string }[] }
     },
-    onSuccess: data => toast.success(`${data.clientes_importados} cliente(s) válido(s) importado(s)`),
+    onSuccess: data => {
+      toast.success(`${data.clientes_importados} cliente(s) válido(s) importado(s)`)
+      // Importação PARCIAL (08/09/2026) — linha com problema não trava mais
+      // o resto do arquivo, só vira aviso. Mostra separado do toast de
+      // sucesso pra não escrever por cima dele.
+      if (data.avisos && data.avisos.length > 0) {
+        const linhas = data.avisos.map(a => `Linha ${a.linha || '-'}: ${a.erro}`).join('\n')
+        toast.warning(`${data.avisos.length} linha(s) ignorada(s) (não entraram):`, {
+          description: linhas, style: { whiteSpace: 'pre-line' }, duration: 15000,
+        })
+      }
+    },
     onError: (e: Error) => toast.error(e.message, { style: { whiteSpace: 'pre-line' } }),
   })
 

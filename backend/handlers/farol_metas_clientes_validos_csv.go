@@ -13,9 +13,16 @@ package handlers
 // mesmo") e o trio GGV/CRV/RCA (código+nome) já resolvido por CNPJ. Ver
 // migration 224 pro racional completo da mudança de schema.
 //
-// Mesmo padrão de atomicidade estrita da Story 3.1 (FR9): valida tudo,
-// aplica tudo ou nada. Uma nova importação SUBSTITUI a lista anterior da
-// mesma vigência (mesmo princípio do PUT-replace de farol_industrias.go).
+// Uma nova importação SUBSTITUI a lista anterior da mesma vigência (mesmo
+// princípio do PUT-replace de farol_industrias.go).
+//
+// Importação PARCIAL desde 08/09/2026 (decisão do Heverton, pra testar/
+// aprovar o MVP com a planilha real da JC — que tem pendências conhecidas de
+// dado na origem: RCA/GGV faltando em algumas linhas, CNPJ duplicado). Era
+// atomicidade estrita (Story 3.1, FR9: valida tudo, aplica tudo ou nada) —
+// agora linha com erro vira só um AVISO (`avisos` na resposta) e o resto
+// entra normalmente. Só recusa (400, nada importado) se NENHUMA linha for
+// válida — evita apagar a lista antiga da vigência sem nenhum substituto.
 //
 // Formato CSV (';'): cnpj;cod_princ;razao;fantasia;cod_ggv;nome_ggv;cod_crv;nome_crv;cod_rca;nome_rca
 // Colunas obrigatórias (não-vazias): cnpj, cod_princ, cod_ggv, cod_crv, cod_rca
@@ -208,7 +215,14 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"CSV vazio — nenhuma linha de dado encontrada"}`, http.StatusBadRequest)
 			return
 		}
-		if len(erros) > 0 {
+		// Importação PARCIAL (decisão do Heverton, 08/09/2026, pra testar/
+		// aprovar o MVP com a planilha real da JC — que tem pendências
+		// conhecidas de dado na origem, ver [[painel_metas_industria_pendencias]]):
+		// linhas com erro são só um AVISO agora, não travam mais o restante
+		// (era atomicidade estrita — FR9 da Story 3.1). Só recusa de vez
+		// (400, nada é importado) se NENHUMA linha ficou válida — importar
+		// zero clientes apagaria a lista antiga da vigência sem substituto.
+		if len(rows) == 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]any{"erros": erros, "linhas_com_erro": len(erros)})
@@ -239,7 +253,7 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		if err := writeAuditLogTx(tx, spCtx.EmpresaID, spCtx.UserID, "metas_clientes_validos", strconv.Itoa(vigenciaID), "importar_csv", map[string]any{
-			"vinculo_id": vinculoID, "vigencia_id": vigenciaID, "linhas": len(rows),
+			"vinculo_id": vinculoID, "vigencia_id": vigenciaID, "linhas": len(rows), "linhas_com_erro": len(erros),
 		}); err != nil {
 			http.Error(w, `{"error":"erro ao gravar auditoria"}`, http.StatusInternalServerError)
 			return
@@ -248,9 +262,13 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"commit error"}`, http.StatusInternalServerError)
 			return
 		}
-		log.Printf("MetasClientesValidos: %d linhas importadas (vinculo=%d, vigencia=%d) empresa %s por %s", len(rows), vinculoID, vigenciaID, spCtx.EmpresaID, spCtx.UserID)
+		log.Printf("MetasClientesValidos: %d linhas importadas, %d com erro (ignoradas) (vinculo=%d, vigencia=%d) empresa %s por %s",
+			len(rows), len(erros), vinculoID, vigenciaID, spCtx.EmpresaID, spCtx.UserID)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "clientes_importados": len(rows)})
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "clientes_importados": len(rows),
+			"avisos": erros, "linhas_com_erro": len(erros),
+		})
 	}
 }
 
