@@ -195,6 +195,30 @@ var aggTablesTrans = map[string][]string{
 	"V11": {"agg_trans_v10_l0_mes", "agg_trans_v11_l1_mes", "agg_trans_v11_l2_mes", "agg_trans_v11_l3_mes", "agg_trans_v11_l4_mes", "agg_trans_v11_l5_mes"},
 }
 
+// "V03I"/"V02I" — pseudo-views internas do toggle "Somente Indústrias"
+// (mig 228, planejado em 08/09/2026). Nunca expostas ao frontend (nem no
+// parâmetro ?view=, nem no JSON de resposta — FarolV2CardsHandler troca
+// view→viewInterno só pra estas duas lookups, e devolve "V02"/"V03" de
+// volta). hierarquias é IDÊNTICA à original (mesmos níveis/rótulos); só a
+// tabela física muda, pra ler dado já filtrado só nos fornecedores
+// cadastrados como indústria (farol.industria_fornecedores), calculado uma
+// vez por dia em vez de filtrar cod_fornec na hora (que força scan ao vivo
+// com 2+ fornecedores — ver fornecMultiValor em pickAggForCrossFilter).
+//
+// V03I cobre L0-L3 inteiros (V03 nunca teve cod_fornec no grão). V02I só
+// tem tabela nova em L0/L1 — L2/L3 (Fornecedor[+Cliente]) reaproveitam
+// agg_fat_v02_l2/l3_mes originais: o handler injeta um filtro
+// cod_fornec=ANY(industrias) nesses níveis em vez de trocar de tabela (já
+// têm cod_fornec no grão, filtrar não exige somar entre fornecedores).
+func init() {
+	hierarquias["V03I"] = hierarquias["V03"]
+	hierarquias["V02I"] = hierarquias["V02"]
+	aggTablesFat["V03I"] = []string{"agg_fat_v03_ind_l0_mes", "agg_fat_v03_ind_l1_mes", "agg_fat_v03_ind_l2_mes", "agg_fat_v03_ind_l3_mes"}
+	aggTablesTrans["V03I"] = []string{"agg_trans_v03_ind_l0_mes", "agg_trans_v03_ind_l1_mes", "agg_trans_v03_ind_l2_mes", "agg_trans_v03_ind_l3_mes"}
+	aggTablesFat["V02I"] = []string{"agg_fat_v02_ind_l0_mes", "agg_fat_v02_ind_l1_mes", "agg_fat_v02_l2_mes", "agg_fat_v02_l3_mes"}
+	aggTablesTrans["V02I"] = []string{"agg_trans_v02_ind_l0_mes", "agg_trans_v02_ind_l1_mes", "agg_trans_v02_l2_mes", "agg_trans_v02_l3_mes"}
+}
+
 // fluxoCtx — após mig 165 não há mais MVs diárias. tableName/dateCol seguem
 // usados pelos handlers de detalhe (consulta direta em vendas_*).
 type fluxoCtx struct {
@@ -646,11 +670,23 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if view == "" {
 			view = "V01"
 		}
-		hier, ok := hierarquias[view]
-		if !ok {
+		if _, ok := hierarquias[view]; !ok {
 			http.Error(w, `{"error":"view inválida — use V01, V02, V03 ou V04"}`, http.StatusBadRequest)
 			return
 		}
+
+		// "Somente Indústrias" (mig 228, 08/09/2026) — pra V02/V03, troca as
+		// tabelas agg lidas por versões pré-filtradas só nos fornecedores
+		// cadastrados como indústria (evita o scan ao vivo que um filtro
+		// cod_fornec de dezenas de valores forçaria — ver fornecMultiValor em
+		// pickAggForCrossFilter). `view` (devolvido no JSON) nunca muda — só
+		// viewInterno, usado daqui pra baixo em toda lookup de tabela/hier.
+		viewInterno := view
+		somenteIndustria := q.Get("somente_industria") == "1" && (view == "V02" || view == "V03")
+		if somenteIndustria {
+			viewInterno = view + "I"
+		}
+		hier := hierarquias[viewInterno]
 
 		fluxo := resolveFluxo(q.Get("fluxo"))
 
@@ -700,14 +736,26 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
-		cards, diag := fetchCards(db, spCtx.EmpresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
+		// V02I L2/L3 (Fornecedor[+Cliente]) reaproveitam as tabelas ORIGINAIS
+		// (já têm cod_fornec no grão) — só injeta o filtro pros fornecedores
+		// de indústria aqui. L0/L1 usam tabela nova (sem cod_fornec no grão),
+		// então NÃO leva esse filtro — colocá-lo lá forçaria aggServesFilters
+		// a rejeitar a tabela (coluna ausente) e cair num roteamento errado.
+		// Se o usuário já filtrou uma indústria específica (FORN DIST manual),
+		// essa escolha mais específica prevalece — não sobrescreve.
+		if somenteIndustria && view == "V02" && drillIdx >= 2 {
+			if _, jaTemFiltro := filters["cod_fornec"]; !jaTemFiltro {
+				filters["cod_fornec"] = industriaMappedFornecs(db, spCtx.EmpresaID)
+			}
+		}
+		cards, diag := fetchCards(db, spCtx.EmpresaID, fluxo, viewInterno, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		// Totalizador = distinct do recorte (drill+filtros) em todos os níveis com
 		// positivação (não em cliente/produto, onde é escondida). Garante que, ao
 		// abrir um fornecedor, o totalizador = o nº que aparecia no card dele.
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&
-			leafServesPositivados(fluxo, view, currentLevel.Level, drillPath, filters) {
-			fixOverlappingBaseKPI(db, &kpi, fluxo, view, currentLevel.Level, spCtx.EmpresaID, pr, drillPath, filters)
+			leafServesPositivados(fluxo, viewInterno, currentLevel.Level, drillPath, filters) {
+			fixOverlappingBaseKPI(db, &kpi, fluxo, viewInterno, currentLevel.Level, spCtx.EmpresaID, pr, drillPath, filters)
 			if currentLevel.Level == "cod_fornec" {
 				fixOverlappingBaseCards(cards, kpi, !pr.CompInicio.IsZero() && !pr.CompFim.IsZero())
 			}
@@ -3302,6 +3350,12 @@ func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, worke
 				// antes da venda_liquida, que preenche liquido/pv_* nela também.
 				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_v11_l5($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
 					log.Printf("[farol:agg] w=%d UPSERT V11_l5 %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
+				}
+				// "Somente Indústrias" (mig 228) — V02/V03 pré-filtrados só nos
+				// fornecedores cadastrados como indústria. Custo ~0 se a empresa
+				// não tem nenhuma indústria cadastrada (temp table fica vazia).
+				if _, e := db.Exec(`SELECT farol.upsert_aggs_mes_ind($1,$2,$3)`, empresaID, m.Ano, m.Mes); e != nil {
+					log.Printf("[farol:agg] w=%d UPSERT IND %04d-%02d ERRO: %v", wid, m.Ano, m.Mes, e)
 				}
 				// tipo_venda (mig 188) — popula dim='tipo_venda' do fluxo faturado
 				// para o dropdown do filtro cruzado. Barato (agrega poucos códigos).

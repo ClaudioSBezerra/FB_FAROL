@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ChevronLeft, Search, X, Calendar, Filter, ChevronDown,
+  ChevronLeft, Search, X, Calendar, Filter, ChevronDown, Factory,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -817,12 +817,13 @@ interface UseCardsArgs {
   comp_fim: string
   drillPath: DrillStep[]
   filters: Record<string, string[]>
+  somenteIndustria?: boolean
 }
 
 function useCards(a: UseCardsArgs) {
   return useQuery<CardsResponse>({
     queryKey: ['farol-v2-cards', a.view, a.fluxo, a.ref_inicio, a.ref_fim, a.comp_inicio, a.comp_fim,
-      JSON.stringify(a.drillPath), JSON.stringify(a.filters)],
+      JSON.stringify(a.drillPath), JSON.stringify(a.filters), a.somenteIndustria],
     enabled: !!a.ref_inicio && !!a.ref_fim,
     queryFn: async () => {
       const p = new URLSearchParams({
@@ -832,6 +833,10 @@ function useCards(a: UseCardsArgs) {
       if (a.comp_inicio && a.comp_fim) { p.set('comp_inicio', a.comp_inicio); p.set('comp_fim', a.comp_fim) }
       if (a.drillPath.length > 0) p.set('drill', JSON.stringify(a.drillPath))
       Object.entries(a.filters).forEach(([k, v]) => { if (v.length > 0) p.set(k, v.join(',')) })
+      // "Somente Indústrias" (mig 228) — só faz sentido em V02/V03 (ver
+      // backend, FarolV2CardsHandler); nas demais visões o parâmetro é
+      // ignorado, então nem vale a pena mandar.
+      if (a.somenteIndustria && (a.view === 'V02' || a.view === 'V03')) p.set('somente_industria', '1')
       const r = await fetch(`/api/v2/farol/cards?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar dados')
       return r.json()
@@ -918,6 +923,10 @@ export default function FarolExecutivo() {
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
+  // "Somente Indústrias" (mig 228, planejado 08/09/2026) — só tem efeito em
+  // Por Gerência/Por Equipe (V02/V03); fica "lembrado" ao trocar de visão,
+  // mas o backend ignora o parâmetro fora dessas duas (ver useCards).
+  const [somenteIndustria, setSomenteIndustria] = useState(false)
   // Toggles "Incluir X" (venda líquida). Vazio = Líquido puro (padrão).
   const [incluir, setIncluir] = useState<Set<CompKey>>(() => new Set())
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])
@@ -981,7 +990,7 @@ export default function FarolExecutivo() {
   const { data, isLoading, error } = useCards({
     view, fluxo, ref_inicio: refInicio, ref_fim: refFim,
     comp_inicio: compInicio, comp_fim: compFim,
-    drillPath, filters,
+    drillPath, filters, somenteIndustria,
   })
   const dimsQ = useDims(fluxo, refInicio, refFim)
   // Lazy-load do dropdown de Cliente: só ativa após o usuário abri-lo uma vez.
@@ -1136,6 +1145,30 @@ export default function FarolExecutivo() {
             </button>
           ))}
         </div>
+
+        {/* "Somente Indústrias" (mig 228) — só filtra em Por Gerência/Por
+            Equipe (V02/V03); nas demais visões fica visível mas desativado,
+            pra não sumir/reaparecer trocando de aba. Cor azul (pedido do
+            Claudio) — distinta do verde/vermelho do farol e do cinza dos
+            outros botões, pra chamar atenção como um modo à parte. */}
+        <button
+          onClick={() => setSomenteIndustria(v => !v)}
+          disabled={view !== 'V02' && view !== 'V03'}
+          title={
+            view === 'V02' || view === 'V03'
+              ? 'Considera só a venda dos fornecedores cadastrados como indústria (/gestao/industrias)'
+              : 'Só tem efeito em "Por Gerência" e "Por Equipe"'
+          }
+          className={cn(
+            'ml-2 inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-bold uppercase tracking-wide rounded-md border-2 transition-colors',
+            somenteIndustria
+              ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+              : 'bg-white border-blue-300 text-blue-700 hover:bg-blue-50',
+            (view !== 'V02' && view !== 'V03') && 'opacity-40 cursor-not-allowed hover:bg-white',
+          )}
+        >
+          <Factory className="h-3.5 w-3.5" /> Somente Indústrias
+        </button>
       </div>
 
       {/* ── Atalhos de período ──────────────────────────────────────────────── */}
