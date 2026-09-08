@@ -2384,18 +2384,23 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 	}
 
 	// Cor binária: verde se atingiu ≥ 100% do anterior, vermelho caso contrário.
-	// Sem comparativo, considera neutro (verde — sem alerta).
+	// Sem comparativo, considera neutro (verde — sem alerta). pct devolvido é o
+	// % DE CRESCIMENTO (atual vs anterior) — usado como "Venda %" exibida no
+	// card do fornecedor (via campo Pct abaixo). Corrigido em 08/09/2026: antes
+	// era a RAZÃO atual/anterior (R$15→R$16 mostrava 107%, não os +7% reais de
+	// crescimento). A cor continua pela mesma régua de antes (atual ≥ anterior),
+	// só desacoplada da fórmula do pct exibido.
 	pickCor := func(atual, ant float64) (float64, string) {
 		if !hasComp {
 			return 0, "verde"
 		}
 		var pct float64
 		if ant > 0 {
-			pct = atual / ant * 100
+			pct = (atual - ant) / ant * 100
 		} else if atual > 0 {
 			pct = 100
 		}
-		if pct >= 100 {
+		if atual >= ant {
 			return pct, "verde"
 		}
 		return pct, "vermelho"
@@ -2577,14 +2582,15 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 			kpi.Vermelhos++
 		}
 	}
-	// Venda — % e cor
+	// Venda — % e cor. TotalPct é % DE CRESCIMENTO (não a razão atual/anterior
+	// — mesmo bug/correção do pickCor acima, 08/09/2026).
 	if kpi.TotalAnt > 0 {
-		kpi.TotalPct = kpi.TotalAtual / kpi.TotalAnt * 100
+		kpi.TotalPct = (kpi.TotalAtual - kpi.TotalAnt) / kpi.TotalAnt * 100
 	} else if kpi.TotalAtual > 0 {
 		kpi.TotalPct = 100
 	}
 	kpi.TotalCor = "vermelho"
-	if kpi.TotalPct >= 100 {
+	if kpi.TotalAtual >= kpi.TotalAnt {
 		kpi.TotalCor = "verde"
 	}
 	// Positivação — % e cor (atual vs comparativo)
@@ -3076,7 +3082,28 @@ func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view, gr
 	// anterior. Clientes Ativos (PROVISÓRIO Heverton) = distinct no período todo;
 	// positivados = distinct no período. Carteira Rotina 302 (Keslley) segue no
 	// banco, só não exibida.
-	base := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, 0, 999912, drillPath, filters)
+	//
+	// baseFilters (sem cod_fornec) — Clientes Ativos (a BASE/denominador) tem
+	// que ser fixo "independente da visão ou fornecedor" (regra do Heverton,
+	// 27/08/2026, ver fixOverlappingBaseCards abaixo). Isso já valia entre
+	// cards da mesma tela (fixOverlappingBaseCards), mas não quando o usuário
+	// filtra por FORN.GERAL/FORN DIST (cod_industria já chega aqui resolvido
+	// em filters["cod_fornec"], ver resolveIndustriaFilter) — nesse caso o
+	// totalizador inteiro encolhia para a carteira só daquele fornecedor,
+	// bug corrigido em 08/09/2026. positivados (ref/ant abaixo) CONTINUA
+	// usando `filters` com cod_fornec: é o numerador, tem que refletir o
+	// fornecedor selecionado.
+	baseFilters := filters
+	if _, temFornec := filters["cod_fornec"]; temFornec {
+		baseFilters = make(multiFilters, len(filters))
+		for k, v := range filters {
+			if k == "cod_fornec" {
+				continue
+			}
+			baseFilters[k] = v
+		}
+	}
+	base := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, 0, 999912, drillPath, baseFilters)
 	kpi.TotalBaseCli = base
 	kpi.TotalBaseCliAnt = base
 	ref := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)

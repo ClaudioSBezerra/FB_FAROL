@@ -467,13 +467,15 @@ func biFaturadoPorUF(db *sql.DB, empresaID string, fluxo fluxoCtx, pr periodReso
 }
 
 // biPct / biCor — régua idêntica ao pickCor do fetchCards (farol_v2_api.go):
-// sem comparativo → neutro/verde; senão verde se atual ≥ anterior.
+// sem comparativo → neutro/verde; senão verde se atual ≥ anterior. biPct
+// devolve o % DE CRESCIMENTO (atual vs anterior), não a razão entre os dois —
+// corrigido em 08/09/2026 junto com o mesmo bug em pickCor/TotalPct.
 func biPct(atual, ant float64, hasComp bool) float64 {
 	if !hasComp {
 		return 0
 	}
 	if ant > 0 {
-		return atual / ant * 100
+		return (atual - ant) / ant * 100
 	}
 	if atual > 0 {
 		return 100
@@ -482,7 +484,7 @@ func biPct(atual, ant float64, hasComp bool) float64 {
 }
 
 func biCor(atual, ant float64, hasComp bool) string {
-	if biPct(atual, ant, hasComp) >= 100 || !hasComp {
+	if !hasComp || atual >= ant {
 		return "verde"
 	}
 	return "vermelho"

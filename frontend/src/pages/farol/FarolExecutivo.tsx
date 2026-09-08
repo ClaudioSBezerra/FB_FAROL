@@ -71,12 +71,30 @@ function sumDelta(comp: Composicao | undefined, inc: Set<CompKey>): number {
 
 // Replica farol_v2_api.pickCor: verde se atual ≥ anterior; neutro (verde) sem
 // comparativo. Usado no recálculo client-side quando um toggle está ligado.
+// pct = % DE CRESCIMENTO (atual vs anterior), não a razão atual/anterior —
+// bug corrigido em 08/09/2026: R$15→R$16 é +7% de crescimento, não 107%.
 function corFor(atual: number, ant: number, hasComp: boolean): { pct: number; cor: Cor } {
   if (!hasComp) return { pct: 0, cor: 'verde' }
   let pct = 0
-  if (ant > 0) pct = (atual / ant) * 100
+  if (ant > 0) pct = ((atual - ant) / ant) * 100
   else if (atual > 0) pct = 100
-  return { pct, cor: pct >= 100 ? 'verde' : 'vermelho' }
+  return { pct, cor: atual >= ant ? 'verde' : 'vermelho' }
+}
+
+// pctCresc — % de crescimento entre dois valores (não a razão entre eles).
+// Ex.: Positivação Anterior=10, Atual=12 → 20% (não 120%).
+function pctCresc(atual: number, ant: number): number {
+  if (ant > 0) return ((atual - ant) / ant) * 100
+  if (atual > 0) return 100
+  return 0
+}
+
+// corCrescPosit — cor da coluna "% Posit. Atual X Anterior", comparando os
+// números BRUTOS de positivados exibidos na própria linha (não a penetração
+// posit_cor, que pode usar bases diferentes entre Atual/Anterior fora do
+// totalizador "Por Fornecedor" — ver comentário na coluna).
+function corCrescPosit(card: CardItem): Cor {
+  return card.positivados >= card.positivados_ant ? 'verde' : 'vermelho'
 }
 
 interface KPI {
@@ -272,14 +290,13 @@ function fmtDateBR(s: string): string {
 }
 
 // Presets (ordem da barra, da esquerda para a direita):
-//  ytd          — ano anterior completo (jan-dez) × jan até hoje, ano corrente
+//  ytd          — jan até hoje, ano corrente × MESMO período (jan até o mesmo
+//                 dia), ano anterior — período vs período
 //  yoy          — último mês 100% importado × mesmo mês ano anterior
-//  ant_corrente — dois últimos meses completos carregados (M-1 vs M-2)
+//  ant_corrente — mês corrente até hoje × mesmo período do mês anterior (M-1 vs M-2)
 //  mes_corrente — dia 1 até hoje, mês corrente × mesmo período do ano anterior
-//  dia_anterior — ontem × mesmo dia da semana 7 dias antes (régua do Pulso)
-//  last7        — últimos 7 dias × 7 dias anteriores
-//  last30       — últimos 30 dias × 30 dias anteriores
-type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'dia_anterior' | 'last7' | 'last30'
+//  dia_anterior — ontem × mesmo dia do ano anterior
+type Preset = 'mes_corrente' | 'yoy' | 'ant_corrente' | 'ytd' | 'dia_anterior'
 
 const PRESET_LABEL: Record<Preset, string> = {
   ytd:          'Ano × Ano',
@@ -287,8 +304,6 @@ const PRESET_LABEL: Record<Preset, string> = {
   ant_corrente: 'M-1 vs M-2',
   mes_corrente: 'Mês Corrente',
   dia_anterior: 'Dia Anterior',
-  last7:        '7 dias',
-  last30:       '30 dias',
 }
 
 function presetRange(p: Preset, last?: { ano: number; mes: number }) {
@@ -304,12 +319,15 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
 
   switch (p) {
     case 'ytd': {
-      // Ano anterior INTEIRO × Janeiro até hoje do ano corrente
+      // Jan até hoje do ano corrente × MESMO período (Jan até o mesmo dia) do
+      // ano anterior — período vs período (era: ano anterior INTEIRO, jan-dez,
+      // comparando faixas de tamanhos diferentes — ex. 8 meses × 12 meses).
+      const dayCap = Math.min(todayD, lastDayOfMonth(todayY - 1, todayM))
       return {
         ref_inicio:  ymd(todayY, 1, 1),
         ref_fim:     today,
         comp_inicio: ymd(todayY - 1, 1, 1),
-        comp_fim:    ymd(todayY - 1, 12, 31),
+        comp_fim:    ymd(todayY - 1, todayM, dayCap),
       }
     }
     case 'yoy': {
@@ -322,14 +340,17 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
       }
     }
     case 'ant_corrente': {
-      // M-1 vs M-2: dois últimos meses completos carregados
-      let prevM = lastM - 1, prevY = lastY
+      // Mês corrente até hoje × MESMO período do mês anterior, mesmo ano —
+      // mês vs mês, calendário de hoje (era: "os 2 últimos meses 100%
+      // importados" completos, sem relação com o dia corrente).
+      let prevM = todayM - 1, prevY = todayY
       if (prevM === 0) { prevM = 12; prevY-- }
+      const dayCap = Math.min(todayD, lastDayOfMonth(prevY, prevM))
       return {
-        ref_inicio:  ymd(lastY, lastM, 1),
-        ref_fim:     ymd(lastY, lastM, lastDayOfMonth(lastY, lastM)),
+        ref_inicio:  ymd(todayY, todayM, 1),
+        ref_fim:     today,
         comp_inicio: ymd(prevY, prevM, 1),
-        comp_fim:    ymd(prevY, prevM, lastDayOfMonth(prevY, prevM)),
+        comp_fim:    ymd(prevY, prevM, dayCap),
       }
     }
     case 'mes_corrente': {
@@ -343,36 +364,18 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
         comp_fim:    ymd(todayY - 1, todayM, dayCap),
       }
     }
-    case 'dia_anterior': {
-      // Ontem × mesmo dia da semana 7 dias antes (régua do Pulso — evita
-      // falso alarme de fim de semana). Um único dia em cada ponta.
+    case 'dia_anterior':
+    default: {
+      // Ontem × mesmo dia do ANO ANTERIOR (era: -7 dias/mesmo dia da semana).
       const ontem = addDays(today, -1)
+      const [oy, om, od] = ontem.split('-').map(Number)
+      const dayCap = Math.min(od, lastDayOfMonth(oy - 1, om))
+      const ontemAnoAnterior = ymd(oy - 1, om, dayCap)
       return {
         ref_inicio:  ontem,
         ref_fim:     ontem,
-        comp_inicio: addDays(ontem, -7),
-        comp_fim:    addDays(ontem, -7),
-      }
-    }
-    case 'last7': {
-      const fim = today
-      const ini = addDays(fim, -6)
-      return {
-        ref_inicio:  ini,
-        ref_fim:     fim,
-        comp_inicio: addDays(ini, -7),
-        comp_fim:    addDays(fim, -7),
-      }
-    }
-    case 'last30':
-    default: {
-      const fim = today
-      const ini = addDays(fim, -29)
-      return {
-        ref_inicio:  ini,
-        ref_fim:     fim,
-        comp_inicio: addDays(ini, -30),
-        comp_fim:    addDays(fim, -30),
+        comp_inicio: ontemAnoAnterior,
+        comp_fim:    ontemAnoAnterior,
       }
     }
   }
@@ -572,9 +575,16 @@ function DataRow({ card, isTotal = false, onClick, hidePosit }: RowProps) {
           <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtInt(card.positivados_ant)}</div>
           {/* Posit. Atual */}
           <div className={cn(valueNum, 'text-center min-w-0 break-words')}>{fmtInt(card.positivados)}</div>
-          {/* % Posit. Atual X Anterior (mesmo dado, apenas label diferente) */}
-          <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[card.posit_cor] : COR_TXT[card.posit_cor])}>
-            {fmtPct(card.positpct)}
+          {/* % Posit. Atual X Anterior — crescimento de positivados (Atual vs
+              Anterior), ex.: 10 → 12 = 20%. Bug corrigido em 08/09/2026: essa
+              coluna mostrava o MESMO dado de "% Posit. Atual" (penetração
+              sobre a carteira), não uma comparação Atual×Anterior. Cor própria
+              (não reaproveita card.posit_cor): posit_cor compara penetração
+              (positpct vs positpct_ant), que só é equivalente a comparar os
+              números brutos quando base_cli é igual nos dois períodos — nem
+              sempre verdade fora do totalizador "Por Fornecedor". */}
+          <div className={cn('text-center tabular-nums', isTotal ? 'text-base font-extrabold' : 'text-sm font-bold', isTotal ? COR_TXT_TOTAL[corCrescPosit(card)] : COR_TXT[corCrescPosit(card)])}>
+            {fmtPct(pctCresc(card.positivados, card.positivados_ant))}
           </div>
         </div>
       )}
@@ -1048,13 +1058,21 @@ export default function FarolExecutivo() {
 
   // handleRefreshViews removido junto com o botão Consolidar.
 
+  // Nas visões "Por Gerência" (GGV, V03) e "Por Equipe" (CRV/Supervisor, V02),
+  // o chip "FORN.GERAL" (cod_fornec cru) some — pedido do Claudio em
+  // 08/09/2026: nessas visões só o filtro canônico "FORN DIST" (industria-
+  // mapeado, ver chip abaixo) deve ficar disponível, pra evitar que o gestor
+  // escolha um fornecedor fora da lista de Indústrias cadastradas e veja
+  // números (em especial Clientes Ativos, ver fixOverlappingBaseKPI no
+  // backend) que não batem com o resto do painel.
+  const ehVisaoGGVouCRV = view === 'V03' || view === 'V02'
   const FILTER_DIMS: { col: string; label: string; from: keyof DimsResponse }[] = [
     // Rótulo era "Indústria" até 28/08/2026 — cod_fornec cru (mesmo fabricante
     // pode ter 2+ códigos). Renomeado pra "FORN.GERAL" pra liberar "Indústria"
     // pro filtro canônico novo (chip separado, ver industriaOptions abaixo —
     // esse chip virou "FORN DIST" no mesmo dia, a pedido do Heverton, pra
     // manter o padrão com "FORN.GERAL").
-    { col: 'cod_fornec',     label: 'FORN.GERAL', from: 'fornec' },
+    ...(ehVisaoGGVouCRV ? [] : [{ col: 'cod_fornec', label: 'FORN.GERAL', from: 'fornec' as const }]),
     { col: 'cod_gerente',    label: 'Gerente',    from: 'gerente' },
     { col: 'cod_supervisor', label: 'Supervisor', from: 'supervisor' },
     { col: 'cod_rca',        label: 'RCA',        from: 'rca' },
@@ -1126,13 +1144,11 @@ export default function FarolExecutivo() {
           <Calendar className="h-3 w-3" />
         </span>
         {([
-          { id: 'ytd'          as const, tip: 'Ano anterior INTEIRO (Jan-Dez) × Jan até hoje do ano atual' },
+          { id: 'ytd'          as const, tip: 'Jan até hoje do ano atual × mesmo período (Jan até o mesmo dia) do ano anterior' },
           { id: 'yoy'          as const, tip: 'Último mês 100% importado × Mesmo mês do ano anterior (ambos completos)' },
-          { id: 'ant_corrente' as const, tip: 'Dois últimos meses completos carregados (M-1 vs M-2)' },
+          { id: 'ant_corrente' as const, tip: 'Mês corrente até hoje × mesmo período do mês anterior (M-1 vs M-2)' },
           { id: 'mes_corrente' as const, tip: 'Dia 1 até hoje do mês corrente × mesmo período do ano anterior' },
-          { id: 'dia_anterior' as const, tip: 'Ontem × mesmo dia da semana 7 dias antes (evita falso alarme de fim de semana)' },
-          { id: 'last7'        as const, tip: 'Últimos 7 dias × 7 dias anteriores' },
-          { id: 'last30'       as const, tip: 'Últimos 30 dias × 30 dias anteriores' },
+          { id: 'dia_anterior' as const, tip: 'Ontem × mesmo dia do ano anterior' },
         ]).map(p => (
           <button
             key={p.id}
