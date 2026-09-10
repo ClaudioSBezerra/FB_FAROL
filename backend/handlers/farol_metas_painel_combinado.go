@@ -71,6 +71,86 @@ func refsDeClientes(cs []RealizadoCliente) []PainelClienteRef {
 	return out
 }
 
+// PainelCombinadoCliente — 1 linha por CNPJ/loja (aba "Resumo Rede Cliente"
+// do modelo V1 da JC): mesma Cobertura+Sortimento lado a lado da linha de
+// Rede, mas no grão de uma loja só — por isso "objetivo" aqui é comparado
+// direto contra o valor da loja (sem média entre lojas da Rede).
+type PainelCombinadoCliente struct {
+	CodPrinc           string  `json:"cod_princ"`
+	CNPJ               string  `json:"cnpj"`
+	Razao              string  `json:"razao"`
+	Fantasia           string  `json:"fantasia"`
+	CodGGV             string  `json:"cod_ggv"`
+	NomeGGV            string  `json:"nome_ggv"`
+	CodCRV             string  `json:"cod_crv"`
+	NomeCRV            string  `json:"nome_crv"`
+	CodRCA             string  `json:"cod_rca"`
+	NomeRCA            string  `json:"nome_rca"`
+	CoberturaValor     float64 `json:"cobertura_valor"`
+	CoberturaObjetivo  float64 `json:"cobertura_objetivo"`
+	SortimentoValor    float64 `json:"sortimento_valor"`
+	SortimentoObjetivo float64 `json:"sortimento_objetivo"`
+}
+
+// montarClientesCombinado explode as Redes já mescladas (`redes`, que já
+// resolveu o dono GGV/CRV/RCA e cobre tanto o caso normal quanto Redes
+// presentes só numa das duas métricas) em 1 linha por CNPJ, juntando o
+// valor de Cobertura e o de Sortimento daquele CNPJ especificamente — as
+// duas métricas têm sua PRÓPRIA lista de Clientes Válidos (vínculos
+// diferentes), então o cruzamento é por CNPJ dentro da mesma Rede, não uma
+// suposição de que as duas listas são idênticas.
+func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, realizadoSortimento *RealizadoResultado) []PainelCombinadoCliente {
+	contextoPorRede := make(map[string]PainelCombinadoRede, len(redes))
+	for _, r := range redes {
+		contextoPorRede[r.CodPrinc] = r
+	}
+	sortimentoPorRedeCliente := map[string]map[string]RealizadoCliente{}
+	for _, r := range realizadoSortimento.Redes {
+		m := make(map[string]RealizadoCliente, len(r.Clientes))
+		for _, c := range r.Clientes {
+			m[c.CNPJ] = c
+		}
+		sortimentoPorRedeCliente[r.CodPrinc] = m
+	}
+
+	var out []PainelCombinadoCliente
+	visto := map[string]bool{}
+	for _, rede := range realizadoCobertura.Redes {
+		ctx := contextoPorRede[rede.CodPrinc]
+		sortMap := sortimentoPorRedeCliente[rede.CodPrinc]
+		for _, c := range rede.Clientes {
+			s := sortMap[c.CNPJ]
+			out = append(out, PainelCombinadoCliente{
+				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
+				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
+				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
+				CoberturaValor: c.Valor, CoberturaObjetivo: ctx.CoberturaObjetivo,
+				SortimentoValor: s.Valor, SortimentoObjetivo: ctx.SortimentoObjetivo,
+			})
+			visto[c.CNPJ] = true
+		}
+	}
+	// CNPJs presentes só na lista de Sortimento — mesmo princípio de não
+	// descartar dado silenciosamente usado no nível Rede.
+	for _, rede := range realizadoSortimento.Redes {
+		ctx := contextoPorRede[rede.CodPrinc]
+		for _, c := range rede.Clientes {
+			if visto[c.CNPJ] {
+				continue
+			}
+			out = append(out, PainelCombinadoCliente{
+				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
+				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
+				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
+				CoberturaObjetivo: ctx.CoberturaObjetivo,
+				SortimentoValor:   c.Valor, SortimentoObjetivo: ctx.SortimentoObjetivo,
+			})
+			visto[c.CNPJ] = true
+		}
+	}
+	return out
+}
+
 // PainelMetricaResumo é o mesmo resumo (faixa atual/próxima/delta) que o
 // painel de métrica única já expõe (PainelResponse) — extraído aqui pra
 // reuso sem duplicar a lógica de "qual faixa foi atingida".
@@ -87,11 +167,12 @@ type PainelMetricaResumo struct {
 }
 
 type PainelCombinadoResponse struct {
-	IndustriaNome string                `json:"industria_nome"`
-	Vigencia      PainelVigencia        `json:"vigencia"`
-	Cobertura     PainelMetricaResumo   `json:"cobertura"`
-	Sortimento    PainelMetricaResumo   `json:"sortimento"`
-	Redes         []PainelCombinadoRede `json:"redes"`
+	IndustriaNome string                   `json:"industria_nome"`
+	Vigencia      PainelVigencia           `json:"vigencia"`
+	Cobertura     PainelMetricaResumo      `json:"cobertura"`
+	Sortimento    PainelMetricaResumo      `json:"sortimento"`
+	Redes         []PainelCombinadoRede    `json:"redes"`
+	Clientes      []PainelCombinadoCliente `json:"clientes"` // aba "Resumo Rede Cliente" — 1 linha por CNPJ/loja
 }
 
 // montarResumoMetrica calcula faixa_atual/proxima_faixa/delta a partir do
@@ -237,9 +318,11 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		})
 	}
 
+	clientes := montarClientesCombinado(redes, realizadoCobertura, realizadoSortimento)
+
 	return &PainelCombinadoResponse{
 		IndustriaNome: industriaNome, Vigencia: vig,
-		Cobertura: resumoCobertura, Sortimento: resumoSortimento, Redes: redes,
+		Cobertura: resumoCobertura, Sortimento: resumoSortimento, Redes: redes, Clientes: clientes,
 	}, nil
 }
 
@@ -300,6 +383,21 @@ func MetasPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 				filtradas = append(filtradas, rede)
 			}
 			resp.Redes = filtradas
+
+			clientesFiltrados := make([]PainelCombinadoCliente, 0, len(resp.Clientes))
+			for _, c := range resp.Clientes {
+				if codGGV != "" && c.CodGGV != codGGV {
+					continue
+				}
+				if codCRV != "" && c.CodCRV != codCRV {
+					continue
+				}
+				if codRCA != "" && c.CodRCA != codRCA {
+					continue
+				}
+				clientesFiltrados = append(clientesFiltrados, c)
+			}
+			resp.Clientes = clientesFiltrados
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -361,6 +459,22 @@ func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 		resp.Redes = redesFiltradas
+
+		// Mesmo recorte pra Clientes — endpoint SEM auth, nunca pode vazar
+		// CNPJ fora do Supervisor/RCA da URL.
+		clientesFiltrados := make([]PainelCombinadoCliente, 0, len(resp.Clientes))
+		for _, c := range resp.Clientes {
+			if scope == "rca" {
+				if c.CodRCA == cod {
+					clientesFiltrados = append(clientesFiltrados, c)
+				}
+				continue
+			}
+			if c.CodCRV == cod {
+				clientesFiltrados = append(clientesFiltrados, c)
+			}
+		}
+		resp.Clientes = clientesFiltrados
 
 		json.NewEncoder(w).Encode(resp)
 	}
