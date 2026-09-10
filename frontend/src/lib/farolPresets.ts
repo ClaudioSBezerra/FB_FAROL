@@ -41,20 +41,29 @@ function ymd(y: number, m: number, d: number): string {
 }
 function lastDayOfMonth(y: number, m: number): number { return new Date(y, m, 0).getDate() }
 
+// resolveHoje — âncora "hoje" pros presets. NUNCA passa de D-1 (ontem): o
+// faturado e o transmitido ainda não fecham o dia corrente (a JC não importa
+// o dia de hoje), então "hoje" seria sempre parcial e não pode virar fim de
+// período. Prefere a data real importada (periodo.ultimo_dia_importado, já
+// capada em D-1 no backend); se ela vier vazia (fetch inicial, empresa sem
+// dado) ou — por resposta de um backend antigo em cache — vier igual/depois
+// de hoje, cai pra ontem do relógio local.
+function resolveHoje(ultimoDiaImportado?: string): string {
+  const now = new Date()
+  const o = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  const ontem = ymd(o.getFullYear(), o.getMonth() + 1, o.getDate())
+  if (!ultimoDiaImportado || ultimoDiaImportado.length === 0) return ontem
+  return ultimoDiaImportado < ontem ? ultimoDiaImportado : ontem
+}
+
 // presetRange — replica EXATAMENTE a lógica do painel executivo.
-//   hoje = último dia com dado REAL importado (YYYY-MM-DD), não o relógio do
-//   navegador — a base pode estar 1+ dia atrasada (ex: hoje 09/09, base só
-//   até 08/09). Vem de periodo.ultimo_dia_importado (backend, inferLastDay).
-//   Se ainda não carregou (fetch inicial / empresa sem dado nenhum), cai pro
-//   dia real do navegador como fallback.
+//   ultimoDiaImportado = periodo.ultimo_dia_importado do backend. A âncora
+//   "hoje" de todos os recortes sai de resolveHoje() — sempre ≤ D-1.
 //   "Último mês" (preset yoy) = último mês CALENDÁRIO 100% completo em
 //   relação a `hoje` — só é o próprio mês de `hoje` quando `hoje` for o
 //   último dia daquele mês; senão é o mês anterior.
-export function presetRange(p: Preset, hoje?: string): PresetRange {
-  const today = hoje && hoje.length > 0 ? hoje : (() => {
-    const now = new Date()
-    return ymd(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
-  })()
+export function presetRange(p: Preset, ultimoDiaImportado?: string): PresetRange {
+  const today = resolveHoje(ultimoDiaImportado)
   const [todayY, todayM, todayD] = today.split('-').map(Number)
 
   const hojeEhUltimoDiaDoMes = todayD === lastDayOfMonth(todayY, todayM)
