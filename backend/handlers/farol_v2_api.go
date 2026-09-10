@@ -4264,6 +4264,10 @@ func prewarmHoraDiaria() (hora, minuto int) {
 //
 // Chamar com `go handlers.StartDailyPrewarm(db)` — bloqueia para sempre.
 func StartDailyPrewarm(db *sql.DB) {
+	if jobsAgendadosPausados() {
+		log.Printf("[farol:view] prewarm diário PAUSADO por JC_JOBS_PAUSED")
+		return
+	}
 	loc, err := time.LoadLocation("America/Sao_Paulo")
 	if err != nil {
 		loc = time.Local

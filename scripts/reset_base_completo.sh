@@ -136,7 +136,12 @@ cat <<'FIM'
 ═══════════════════════════════════════════════════════════════
 Base zerada e RECONSTRUÍDA JÁ PARTICIONADA POR ANO. Para recarregar,
 em DUAS ondas (2026 primeiro — ativa o Painel de Indústria hoje — e 2025
-depois, sem pressa, durante o fim de semana):
+depois, sem pressa, durante o fim de semana).
+
+⚠ ANTES de disparar as ondas: pôr JC_JOBS_PAUSED=1 no ambiente (Coolify) e
+  redeployar, pra carga diária das 04:30 / reextração / prewarm NÃO
+  competirem com o backfill. Tirar a variável e redeployar quando as duas
+  ondas terminarem (ver ONBOARDING/memória).
 
   TOKEN=$(curl -s -X POST http://localhost:8087/api/auth/login \
     -H 'Content-Type: application/json' \
@@ -144,9 +149,11 @@ depois, sem pressa, durante o fim de semana):
     | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
   [ -z "$TOKEN" ] && { echo "LOGIN FALHOU"; exit 1; }
 
-  # Onda 1 — 2026 completo até hoje (~9 meses, algumas horas):
+  # Onda 1 — 2026 de janeiro até ONTEM (~9 meses, algumas horas). Até ontem,
+  # não até hoje: o dia corrente ainda está incompleto na origem e a carga
+  # diária pega D-1 de qualquer forma.
   curl -s -X POST \
-    "http://localhost:8087/api/v2/jc/carga?de=2026-01-01&ate=$(date +%F)&passo=mes" \
+    "http://localhost:8087/api/v2/jc/carga?de=2026-01-01&ate=$(date -d yesterday +%F)&passo=mes" \
     -H "Authorization: Bearer $TOKEN"
 
   # Onda 2 — depois que a onda 1 terminar, 2025 completo (~12 meses):

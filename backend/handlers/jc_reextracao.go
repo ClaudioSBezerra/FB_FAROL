@@ -111,6 +111,10 @@ func jcReextracaoConfig() (meses int, dia time.Weekday, hora, minuto int, ok boo
 // isso custa pouco — e a alternativa, rodar antes, deixaria o prewarm
 // aquecendo dado que a reextração ia sobrescrever em seguida.
 func StartReextracaoJC(db *sql.DB) {
+	if jobsAgendadosPausados() {
+		log.Printf("[jc:reextracao] agendador PAUSADO por JC_JOBS_PAUSED")
+		return
+	}
 	if !jcConfigurado() {
 		return // sem credencial não há o que agendar; a carga diária já loga isso
 	}

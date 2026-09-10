@@ -43,9 +43,25 @@ func jcConfigurado() bool {
 		strings.TrimSpace(os.Getenv("JC_EMPRESA_ID")) != ""
 }
 
+// jobsAgendadosPausados — chave de manutenção. Com JC_JOBS_PAUSED=1 (ou true),
+// os agendadores automáticos (carga diária, reextração semanal, prewarm diário)
+// NÃO sobem — mas o endpoint manual POST /api/v2/jc/carga continua funcionando
+// normalmente. Serve para janelas de recarga grande (backfill de 1+ ano via o
+// endpoint manual), onde a carga diária das 04:30 competiria pela escrita nas
+// mesmas partições e pela consolidação/refresh das MVs. Tirar a variável e
+// redeployar volta tudo ao normal.
+func jobsAgendadosPausados() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("JC_JOBS_PAUSED")))
+	return v == "1" || v == "true" || v == "sim"
+}
+
 // StartCargaJCDiaria roda a carga todo dia no horário configurado, sempre para
 // D-1 (dia fechado). Segue o mesmo formato do StartDailyPrewarm.
 func StartCargaJCDiaria(db *sql.DB) {
+	if jobsAgendadosPausados() {
+		log.Printf("[jc:carga] agendador diário PAUSADO por JC_JOBS_PAUSED — só o endpoint manual roda")
+		return
+	}
 	if !jcConfigurado() {
 		log.Printf("[jc:carga] desativada — faltam JC_ORACLE_USER/JC_ORACLE_PASS/JC_EMPRESA_ID")
 		return
