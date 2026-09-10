@@ -311,8 +311,8 @@ function FiltroSelect({ label, value, onChange, opts }: {
     <div className="space-y-1">
       <label className="text-xs font-medium">{label}</label>
       <Select value={value || '__all__'} onValueChange={v => onChange(v === '__all__' ? '' : v)}>
-        <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-        <SelectContent>
+        <SelectTrigger className="w-48 uppercase"><SelectValue /></SelectTrigger>
+        <SelectContent className="[&_*]:uppercase">
           <SelectItem value="__all__">Todos</SelectItem>
           {opts.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
         </SelectContent>
@@ -672,7 +672,7 @@ export default function FarolPainelMetas() {
   const nivelLabelAtual = redeAberta ? 'Rede/CNPJ' : NIVEIS.find(n => n.value === nivel)?.label ?? nivel
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
       <div>
         <h1 className="text-xl font-semibold">Painel de Objetivos por Indústria</h1>
         <p className="text-sm text-muted-foreground">Objetivo × Realizado por Tipo de Métrica, navegável pela hierarquia GGV → CRV → RCA → Rede.</p>
@@ -682,8 +682,8 @@ export default function FarolPainelMetas() {
         <div className="space-y-1">
           <label className="text-xs font-medium">Indústria</label>
           <Select value={industriaID} onValueChange={v => { setIndustriaID(v); setVigenciaID(''); setVigenciaCombinadaKey('') }}>
-            <SelectTrigger className="w-56"><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent>
+            <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent className="[&_*]:uppercase">
               {industrias.map(i => (
                 <SelectItem key={i.id} value={String(i.id)}>{i.nome}</SelectItem>
               ))}
@@ -694,8 +694,8 @@ export default function FarolPainelMetas() {
           <div className="space-y-1">
             <label className="text-xs font-medium">Visão</label>
             <Select value={metrica} onValueChange={v => { setMetrica(v as typeof metrica); setVigenciaID(''); setVigenciaCombinadaKey('') }}>
-              <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="w-64 uppercase"><SelectValue /></SelectTrigger>
+              <SelectContent className="[&_*]:uppercase">
                 {metricasDisponiveis.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -705,8 +705,8 @@ export default function FarolPainelMetas() {
           <div className="space-y-1">
             <label className="text-xs font-medium">Período</label>
             <Select value={vigenciaCombinadaKey} onValueChange={setVigenciaCombinadaKey}>
-              <SelectTrigger className="w-56"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent className="[&_*]:uppercase">
                 {periodosCombinados.map(p => (
                   <SelectItem key={p.chave} value={p.chave}>
                     {p.cobertura.data_inicio} – {p.cobertura.data_fim} {p.cobertura.status === 'fechada' ? '(fechada)' : ''}
@@ -719,8 +719,8 @@ export default function FarolPainelMetas() {
           <div className="space-y-1">
             <label className="text-xs font-medium">Vigência</label>
             <Select value={vigenciaID} onValueChange={setVigenciaID}>
-              <SelectTrigger className="w-56"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent className="[&_*]:uppercase">
                 {vigencias.map(v => (
                   <SelectItem key={v.id} value={String(v.id)}>
                     {v.data_inicio} – {v.data_fim} {v.status === 'fechada' ? '(fechada)' : ''}
@@ -734,8 +734,8 @@ export default function FarolPainelMetas() {
           <div className="space-y-1">
             <label className="text-xs font-medium">Nível</label>
             <Select value={nivel} onValueChange={v => { voltarPara('ggv'); setNivel(v) }}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="w-56 uppercase"><SelectValue /></SelectTrigger>
+              <SelectContent className="[&_*]:uppercase">
                 {NIVEIS.map(n => <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -744,8 +744,8 @@ export default function FarolPainelMetas() {
         <div className="space-y-1">
           <label className="text-xs font-medium">Fluxo</label>
           <Select value={fluxo} onValueChange={setFluxo}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
+            <SelectTrigger className="w-48 uppercase"><SelectValue /></SelectTrigger>
+            <SelectContent className="[&_*]:uppercase">
               {FLUXOS.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -1164,7 +1164,7 @@ export default function FarolPainelMetas() {
           (aba "Resumo Rede×Cliente") mostra só os itens daquele CNPJ.
           Vendeu/não vendeu, Qtd e Valor — pedido do Claudio 10/09/2026. */}
       <Dialog open={!!itensAlvo} onOpenChange={open => { if (!open) setItensAlvo(null) }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
           <DialogHeader>
             <DialogTitle>Itens — {itensAlvo?.titulo}</DialogTitle>
           </DialogHeader>
