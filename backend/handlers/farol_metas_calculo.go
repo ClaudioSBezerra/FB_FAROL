@@ -41,6 +41,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -142,6 +143,11 @@ func CalcularRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, 
 // — projetar o fechamento da vigência com base só em "ontem" não faria
 // sentido; recorte afeta o Realizado exibido, não a base da projeção.
 func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, nivel, dataInicioOverride, dataFimOverride string) (*RealizadoResultado, error) {
+	t0 := time.Now()
+	defer func() {
+		log.Printf("[farol:objetivos] CalcularRealizado vinculo=%d vigencia=%d fluxo=%s nivel=%s em %v",
+			vinculoID, vigenciaID, fluxo, nivel, time.Since(t0))
+	}()
 	var formulaCodigo, dataInicioVigencia, dataFimVigencia string
 	var industriaID int
 	var tiposVendaValidos []string
@@ -443,6 +449,7 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 		return out, nil
 	}
 	somar := func(tabela, colData string) error {
+		t0 := time.Now()
 		query := fmt.Sprintf(`
 			SELECT cnpj, SUM(pvenda) FROM %s
 			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4
@@ -462,6 +469,7 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 			return err
 		}
 		defer rows.Close()
+		n := 0
 		for rows.Next() {
 			var cnpj string
 			var v float64
@@ -469,8 +477,14 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 				return err
 			}
 			out[cnpj] += v
+			n++
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		log.Printf("[farol:objetivos] somaPvendaClientes tabela=%s cnpjs=%d período=[%s..%s] → %d grupos em %v",
+			tabela, len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+		return nil
 	}
 	switch fluxo {
 	case "faturado":
@@ -624,6 +638,7 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 		return out, nil
 	}
 	somar := func(tabela, colData string) error {
+		t0 := time.Now()
 		query := fmt.Sprintf(`
 			SELECT cnpj, cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM %s
 			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
@@ -643,6 +658,7 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 			return err
 		}
 		defer rows.Close()
+		n := 0
 		for rows.Next() {
 			var cnpj, codProd, embalagem string
 			var qt, qtUnitCx float64
@@ -659,8 +675,14 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 			agregada.Embalagem = embalagem
 			agregada.QtUnitCx = qtUnitCx
 			porCliente[codProd] = agregada
+			n++
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		log.Printf("[farol:objetivos] qtdPorCodProdClientes tabela=%s cnpjs=%d período=[%s..%s] → %d linhas em %v",
+			tabela, len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+		return nil
 	}
 	switch fluxo {
 	case "faturado":

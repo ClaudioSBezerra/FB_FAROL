@@ -25,10 +25,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -59,6 +61,7 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 		return out, nil
 	}
 	somar := func(tabela, colData string) error {
+		t0 := time.Now()
 		query := fmt.Sprintf(`
 			SELECT cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM %s
 			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
@@ -78,6 +81,7 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 			return err
 		}
 		defer rows.Close()
+		n := 0
 		for rows.Next() {
 			var codProd, nome string
 			var qt, valor float64
@@ -91,8 +95,14 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 				a.Nome = nome
 			}
 			out[codProd] = a
+			n++
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		log.Printf("[farol:objetivos] somaQtdValorPorCodProd tabela=%s cnpjs=%d período=[%s..%s] → %d itens em %v",
+			tabela, len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+		return nil
 	}
 	switch fluxo {
 	case "faturado":
