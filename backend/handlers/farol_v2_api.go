@@ -72,14 +72,13 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
-	// V04: visão por força de vendas — RCA → Fornecedor → Cliente → Produto
-	// Usa exclusivamente tabelas agg_*_mes (migration 162); sem MVs diárias.
-	"V04": {
-		{Level: "cod_rca", NameField: "nome_rca", Label: "RCA"},
-		{Level: "cod_fornec", NameField: "nome_fornec", Label: "Fornecedor"},
-		{Level: "cod_cli", NameField: "nome_cli", Label: "Cliente"},
-		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
-	},
+	// V04 ("Por RCA": RCA → Fornecedor → Cliente → Produto) removida do mapa
+	// de rotas em 10/09/2026 (mig 230) — roteável via ?view=V04 desde a
+	// migration 162, mas nenhuma tela do frontend jamais ofereceu essa opção
+	// (confirmado por grep em todo frontend/src). As tabelas agg_fat_v04_*/
+	// agg_trans_v04_* (aggTablesFat/aggTablesTrans abaixo) pararam de ser
+	// escritas na mesma migration — ficam como histórico morto, sem leitor
+	// possível agora que a rota devolve "view inválida".
 	// V05: visão Supervisor → Fornecedor → RCA → Cliente → Produto
 	// (mig 167) — usada EXCLUSIVAMENTE pelo painel mobile, como toggle "Por
 	// Indústria" (rótulo renomeado de "Por Fornecedor" em 28/08/2026, pedido
@@ -726,7 +725,7 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			view = "V01"
 		}
 		if _, ok := hierarquias[view]; !ok {
-			http.Error(w, `{"error":"view inválida — use V01, V02, V03 ou V04"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"view inválida — use V01, V02 ou V03"}`, http.StatusBadRequest)
 			return
 		}
 
