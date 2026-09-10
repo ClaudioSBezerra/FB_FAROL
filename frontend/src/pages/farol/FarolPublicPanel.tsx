@@ -370,10 +370,13 @@ export default function FarolPublicPanel() {
   const { sorted: sortedCards } =
     useSortedCards(data?.cards ?? [], 'farol.sort.public', { field: 'valor', direction: 'desc' })
 
-  // Ao carregar, aplica o preset default (Último mês YoY) usando o último dia
-  // com dado REAL importado (não o relógio do navegador) como âncora.
+  // Ao carregar, aplica o preset default (Último mês YoY). Âncora "hoje" =
+  // periodo.ultimo_dia_importado quando vier; presetRange/resolveHoje já cai
+  // pra D-1 do relógio local se estiver ausente — por isso o guard NÃO exige
+  // ultimoDia, senão o painel ficava sem período enquanto o backend não
+  // manda o campo.
   const ultimoDia = data?.periodo?.ultimo_dia_importado
-  if (refInicio === '' && ultimoDia) {
+  if (refInicio === '' && data) {
     const r = presetRange('yoy', ultimoDia)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
