@@ -331,16 +331,16 @@ export default function ConfigMetasVinculos() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Configuração de Metas por Indústria</h1>
+          <h1 className="text-xl font-semibold">Configuração de Objetivos por Indústria</h1>
           <p className="text-sm text-muted-foreground">
             Vincula uma Indústria a um Tipo de Métrica, com os valores de parâmetro específicos dela (ex: limiar de Cobertura).
-            Valores de meta por faixa/vigência ficam em outra tela.
+            Valores do objetivo por faixa/vigência ficam em outra tela.
           </p>
         </div>
         <div className="flex gap-2">
           <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={onCSVSelected} />
           <Button variant="outline" size="sm" disabled={importarCSV.isPending} onClick={() => fileInputRef.current?.click()}>
-            <Upload className="w-4 h-4 mr-1" /> {importarCSV.isPending ? 'Importando...' : 'Importar Metas (CSV)'}
+            <Upload className="w-4 h-4 mr-1" /> {importarCSV.isPending ? 'Importando...' : 'Importar Objetivos (CSV)'}
           </Button>
           <Button onClick={openCreate} size="sm" disabled={industrias.length === 0 || tiposMetrica.length === 0}>
             <Plus className="w-4 h-4 mr-1" /> Novo Vínculo
@@ -390,7 +390,7 @@ export default function ConfigMetasVinculos() {
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
-                    <Button variant="ghost" size="icon" title="Vigências e metas" onClick={() => setVigenciasTarget(v)}>
+                    <Button variant="ghost" size="icon" title="Vigências e objetivos" onClick={() => setVigenciasTarget(v)}>
                       <CalendarClock className="w-4 h-4" />
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(v)}>
@@ -781,7 +781,7 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Faixas de meta</Label>
+                <Label className="text-xs">Faixas do objetivo</Label>
                 {form.faixas.map((row, idx) => (
                   <div key={idx} className="flex gap-2 items-center">
                     <Input
@@ -801,7 +801,7 @@ function VigenciasDialog({ vinculo, headers, onClose }: {
                         ...f,
                         faixas: f.faixas.map((r, i) => i === idx ? { ...r, valor_meta: e.target.value } : r),
                       }))}
-                      placeholder="Valor da meta"
+                      placeholder="Valor do objetivo"
                     />
                     <Button variant="ghost" size="icon" disabled={form.faixas.length === 1} onClick={() => removeFaixaRow(idx)}>
                       <X className="w-4 h-4" />

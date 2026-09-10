@@ -34,9 +34,9 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel BI',
     tabs: [],
   },
-  // ── Metas por Indústria — visão de campo pra GGV/Supervisor (Épico 5) ────
+  // ── Objetivos por Indústria — visão de campo pra GGV/Supervisor (Épico 5) ─
   metas_industria: {
-    label: 'Metas Indústria',
+    label: 'Objetivos Indústria',
     tabs: [
       { label: 'Painel', path: '/farol/metas-industria' },
     ],
@@ -80,7 +80,7 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
       { label: 'Tipos de Métrica',  path: '/gestao/tipos-metrica'     },
-      { label: 'Metas por Indústria', path: '/gestao/metas-vinculos' },
+      { label: 'Objetivos por Indústria', path: '/gestao/metas-vinculos' },
     ],
   },
 }
