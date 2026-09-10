@@ -548,6 +548,12 @@ func DiagnoseBIHandler(db *sql.DB) http.HandlerFunc {
 						if _, e := db.Exec(`SELECT farol.create_agg_year_partitions($1)`, j.Ano); e != nil {
 							log.Printf("[diagnose-bi] create_year(%d) erro: %v", j.Ano, e)
 						}
+						// Idem pras tabelas BRUTAS (vendas_faturadas/vendas_transmitidas)
+						// — NO-OP seguro até o script manual de conversão pra
+						// particionada rodar em produção (ver migration 231).
+						if _, e := db.Exec(`SELECT farol.ensure_vendas_ano_partition($1)`, j.Ano); e != nil {
+							log.Printf("[diagnose-bi] ensure_vendas_ano_partition(%d) erro: %v", j.Ano, e)
+						}
 						anosSeen[j.Ano] = true
 					}
 					t1 := time.Now()

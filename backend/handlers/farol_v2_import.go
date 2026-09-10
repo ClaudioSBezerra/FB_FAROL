@@ -693,6 +693,22 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 				log.Printf("[ImportJob:%s] marcar pendente %04d-%02d ERRO: %v", jobID, ym[0], ym[1], e)
 			}
 		}
+		// Garante a partição do(s) ano(s) tocados nas tabelas BRUTAS
+		// (vendas_faturadas/vendas_transmitidas) ANTES do COPY abaixo —
+		// senão o COPY falha com "no partition of relation found for row"
+		// assim que a conversão pra particionada rodar em produção (ver
+		// migration 231 e scripts/particionar_vendas_2025_2026.sql). NO-OP
+		// seguro até essa conversão acontecer.
+		anosJaGarantidos := map[int]bool{}
+		for ym := range mesContagem {
+			if anosJaGarantidos[ym[0]] {
+				continue
+			}
+			if _, e := db.Exec(`SELECT farol.ensure_vendas_ano_partition($1)`, ym[0]); e != nil {
+				log.Printf("[ImportJob:%s] ensure_vendas_ano_partition(%d) ERRO: %v", jobID, ym[0], e)
+			}
+			anosJaGarantidos[ym[0]] = true
+		}
 	}
 	if skippedNoData > 0 {
 		log.Printf("[import:diag] %d linhas puladas — sem data válida (coluna DATA ausente e sem fallback)", skippedNoData)

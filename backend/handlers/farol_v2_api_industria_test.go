@@ -25,7 +25,7 @@ func TestFarolV2Cards_FiltroIndustria_DedupCliente(t *testing.T) {
 	gerente := "T2APIGER"
 	cnpj := "11111111000100"
 	cod1, cod2 := "T2API01", "T2API02"
-	data := mustParseData(t, "2021-03-10")
+	data := mustParseData(t, "2025-03-10")
 
 	db.Exec(`DELETE FROM farol.industrias WHERE empresa_id = $1 AND nome = $2`, empresaID, nome)
 	db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_gerente = $2`, empresaID, gerente)

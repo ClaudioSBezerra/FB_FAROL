@@ -473,7 +473,7 @@ func TestProjetarFechamento_ExemploDoPRD(t *testing.T) {
 
 func TestProjetarFechamento_PeriodoJaEncerrado_ProjecaoEhORealizado(t *testing.T) {
 	// período totalmente no passado — não há mais nada a extrapolar
-	projecao := projetarFechamento(50000, "2020-01-01", "2020-01-31")
+	projecao := projetarFechamento(50000, "2025-01-01", "2025-01-31")
 	if projecao != 50000 {
 		t.Errorf("período encerrado: projeção deveria ser o próprio realizado (50000), veio %.2f", projecao)
 	}
@@ -528,11 +528,11 @@ func TestCalcularRealizado_MesCorrenteEhParcial(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	// vigência que já fechou no passado — não deveria ser parcial
-	vigenciaPassada := criarVigenciaFixture(t, db, empresaID, vinculoID, "2020-01-01", "2020-01-31")
+	vigenciaPassada := criarVigenciaFixture(t, db, empresaID, vinculoID, "2025-01-01", "2025-01-31")
 	loja := "66666666000101"
 	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{loja}) })
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaPassada, "REDE PARCIAL", loja, "TCALC-RCA6")
-	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA6", "1", 100, 1, "2020-01-10")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA6", "1", 100, 1, "2025-01-10")
 
 	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaPassada, "faturado", "rede")
 	if err != nil {

@@ -794,7 +794,7 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor(t *testing.
 	db, empresaID := biTestDB(t)
 	codigos := []string{"T322ESCMEU", "T322ESCOUTRO"}
 	meu, outro := codigos[0], codigos[1]
-	data := mustParseData(t, "2020-06-17")
+	data := mustParseData(t, "2025-06-17")
 
 	for _, cod := range codigos {
 		limparFluxoRel322Fixture(t, db, empresaID, cod)
@@ -853,7 +853,7 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
 	db, empresaID := biTestDB(t)
 	codigos := []string{"T322ESCTRMEU", "T322ESCTROUT"}
 	meu, outro := codigos[0], codigos[1]
-	data := mustParseData(t, "2020-06-19")
+	data := mustParseData(t, "2025-06-19")
 
 	for _, cod := range codigos {
 		limparFluxoRel322Fixture(t, db, empresaID, cod)
@@ -921,7 +921,7 @@ func TestComparativoRel322_MontarComparativoRespeitaEscopoSupervisor_Transmitido
 func TestComparativoRel322_FiltroFilial(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	cod := "T322FILIAL"
-	data := mustParseData(t, "2020-06-21")
+	data := mustParseData(t, "2025-06-21")
 
 	limparFluxoRel322Fixture(t, db, empresaID, cod)
 	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
@@ -1008,7 +1008,7 @@ func limparFluxoRel322Fixture(t *testing.T, db *sql.DB, empresaID, codSupervisor
 func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	cod := "T322TRANS"
-	data := mustParseData(t, "2020-06-15")
+	data := mustParseData(t, "2025-06-15")
 
 	limparFluxoRel322Fixture(t, db, empresaID, cod)
 	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
@@ -1067,7 +1067,7 @@ func TestComparativoRel322_Fluxo_Transmitido(t *testing.T) {
 func TestComparativoRel322_Fluxo_Transmitido_CortadoMaiorQueBruto(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	cod := "T322TRANSNEG"
-	data := mustParseData(t, "2020-06-18")
+	data := mustParseData(t, "2025-06-18")
 
 	limparFluxoRel322Fixture(t, db, empresaID, cod)
 	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
@@ -1111,7 +1111,7 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testi
 	db, empresaID := biTestDB(t)
 	cod := "T322CORTESO"
 	outroCod := "T322CORTESOOUT"
-	data := mustParseData(t, "2020-06-20")
+	data := mustParseData(t, "2025-06-20")
 
 	for _, c := range []string{cod, outroCod} {
 		limparFluxoRel322Fixture(t, db, empresaID, c)
@@ -1190,7 +1190,7 @@ func TestComparativoRel322_Fluxo_Transmitido_CortadoSemLinhaTransmitida(t *testi
 func TestComparativoRel322_Fluxo_FaturadoPadraoInalterado(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	cod := "T322FAT"
-	data := mustParseData(t, "2020-06-16")
+	data := mustParseData(t, "2025-06-16")
 
 	limparFluxoRel322Fixture(t, db, empresaID, cod)
 	t.Cleanup(func() { limparFluxoRel322Fixture(t, db, empresaID, cod) })
@@ -1231,8 +1231,8 @@ func TestComparativoRel322_MontarComparativo_ExpoeFluxoNaResposta(t *testing.T) 
 	db, empresaID := biTestDB(t)
 	parsed := &rel322Parsed{
 		PeriodoTexto: "01/01/2020 a 31/12/2020",
-		DataInicio:   mustParseData(t, "2020-01-01"),
-		DataFim:      mustParseData(t, "2020-12-31"),
+		DataInicio:   mustParseData(t, "2025-01-01"),
+		DataFim:      mustParseData(t, "2025-12-31"),
 		Linhas:       []linhaExtraidaRel322{{CodSupervisor: "999999", Descricao: "INEXISTENTE", VlVendido: 1}},
 	}
 
