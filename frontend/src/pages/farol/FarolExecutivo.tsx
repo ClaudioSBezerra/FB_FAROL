@@ -129,6 +129,9 @@ interface CardsResponse {
     comp_inicio?: string; comp_fim?: string
     ref_ano?: number; ref_mes?: number
     label?: string
+    // Último dia com dado real importado — base pra "hoje" nos presets
+    // (não o relógio do navegador; a base pode estar 1+ dia atrasada).
+    ultimo_dia_importado?: string
   }
   periodos: string[]
   view: string
@@ -267,17 +270,10 @@ function ymd(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 function lastDayOfMonth(y: number, m: number): number { return new Date(y, m, 0).getDate() }
-function addDays(s: string, days: number): string {
-  const [y, m, d] = s.split('-').map(Number)
-  const dt = new Date(Date.UTC(y, m - 1, d))
-  dt.setUTCDate(dt.getUTCDate() + days)
-  return dt.toISOString().slice(0, 10)
-}
 function addYears(s: string, n: number): string {
   const [y, m, d] = s.split('-').map(Number)
   return ymd(y + n, m, d)
 }
-function todayYMD(): string { return new Date().toISOString().slice(0, 10) }
 function rangeDaysInclusive(ini: string, fim: string): number {
   const [yi, mi, di] = ini.split('-').map(Number)
   const [yf, mf, df] = fim.split('-').map(Number)
@@ -306,16 +302,26 @@ const PRESET_LABEL: Record<Preset, string> = {
   dia_anterior: 'Dia Anterior',
 }
 
-function presetRange(p: Preset, last?: { ano: number; mes: number }) {
-  const now = new Date()
-  const todayY = now.getUTCFullYear()
-  const todayM = now.getUTCMonth() + 1  // 1..12
-  const todayD = now.getUTCDate()
-  const today = ymd(todayY, todayM, todayD)
+// hoje = último dia com dado REAL importado (YYYY-MM-DD), não o relógio do
+// navegador — a base pode estar 1+ dia atrasada (ex: hoje 09/09, base só até
+// 08/09). Vem de periodo.ultimo_dia_importado (backend, inferLastDay). Se
+// ainda não carregou, cai pro dia real do navegador como fallback.
+function presetRange(p: Preset, hoje?: string) {
+  const today = hoje && hoje.length > 0 ? hoje : (() => {
+    const now = new Date()
+    return ymd(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
+  })()
+  const [todayY, todayM, todayD] = today.split('-').map(Number)
 
-  // Último mês 100% importado — fallback para o mês anterior ao corrente
-  const lastY = last?.ano ?? todayY
-  const lastM = last?.mes ?? (todayM > 1 ? todayM - 1 : 12)
+  // "Último mês" (preset yoy) = último mês CALENDÁRIO 100% completo em
+  // relação a `hoje` — só é o próprio mês de `hoje` quando `hoje` for o
+  // último dia daquele mês; senão é o mês anterior.
+  const hojeEhUltimoDiaDoMes = todayD === lastDayOfMonth(todayY, todayM)
+  let lastY = todayY, lastM = todayM
+  if (!hojeEhUltimoDiaDoMes) {
+    lastM = todayM - 1
+    if (lastM === 0) { lastM = 12; lastY-- }
+  }
 
   switch (p) {
     case 'ytd': {
@@ -366,16 +372,17 @@ function presetRange(p: Preset, last?: { ano: number; mes: number }) {
     }
     case 'dia_anterior':
     default: {
-      // Ontem × mesmo dia do ANO ANTERIOR (era: -7 dias/mesmo dia da semana).
-      const ontem = addDays(today, -1)
-      const [oy, om, od] = ontem.split('-').map(Number)
+      // Último dia com dado real importado × mesmo dia do ANO ANTERIOR.
+      // `today` JÁ É esse último dia importado (não o dia do relógio) — não
+      // subtrai mais 1 aqui, senão fica um dia atrasado do que a base tem.
+      const [oy, om, od] = today.split('-').map(Number)
       const dayCap = Math.min(od, lastDayOfMonth(oy - 1, om))
-      const ontemAnoAnterior = ymd(oy - 1, om, dayCap)
+      const anoAnterior = ymd(oy - 1, om, dayCap)
       return {
-        ref_inicio:  ontem,
-        ref_fim:     ontem,
-        comp_inicio: ontemAnoAnterior,
-        comp_fim:    ontemAnoAnterior,
+        ref_inicio:  today,
+        ref_fim:     today,
+        comp_inicio: anoAnterior,
+        comp_fim:    anoAnterior,
       }
     }
   }
@@ -899,13 +906,16 @@ export function useIndustrias() {
 }
 
 function useUltimoPeriodo() {
-  return useQuery<{ ref_ano?: number; ref_mes?: number; periodos: string[] }>({
+  return useQuery<{ ref_ano?: number; ref_mes?: number; periodos: string[]; ultimo_dia_importado?: string }>({
     queryKey: ['farol-v2-periodos'],
     queryFn: async () => {
       const r = await fetch('/api/v2/farol/cards?view=V01')
       if (!r.ok) throw new Error()
       const d = await r.json() as CardsResponse
-      return { ref_ano: d.periodo.ref_ano, ref_mes: d.periodo.ref_mes, periodos: d.periodos }
+      return {
+        ref_ano: d.periodo.ref_ano, ref_mes: d.periodo.ref_mes, periodos: d.periodos,
+        ultimo_dia_importado: d.periodo.ultimo_dia_importado,
+      }
     },
     staleTime: 60 * 60_000,
     refetchOnWindowFocus: false,
@@ -968,24 +978,14 @@ export default function FarolExecutivo() {
   useEffect(() => {
     if (refInicio || !periodosQ.data) return
     // Default ao entrar: "Ano × Ano" (ano anterior completo vs ano atual até hoje)
-    const r = presetRange('ytd', { ano: periodosQ.data.ref_ano!, mes: periodosQ.data.ref_mes! })
+    const r = presetRange('ytd', periodosQ.data.ultimo_dia_importado)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }, [periodosQ.data, refInicio])
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p)
-    // periodos vem DESC (mais recente primeiro); ref_ano/ref_mes pode ser 0 se
-    // ainda sem dados no momento do fetch — usar periodos[0] como fonte primária.
-    const ps = periodosQ.data?.periodos ?? []
-    const latestStr = ps[0]
-    const parsePeriodo = (s: string) => { const [y, m] = s.split('-'); return { ano: +y, mes: +m } }
-    const last = latestStr
-      ? parsePeriodo(latestStr)
-      : (periodosQ.data?.ref_ano && periodosQ.data?.ref_mes)
-        ? { ano: periodosQ.data.ref_ano, mes: periodosQ.data.ref_mes }
-        : undefined
-    const r = presetRange(p, last)
+    const r = presetRange(p, periodosQ.data?.ultimo_dia_importado)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }

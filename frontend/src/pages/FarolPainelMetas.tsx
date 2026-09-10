@@ -367,8 +367,8 @@ export default function FarolPainelMetas() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold">Painel de Metas por Indústria</h1>
-        <p className="text-sm text-muted-foreground">Meta × Realizado por Tipo de Métrica, navegável pela hierarquia GGV → CRV → RCA → Rede.</p>
+        <h1 className="text-xl font-semibold">Painel de Objetivos por Indústria</h1>
+        <p className="text-sm text-muted-foreground">Objetivo × Realizado por Tipo de Métrica, navegável pela hierarquia GGV → CRV → RCA → Rede.</p>
       </div>
 
       <div className="flex flex-wrap gap-3 items-end border rounded-lg p-4">
@@ -591,7 +591,7 @@ export default function FarolPainelMetas() {
               {painel.realizado.parcial && <Badge variant="secondary" className="mt-1">Mês em andamento</Badge>}
             </div>
             <div className="border rounded-lg p-4">
-              <div className="text-muted-foreground text-xs mb-1">Meta atual (Faixa {painel.proxima_faixa?.faixa ?? painel.faixa_atual?.faixa ?? '—'})</div>
+              <div className="text-muted-foreground text-xs mb-1">Objetivo atual (Faixa {painel.proxima_faixa?.faixa ?? painel.faixa_atual?.faixa ?? '—'})</div>
               <div className="text-2xl font-semibold">
                 {(painel.proxima_faixa ?? painel.faixa_atual)?.valor_meta !== undefined ? fmt((painel.proxima_faixa ?? painel.faixa_atual)!.valor_meta) : '—'}
               </div>
@@ -599,10 +599,10 @@ export default function FarolPainelMetas() {
             <div className={`border rounded-lg p-4 ${painel.delta > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}>
               <div className="flex items-center gap-2 text-xs mb-1">
                 {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
-                Falta pra bater a meta
+                Falta pra bater o objetivo
               </div>
               <div className="text-2xl font-semibold">
-                {painel.delta > 0 ? fmt(painel.delta) : 'Meta batida'}
+                {painel.delta > 0 ? fmt(painel.delta) : 'Objetivo batido'}
               </div>
             </div>
           </div>

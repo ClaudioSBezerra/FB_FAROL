@@ -71,6 +71,10 @@ export interface CardsResponse {
     label: string; comp_mode: string;
     cur_label?: string; ant_label?: string;
     comp_ano?: number; comp_mes?: number;
+    // Último dia com dado real importado (MAX data_faturamento/transmissao).
+    // Base pra "hoje" nos presets de período — não usar o relógio do
+    // navegador, a base pode estar 1+ dia atrasada.
+    ultimo_dia_importado?: string;
   }
   periodos: string[]
   view: string

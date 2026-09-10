@@ -457,6 +457,12 @@ type periodoInfo struct {
 	Label      string `json:"label"`
 	CurLabel   string `json:"cur_label"`
 	AntLabel   string `json:"ant_label"`
+	// UltimoDiaImportado — MAX(data_faturamento/transmissao) real da empresa
+	// (mesma fonte de inferLastDay). O front usa isto como "hoje" pros presets
+	// de período (dia_anterior/mes_corrente/ant_corrente/yoy) em vez da data do
+	// relógio do navegador — a base pode estar 1+ dia atrasada em relação ao
+	// dia corrente (ex: hoje 09/09, base só até 08/09).
+	UltimoDiaImportado string `json:"ultimo_dia_importado,omitempty"`
 	// Retrocompat — preenchidos quando inferidos a partir de mês inteiro
 	RefAno   int    `json:"ref_ano,omitempty"`
 	RefMes   int    `json:"ref_mes,omitempty"`
@@ -596,6 +602,9 @@ type periodResolution struct {
 	CompMode string
 	CompAno  int
 	CompMes  int
+	// UltimoDia — último dia com dado real importado (ver inferLastDay). Zero
+	// se a empresa ainda não tem nenhuma venda importada.
+	UltimoDia time.Time
 }
 
 func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodResolution {
@@ -606,6 +615,7 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 		return ""
 	}
 	res := periodResolution{}
+	res.UltimoDia = inferLastDay(db, empresaID)
 
 	// 1) Período principal — preferência: datas explícitas; fallback ano/mes; senão último mês
 	refInicio := parseDateISO(get("ref_inicio"))
@@ -650,7 +660,7 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 			// IMPORTADO ("até hoje" = último dado). Comparativo = ANO ANTERIOR
 			// INTEIRO (deriveCompRange = 01/jan–31/dez).
 			if mode == "ytd" {
-				last := inferLastDay(db, empresaID)
+				last := res.UltimoDia
 				if last.IsZero() {
 					last = refFim // fallback: fim do mês de ref
 				}
@@ -662,7 +672,7 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 
 			// mtd: mês atual (01/dia -> último dado) vs mês anterior inteiro
 			if mode == "mtd" {
-				last := inferLastDay(db, empresaID)
+				last := res.UltimoDia
 				if last.IsZero() {
 					last = refFim // fallback: fim do mês de ref
 				}
@@ -814,19 +824,20 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			Cards: cards,
 			KPI:   kpi,
 			Periodo: periodoInfo{
-				Fluxo:      fluxo.name,
-				RefInicio:  pr.RefInicio.Format("2006-01-02"),
-				RefFim:     pr.RefFim.Format("2006-01-02"),
-				CompInicio: fmtDateOrEmpty(pr.CompInicio),
-				CompFim:    fmtDateOrEmpty(pr.CompFim),
-				Label:      plabel,
-				CurLabel:   curLabel,
-				AntLabel:   antLabel,
-				RefAno:     pr.RefAno,
-				RefMes:     pr.RefMes,
-				CompMode:   pr.CompMode,
-				CompAno:    pr.CompAno,
-				CompMes:    pr.CompMes,
+				Fluxo:              fluxo.name,
+				RefInicio:          pr.RefInicio.Format("2006-01-02"),
+				RefFim:             pr.RefFim.Format("2006-01-02"),
+				CompInicio:         fmtDateOrEmpty(pr.CompInicio),
+				CompFim:            fmtDateOrEmpty(pr.CompFim),
+				Label:              plabel,
+				CurLabel:           curLabel,
+				AntLabel:           antLabel,
+				RefAno:             pr.RefAno,
+				RefMes:             pr.RefMes,
+				CompMode:           pr.CompMode,
+				CompAno:            pr.CompAno,
+				CompMes:            pr.CompMes,
+				UltimoDiaImportado: fmtDateOrEmpty(pr.UltimoDia),
 			},
 			Periodos:       periodos,
 			View:           view,
@@ -4894,6 +4905,7 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 				AntLabel:   antLabel,
 				RefAno:     pr.RefAno, RefMes: pr.RefMes,
 				CompMode: pr.CompMode, CompAno: pr.CompAno, CompMes: pr.CompMes,
+				UltimoDiaImportado: fmtDateOrEmpty(pr.UltimoDia),
 			},
 			Periodos:       fetchPeriodosDisponiveis(db, empresaID),
 			View:           view,

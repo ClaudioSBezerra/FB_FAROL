@@ -241,7 +241,7 @@ export default function FarolPublicMetasPanel() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-md mx-auto">
       <div>
-        <h1 className="text-lg font-semibold">Metas por Indústria</h1>
+        <h1 className="text-lg font-semibold">Objetivos por Indústria</h1>
         <p className="text-xs text-muted-foreground">{scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
       </div>
 
@@ -374,10 +374,10 @@ export default function FarolPublicMetasPanel() {
               <div className={`rounded-xl p-4 border ${painel.delta > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
                 <div className="flex items-center gap-2 text-xs mb-1">
                   {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
-                  {painel.delta > 0 ? `Falta ${fmt(painel.delta)} pra bater a meta` : 'Meta batida!'}
+                  {painel.delta > 0 ? `Falta ${fmt(painel.delta)} pra bater o objetivo` : 'Objetivo batido!'}
                 </div>
                 {painel.proxima_faixa && (
-                  <div className="text-xs text-muted-foreground">Próxima meta (Faixa {painel.proxima_faixa.faixa}): {painel.proxima_faixa.valor_meta}</div>
+                  <div className="text-xs text-muted-foreground">Próximo objetivo (Faixa {painel.proxima_faixa.faixa}): {painel.proxima_faixa.valor_meta}</div>
                 )}
               </div>
 

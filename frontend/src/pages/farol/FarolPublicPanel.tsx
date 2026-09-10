@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   Breadcrumb,
-  parsePeriodo, BRLValue, fmtPct, fmtNum, fmtInt,
+  BRLValue, fmtPct, fmtNum, fmtInt,
   type CardsResponse, type CardItem, type DrillStep, type KPI,
 } from './FarolV2Dashboard'
 // Direto da lib, não pelo re-export do FarolV2Dashboard: aquele arquivo já
@@ -370,20 +370,18 @@ export default function FarolPublicPanel() {
   const { sorted: sortedCards } =
     useSortedCards(data?.cards ?? [], 'farol.sort.public', { field: 'valor', direction: 'desc' })
 
-  // Ao carregar, aplica o preset default (Último mês YoY) usando o último mês
-  // com dados (periodos[0], ordem DESC do backend) como âncora.
-  const periodos = data?.periodos ?? []
-  if (refInicio === '' && periodos.length > 0) {
-    const last = parsePeriodo(periodos[0])
-    const r = presetRange('yoy', last)
+  // Ao carregar, aplica o preset default (Último mês YoY) usando o último dia
+  // com dado REAL importado (não o relógio do navegador) como âncora.
+  const ultimoDia = data?.periodo?.ultimo_dia_importado
+  if (refInicio === '' && ultimoDia) {
+    const r = presetRange('yoy', ultimoDia)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p)
-    const last = periodos.length > 0 ? parsePeriodo(periodos[0]) : undefined
-    const r = presetRange(p, last)
+    const r = presetRange(p, ultimoDia)
     setRefInicio(r.ref_inicio); setRefFim(r.ref_fim)
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
     setUserDrill([])
@@ -473,7 +471,7 @@ export default function FarolPublicPanel() {
             href={scope === 'sup' ? `/m/${cnpj}/sup/${scopeCod}/metas-industria` : `/m/${cnpj}/rca/${scopeCod}/metas-industria`}
             className="px-4 py-2.5 text-base font-bold uppercase tracking-wide rounded-lg border-2 border-slate-300 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            Metas Indústria
+            Objetivos Indústria
           </a>
         </div>
       </div>

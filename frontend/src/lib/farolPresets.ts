@@ -40,26 +40,29 @@ function ymd(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 function lastDayOfMonth(y: number, m: number): number { return new Date(y, m, 0).getDate() }
-function addDays(s: string, days: number): string {
-  const [y, m, d] = s.split('-').map(Number)
-  const dt = new Date(Date.UTC(y, m - 1, d))
-  dt.setUTCDate(dt.getUTCDate() + days)
-  return dt.toISOString().slice(0, 10)
-}
 
 // presetRange — replica EXATAMENTE a lógica do painel executivo.
-//   last = último mês com dados (ano, mes). Usado só pelo preset baseado no
-//   "último mês importado" (yoy). Os demais (ytd, ant_corrente, mes_corrente,
-//   dia_anterior) usam a data de hoje.
-export function presetRange(p: Preset, last?: { ano: number; mes: number }): PresetRange {
-  const now = new Date()
-  const todayY = now.getUTCFullYear()
-  const todayM = now.getUTCMonth() + 1
-  const todayD = now.getUTCDate()
-  const today = ymd(todayY, todayM, todayD)
+//   hoje = último dia com dado REAL importado (YYYY-MM-DD), não o relógio do
+//   navegador — a base pode estar 1+ dia atrasada (ex: hoje 09/09, base só
+//   até 08/09). Vem de periodo.ultimo_dia_importado (backend, inferLastDay).
+//   Se ainda não carregou (fetch inicial / empresa sem dado nenhum), cai pro
+//   dia real do navegador como fallback.
+//   "Último mês" (preset yoy) = último mês CALENDÁRIO 100% completo em
+//   relação a `hoje` — só é o próprio mês de `hoje` quando `hoje` for o
+//   último dia daquele mês; senão é o mês anterior.
+export function presetRange(p: Preset, hoje?: string): PresetRange {
+  const today = hoje && hoje.length > 0 ? hoje : (() => {
+    const now = new Date()
+    return ymd(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
+  })()
+  const [todayY, todayM, todayD] = today.split('-').map(Number)
 
-  const lastY = last?.ano ?? todayY
-  const lastM = last?.mes ?? (todayM > 1 ? todayM - 1 : 12)
+  const hojeEhUltimoDiaDoMes = todayD === lastDayOfMonth(todayY, todayM)
+  let lastY = todayY, lastM = todayM
+  if (!hojeEhUltimoDiaDoMes) {
+    lastM = todayM - 1
+    if (lastM === 0) { lastM = 12; lastY-- }
+  }
 
   switch (p) {
     case 'ytd': {
@@ -108,12 +111,13 @@ export function presetRange(p: Preset, last?: { ano: number; mes: number }): Pre
     }
     case 'dia_anterior':
     default: {
-      // Ontem × mesmo dia do ANO ANTERIOR (era: -7 dias/mesmo dia da semana).
-      const ontem = addDays(today, -1)
-      const [oy, om, od] = ontem.split('-').map(Number)
+      // Último dia com dado real importado × mesmo dia do ANO ANTERIOR.
+      // `today` JÁ É esse último dia importado (não o dia do relógio) — não
+      // subtrai mais 1 aqui, senão fica um dia atrasado do que a base tem.
+      const [oy, om, od] = today.split('-').map(Number)
       const dayCap = Math.min(od, lastDayOfMonth(oy - 1, om))
-      const ontemAnoAnterior = ymd(oy - 1, om, dayCap)
-      return { ref_inicio: ontem, ref_fim: ontem, comp_inicio: ontemAnoAnterior, comp_fim: ontemAnoAnterior }
+      const anoAnterior = ymd(oy - 1, om, dayCap)
+      return { ref_inicio: today, ref_fim: today, comp_inicio: anoAnterior, comp_fim: anoAnterior }
     }
   }
 }
