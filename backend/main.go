@@ -587,6 +587,10 @@ func main() {
 	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
 	http.HandleFunc("/api/farol/metas-painel-combinado", withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura"))
 
+	// Drill-down de itens (Sortimento): vendeu/não vendeu, Qtd, Valor — por
+	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
+	http.HandleFunc("/api/farol/metas-painel-itens", withSP(handlers.MetasPainelItensHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

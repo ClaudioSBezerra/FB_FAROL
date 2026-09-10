@@ -7,8 +7,10 @@ import { Badge } from '@/components/ui/badge'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target, AlertTriangle } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch } from 'lucide-react'
+import { fmtBRL } from '@/lib/farolMoney'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,6 +109,7 @@ interface PainelCombinadoRede {
   razao: string
   fantasia: string
   qt_lojas: number
+  uf: string
   cod_ggv: string
   nome_ggv: string
   cod_crv: string
@@ -129,6 +132,7 @@ interface PainelCombinadoCliente {
   cnpj: string
   razao: string
   fantasia: string
+  uf: string
   cod_ggv: string
   nome_ggv: string
   cod_crv: string
@@ -148,6 +152,19 @@ interface PainelCombinado {
   sortimento: PainelMetricaResumo
   redes: PainelCombinadoRede[]
   clientes: PainelCombinadoCliente[]
+  data_inicio_usada: string
+  data_fim_usada: string
+}
+
+// PainelItemLinha — 1 linha do drill-down "Itens" (Sortimento): quais EANs
+// venderam/não venderam numa Rede ou Loja, com Qtd e Valor — pedido do
+// Claudio em 10/09/2026.
+interface PainelItemLinha {
+  ean: string
+  nome: string
+  qtd: number
+  valor: number
+  vendeu: boolean
 }
 
 // AbaCombinado — as 4 abas da visão Combinado, cada uma batizada e
@@ -243,6 +260,36 @@ const FLUXOS = [
 ]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+
+// StatusBadge — "Coberta"/"Não coberta": VERDE pra atingido, VERMELHO pra
+// não atingido (padrão de cor do Farol inteiro — o Badge variant="default"
+// do shadcn usa a cor PRIMÁRIA do tema, não verde/vermelho, então precisa
+// de classes explícitas aqui).
+function StatusBadge({ atingiu, labelSim = 'Coberta', labelNao = 'Não coberta' }: {
+  atingiu: boolean
+  labelSim?: string
+  labelNao?: string
+}) {
+  return (
+    <Badge className={atingiu
+      ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+      : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-100'}
+    >
+      {atingiu ? labelSim : labelNao}
+    </Badge>
+  )
+}
+
+// primeiroEUltimoDiaDoMes — default do filtro "Período: de/até" (pedido do
+// Claudio em 10/09/2026): início do mês corrente até o final do mês
+// corrente, no fuso do navegador (mesma convenção de data YYYY-MM-DD usada
+// em toda a barra de filtros/vigências deste painel).
+function primeiroEUltimoDiaDoMes(): { inicio: string; fim: string } {
+  const hoje = new Date()
+  const y = hoje.getFullYear(), m = hoje.getMonth()
+  const fmtd = (d: Date) => d.toISOString().slice(0, 10)
+  return { inicio: fmtd(new Date(y, m, 1)), fim: fmtd(new Date(y, m + 1, 0)) }
+}
 
 // dedup — lista de {v: código, l: rótulo} única por código, ordenada pelo
 // rótulo. Alimenta os selects da barra de filtros da visão Combinada.
@@ -433,8 +480,25 @@ export default function FarolPainelMetas() {
 
   const periodoSelecionado = periodosCombinados.find(p => p.chave === vigenciaCombinadaKey)
 
+  // Filtro "Período: de/até" (pedido do Claudio em 10/09/2026) — default =
+  // os bounds da vigência escolhida (que, pra vigência aberta/corrente,
+  // geralmente JÁ é "início do mês corrente até final do mês corrente").
+  // Editável: o usuário pode estreitar pra uma janela menor dentro da
+  // vigência. O backend (farol_metas_painel_combinado.go) só recalcula ao
+  // vivo quando essas datas DIFEREM dos bounds da vigência — do contrário
+  // respeita o congelamento normalmente (FR17), então não custa nada
+  // mandar essas datas sempre preenchidas.
+  const [periodoManualInicio, setPeriodoManualInicio] = useState('')
+  const [periodoManualFim, setPeriodoManualFim] = useState('')
+  useEffect(() => {
+    if (periodoSelecionado) {
+      setPeriodoManualInicio(periodoSelecionado.cobertura.data_inicio)
+      setPeriodoManualFim(periodoSelecionado.cobertura.data_fim)
+    }
+  }, [periodoSelecionado?.chave])
+
   const { data: painelCombinado, isLoading: isLoadingCombinado, isFetching: isFetchingCombinado } = useQuery<PainelCombinado>({
-    queryKey: ['farol-metas-painel-combinado', industriaSelecionada?.cobertura?.id, industriaSelecionada?.sortimento?.id, periodoSelecionado?.chave, fluxo],
+    queryKey: ['farol-metas-painel-combinado', industriaSelecionada?.cobertura?.id, industriaSelecionada?.sortimento?.id, periodoSelecionado?.chave, fluxo, periodoManualInicio, periodoManualFim],
     queryFn: async () => {
       const p = new URLSearchParams({
         vinculo_cobertura_id: String(industriaSelecionada!.cobertura!.id),
@@ -443,11 +507,14 @@ export default function FarolPainelMetas() {
         vigencia_sortimento_id: String(periodoSelecionado!.sortimento.id),
         fluxo,
       })
+      if (periodoManualInicio && periodoManualFim) {
+        p.set('data_inicio', periodoManualInicio); p.set('data_fim', periodoManualFim)
+      }
       const r = await fetch(`/api/farol/metas-painel-combinado?${p}`, { headers })
       if (!r.ok) throw new Error(await r.text())
       return r.json()
     },
-    enabled: metrica === 'combinado' && !!periodoSelecionado,
+    enabled: metrica === 'combinado' && !!periodoSelecionado && !!periodoManualInicio && !!periodoManualFim,
   })
 
   // ─── Barra de filtros da visão Combinada (client-side sobre .redes) ─────────
@@ -455,14 +522,16 @@ export default function FarolPainelMetas() {
   // re-fetch. Os selects são EM CASCATA: GGV limita CRV, que limita RCA, que
   // limita Rede; "Cliente" só estreita a lista de Redes (mostra a Rede que
   // contém aquele CNPJ), sem trocar a granularidade — decisão do Claudio.
+  // UF é ORTOGONAL à hierarquia (não cascateia com GGV/CRV/RCA/Rede).
   const [fGGV, setFGGV] = useState('')
   const [fCRV, setFCRV] = useState('')
   const [fRCA, setFRCA] = useState('')
   const [fRede, setFRede] = useState('')
   const [fCliente, setFCliente] = useState('')
-  const limparFiltrosCombinado = () => { setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('') }
+  const [fUF, setFUF] = useState('')
+  const limparFiltrosCombinado = () => { setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente(''); setFUF('') }
   useEffect(() => {
-    setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('')
+    setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente(''); setFUF('')
   }, [industriaID, metrica, vigenciaCombinadaKey, fluxo])
 
   const redesCombinado = painelCombinado?.redes ?? []
@@ -495,6 +564,14 @@ export default function FarolPainelMetas() {
     }
     return [...seen.entries()].map(([v, l]) => ({ v, l })).sort((a, b) => a.l.localeCompare(b.l))
   }, [redesCombinado, fGGV, fCRV, fRCA, fRede])
+  // UF — não vem no CSV de Clientes Válidos (só nas linhas de venda);
+  // resolvido pelo backend a partir da venda mais recente do CNPJ "dono"
+  // da Rede (ver resolverUFClientes, farol_metas_painel_combinado.go).
+  // Filtro ORTOGONAL: não cascateia com GGV/CRV/RCA/Rede, só narrowing.
+  const optsUF = useMemo(
+    () => dedup(redesCombinado.filter(r => r.uf).map(r => ({ v: r.uf, l: r.uf }))),
+    [redesCombinado],
+  )
 
   const redesVisiveis = useMemo(
     () => redesCombinado.filter(r =>
@@ -502,8 +579,9 @@ export default function FarolPainelMetas() {
       (!fCRV || r.cod_crv === fCRV) &&
       (!fRCA || r.cod_rca === fRCA) &&
       (!fRede || r.cod_princ === fRede) &&
+      (!fUF || r.uf === fUF) &&
       (!fCliente || (r.clientes ?? []).some(c => c.cnpj === fCliente))),
-    [redesCombinado, fGGV, fCRV, fRCA, fRede, fCliente],
+    [redesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
   // TOTAL — soma só das colunas que a planilha "Resumo Redes" soma na última
@@ -533,23 +611,56 @@ export default function FarolPainelMetas() {
       (!fCRV || c.cod_crv === fCRV) &&
       (!fRCA || c.cod_rca === fRCA) &&
       (!fRede || c.cod_princ === fRede) &&
+      (!fUF || c.uf === fUF) &&
       (!fCliente || c.cnpj === fCliente)),
-    [clientesCombinado, fGGV, fCRV, fRCA, fRede, fCliente],
+    [clientesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
   const gruposGGVCRV = useMemo(() => agruparCombinado(redesVisiveis, false), [redesVisiveis])
   const gruposGGVCRVRCA = useMemo(() => agruparCombinado(redesVisiveis, true), [redesVisiveis])
 
+  // ─── Drill-down "Itens" (Sortimento): vendeu/não vendeu, Qtd e Valor —
+  // clicar numa Rede (aba "Resumo Redes") mostra os itens de TODAS as
+  // lojas dela; clicar numa loja (aba "Resumo Rede×Cliente") mostra só os
+  // itens daquele CNPJ. Pedido do Claudio em 10/09/2026.
+  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; titulo: string } | null>(null)
+  const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
+    queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        vinculo_sortimento_id: String(industriaSelecionada!.sortimento!.id),
+        vigencia_sortimento_id: String(periodoSelecionado!.sortimento.id),
+        fluxo,
+      })
+      if (itensAlvo!.cnpj) p.set('cnpj', itensAlvo!.cnpj)
+      else p.set('cod_princ', itensAlvo!.codPrinc!)
+      const r = await fetch(`/api/farol/metas-painel-itens?${p}`, { headers })
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    enabled: !!itensAlvo && !!industriaSelecionada?.sortimento && !!periodoSelecionado,
+  })
+  const itensLista = itensResp?.itens ?? []
+
   // Nível 5 (CNPJ) é um drill-down de UMA Rede escolhida, não um valor de
   // `nivel` selecionável — por isso fica fora do enum NIVEIS/fetch e só lê
   // .clientes que já veio junto no Realizado da Rede.
+  // Cobertura mede R$ por loja/Rede; Sortimento mede qtd de EANs — só a
+  // primeira usa formatação monetária linha a linha (pedido do Claudio em
+  // 10/09/2026, "colocar o R$ ao lado do Valor").
+  const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede'
   const linhas = redeAberta
     ? (redeAberta.clientes ?? []).map(c => ({
+        // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
+        // aqui "nome" já é a loja, sem contagem de lojas ao lado.
         nome: c.fantasia || c.razao || c.cnpj, sub: c.cnpj, valor: c.valor, marcador: undefined as boolean | undefined, drill: undefined as (() => void) | undefined,
       }))
     : nivel === 'rede'
     ? (painel?.realizado.redes ?? []).map(r => ({
-        nome: r.fantasia || r.razao || r.cod_princ, sub: `${r.nome_rca || r.cod_rca} · ${r.qt_lojas} loja(s)`,
+        // Qt de lojas AO LADO do nome da Rede (pedido do Claudio em
+        // 10/09/2026) — RCA fica isolado no "sub", sem misturar os dois.
+        nome: `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
+        sub: r.nome_rca || r.cod_rca,
         valor: r.valor, marcador: r.atingiu as boolean | undefined, drill: () => setRedeAberta(r),
       }))
     : (painel?.realizado.grupos ?? []).map(g => ({
@@ -674,18 +785,37 @@ export default function FarolPainelMetas() {
             </div>
 
             <div className="flex flex-wrap gap-2 items-end border rounded-lg p-4">
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Período</label>
+                <div className="flex items-center gap-1">
+                  <input type="date" value={periodoManualInicio} onChange={e => setPeriodoManualInicio(e.target.value)}
+                    className="h-10 rounded-md border border-input bg-background px-2 text-sm" />
+                  <span className="text-xs text-muted-foreground">até</span>
+                  <input type="date" value={periodoManualFim} onChange={e => setPeriodoManualFim(e.target.value)}
+                    className="h-10 rounded-md border border-input bg-background px-2 text-sm" />
+                </div>
+              </div>
               <FiltroSelect label="GGV" value={fGGV} opts={optsGGV}
                 onChange={v => { setFGGV(v); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('') }} />
               <FiltroSelect label="Supervisor (CRV)" value={fCRV} opts={optsCRV}
                 onChange={v => { setFCRV(v); setFRCA(''); setFRede(''); setFCliente('') }} />
               <FiltroSelect label="RCA" value={fRCA} opts={optsRCA}
                 onChange={v => { setFRCA(v); setFRede(''); setFCliente('') }} />
+              <FiltroSelect label="UF" value={fUF} opts={optsUF} onChange={setFUF} />
               <FiltroSelect label="Rede" value={fRede} opts={optsRede}
                 onChange={v => { setFRede(v); setFCliente('') }} />
               <FiltroSelect label="Cliente" value={fCliente} opts={optsCliente} onChange={setFCliente} />
-              {(fGGV || fCRV || fRCA || fRede || fCliente) && (
+              {(fGGV || fCRV || fRCA || fRede || fUF || fCliente) && (
                 <button className="text-xs text-primary hover:underline pb-2.5" onClick={limparFiltrosCombinado}>
                   Limpar filtros
+                </button>
+              )}
+              {painelCombinado && (
+                <button
+                  className="text-xs text-primary hover:underline pb-2.5 ml-auto"
+                  onClick={() => { const { inicio, fim } = primeiroEUltimoDiaDoMes(); setPeriodoManualInicio(inicio); setPeriodoManualFim(fim) }}
+                >
+                  Mês corrente
                 </button>
               )}
             </div>
@@ -710,7 +840,7 @@ export default function FarolPainelMetas() {
             </div>
 
             {(abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
-              <div className="border rounded-lg overflow-x-auto">
+              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -746,7 +876,8 @@ export default function FarolPainelMetas() {
             )}
 
             {abaCombinado === 'rede' && (
-              <div className="border rounded-lg overflow-x-auto">
+              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os itens que venderam e não venderam.</p>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -754,6 +885,7 @@ export default function FarolPainelMetas() {
                       <TableHead>Razão</TableHead>
                       <TableHead>Fantasia</TableHead>
                       <TableHead className="text-right">Qt Lojas</TableHead>
+                      <TableHead>UF</TableHead>
                       <TableHead>GGV</TableHead>
                       <TableHead>CRV</TableHead>
                       <TableHead>RCA</TableHead>
@@ -761,6 +893,7 @@ export default function FarolPainelMetas() {
                       <TableHead className="text-right">Valor Venda</TableHead>
                       <TableHead className="text-right">Venda Média</TableHead>
                       <TableHead className="text-right">Falta (R$)</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
                       <TableHead className="text-right">Obj. EANs</TableHead>
                       <TableHead className="text-right">Qt Méd. EANs</TableHead>
                       <TableHead className="text-right">Falta EANs</TableHead>
@@ -768,24 +901,35 @@ export default function FarolPainelMetas() {
                   </TableHeader>
                   <TableBody>
                     {redesVisiveis.length === 0 && (
-                      <TableRow><TableCell colSpan={14} className="text-center py-8 text-muted-foreground">Sem Redes pra este recorte/filtros</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={16} className="text-center py-8 text-muted-foreground">Sem Redes pra este recorte/filtros</TableCell></TableRow>
                     )}
                     {redesVisiveis.map((r, i) => {
                       const faltaCob = r.cobertura_valor - r.cobertura_objetivo
                       const faltaEan = r.sortimento_valor - r.sortimento_objetivo
                       return (
-                        <TableRow key={i}>
+                        <TableRow
+                          key={i}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: r.fantasia || r.razao || r.cod_princ })}
+                        >
                           <TableCell className="font-mono text-xs">{r.cod_princ}</TableCell>
                           <TableCell className="text-sm">{r.razao}</TableCell>
-                          <TableCell className="text-sm font-medium">{r.fantasia}</TableCell>
+                          <TableCell className="text-sm font-medium">
+                            <span className="inline-flex items-center gap-1">
+                              <PackageSearch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              {r.fantasia}
+                            </span>
+                          </TableCell>
                           <TableCell className="text-right">{r.qt_lojas}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{r.uf || '—'}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_ggv} — {r.nome_ggv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_crv} — {r.nome_crv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_rca} — {r.nome_rca}</TableCell>
-                          <TableCell className="text-right">{fmt(r.cobertura_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmt(r.cobertura_valor_total)}</TableCell>
-                          <TableCell className="text-right">{fmt(r.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaCob)}</TableCell>
+                          <TableCell className="text-right">{fmtBRL(r.cobertura_objetivo)}</TableCell>
+                          <TableCell className="text-right">{fmtBRL(r.cobertura_valor_total)}</TableCell>
+                          <TableCell className="text-right">{fmtBRL(r.cobertura_valor)}</TableCell>
+                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={r.cobertura_atingiu} /></TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
                           <TableCell className={`text-right ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)}</TableCell>
@@ -797,9 +941,11 @@ export default function FarolPainelMetas() {
                         <TableCell>TOTAL</TableCell>
                         <TableCell /><TableCell />
                         <TableCell />
+                        <TableCell />
                         <TableCell /><TableCell /><TableCell />
-                        <TableCell className="text-right">{fmt(totComb.objCob)}</TableCell>
-                        <TableCell className="text-right">{fmt(totComb.valorVenda)}</TableCell>
+                        <TableCell className="text-right">{fmtBRL(totComb.objCob)}</TableCell>
+                        <TableCell className="text-right">{fmtBRL(totComb.valorVenda)}</TableCell>
+                        <TableCell />
                         <TableCell />
                         <TableCell />
                         <TableCell className="text-right">{fmt(totComb.objEan)}</TableCell>
@@ -813,7 +959,8 @@ export default function FarolPainelMetas() {
             )}
 
             {abaCombinado === 'cliente' && (
-              <div className="border rounded-lg overflow-x-auto">
+              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa loja pra ver os itens que venderam e não venderam nela.</p>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -821,12 +968,14 @@ export default function FarolPainelMetas() {
                       <TableHead>CNPJ</TableHead>
                       <TableHead>Razão</TableHead>
                       <TableHead>Fantasia</TableHead>
+                      <TableHead>UF</TableHead>
                       <TableHead>GGV</TableHead>
                       <TableHead>CRV</TableHead>
                       <TableHead>RCA</TableHead>
                       <TableHead className="text-right">Obj. Cobertura</TableHead>
                       <TableHead className="text-right">Valor Venda</TableHead>
                       <TableHead className="text-right">Falta (R$)</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
                       <TableHead className="text-right">Obj. EANs</TableHead>
                       <TableHead className="text-right">Qt EANs</TableHead>
                       <TableHead className="text-right">Falta EANs</TableHead>
@@ -834,23 +983,34 @@ export default function FarolPainelMetas() {
                   </TableHeader>
                   <TableBody>
                     {clientesVisiveis.length === 0 && (
-                      <TableRow><TableCell colSpan={13} className="text-center py-8 text-muted-foreground">Sem Clientes pra este recorte/filtros</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={15} className="text-center py-8 text-muted-foreground">Sem Clientes pra este recorte/filtros</TableCell></TableRow>
                     )}
                     {clientesVisiveis.map((c, i) => {
                       const faltaCob = c.cobertura_valor - c.cobertura_objetivo
                       const faltaEan = c.sortimento_valor - c.sortimento_objetivo
                       return (
-                        <TableRow key={i}>
+                        <TableRow
+                          key={i}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})` })}
+                        >
                           <TableCell className="font-mono text-xs">{c.cod_princ}</TableCell>
                           <TableCell className="font-mono text-xs">{c.cnpj}</TableCell>
                           <TableCell className="text-sm">{c.razao}</TableCell>
-                          <TableCell className="text-sm font-medium">{c.fantasia}</TableCell>
+                          <TableCell className="text-sm font-medium">
+                            <span className="inline-flex items-center gap-1">
+                              <PackageSearch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              {c.fantasia}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{c.uf || '—'}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_ggv} — {c.nome_ggv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_crv} — {c.nome_crv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_rca} — {c.nome_rca}</TableCell>
-                          <TableCell className="text-right">{fmt(c.cobertura_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmt(c.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaCob)}</TableCell>
+                          <TableCell className="text-right">{fmtBRL(c.cobertura_objetivo)}</TableCell>
+                          <TableCell className="text-right">{fmtBRL(c.cobertura_valor)}</TableCell>
+                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={faltaCob >= 0} /></TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_valor)}</TableCell>
                           <TableCell className={`text-right ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)}</TableCell>
@@ -903,7 +1063,7 @@ export default function FarolPainelMetas() {
               </div>
 
               {painel.recortes && (
-                <div className="border rounded-lg overflow-hidden">
+                <div className="border rounded-lg overflow-hidden [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -963,7 +1123,7 @@ export default function FarolPainelMetas() {
             </div>
           )}
 
-          <div className="border rounded-lg overflow-hidden">
+          <div className="border rounded-lg overflow-hidden [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -982,10 +1142,10 @@ export default function FarolPainelMetas() {
                   <TableRow key={i} className={l.drill ? 'cursor-pointer hover:bg-muted/50' : undefined} onClick={l.drill}>
                     <TableCell className="font-medium">{l.nome}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{l.sub}</TableCell>
-                    <TableCell className="text-right">{fmt(l.valor)}</TableCell>
+                    <TableCell className="text-right">{(nivel === 'rede' || redeAberta) && ehCobertura ? fmtBRL(l.valor) : fmt(l.valor)}</TableCell>
                     {nivel === 'rede' && !redeAberta && (
                       <TableCell className="text-center">
-                        <Badge variant={l.marcador ? 'default' : 'secondary'}>{l.marcador ? 'Coberta' : 'Não coberta'}</Badge>
+                        <StatusBadge atingiu={!!l.marcador} />
                       </TableCell>
                     )}
                     {podeAbrirLinha && <TableCell className="text-center text-muted-foreground">›</TableCell>}
@@ -998,6 +1158,49 @@ export default function FarolPainelMetas() {
           )}
         </>
       ) : null}
+
+      {/* Drill-down de itens (Sortimento): clicar numa Rede (aba "Resumo
+          Redes") mostra os itens de TODAS as lojas dela; clicar numa loja
+          (aba "Resumo Rede×Cliente") mostra só os itens daquele CNPJ.
+          Vendeu/não vendeu, Qtd e Valor — pedido do Claudio 10/09/2026. */}
+      <Dialog open={!!itensAlvo} onOpenChange={open => { if (!open) setItensAlvo(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Itens — {itensAlvo?.titulo}</DialogTitle>
+          </DialogHeader>
+          {isLoadingItens ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
+          ) : (
+            <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>EAN</TableHead>
+                    <TableHead>Produto</TableHead>
+                    <TableHead className="text-right">Qtd</TableHead>
+                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead className="text-center">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {itensLista.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                  )}
+                  {itensLista.map((it, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{it.ean}</TableCell>
+                      <TableCell className="text-sm">{it.nome || '—'}</TableCell>
+                      <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
+                      <TableCell className="text-right">{fmtBRL(it.valor)}</TableCell>
+                      <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

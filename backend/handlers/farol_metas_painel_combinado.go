@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // PainelClienteRef — loja/CNPJ de uma Rede, só o suficiente pro filtro
@@ -35,10 +37,15 @@ type PainelClienteRef struct {
 }
 
 type PainelCombinadoRede struct {
-	CodPrinc            string             `json:"cod_princ"`
-	Razao               string             `json:"razao"`
-	Fantasia            string             `json:"fantasia"`
-	QtLojas             int                `json:"qt_lojas"`
+	CodPrinc string `json:"cod_princ"`
+	Razao    string `json:"razao"`
+	Fantasia string `json:"fantasia"`
+	QtLojas  int    `json:"qt_lojas"`
+	// UF — não existe no CSV de Clientes Válidos nem em cadastro de cliente
+	// algum (só nas linhas de VENDA); resolvido a partir da venda mais
+	// recente do CNPJ "dono" da Rede (ver resolverUFClientes), em qualquer
+	// período/fornecedor do Farol. Vazio se o dono nunca vendeu nada.
+	UF                  string             `json:"uf"`
 	CodGGV              string             `json:"cod_ggv"`
 	NomeGGV             string             `json:"nome_ggv"`
 	CodCRV              string             `json:"cod_crv"`
@@ -80,6 +87,7 @@ type PainelCombinadoCliente struct {
 	CNPJ               string  `json:"cnpj"`
 	Razao              string  `json:"razao"`
 	Fantasia           string  `json:"fantasia"`
+	UF                 string  `json:"uf"` // ver PainelCombinadoRede.UF — aqui é exato (o CNPJ do próprio cliente, não um "dono" aproximado)
 	CodGGV             string  `json:"cod_ggv"`
 	NomeGGV            string  `json:"nome_ggv"`
 	CodCRV             string  `json:"cod_crv"`
@@ -92,6 +100,41 @@ type PainelCombinadoCliente struct {
 	SortimentoObjetivo float64 `json:"sortimento_objetivo"`
 }
 
+// resolverUFClientes resolve o UF de cada CNPJ a partir da venda mais
+// RECENTE dele — qualquer período, qualquer fornecedor, faturado OU
+// transmitido (o que vier depois na ordenação) — decisão do Claudio em
+// 10/09/2026: não existe UF na lista de Clientes Válidos nem em cadastro
+// de cliente algum, só nas linhas de venda (migration 156). CNPJ que nunca
+// vendeu nada no Farol simplesmente não aparece no mapa.
+func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(cnpjs) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(`
+		SELECT DISTINCT ON (cnpj) cnpj, uf FROM (
+			SELECT cnpj, uf, data_faturamento AS data FROM vendas_faturadas
+				WHERE empresa_id = $1 AND cnpj = ANY($2) AND uf <> ''
+			UNION ALL
+			SELECT cnpj, uf, data_transmissao AS data FROM vendas_transmitidas
+				WHERE empresa_id = $1 AND cnpj = ANY($2) AND uf <> ''
+		) x
+		ORDER BY cnpj, data DESC
+	`, empresaID, pq.Array(cnpjs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cnpj, uf string
+		if err := rows.Scan(&cnpj, &uf); err != nil {
+			return nil, err
+		}
+		out[cnpj] = uf
+	}
+	return out, rows.Err()
+}
+
 // montarClientesCombinado explode as Redes já mescladas (`redes`, que já
 // resolveu o dono GGV/CRV/RCA e cobre tanto o caso normal quanto Redes
 // presentes só numa das duas métricas) em 1 linha por CNPJ, juntando o
@@ -99,7 +142,7 @@ type PainelCombinadoCliente struct {
 // duas métricas têm sua PRÓPRIA lista de Clientes Válidos (vínculos
 // diferentes), então o cruzamento é por CNPJ dentro da mesma Rede, não uma
 // suposição de que as duas listas são idênticas.
-func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, realizadoSortimento *RealizadoResultado) []PainelCombinadoCliente {
+func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, realizadoSortimento *RealizadoResultado, ufPorCliente map[string]string) []PainelCombinadoCliente {
 	contextoPorRede := make(map[string]PainelCombinadoRede, len(redes))
 	for _, r := range redes {
 		contextoPorRede[r.CodPrinc] = r
@@ -122,6 +165,7 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 			s := sortMap[c.CNPJ]
 			out = append(out, PainelCombinadoCliente{
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
+				UF:     ufPorCliente[c.CNPJ],
 				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaValor: c.Valor, CoberturaObjetivo: ctx.CoberturaObjetivo,
@@ -140,6 +184,7 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 			}
 			out = append(out, PainelCombinadoCliente{
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
+				UF:     ufPorCliente[c.CNPJ],
 				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaObjetivo: ctx.CoberturaObjetivo,
@@ -173,6 +218,13 @@ type PainelCombinadoResponse struct {
 	Sortimento    PainelMetricaResumo      `json:"sortimento"`
 	Redes         []PainelCombinadoRede    `json:"redes"`
 	Clientes      []PainelCombinadoCliente `json:"clientes"` // aba "Resumo Rede Cliente" — 1 linha por CNPJ/loja
+	// DataInicioUsada/DataFimUsada — o período REALMENTE calculado: os
+	// bounds da vigência (padrão) ou o override pedido em data_inicio/
+	// data_fim (narrowing "de: até:", pedido do Claudio em 10/09/2026— ver
+	// resolverPeriodoCombinado). O front usa isto pra saber o que preencher
+	// nos campos de data por padrão.
+	DataInicioUsada string `json:"data_inicio_usada"`
+	DataFimUsada    string `json:"data_fim_usada"`
 }
 
 // montarResumoMetrica calcula faixa_atual/proxima_faixa/delta a partir do
@@ -237,10 +289,21 @@ func faltaOuZero(objetivo, valor float64) float64 {
 }
 
 // calcularPainelCombinado é o núcleo compartilhado pelo painel web e pelo
-// painel público mobile: calcula as duas métricas (via
-// obterOuCongelarRealizado — respeita o congelamento de mês fechado, Story
-// 4.3) e monta as linhas por Rede.
-func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID int, fluxo string) (*PainelCombinadoResponse, error) {
+// painel público mobile: calcula as duas métricas e monta as linhas por
+// Rede.
+//
+// dataInicioOverride/dataFimOverride ("Período: de/até", pedido do Claudio
+// em 10/09/2026) permitem estreitar o cálculo pra uma janela MENOR que a
+// vigência inteira — mesmo princípio dos "recortes" já existentes no
+// painel de métrica única (farol_metas_painel.go, FR21): SEMPRE ao vivo,
+// nunca passam pelo congelamento (Story 4.3), porque são leitura de
+// momentum dentro do período, não o número oficial da vigência. Por isso,
+// quando o override bate EXATAMENTE com os bounds da vigência (o caso
+// comum — usuário não mexeu no filtro), o cálculo cai de volta em
+// obterOuCongelarRealizado pra não pagar o custo de recalcular ao vivo (e,
+// mais importante, pra não bypassar o congelamento de um mês FECHADO só
+// porque o front preencheu as datas por padrão com os mesmos bounds).
+func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID int, fluxo, dataInicioOverride, dataFimOverride string) (*PainelCombinadoResponse, error) {
 	var industriaNome string
 	var vig PainelVigencia
 	vig.ID = vigenciaCoberturaID
@@ -255,13 +318,30 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		return nil, err
 	}
 
-	realizadoCobertura, err := obterOuCongelarRealizado(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, fluxo, "rede")
-	if err != nil {
-		return nil, err
-	}
-	realizadoSortimento, err := obterOuCongelarRealizado(db, empresaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo, "rede")
-	if err != nil {
-		return nil, err
+	usaPeriodoManual := dataInicioOverride != "" && dataFimOverride != "" &&
+		(dataInicioOverride != vig.DataInicio || dataFimOverride != vig.DataFim)
+	dataInicioUsada, dataFimUsada := vig.DataInicio, vig.DataFim
+
+	var realizadoCobertura, realizadoSortimento *RealizadoResultado
+	if usaPeriodoManual {
+		dataInicioUsada, dataFimUsada = dataInicioOverride, dataFimOverride
+		realizadoCobertura, err = CalcularRealizadoComPeriodo(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, fluxo, "rede", dataInicioOverride, dataFimOverride)
+		if err != nil {
+			return nil, err
+		}
+		realizadoSortimento, err = CalcularRealizadoComPeriodo(db, empresaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo, "rede", dataInicioOverride, dataFimOverride)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		realizadoCobertura, err = obterOuCongelarRealizado(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, fluxo, "rede")
+		if err != nil {
+			return nil, err
+		}
+		realizadoSortimento, err = obterOuCongelarRealizado(db, empresaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo, "rede")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	resumoCobertura, err := montarResumoMetrica(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, realizadoCobertura)
@@ -318,11 +398,39 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		})
 	}
 
-	clientes := montarClientesCombinado(redes, realizadoCobertura, realizadoSortimento)
+	// UF (ver resolverUFClientes) — coletado de TODOS os CNPJs (cobertura +
+	// sortimento) antes de montar Clientes/preencher Redes.
+	var todosCnpjs []string
+	for _, r := range realizadoCobertura.Redes {
+		for _, c := range r.Clientes {
+			todosCnpjs = append(todosCnpjs, c.CNPJ)
+		}
+	}
+	for _, r := range realizadoSortimento.Redes {
+		for _, c := range r.Clientes {
+			todosCnpjs = append(todosCnpjs, c.CNPJ)
+		}
+	}
+	ufPorCliente, err := resolverUFClientes(db, empresaID, todosCnpjs)
+	if err != nil {
+		return nil, err
+	}
+	// UF da Rede = UF do "dono" (primeiro CNPJ da lista, mesma aproximação
+	// já aceita pra GGV/CRV/RCA — ver redeRepresentante em
+	// farol_metas_calculo.go): uma Rede pode ter lojas em UFs diferentes,
+	// mas o indicador aqui é só pro filtro, não um dado oficial.
+	for i := range redes {
+		if len(redes[i].Clientes) > 0 {
+			redes[i].UF = ufPorCliente[redes[i].Clientes[0].CNPJ]
+		}
+	}
+
+	clientes := montarClientesCombinado(redes, realizadoCobertura, realizadoSortimento, ufPorCliente)
 
 	return &PainelCombinadoResponse{
 		IndustriaNome: industriaNome, Vigencia: vig,
 		Cobertura: resumoCobertura, Sortimento: resumoSortimento, Redes: redes, Clientes: clientes,
+		DataInicioUsada: dataInicioUsada, DataFimUsada: dataFimUsada,
 	}, nil
 }
 
@@ -353,6 +461,8 @@ func MetasPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo == "" {
 			fluxo = "faturado"
 		}
+		dataInicio := strings.TrimSpace(q.Get("data_inicio"))
+		dataFim := strings.TrimSpace(q.Get("data_fim"))
 
 		// Escopo obrigatório de login (farol_escopo.go) + drill-down pedido
 		// na URL — mesmo princípio do painel individual (farol_metas_painel.go).
@@ -363,7 +473,7 @@ func MetasPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 		}
 		codGGV, codCRV, codRCA = resolverFiltroDrillDown(q, codGGV, codCRV, codRCA)
 
-		resp, err := calcularPainelCombinado(db, spCtx.EmpresaID, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo)
+		resp, err := calcularPainelCombinado(db, spCtx.EmpresaID, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo, dataInicio, dataFim)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -435,8 +545,10 @@ func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo == "" {
 			fluxo = "faturado"
 		}
+		dataInicio := strings.TrimSpace(q.Get("data_inicio"))
+		dataFim := strings.TrimSpace(q.Get("data_fim"))
 
-		resp, err := calcularPainelCombinado(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo)
+		resp, err := calcularPainelCombinado(db, empresaID, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID, fluxo, dataInicio, dataFim)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
