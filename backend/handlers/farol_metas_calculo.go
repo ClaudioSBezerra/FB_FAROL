@@ -390,16 +390,23 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	}
 
 	ordem, porRede := agruparPorRede(clientes)
+
+	cnpjs := make([]string, len(clientes))
+	for i, c := range clientes {
+		cnpjs[i] = c.CNPJ
+	}
+	valoresPorCliente, err := somaPvendaClientes(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
+	if err != nil {
+		return nil, err
+	}
+
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
 		clientesDaRede := porRede[codPrinc]
 		var somaCompras float64
 		clientesResultado := make([]RealizadoCliente, 0, len(clientesDaRede))
 		for _, c := range clientesDaRede {
-			valor, err := somaPvendaCliente(db, empresaID, c.CNPJ, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
-			if err != nil {
-				return nil, err
-			}
+			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
 			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor})
 		}
@@ -416,21 +423,31 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	return out, nil
 }
 
-// somaPvendaCliente soma pvenda (Faturado/Transmitido) de um CNPJ no
-// período, respeitando o(s) tipo(s) de venda válido(s) do vínculo (FR16) —
-// vazio = sem filtro de tipo_venda ("Líquido" padrão do Farol, que já é o
-// conteúdo natural de vendas_faturadas/vendas_transmitidas sem filtro
-// adicional) — e o(s) cod_fornec da Indústria do vínculo (ex: 396 Unilever
-// HC): sem esse filtro a "média de compras" da Rede incluiria compras de
-// QUALQUER fornecedor, não só o do programa (bug corrigido 2026-09-04).
-func somaPvendaCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (float64, error) {
-	var total float64
+// somaPvendaClientes soma pvenda (Faturado/Transmitido) de TODOS os CNPJs
+// da vigência numa ÚNICA consulta agregada (GROUP BY cnpj) — substitui, em
+// 2026-09-10, uma versão que rodava 1 consulta POR CNPJ (400+ round-trips
+// ao banco numa vigência típica da Unilever, dobrado no painel Combinado
+// por calcular as duas métricas). Era o gargalo real do painel de
+// Objetivos por Indústria — cada consulta individual já usava o índice
+// (empresa_id, cnpj) da migration 160, mas centenas de round-trips
+// sequenciais têm custo de rede/parsing que uma única consulta agregada
+// elimina. Respeita o(s) tipo(s) de venda válido(s) do vínculo (FR16) —
+// vazio = sem filtro de tipo_venda — e o(s) cod_fornec da Indústria do
+// vínculo (ex: 396 Unilever HC), sem o qual a "média de compras" da Rede
+// incluiria compras de QUALQUER fornecedor (bug corrigido 2026-09-04). CNPJ
+// sem nenhuma venda no período simplesmente não aparece no mapa — o
+// chamador trata a ausência como 0.
+func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]float64, error) {
+	out := map[string]float64{}
+	if len(cnpjs) == 0 {
+		return out, nil
+	}
 	somar := func(tabela, colData string) error {
 		query := fmt.Sprintf(`
-			SELECT COALESCE(SUM(pvenda), 0) FROM %s
-			WHERE empresa_id = $1 AND cnpj = $2 AND %s BETWEEN $3 AND $4
+			SELECT cnpj, SUM(pvenda) FROM %s
+			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4
 		`, tabela, colData)
-		args := []any{empresaID, cnpj, dataInicio, dataFim}
+		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
 		if len(tiposVenda) > 0 {
 			query += fmt.Sprintf(" AND tipo_venda = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(tiposVenda))
@@ -439,26 +456,35 @@ func somaPvendaCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataFim, fluxo s
 			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		var v float64
-		if err := db.QueryRow(query, args...).Scan(&v); err != nil {
+		query += " GROUP BY cnpj"
+		rows, err := db.Query(query, args...)
+		if err != nil {
 			return err
 		}
-		total += v
-		return nil
+		defer rows.Close()
+		for rows.Next() {
+			var cnpj string
+			var v float64
+			if err := rows.Scan(&cnpj, &v); err != nil {
+				return err
+			}
+			out[cnpj] += v
+		}
+		return rows.Err()
 	}
 	switch fluxo {
 	case "faturado":
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
-			return 0, err
+			return nil, err
 		}
 	case "transmitido":
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
-			return 0, err
+			return nil, err
 		}
 	default:
-		return 0, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
 	}
-	return total, nil
+	return out, nil
 }
 
 // ─── Sortimento por Rede ────────────────────────────────────────────────────
@@ -478,16 +504,23 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	}
 
 	ordem, porRede := agruparPorRede(clientes)
+
+	cnpjs := make([]string, len(clientes))
+	for i, c := range clientes {
+		cnpjs[i] = c.CNPJ
+	}
+	linhasPorCliente, err := qtdPorCodProdClientes(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
+	if err != nil {
+		return nil, err
+	}
+
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
 		clientesDaRede := porRede[codPrinc]
 		var somaEANsPorLoja float64
 		clientesResultado := make([]RealizadoCliente, 0, len(clientesDaRede))
 		for _, c := range clientesDaRede {
-			qtdEANs, err := contarEANsPositivadosCliente(db, empresaID, c.CNPJ, dataInicio, dataFim, fluxo, tiposVenda, codFornec, eanPorCodProd, qtdMinima)
-			if err != nil {
-				return nil, err
-			}
+			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], eanPorCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
 			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs})
 		}
@@ -515,14 +548,12 @@ type vendaProdutoAgregada struct {
 	QtUnitCx  float64
 }
 
-// contarEANsPositivadosCliente conta quantos EANs distintos (da lista de
-// Itens Válidos) um CNPJ comprou no período, respeitando a regra de
-// quantidade mínima (FR12) — ver exigeQuantidadeMinima.
-func contarEANsPositivadosCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string, eanPorCodProd map[string]string, qtdMinima float64) (float64, error) {
-	linhas, err := qtdPorCodProdCliente(db, empresaID, cnpj, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
-	if err != nil {
-		return 0, err
-	}
+// contarEANsPositivados conta quantos EANs distintos (da lista de Itens
+// Válidos) aparecem nas linhas já agregadas de UM cliente (ver
+// qtdPorCodProdClientes — `linhas` é o resultado[cnpj]), respeitando a
+// regra de quantidade mínima (FR12) — ver exigeQuantidadeMinima. `linhas`
+// nil (cliente sem nenhuma venda no período) itera zero vezes e devolve 0.
+func contarEANsPositivados(linhas map[string]vendaProdutoAgregada, eanPorCodProd map[string]string, qtdMinima float64) float64 {
 	eansPositivados := map[string]bool{}
 	for codProd, agregada := range linhas {
 		ean, ok := eanPorCodProd[codProd]
@@ -534,7 +565,7 @@ func contarEANsPositivadosCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataF
 		}
 		eansPositivados[ean] = true
 	}
-	return float64(len(eansPositivados)), nil
+	return float64(len(eansPositivados))
 }
 
 // exigeQuantidadeMinima decide se um item exige a venda de 3+ unidades pra
@@ -577,20 +608,27 @@ func exigeQuantidadeMinima(embalagem string, qtUnitCx float64) bool {
 	return qtUnitCx <= 1
 }
 
-// qtdPorCodProdCliente soma a quantidade vendida (qt) por cod_prod, pra um
-// CNPJ no período — base pra aplicar a regra de quantidade mínima. Também
-// traz embalagem/qt_unit_cx (atributo do PRODUTO, constante por cod_prod —
-// por isso MAX() em vez de GROUP BY em mais colunas) pra
-// exigeQuantidadeMinima decidir a regra. Filtra por cod_fornec da Indústria
-// do vínculo (mesmo bug corrigido de Cobertura, ver somaPvendaCliente).
-func qtdPorCodProdCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]vendaProdutoAgregada, error) {
-	out := map[string]vendaProdutoAgregada{}
+// qtdPorCodProdClientes soma a quantidade vendida (qt) por cod_prod, pra
+// TODOS os CNPJs da vigência numa ÚNICA consulta agregada (GROUP BY cnpj,
+// cod_prod) — substitui, em 2026-09-10, uma versão que rodava 1 consulta
+// por CNPJ (ver somaPvendaClientes pro racional completo do porquê isso
+// era o gargalo real do painel). Também traz embalagem/qt_unit_cx
+// (atributo do PRODUTO, constante por cod_prod — por isso MAX() em vez de
+// GROUP BY em mais colunas) pra exigeQuantidadeMinima decidir a regra.
+// Filtra por cod_fornec da Indústria do vínculo (mesmo bug corrigido de
+// Cobertura, ver somaPvendaClientes). Retorna map[cnpj]map[cod_prod]agregada
+// — CNPJ sem nenhuma venda simplesmente não aparece na chave externa.
+func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]vendaProdutoAgregada, error) {
+	out := map[string]map[string]vendaProdutoAgregada{}
+	if len(cnpjs) == 0 {
+		return out, nil
+	}
 	somar := func(tabela, colData string) error {
 		query := fmt.Sprintf(`
-			SELECT cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM %s
-			WHERE empresa_id = $1 AND cnpj = $2 AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
+			SELECT cnpj, cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM %s
+			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
 		`, tabela, colData)
-		args := []any{empresaID, cnpj, dataInicio, dataFim}
+		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
 		if len(tiposVenda) > 0 {
 			query += fmt.Sprintf(" AND tipo_venda = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(tiposVenda))
@@ -599,25 +637,30 @@ func qtdPorCodProdCliente(db *sql.DB, empresaID, cnpj, dataInicio, dataFim, flux
 			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		query += " GROUP BY cod_prod"
+		query += " GROUP BY cnpj, cod_prod"
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var codProd, embalagem string
+			var cnpj, codProd, embalagem string
 			var qt, qtUnitCx float64
-			if err := rows.Scan(&codProd, &qt, &embalagem, &qtUnitCx); err != nil {
+			if err := rows.Scan(&cnpj, &codProd, &qt, &embalagem, &qtUnitCx); err != nil {
 				return err
 			}
-			agregada := out[codProd]
+			porCliente, ok := out[cnpj]
+			if !ok {
+				porCliente = map[string]vendaProdutoAgregada{}
+				out[cnpj] = porCliente
+			}
+			agregada := porCliente[codProd]
 			agregada.Qtd += qt
 			agregada.Embalagem = embalagem
 			agregada.QtUnitCx = qtUnitCx
-			out[codProd] = agregada
+			porCliente[codProd] = agregada
 		}
-		return nil
+		return rows.Err()
 	}
 	switch fluxo {
 	case "faturado":
