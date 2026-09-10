@@ -457,11 +457,12 @@ type periodoInfo struct {
 	Label      string `json:"label"`
 	CurLabel   string `json:"cur_label"`
 	AntLabel   string `json:"ant_label"`
-	// UltimoDiaImportado — MAX(data_faturamento/transmissao) real da empresa
-	// (mesma fonte de inferLastDay). O front usa isto como "hoje" pros presets
-	// de período (dia_anterior/mes_corrente/ant_corrente/yoy) em vez da data do
-	// relógio do navegador — a base pode estar 1+ dia atrasada em relação ao
-	// dia corrente (ex: hoje 09/09, base só até 08/09).
+	// UltimoDiaImportado — MAX(data_faturamento/transmissao) da empresa, mas
+	// nunca mais recente que ontem (Brasil) — ver ontemBrasil. Faturado e
+	// transmitido ainda não fecham o dia corrente, então uma linha de hoje é
+	// sempre parcial. O front usa isto como "hoje" pros presets de período
+	// (dia_anterior/mes_corrente/ant_corrente/yoy) em vez da data do relógio
+	// do navegador.
 	UltimoDiaImportado string `json:"ultimo_dia_importado,omitempty"`
 	// Retrocompat — preenchidos quando inferidos a partir de mês inteiro
 	RefAno   int    `json:"ref_ano,omitempty"`
@@ -558,6 +559,19 @@ func inferLastDay(db *sql.DB, empresaID string) time.Time {
 	return time.Time{}
 }
 
+// ontemBrasil — "ontem" no calendário de Brasília, como meia-noite UTC (mesma
+// convenção de data usada neste arquivo). Faturado e transmitido ainda NÃO
+// fecham o dia corrente — pedidos/NFs de hoje ainda estão chegando ao longo
+// do dia, então mesmo que MAX(data) já tenha alguma linha de hoje (comum no
+// transmitido, que é ~tempo real), essa linha é parcial. A data de referência
+// ("hoje" pros presets de período) nunca pode passar de ontem — ver
+// inferLastDay + resolvePeriods.
+func ontemBrasil() time.Time {
+	hojeBR := time.Now().In(tzBrasil())
+	ontem := hojeBR.AddDate(0, 0, -1)
+	return time.Date(ontem.Year(), ontem.Month(), ontem.Day(), 0, 0, 0, 0, time.UTC)
+}
+
 // deriveCompRange calcula um intervalo comparativo a partir de (refInicio, refFim)
 // e do compMode (yoy | mom | ytd | mtd). Retorna (zero, zero) se mode for desconhecido.
 //
@@ -602,8 +616,9 @@ type periodResolution struct {
 	CompMode string
 	CompAno  int
 	CompMes  int
-	// UltimoDia — último dia com dado real importado (ver inferLastDay). Zero
-	// se a empresa ainda não tem nenhuma venda importada.
+	// UltimoDia — último dia com dado real importado, capado em ontemBrasil()
+	// (ver resolvePeriods). Zero se a empresa ainda não tem nenhuma venda
+	// importada.
 	UltimoDia time.Time
 }
 
@@ -616,6 +631,9 @@ func resolvePeriods(db *sql.DB, empresaID string, q map[string][]string) periodR
 	}
 	res := periodResolution{}
 	res.UltimoDia = inferLastDay(db, empresaID)
+	if limite := ontemBrasil(); res.UltimoDia.After(limite) {
+		res.UltimoDia = limite
+	}
 
 	// 1) Período principal — preferência: datas explícitas; fallback ano/mes; senão último mês
 	refInicio := parseDateISO(get("ref_inicio"))
