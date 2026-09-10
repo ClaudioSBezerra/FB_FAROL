@@ -139,9 +139,17 @@ func dsnJC() (string, error) {
 	if err != nil {
 		porta = 1521
 	}
+	// PREFETCH_ROWS — go-ora default é 25 linhas por round-trip. O Oracle da JC
+	// é externo (latência de internet), e um mês do COMPRAS_FAROL_VW passa de
+	// 2,5M linhas: a 25/fetch são ~100 mil idas-e-voltas, horas só de latência
+	// (medido 10/09/2026: jan/2026 não terminou em 3h). 2000/fetch corta isso
+	// ~80x. Ajustável por env se algum dia precisar afinar.
+	opts := map[string]string{
+		"PREFETCH_ROWS": envJC("JC_ORACLE_PREFETCH_ROWS", "2000"),
+	}
 	return go_ora.BuildUrl(
 		envJC("JC_ORACLE_HOST", "201.48.119.197"), porta,
-		envJC("JC_ORACLE_SERVICE", "cdb1"), user, pass, nil), nil
+		envJC("JC_ORACLE_SERVICE", "cdb1"), user, pass, opts), nil
 }
 
 // valorCSV converte o que o driver devolveu para o texto que o importador espera.
