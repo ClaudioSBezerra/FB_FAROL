@@ -25,25 +25,50 @@ import (
 	"strings"
 )
 
+// PainelClienteRef — loja/CNPJ de uma Rede, só o suficiente pro filtro
+// "Cliente" da barra de filtros do painel (narrow da lista de Redes, não
+// detalhamento por loja). Vem de RealizadoRede.Clientes, que o motor de
+// Cobertura já calcula e o snapshot de mês fechado preserva.
+type PainelClienteRef struct {
+	CNPJ string `json:"cnpj"`
+	Nome string `json:"nome"`
+}
+
 type PainelCombinadoRede struct {
-	CodPrinc            string  `json:"cod_princ"`
-	Razao               string  `json:"razao"`
-	Fantasia            string  `json:"fantasia"`
-	QtLojas             int     `json:"qt_lojas"`
-	CodGGV              string  `json:"cod_ggv"`
-	NomeGGV             string  `json:"nome_ggv"`
-	CodCRV              string  `json:"cod_crv"`
-	NomeCRV             string  `json:"nome_crv"`
-	CodRCA              string  `json:"cod_rca"`
-	NomeRCA             string  `json:"nome_rca"`
-	CoberturaValor      float64 `json:"cobertura_valor"`
-	CoberturaValorTotal float64 `json:"cobertura_valor_total"`
-	CoberturaObjetivo   float64 `json:"cobertura_objetivo"`
-	CoberturaFalta      float64 `json:"cobertura_falta"`
-	CoberturaAtingiu    bool    `json:"cobertura_atingiu"`
-	SortimentoValor     float64 `json:"sortimento_valor"`
-	SortimentoObjetivo  float64 `json:"sortimento_objetivo"`
-	SortimentoFalta     float64 `json:"sortimento_falta"`
+	CodPrinc            string             `json:"cod_princ"`
+	Razao               string             `json:"razao"`
+	Fantasia            string             `json:"fantasia"`
+	QtLojas             int                `json:"qt_lojas"`
+	CodGGV              string             `json:"cod_ggv"`
+	NomeGGV             string             `json:"nome_ggv"`
+	CodCRV              string             `json:"cod_crv"`
+	NomeCRV             string             `json:"nome_crv"`
+	CodRCA              string             `json:"cod_rca"`
+	NomeRCA             string             `json:"nome_rca"`
+	CoberturaValor      float64            `json:"cobertura_valor"`
+	CoberturaValorTotal float64            `json:"cobertura_valor_total"`
+	CoberturaObjetivo   float64            `json:"cobertura_objetivo"`
+	CoberturaFalta      float64            `json:"cobertura_falta"`
+	CoberturaAtingiu    bool               `json:"cobertura_atingiu"`
+	SortimentoValor     float64            `json:"sortimento_valor"`
+	SortimentoObjetivo  float64            `json:"sortimento_objetivo"`
+	SortimentoFalta     float64            `json:"sortimento_falta"`
+	Clientes            []PainelClienteRef `json:"clientes,omitempty"`
+}
+
+func refsDeClientes(cs []RealizadoCliente) []PainelClienteRef {
+	if len(cs) == 0 {
+		return nil
+	}
+	out := make([]PainelClienteRef, 0, len(cs))
+	for _, c := range cs {
+		nome := c.Fantasia
+		if nome == "" {
+			nome = c.Razao
+		}
+		out = append(out, PainelClienteRef{CNPJ: c.CNPJ, Nome: nome})
+	}
+	return out
 }
 
 // PainelMetricaResumo é o mesmo resumo (faixa atual/próxima/delta) que o
@@ -190,6 +215,7 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 			CoberturaFalta: faltaOuZero(limiarCobertura, c.Valor), CoberturaAtingiu: c.Atingiu,
 			SortimentoValor: s.Valor, SortimentoObjetivo: objetivoSortimento,
 			SortimentoFalta: faltaOuZero(objetivoSortimento, s.Valor),
+			Clientes:        refsDeClientes(c.Clientes),
 		})
 		vistas[c.CodPrinc] = true
 	}
@@ -207,6 +233,7 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 			CoberturaObjetivo: limiarCobertura,
 			SortimentoValor:   s.Valor, SortimentoObjetivo: objetivoSortimento,
 			SortimentoFalta: faltaOuZero(objetivoSortimento, s.Valor),
+			Clientes:        refsDeClientes(s.Clientes),
 		})
 	}
 

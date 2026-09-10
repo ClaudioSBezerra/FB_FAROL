@@ -121,6 +121,7 @@ interface PainelCombinadoRede {
   sortimento_valor: number
   sortimento_objetivo: number
   sortimento_falta: number
+  clientes?: { cnpj: string; nome: string }[]
 }
 
 interface PainelCombinado {
@@ -167,6 +168,36 @@ const FLUXOS = [
 ]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+
+// dedup — lista de {v: código, l: rótulo} única por código, ordenada pelo
+// rótulo. Alimenta os selects da barra de filtros da visão Combinada.
+function dedup(items: { v: string; l: string }[]) {
+  const m = new Map<string, string>()
+  for (const it of items) if (it.v && !m.has(it.v)) m.set(it.v, it.l)
+  return [...m.entries()].map(([v, l]) => ({ v, l })).sort((a, b) => a.l.localeCompare(b.l))
+}
+
+// FiltroSelect — select "Todos + opções" da barra de filtros da visão
+// Combinada. Radix Select não aceita value="" num item, daí o sentinel.
+function FiltroSelect({ label, value, onChange, opts }: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  opts: { v: string; l: string }[]
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs font-medium">{label}</label>
+      <Select value={value || '__all__'} onValueChange={v => onChange(v === '__all__' ? '' : v)}>
+        <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">Todos</SelectItem>
+          {opts.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -344,6 +375,79 @@ export default function FarolPainelMetas() {
     enabled: metrica === 'combinado' && !!periodoSelecionado,
   })
 
+  // ─── Barra de filtros da visão Combinada (client-side sobre .redes) ─────────
+  // Todos os campos já vêm na resposta (~120 Redes), então filtrar aqui evita
+  // re-fetch. Os selects são EM CASCATA: GGV limita CRV, que limita RCA, que
+  // limita Rede; "Cliente" só estreita a lista de Redes (mostra a Rede que
+  // contém aquele CNPJ), sem trocar a granularidade — decisão do Claudio.
+  const [fGGV, setFGGV] = useState('')
+  const [fCRV, setFCRV] = useState('')
+  const [fRCA, setFRCA] = useState('')
+  const [fRede, setFRede] = useState('')
+  const [fCliente, setFCliente] = useState('')
+  const limparFiltrosCombinado = () => { setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('') }
+  useEffect(() => {
+    setFGGV(''); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('')
+  }, [industriaID, metrica, vigenciaCombinadaKey, fluxo])
+
+  const redesCombinado = painelCombinado?.redes ?? []
+  const optsGGV = useMemo(
+    () => dedup(redesCombinado.map(r => ({ v: r.cod_ggv, l: `${r.cod_ggv} — ${r.nome_ggv}` }))),
+    [redesCombinado],
+  )
+  const optsCRV = useMemo(
+    () => dedup(redesCombinado.filter(r => !fGGV || r.cod_ggv === fGGV)
+      .map(r => ({ v: r.cod_crv, l: `${r.cod_crv} — ${r.nome_crv}` }))),
+    [redesCombinado, fGGV],
+  )
+  const optsRCA = useMemo(
+    () => dedup(redesCombinado.filter(r => (!fGGV || r.cod_ggv === fGGV) && (!fCRV || r.cod_crv === fCRV))
+      .map(r => ({ v: r.cod_rca, l: `${r.cod_rca} — ${r.nome_rca}` }))),
+    [redesCombinado, fGGV, fCRV],
+  )
+  const optsRede = useMemo(
+    () => dedup(redesCombinado
+      .filter(r => (!fGGV || r.cod_ggv === fGGV) && (!fCRV || r.cod_crv === fCRV) && (!fRCA || r.cod_rca === fRCA))
+      .map(r => ({ v: r.cod_princ, l: r.fantasia || r.razao || r.cod_princ }))),
+    [redesCombinado, fGGV, fCRV, fRCA],
+  )
+  const optsCliente = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of redesCombinado.filter(r =>
+      (!fGGV || r.cod_ggv === fGGV) && (!fCRV || r.cod_crv === fCRV) &&
+      (!fRCA || r.cod_rca === fRCA) && (!fRede || r.cod_princ === fRede))) {
+      for (const c of r.clientes ?? []) if (!seen.has(c.cnpj)) seen.set(c.cnpj, `${c.nome || c.cnpj} (${c.cnpj})`)
+    }
+    return [...seen.entries()].map(([v, l]) => ({ v, l })).sort((a, b) => a.l.localeCompare(b.l))
+  }, [redesCombinado, fGGV, fCRV, fRCA, fRede])
+
+  const redesVisiveis = useMemo(
+    () => redesCombinado.filter(r =>
+      (!fGGV || r.cod_ggv === fGGV) &&
+      (!fCRV || r.cod_crv === fCRV) &&
+      (!fRCA || r.cod_rca === fRCA) &&
+      (!fRede || r.cod_princ === fRede) &&
+      (!fCliente || (r.clientes ?? []).some(c => c.cnpj === fCliente))),
+    [redesCombinado, fGGV, fCRV, fRCA, fRede, fCliente],
+  )
+
+  // TOTAL — soma só das colunas que a planilha "Resumo Redes" soma na última
+  // linha (Obj. Cobertura, Valor Venda, Obj. EANs, Qt Méd. EANs, Falta EANs);
+  // médias e Falta (R$) não são somadas (não faz sentido somar média).
+  const totComb = useMemo(() => {
+    const t = { objCob: 0, valorVenda: 0, objEan: 0, qtMedEan: 0, faltaEan: 0, cob: 0, sort: 0 }
+    for (const r of redesVisiveis) {
+      t.objCob += r.cobertura_objetivo
+      t.valorVenda += r.cobertura_valor_total
+      t.objEan += r.sortimento_objetivo
+      t.qtMedEan += r.sortimento_valor
+      t.faltaEan += r.sortimento_valor - r.sortimento_objetivo
+      if (r.cobertura_atingiu) t.cob++
+      if (r.sortimento_valor >= r.sortimento_objetivo) t.sort++
+    }
+    return t
+  }, [redesVisiveis])
+
   // Nível 5 (CNPJ) é um drill-down de UMA Rede escolhida, não um valor de
   // `nivel` selecionável — por isso fica fora do enum NIVEIS/fetch e só lê
   // .clientes que já veio junto no Realizado da Rede.
@@ -396,7 +500,7 @@ export default function FarolPainelMetas() {
         )}
         {metrica === 'combinado' ? (
           <div className="space-y-1">
-            <label className="text-xs font-medium">Vigência</label>
+            <label className="text-xs font-medium">Período</label>
             <Select value={vigenciaCombinadaKey} onValueChange={setVigenciaCombinadaKey}>
               <SelectTrigger className="w-56"><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent>
@@ -458,61 +562,103 @@ export default function FarolPainelMetas() {
           <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
         ) : painelCombinado ? (
           <>
+            <div className="flex flex-wrap gap-2 items-end border rounded-lg p-4">
+              <FiltroSelect label="GGV" value={fGGV} opts={optsGGV}
+                onChange={v => { setFGGV(v); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('') }} />
+              <FiltroSelect label="Supervisor (CRV)" value={fCRV} opts={optsCRV}
+                onChange={v => { setFCRV(v); setFRCA(''); setFRede(''); setFCliente('') }} />
+              <FiltroSelect label="RCA" value={fRCA} opts={optsRCA}
+                onChange={v => { setFRCA(v); setFRede(''); setFCliente('') }} />
+              <FiltroSelect label="Rede" value={fRede} opts={optsRede}
+                onChange={v => { setFRede(v); setFCliente('') }} />
+              <FiltroSelect label="Cliente" value={fCliente} opts={optsCliente} onChange={setFCliente} />
+              {(fGGV || fCRV || fRCA || fRede || fCliente) && (
+                <button className="text-xs text-primary hover:underline pb-2.5" onClick={limparFiltrosCombinado}>
+                  Limpar filtros
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="border rounded-lg p-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Cobertura — redes cobertas
                 </div>
                 <div className="text-2xl font-semibold">
-                  {fmt(painelCombinado.cobertura.realizado_total)}
-                  {painelCombinado.cobertura.proxima_faixa && (
-                    <span className="text-sm text-muted-foreground"> / {fmt(painelCombinado.cobertura.proxima_faixa.valor_meta)} (Faixa {painelCombinado.cobertura.proxima_faixa.faixa})</span>
-                  )}
+                  {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
                 </div>
               </div>
               <div className="border rounded-lg p-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Sortimento — média de EANs
+                  <Target className="w-4 h-4" /> Sortimento — redes no objetivo de EANs
                 </div>
                 <div className="text-2xl font-semibold">
-                  {fmt(painelCombinado.sortimento.realizado_total)}
-                  {painelCombinado.sortimento.proxima_faixa && (
-                    <span className="text-sm text-muted-foreground"> / {fmt(painelCombinado.sortimento.proxima_faixa.valor_meta)} (Faixa {painelCombinado.sortimento.proxima_faixa.faixa})</span>
-                  )}
+                  {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
                 </div>
               </div>
             </div>
 
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Rede</TableHead>
+                    <TableHead>Cód. Princ.</TableHead>
+                    <TableHead>Razão</TableHead>
+                    <TableHead>Fantasia</TableHead>
+                    <TableHead className="text-right">Qt Lojas</TableHead>
+                    <TableHead>GGV</TableHead>
+                    <TableHead>CRV</TableHead>
                     <TableHead>RCA</TableHead>
-                    <TableHead className="text-right">Objetivo Cobertura</TableHead>
-                    <TableHead className="text-right">Valor Venda Média</TableHead>
+                    <TableHead className="text-right">Obj. Cobertura</TableHead>
+                    <TableHead className="text-right">Valor Venda</TableHead>
+                    <TableHead className="text-right">Venda Média</TableHead>
                     <TableHead className="text-right">Falta (R$)</TableHead>
-                    <TableHead className="text-right">Objetivo EANs</TableHead>
-                    <TableHead className="text-right">Qt Média EANs</TableHead>
+                    <TableHead className="text-right">Obj. EANs</TableHead>
+                    <TableHead className="text-right">Qt Méd. EANs</TableHead>
                     <TableHead className="text-right">Falta EANs</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {painelCombinado.redes.length === 0 && (
-                    <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Sem dados pra este período</TableCell></TableRow>
+                  {redesVisiveis.length === 0 && (
+                    <TableRow><TableCell colSpan={14} className="text-center py-8 text-muted-foreground">Sem Redes pra este recorte/filtros</TableCell></TableRow>
                   )}
-                  {painelCombinado.redes.map((r, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-medium">{r.fantasia || r.razao || r.cod_princ}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{r.nome_rca || r.cod_rca} · {r.qt_lojas} loja(s)</TableCell>
-                      <TableCell className="text-right">{fmt(r.cobertura_objetivo)}</TableCell>
-                      <TableCell className="text-right">{fmt(r.cobertura_valor)}</TableCell>
-                      <TableCell className="text-right">{r.cobertura_atingiu ? <Badge variant="default">Coberta</Badge> : fmt(r.cobertura_falta)}</TableCell>
-                      <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
-                      <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
-                      <TableCell className="text-right">{fmt(r.sortimento_falta)}</TableCell>
+                  {redesVisiveis.map((r, i) => {
+                    const faltaCob = r.cobertura_valor - r.cobertura_objetivo
+                    const faltaEan = r.sortimento_valor - r.sortimento_objetivo
+                    return (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono text-xs">{r.cod_princ}</TableCell>
+                        <TableCell className="text-sm">{r.razao}</TableCell>
+                        <TableCell className="text-sm font-medium">{r.fantasia}</TableCell>
+                        <TableCell className="text-right">{r.qt_lojas}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_ggv} — {r.nome_ggv}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_crv} — {r.nome_crv}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_rca} — {r.nome_rca}</TableCell>
+                        <TableCell className="text-right">{fmt(r.cobertura_objetivo)}</TableCell>
+                        <TableCell className="text-right">{fmt(r.cobertura_valor_total)}</TableCell>
+                        <TableCell className="text-right">{fmt(r.cobertura_valor)}</TableCell>
+                        <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaCob)}</TableCell>
+                        <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
+                        <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
+                        <TableCell className={`text-right ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)}</TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {redesVisiveis.length > 0 && (
+                    <TableRow className="font-semibold bg-muted/50">
+                      <TableCell>TOTAL</TableCell>
+                      <TableCell /><TableCell />
+                      <TableCell />
+                      <TableCell /><TableCell /><TableCell />
+                      <TableCell className="text-right">{fmt(totComb.objCob)}</TableCell>
+                      <TableCell className="text-right">{fmt(totComb.valorVenda)}</TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell className="text-right">{fmt(totComb.objEan)}</TableCell>
+                      <TableCell className="text-right">{fmt(totComb.qtMedEan)}</TableCell>
+                      <TableCell className={`text-right ${totComb.faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(totComb.faltaEan)}</TableCell>
                     </TableRow>
-                  ))}
+                  )}
                 </TableBody>
               </Table>
             </div>
