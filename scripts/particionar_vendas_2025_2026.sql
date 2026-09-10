@@ -1,5 +1,29 @@
 -- particionar_vendas_2025_2026.sql
 -- ════════════════════════════════════════════════════════════════════════════
+-- ⚠️  SUPERSEDIDO em 10/09/2026 — NÃO USAR. O Claudio decidiu, na mesma
+--     sessão, zerar a base inteira (TRUNCATE dos agregados + DROP/recria de
+--     vendas_faturadas/vendas_transmitidas) e reimportar tudo via Oracle
+--     (scripts/reset_base_completo.sh), em vez de converter as tabelas
+--     populadas via ATTACH PARTITION como este script fazia. Motivo: com a
+--     base zerada de qualquer forma, dá pra nascer com partição POR ANO desde
+--     já (2025 e 2026 separados), sem a limitação deste script (que juntava
+--     2025+2026 numa partição combinada só, por causa da restrição de não
+--     poder copiar os ~49GB existentes). Mantido aqui só como referência
+--     histórica de como fazer ATTACH PARTITION sem copiar dado, caso precise
+--     de novo no futuro (ex: converter outra tabela grande já populada).
+--
+-- ⚠️  BUG LATENTE DESCOBERTO nesta mesma sessão (nunca chegou a rodar em
+--     produção, então nunca se manifestou): farol.mv_fat_carteira_rca,
+--     farol.mv_trans_carteira_rca e farol.mv_fat_uf_mes dependem de
+--     vendas_faturadas/vendas_transmitidas por OID interno do Postgres. Este
+--     script RENOMEIA a tabela original (preserva o OID) e a ANEXA como
+--     partição do novo pai — as 3 MVs ficariam permanentemente grudadas
+--     SÓ NAQUELA PARTIÇÃO renomeada, nunca enxergando dado de anos futuros
+--     inserido em outras partições. Se este script for reaproveitado no
+--     futuro, precisa DROPAR e RECRIAR essas 3 MVs contra o novo pai
+--     particionado (ver scripts/reset_base_completo.sh pra como fazer isso
+--     corretamente).
+--
 -- Converte vendas_faturadas/vendas_transmitidas de tabela normal pra
 -- particionada por RANGE(data), SEM copiar os dados existentes (~26GB +
 -- ~23GB em produção, hoje 10/09/2026) — usa o recurso nativo do Postgres de
