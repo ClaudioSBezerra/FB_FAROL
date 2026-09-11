@@ -104,6 +104,43 @@ const FLUXOS = [
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
+// ─── ChipRow — seleção por toque (pedido do Claudio 11/09/2026: "se possível
+// ele tocar em vez de filtrar, tem que ser seleção touch") — substitui os
+// <select> nativos, ruins de mirar com o dedo e que escondem as opções atrás
+// de mais um toque. Com só 1 opção nem chip mostra (nada pra escolher).
+// Alvo de toque generoso (padding vertical ~12px, min ~44px de altura) e
+// scroll horizontal quando a lista não cabe na tela (ex: histórico de
+// vigências fechadas).
+function ChipRow<T extends string>({ label, options, value, onChange }: {
+  label: string
+  options: Array<{ value: T; label: string }>
+  value: T
+  onChange: (v: T) => void
+}) {
+  if (options.length <= 1) return null
+  return (
+    <div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground px-0.5 mb-1.5">{label}</div>
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none">
+        {options.map(opt => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-3 text-sm font-medium leading-none transition-colors active:scale-[0.97] ${
+              value === opt.value
+                ? 'border-slate-900 bg-slate-900 text-white'
+                : 'border-slate-300 bg-white text-slate-700'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page — painel mobile público, mesmo padrão sem login de FarolPublicPanel ──
 
 export default function FarolPublicMetasPanel() {
@@ -141,6 +178,14 @@ export default function FarolPublicMetasPanel() {
     return Array.from(porID.values()).sort((a, b) => a.nome.localeCompare(b.nome))
   }, [vinculos])
 
+  // Auto-seleciona a Indústria quando só existe UMA (pedido do Claudio
+  // 11/09/2026: "o SUPV/RCA tem que entrar já carregando... sem ter que
+  // informar") — com 2+ indústrias ainda mostra os chips de toque pra
+  // escolher, mas nunca deixa a tela vazia esperando 1 escolha óbvia.
+  useEffect(() => {
+    if (!industriaID && industrias.length === 1) setIndustriaID(String(industrias[0].id))
+  }, [industrias, industriaID])
+
   const industriaSelecionada = industrias.find(i => String(i.id) === industriaID)
   const metricasDisponiveis = useMemo(() => {
     const opcoes: Array<{ value: typeof metrica; label: string }> = []
@@ -174,6 +219,17 @@ export default function FarolPublicMetasPanel() {
     },
     enabled: !!cnpj && metrica !== 'combinado' && !!vinculoAtivo,
   })
+
+  // Auto-seleciona a vigência VIGENTE (aberta) assim que a lista chega —
+  // mesmo racional do painel web (ver FarolPainelMetas.tsx), aqui ainda
+  // mais importante: o RCA em campo não pode ficar preso escolhendo período
+  // antes de ver o número.
+  useEffect(() => {
+    if (vigencias.length === 0) return
+    if (vigencias.some(v => String(v.id) === vigenciaID)) return
+    const preferida = vigencias.find(v => v.status === 'aberta') ?? vigencias[0]
+    setVigenciaID(String(preferida.id))
+  }, [vigencias])
 
   const { data: painel, isLoading } = useQuery<Painel>({
     queryKey: ['public-metas-painel', cnpj, scope, scopeCod, vinculoAtivo?.id, vigenciaID, fluxo],
@@ -216,6 +272,14 @@ export default function FarolPublicMetasPanel() {
 
   const periodoSelecionado = periodosCombinados.find(p => p.chave === vigenciaCombinadaKey)
 
+  // Mesmo auto-select acima, aplicado ao Período do modo Combinado.
+  useEffect(() => {
+    if (periodosCombinados.length === 0) return
+    if (periodosCombinados.some(p => p.chave === vigenciaCombinadaKey)) return
+    const preferido = periodosCombinados.find(p => p.cobertura.status === 'aberta') ?? periodosCombinados[0]
+    setVigenciaCombinadaKey(preferido.chave)
+  }, [periodosCombinados])
+
   const { data: painelCombinado, isLoading: isLoadingCombinado } = useQuery<PainelCombinado>({
     queryKey: ['public-metas-painel-combinado', cnpj, scope, scopeCod, industriaSelecionada?.cobertura?.id, industriaSelecionada?.sortimento?.id, periodoSelecionado?.chave, fluxo],
     queryFn: async () => {
@@ -245,60 +309,46 @@ export default function FarolPublicMetasPanel() {
         <p className="text-xs text-muted-foreground">{scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
       </div>
 
-      <div className="space-y-2">
-        <select
-          className="w-full border rounded-md p-2 text-sm bg-white"
+      <div className="space-y-3">
+        <ChipRow
+          label="Indústria"
+          options={industrias.map(i => ({ value: String(i.id), label: i.nome }))}
           value={industriaID}
-          onChange={e => { setIndustriaID(e.target.value); setVigenciaID(''); setVigenciaCombinadaKey('') }}
-        >
-          <option value="">Selecione a Indústria...</option>
-          {industrias.map(i => (
-            <option key={i.id} value={i.id}>{i.nome}</option>
-          ))}
-        </select>
+          onChange={v => { setIndustriaID(v); setVigenciaID(''); setVigenciaCombinadaKey('') }}
+        />
 
         {industriaSelecionada && (
-          <select
-            className="w-full border rounded-md p-2 text-sm bg-white"
+          <ChipRow
+            label="Métrica"
+            options={metricasDisponiveis.map(m => ({ value: m.value, label: m.label }))}
             value={metrica}
-            onChange={e => { setMetrica(e.target.value as typeof metrica); setVigenciaID(''); setVigenciaCombinadaKey('') }}
-          >
-            {metricasDisponiveis.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
+            onChange={v => { setMetrica(v); setVigenciaID(''); setVigenciaCombinadaKey('') }}
+          />
         )}
 
         {industriaSelecionada && metrica === 'combinado' && (
-          <select
-            className="w-full border rounded-md p-2 text-sm bg-white"
+          <ChipRow
+            label="Período"
+            options={periodosCombinados.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
             value={vigenciaCombinadaKey}
-            onChange={e => setVigenciaCombinadaKey(e.target.value)}
-          >
-            <option value="">Selecione o período...</option>
-            {periodosCombinados.map(p => (
-              <option key={p.chave} value={p.chave}>{p.cobertura.data_inicio} – {p.cobertura.data_fim}</option>
-            ))}
-          </select>
+            onChange={setVigenciaCombinadaKey}
+          />
         )}
         {industriaSelecionada && metrica !== 'combinado' && (
-          <select
-            className="w-full border rounded-md p-2 text-sm bg-white"
+          <ChipRow
+            label="Período"
+            options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
             value={vigenciaID}
-            onChange={e => setVigenciaID(e.target.value)}
-          >
-            <option value="">Selecione o período...</option>
-            {vigencias.map(v => (
-              <option key={v.id} value={v.id}>{v.data_inicio} – {v.data_fim}</option>
-            ))}
-          </select>
+            onChange={setVigenciaID}
+          />
         )}
         {industriaSelecionada && (
-          <select
-            className="w-full border rounded-md p-2 text-sm bg-white"
+          <ChipRow
+            label="Visão"
+            options={FLUXOS}
             value={fluxo}
-            onChange={e => setFluxo(e.target.value)}
-          >
-            {FLUXOS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-          </select>
+            onChange={setFluxo}
+          />
         )}
       </div>
 
