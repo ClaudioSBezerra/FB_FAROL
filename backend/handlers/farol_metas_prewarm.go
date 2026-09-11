@@ -64,12 +64,12 @@ func listarVinculosAtivosComVigenciaAberta(db *sql.DB, empresaID string) ([]vinc
 	return out, rows.Err()
 }
 
-// prewarmMetasRealizados varre os vínculos ativos com vigência aberta da
+// PrewarmMetasRealizados varre os vínculos ativos com vigência aberta da
 // empresa e grava (recorte "" + os 4 recortes, cada fluxo × nível) o
 // snapshot no banco. Erros de UM vínculo/combinação só logam e seguem pras
 // próximas — uma Indústria com Cliente Válido faltando não pode travar o
 // prewarm das outras.
-func prewarmMetasRealizados(db *sql.DB, empresaID string) {
+func PrewarmMetasRealizados(db *sql.DB, empresaID string) {
 	t0 := time.Now()
 	vinculos, err := listarVinculosAtivosComVigenciaAberta(db, empresaID)
 	if err != nil {

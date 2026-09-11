@@ -259,6 +259,34 @@ func onDBConnected() {
 		}
 	}
 
+	// FAROL_PREWARM_METAS_ONCE=1 — modo de manutenção: roda o prewarm do
+	// snapshot do Painel de Objetivos (handlers.PrewarmMetasRealizados, ver
+	// handlers/farol_metas_prewarm.go) pra TODAS as empresas e sai, sem subir
+	// o servidor HTTP nem os agendadores. Existe pra forçar a atualização do
+	// snapshot fora do ciclo normal (1x/dia + depois de import) sem esperar o
+	// próximo ciclo — ex: `docker exec -e FAROL_PREWARM_METAS_ONCE=1 <container>
+	// ./server` contra o container já no ar, sem precisar de redeploy. Nunca
+	// liga sozinho — só quem passa a env var explicitamente (11/09/2026).
+	if os.Getenv("FAROL_PREWARM_METAS_ONCE") == "1" {
+		rows, err := database.Query(`SELECT id::text FROM companies`)
+		if err != nil {
+			log.Fatalf("FAROL_PREWARM_METAS_ONCE: falha ao listar empresas: %v", err)
+		}
+		var empresaIDs []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				empresaIDs = append(empresaIDs, id)
+			}
+		}
+		rows.Close()
+		for _, id := range empresaIDs {
+			handlers.PrewarmMetasRealizados(database, id)
+		}
+		log.Printf("FAROL_PREWARM_METAS_ONCE: concluído para %d empresa(s)", len(empresaIDs))
+		os.Exit(0)
+	}
+
 	// Aquece o baseCache (positivados/base_cli) logo após conectar — sem isto,
 	// todo restart do backend (deploy nosso, crash, redeploy do Coolify) zera
 	// o cache em memória e os primeiros usuários reais pagam do zero o custo

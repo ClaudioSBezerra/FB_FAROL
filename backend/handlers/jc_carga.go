@@ -325,7 +325,7 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		// com o intervalo que acabou de ser carregado — síncrono aqui (ao
 		// contrário do import de 1 dia) porque essa consolidação já roda em
 		// background própria (chamada por goroutine do endpoint manual).
-		prewarmMetasRealizados(db, empresaID)
+		PrewarmMetasRealizados(db, empresaID)
 		log.Printf("[jc:carga] consolidação final concluída em %v", time.Since(t0).Round(time.Second))
 	}
 

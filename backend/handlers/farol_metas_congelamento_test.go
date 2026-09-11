@@ -71,7 +71,7 @@ func TestObterOuCongelar_VigenciaAberta_UsaSnapshotComAutoCura(t *testing.T) {
 	}
 
 	// prewarm (mesmo mecanismo do daily) renova o snapshot com o dado novo.
-	prewarmMetasRealizados(db, empresaID)
+	PrewarmMetasRealizados(db, empresaID)
 
 	r3, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
 	if err != nil {
