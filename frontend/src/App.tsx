@@ -1,47 +1,61 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/queryClient'
 import { Toaster } from '@/components/ui/sonner'
-import ObjetivosManutencao from './pages/ObjetivosManutencao'
-import GestaoAmbiente from './pages/GestaoAmbiente'
-import AdminUsers from './pages/AdminUsers'
-import SpUsuarios from './pages/SpUsuarios'
-import SpAmbiente from './pages/SpAmbiente'
-import SpUploadCSV from './pages/SpUploadCSV'
-import SpIgnorados from './pages/SpIgnorados'
-import SpDashboard from './pages/SpDashboard'
-import SpGerarPDF from './pages/SpGerarPDF'
-import SpHistorico from './pages/SpHistorico'
-import SpReincidencia from './pages/SpReincidencia'
-import SpResultados from './pages/SpResultados'
-import SpResumoExecutivo from './pages/SpResumoExecutivo'
-import SpDestinatarios from './pages/SpDestinatarios'
-import SpAuditLog from './pages/SpAuditLog'
-import SpEmpresasBloqueio from './pages/SpEmpresasBloqueio'
-import SpUsoSistema from './pages/SpUsoSistema'
 import { useUsageTracker } from './hooks/useUsageTracker'
-import Login from './pages/Login'
-import Register from './pages/Register'
-import ForgotPassword from './pages/ForgotPassword'
-import ResetPassword from './pages/ResetPassword'
-import FarolPublicPanel from './pages/farol/FarolPublicPanel'
-import FarolPublicMetasPanel from './pages/farol/FarolPublicMetasPanel'
-import LimparDados from './pages/LimparDados'
-import ConfigSazonalidade from './pages/ConfigSazonalidade'
-import GestaoIndustrias from './pages/GestaoIndustrias'
-import ConfigTiposMetrica from './pages/ConfigTiposMetrica'
-import ConfigMetasVinculos from './pages/ConfigMetasVinculos'
-import FarolPainelMetas from './pages/FarolPainelMetas'
-import { FarolWebList, FarolWebDashboard, FarolWebRcaDetail, FarolWebFornecRcas, FarolWebFornecSups } from './pages/farol/FarolWeb'
-import FarolV2Dashboard from './pages/farol/FarolV2Dashboard'
-import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
-import FarolResumoEnvio from './pages/farol/FarolResumoEnvio'
-import FarolV2Import from './pages/farol/FarolV2Import'
-import FarolUsuarios from './pages/farol/FarolUsuarios'
-import FarolBI from './pages/farol/FarolBI'
-import FarolAssistente from './pages/farol/FarolAssistente'
-import FarolRelatorios from './pages/farol/FarolRelatorios'
 import { AppRail } from '@/components/AppRail'
+
+// ─── Páginas — lazy (pedido do Claudio 11/09/2026) ───────────────────────────
+// Antes TODA página (admin inteiro: dashboards, config, relatórios) entrava
+// num único bundle de ~1,4MB — até o link mobile /m/.../metas-industria, que
+// só precisa de 3 números, pagava esse download inteiro antes de renderizar
+// qualquer coisa (4s medidos num iPhone em wifi bom). Com React.lazy, cada
+// rota vira um chunk separado, baixado só quando aquela rota é visitada — o
+// Suspense em App() cobre tanto as rotas de topo (/m/..., /login) quanto as
+// aninhadas em AppLayout.
+const ObjetivosManutencao = lazy(() => import('./pages/ObjetivosManutencao'))
+const GestaoAmbiente = lazy(() => import('./pages/GestaoAmbiente'))
+const AdminUsers = lazy(() => import('./pages/AdminUsers'))
+const SpUsuarios = lazy(() => import('./pages/SpUsuarios'))
+const SpAmbiente = lazy(() => import('./pages/SpAmbiente'))
+const SpUploadCSV = lazy(() => import('./pages/SpUploadCSV'))
+const SpIgnorados = lazy(() => import('./pages/SpIgnorados'))
+const SpDashboard = lazy(() => import('./pages/SpDashboard'))
+const SpGerarPDF = lazy(() => import('./pages/SpGerarPDF'))
+const SpHistorico = lazy(() => import('./pages/SpHistorico'))
+const SpReincidencia = lazy(() => import('./pages/SpReincidencia'))
+const SpResultados = lazy(() => import('./pages/SpResultados'))
+const SpResumoExecutivo = lazy(() => import('./pages/SpResumoExecutivo'))
+const SpDestinatarios = lazy(() => import('./pages/SpDestinatarios'))
+const SpAuditLog = lazy(() => import('./pages/SpAuditLog'))
+const SpEmpresasBloqueio = lazy(() => import('./pages/SpEmpresasBloqueio'))
+const SpUsoSistema = lazy(() => import('./pages/SpUsoSistema'))
+const Login = lazy(() => import('./pages/Login'))
+const Register = lazy(() => import('./pages/Register'))
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const FarolPublicPanel = lazy(() => import('./pages/farol/FarolPublicPanel'))
+const FarolPublicMetasPanel = lazy(() => import('./pages/farol/FarolPublicMetasPanel'))
+const LimparDados = lazy(() => import('./pages/LimparDados'))
+const ConfigSazonalidade = lazy(() => import('./pages/ConfigSazonalidade'))
+const GestaoIndustrias = lazy(() => import('./pages/GestaoIndustrias'))
+const ConfigTiposMetrica = lazy(() => import('./pages/ConfigTiposMetrica'))
+const ConfigMetasVinculos = lazy(() => import('./pages/ConfigMetasVinculos'))
+const FarolPainelMetas = lazy(() => import('./pages/FarolPainelMetas'))
+const FarolWebList = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebList })))
+const FarolWebDashboard = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebDashboard })))
+const FarolWebRcaDetail = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebRcaDetail })))
+const FarolWebFornecRcas = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebFornecRcas })))
+const FarolWebFornecSups = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebFornecSups })))
+const FarolV2Dashboard = lazy(() => import('./pages/farol/FarolV2Dashboard'))
+const FarolDinheiroNaMesa = lazy(() => import('./pages/farol/FarolDinheiroNaMesa'))
+const FarolResumoEnvio = lazy(() => import('./pages/farol/FarolResumoEnvio'))
+const FarolV2Import = lazy(() => import('./pages/farol/FarolV2Import'))
+const FarolUsuarios = lazy(() => import('./pages/farol/FarolUsuarios'))
+const FarolBI = lazy(() => import('./pages/farol/FarolBI'))
+const FarolAssistente = lazy(() => import('./pages/farol/FarolAssistente'))
+const FarolRelatorios = lazy(() => import('./pages/farol/FarolRelatorios'))
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
 import { FarolAjudaChat } from '@/components/farol/FarolAjudaChat'
@@ -330,6 +344,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
+          <Suspense fallback={<div className="flex h-screen items-center justify-center text-sm text-muted-foreground">Carregando…</div>}>
           <Routes>
             <Route path="/login"           element={<Login />} />
             <Route path="/register"        element={<Register />} />
@@ -361,6 +376,7 @@ function App() {
               </ProtectedRoute>
             } />
           </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
