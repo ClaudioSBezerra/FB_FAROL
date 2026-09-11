@@ -39,7 +39,7 @@ func TestInvalidateBaseCacheMesesPreservaHistorico(t *testing.T) {
 	}
 	baseCacheMu.Unlock()
 
-	invalidateBaseCacheMeses(emp, 202607, 202607)
+	invalidateBaseCacheMeses(nil, emp, 202607, 202607)
 
 	baseCacheMu.RLock()
 	defer baseCacheMu.RUnlock()
@@ -196,7 +196,7 @@ func TestBaseCacheKeyComFiltroPreservaPosicaoDoYmRange(t *testing.T) {
 	baseCache = map[string]baseCacheEntry{key: {data: map[string]int{"x": 1}, at: time.Now()}}
 	baseCacheMu.Unlock()
 
-	invalidateBaseCacheMeses(emp, 202607, 202607)
+	invalidateBaseCacheMeses(nil, emp, 202607, 202607)
 
 	baseCacheMu.RLock()
 	_, existe := baseCache[key]

@@ -317,7 +317,7 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 		// janela em que uma request repovoaria o cache com agregado velho.
 		for _, m := range lista {
 			ym := m.Ano*100 + m.Mes
-			invalidateBaseCacheMeses(empresaID, ym, ym)
+			invalidateBaseCacheMeses(db, empresaID, ym, ym)
 			invalidateVendasPeriodoCacheMeses(empresaID, ym, ym)
 			invalidateAggMesCacheMeses(empresaID, ym, ym)
 		}

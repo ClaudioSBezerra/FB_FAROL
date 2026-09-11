@@ -1034,11 +1034,11 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		// Invalida só os períodos que a carga tocou — a carga diária mexe no mês
 		// corrente e não pode derrubar o cache já aquecido de 2025/2026 antigo.
 		if ymIni, ymFim, ok := mesesRangeYM(meses); ok {
-			invalidateBaseCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+			invalidateBaseCacheMeses(db, spCtx.EmpresaID, ymIni, ymFim)
 			invalidateVendasPeriodoCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 			invalidateAggMesCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 		} else {
-			invalidateBaseCache(spCtx.EmpresaID)
+			invalidateBaseCache(db, spCtx.EmpresaID)
 			invalidateVendasPeriodoCache(spCtx.EmpresaID)
 			invalidateAggMesCache(spCtx.EmpresaID)
 		}
@@ -1479,7 +1479,7 @@ func VendasClearHandler(db *sql.DB) http.HandlerFunc {
 		// positivação/base do que já não existe por até 30 min — os dois têm de
 		// cair juntos, senão viram números divergentes.
 		invalidateBICache(spCtx.EmpresaID)
-		invalidateBaseCache(spCtx.EmpresaID)
+		invalidateBaseCache(db, spCtx.EmpresaID)
 		invalidateVendasPeriodoCache(spCtx.EmpresaID)
 		invalidateAggMesCache(spCtx.EmpresaID)
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n})

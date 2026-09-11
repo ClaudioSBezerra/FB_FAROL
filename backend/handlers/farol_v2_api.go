@@ -2948,7 +2948,7 @@ const vendasPeriodoCacheTTL = 20 * time.Hour
 // o conjunto de meses afetados é desconhecido ou os dados foram apagados em
 // bloco; para carga/consolidação de meses específicos prefira
 // invalidateBaseCacheMeses, que preserva o histórico já aquecido.
-func invalidateBaseCache(empresaID string) {
+func invalidateBaseCache(db *sql.DB, empresaID string) {
 	baseCacheMu.Lock()
 	for k := range baseCache {
 		if strings.HasPrefix(k, empresaID+"|") {
@@ -2956,6 +2956,7 @@ func invalidateBaseCache(empresaID string) {
 		}
 	}
 	baseCacheMu.Unlock()
+	painelCacheInvalidateAll(db, empresaID, "base_positivados")
 }
 
 // ymOverlapsKeyRange — decide se a entrada de cache cujo período é [aIni,aFim]
@@ -2984,7 +2985,7 @@ func parseYMRangeField(f string) (ini, fim int, ok bool) {
 // corrente: derrubar junto o cache de 2025 e de jan-mai/2026 — dado que não
 // mudou — obrigaria a reconstruir 10-25s por view no próximo acesso, todo dia.
 // Chaves com período fora do intervalo carregado sobrevivem intactas.
-func invalidateBaseCacheMeses(empresaID string, ymIni, ymFim int) {
+func invalidateBaseCacheMeses(db *sql.DB, empresaID string, ymIni, ymFim int) {
 	pref := empresaID + "|"
 	kept, dropped := 0, 0
 	baseCacheMu.Lock()
@@ -3008,6 +3009,7 @@ func invalidateBaseCacheMeses(empresaID string, ymIni, ymFim int) {
 		kept++
 	}
 	baseCacheMu.Unlock()
+	painelCacheInvalidateMeses(db, empresaID, "base_positivados", ymIni, ymFim)
 	log.Printf("[farol:cache] baseCache invalidado p/ meses %d..%d — %d entradas removidas, %d preservadas (histórico)",
 		ymIni, ymFim, dropped, kept)
 }
@@ -3120,10 +3122,23 @@ func cachedDistinctPositivados(db *sql.DB, empresaID string, fluxo fluxoCtx, vie
 	}
 	baseCacheMu.RUnlock()
 
+	// L2 — snapshot gravado no banco (migration 235, farol_painel_cache_db.go):
+	// sobrevive a deploy, ao contrário do baseCache (só RAM). Miss aqui é
+	// raro fora de "empresa nunca calculou isso" ou "acabou de ser
+	// invalidado por uma carga" — nos dois casos cai pro cálculo ao vivo
+	// normalmente.
+	if data, ok := painelCacheGet(db, empresaID, "base_positivados", key); ok {
+		baseCacheMu.Lock()
+		baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
+		baseCacheMu.Unlock()
+		return data, true
+	}
+
 	data := queryDistinctPositivados(db, empresaID, fluxo, view, groupCol, ymStart, ymEnd, drillPath, filters)
 	baseCacheMu.Lock()
 	baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
 	baseCacheMu.Unlock()
+	painelCacheSet(db, empresaID, "base_positivados", key, ymStart, ymEnd, data)
 	return data, false
 }
 
@@ -3604,11 +3619,11 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 		// derrubar o histórico já aquecido (2025, 2026 antigo). Sem meses
 		// conhecidos (reconstrução total) cai no invalidate completo.
 		if ymIni, ymFim, ok := mesesRangeYM(meses); ok {
-			invalidateBaseCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
+			invalidateBaseCacheMeses(db, spCtx.EmpresaID, ymIni, ymFim)
 			invalidateVendasPeriodoCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 			invalidateAggMesCacheMeses(spCtx.EmpresaID, ymIni, ymFim)
 		} else {
-			invalidateBaseCache(spCtx.EmpresaID)
+			invalidateBaseCache(db, spCtx.EmpresaID)
 			invalidateVendasPeriodoCache(spCtx.EmpresaID)
 			invalidateAggMesCache(spCtx.EmpresaID)
 		}
