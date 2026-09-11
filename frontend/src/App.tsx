@@ -5,6 +5,9 @@ import { queryClient } from '@/lib/queryClient'
 import { Toaster } from '@/components/ui/sonner'
 import { useUsageTracker } from './hooks/useUsageTracker'
 import { AppRail } from '@/components/AppRail'
+import FarolPublicPanel from './pages/farol/FarolPublicPanel'
+import FarolPublicMetasPanel from './pages/farol/FarolPublicMetasPanel'
+import FarolDinheiroNaMesa from './pages/farol/FarolDinheiroNaMesa'
 
 // ─── Páginas — lazy (pedido do Claudio 11/09/2026) ───────────────────────────
 // Antes TODA página (admin inteiro: dashboards, config, relatórios) entrava
@@ -14,6 +17,18 @@ import { AppRail } from '@/components/AppRail'
 // rota vira um chunk separado, baixado só quando aquela rota é visitada — o
 // Suspense em App() cobre tanto as rotas de topo (/m/..., /login) quanto as
 // aninhadas em AppLayout.
+//
+// EXCEÇÃO (11/09/2026, achado no próprio teste do Claudio no iPhone): lazy
+// virou 10s em vez de 4s pras 2 rotas públicas /m/... — React.lazy só
+// dispara o fetch do chunk DEPOIS do bundle principal já ter baixado E
+// executado (é preciso rodar o import() pra descobrir o que buscar), então
+// vira uma 2ª viagem de rede em SÉRIE, que numa conexão com latência real
+// pesa mais do que os bytes que o code-split economiza. FarolPublicPanel/
+// FarolPublicMetasPanel/FarolDinheiroNaMesa (também pública via /q/:token)
+// voltam a ser import estático — pagam pra entrar no bundle principal, mas
+// renderizam numa tacada só, sem 2ª viagem. As páginas de admin (usadas só
+// por quem já logou, tipicamente em desktop) continuam lazy — é ali que o
+// corte de 1,4MB pra 428KB realmente compensa.
 const ObjetivosManutencao = lazy(() => import('./pages/ObjetivosManutencao'))
 const GestaoAmbiente = lazy(() => import('./pages/GestaoAmbiente'))
 const AdminUsers = lazy(() => import('./pages/AdminUsers'))
@@ -35,8 +50,6 @@ const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
-const FarolPublicPanel = lazy(() => import('./pages/farol/FarolPublicPanel'))
-const FarolPublicMetasPanel = lazy(() => import('./pages/farol/FarolPublicMetasPanel'))
 const LimparDados = lazy(() => import('./pages/LimparDados'))
 const ConfigSazonalidade = lazy(() => import('./pages/ConfigSazonalidade'))
 const GestaoIndustrias = lazy(() => import('./pages/GestaoIndustrias'))
@@ -49,7 +62,6 @@ const FarolWebRcaDetail = lazy(() => import('./pages/farol/FarolWeb').then(m => 
 const FarolWebFornecRcas = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebFornecRcas })))
 const FarolWebFornecSups = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebFornecSups })))
 const FarolV2Dashboard = lazy(() => import('./pages/farol/FarolV2Dashboard'))
-const FarolDinheiroNaMesa = lazy(() => import('./pages/farol/FarolDinheiroNaMesa'))
 const FarolResumoEnvio = lazy(() => import('./pages/farol/FarolResumoEnvio'))
 const FarolV2Import = lazy(() => import('./pages/farol/FarolV2Import'))
 const FarolUsuarios = lazy(() => import('./pages/farol/FarolUsuarios'))
