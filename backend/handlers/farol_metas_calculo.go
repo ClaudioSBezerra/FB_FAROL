@@ -62,6 +62,17 @@ type RealizadoCliente struct {
 	Razao    string  `json:"razao"`
 	Fantasia string  `json:"fantasia"`
 	Valor    float64 `json:"valor"`
+	// UF — resolvida AQUI (cálculo, gravado no snapshot) e nunca ao vivo no
+	// momento da leitura (decisão do Claudio 11/09/2026: "tem que ser pá
+	// pum na tela" — nada de consulta viva no clique do RCA/Supervisor).
+	// Era uma chamada separada (resolverUFClientes) dentro de
+	// calcularPainelCombinado, rodando em TODA leitura do painel mobile —
+	// 8s medidos em produção (DISTINCT ON ordenando 3,2M linhas de
+	// histórico só pra achar a venda mais recente de 378 CNPJs). Movida
+	// pra dentro de calcularCoberturaPorRede/calcularSortimentoPorRede,
+	// que só rodam no prewarm (1x/dia) ou na auto-cura do 1º acesso —
+	// nunca mais numa leitura que já tem snapshot.
+	UF string `json:"uf,omitempty"`
 }
 
 type RealizadoRede struct {
@@ -405,6 +416,10 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	if err != nil {
 		return nil, err
 	}
+	ufPorCliente, err := resolverUFClientes(db, empresaID, cnpjs)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -414,7 +429,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ]})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
@@ -527,6 +542,10 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	if err != nil {
 		return nil, err
 	}
+	ufPorCliente, err := resolverUFClientes(db, empresaID, cnpjs)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -536,7 +555,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		for _, c := range clientesDaRede {
 			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], eanPorCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ]})
 		}
 		media := somaEANsPorLoja / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)

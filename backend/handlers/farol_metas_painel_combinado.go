@@ -106,20 +106,40 @@ type PainelCombinadoCliente struct {
 // 10/09/2026: não existe UF na lista de Clientes Válidos nem em cadastro
 // de cliente algum, só nas linhas de venda (migration 156). CNPJ que nunca
 // vendeu nada no Farol simplesmente não aparece no mapa.
+// resolverUFClientes — reescrita 2026-09-11 (decisão do Claudio: UF não pode
+// custar caro nem ao vivo nem no cálculo). A versão original fazia
+// DISTINCT ON sobre um UNION ALL das duas tabelas (empresa_id, cnpj) —
+// mesmo com índice cobridor (idx_vf/vt_cnpj_data_uf), o Postgres ainda
+// precisava TRAZER e ORDENAR todo o histórico batendo cnpj (3,2 milhões de
+// linhas pra 378 clientes, medido em produção: 8s). Esta versão usa LATERAL
+// + LIMIT 1 por cnpj — o índice (empresa_id, cnpj, data DESC) deixa buscar
+// só a linha mais recente de cada cliente direto, sem trazer o resto do
+// histórico. Mesmo resultado, mesmo empresaID/cnpjs — só o plano de
+// execução muda. Medido: 8.000ms → 20ms (400x).
 func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]string, error) {
 	out := map[string]string{}
 	if len(cnpjs) == 0 {
 		return out, nil
 	}
 	rows, err := db.Query(`
-		SELECT DISTINCT ON (cnpj) cnpj, uf FROM (
-			SELECT cnpj, uf, data_faturamento AS data FROM vendas_faturadas
-				WHERE empresa_id = $1 AND cnpj = ANY($2) AND uf <> ''
-			UNION ALL
-			SELECT cnpj, uf, data_transmissao AS data FROM vendas_transmitidas
-				WHERE empresa_id = $1 AND cnpj = ANY($2) AND uf <> ''
-		) x
-		ORDER BY cnpj, data DESC
+		SELECT c.cnpj,
+		  CASE WHEN vf.data IS NULL THEN vt.uf
+		       WHEN vt.data IS NULL THEN vf.uf
+		       WHEN vf.data >= vt.data THEN vf.uf
+		       ELSE vt.uf
+		  END AS uf
+		FROM unnest($2::text[]) AS c(cnpj)
+		LEFT JOIN LATERAL (
+		  SELECT uf, data_faturamento AS data FROM vendas_faturadas
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj AND uf <> ''
+		  ORDER BY data_faturamento DESC LIMIT 1
+		) vf ON true
+		LEFT JOIN LATERAL (
+		  SELECT uf, data_transmissao AS data FROM vendas_transmitidas
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj AND uf <> ''
+		  ORDER BY data_transmissao DESC LIMIT 1
+		) vt ON true
+		WHERE vf.uf IS NOT NULL OR vt.uf IS NOT NULL
 	`, empresaID, pq.Array(cnpjs))
 	if err != nil {
 		return nil, err
@@ -398,22 +418,27 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		})
 	}
 
-	// UF (ver resolverUFClientes) — coletado de TODOS os CNPJs (cobertura +
-	// sortimento) antes de montar Clientes/preencher Redes.
-	var todosCnpjs []string
+	// UF — já vem resolvida DENTRO de cada RealizadoCliente (ver
+	// calcularCoberturaPorRede/calcularSortimentoPorRede em
+	// farol_metas_calculo.go): antes esta função fazia uma consulta viva
+	// separada (resolverUFClientes) em TODA leitura do painel — 8s medidos
+	// em produção (decisão do Claudio 11/09/2026: isso não pode acontecer
+	// no clique, só no prewarm). Aqui só remonta o mapa a partir do que já
+	// foi calculado, sem tocar o banco.
+	ufPorCliente := map[string]string{}
 	for _, r := range realizadoCobertura.Redes {
 		for _, c := range r.Clientes {
-			todosCnpjs = append(todosCnpjs, c.CNPJ)
+			if c.UF != "" {
+				ufPorCliente[c.CNPJ] = c.UF
+			}
 		}
 	}
 	for _, r := range realizadoSortimento.Redes {
 		for _, c := range r.Clientes {
-			todosCnpjs = append(todosCnpjs, c.CNPJ)
+			if _, ok := ufPorCliente[c.CNPJ]; !ok && c.UF != "" {
+				ufPorCliente[c.CNPJ] = c.UF
+			}
 		}
-	}
-	ufPorCliente, err := resolverUFClientes(db, empresaID, todosCnpjs)
-	if err != nil {
-		return nil, err
 	}
 	// UF da Rede = UF do "dono" (primeiro CNPJ da lista, mesma aproximação
 	// já aceita pra GGV/CRV/RCA — ver redeRepresentante em
