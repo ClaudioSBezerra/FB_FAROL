@@ -399,6 +399,14 @@ export default function FarolPainelMetas() {
     return Array.from(porID.values()).sort((a, b) => a.nome.localeCompare(b.nome))
   }, [vinculos])
 
+  // Auto-seleciona a Indústria quando só existe UMA cadastrada (pedido do
+  // Claudio 11/09/2026) — poupa o clique óbvio quando não há escolha real.
+  // Com 2+ (ex: HC e FOOD), continua exigindo escolha manual — não dá pra
+  // adivinhar qual o usuário quer ver primeiro.
+  useEffect(() => {
+    if (!industriaID && industrias.length === 1) setIndustriaID(String(industrias[0].id))
+  }, [industrias, industriaID])
+
   const industriaSelecionada = industrias.find(i => String(i.id) === industriaID)
   const metricasDisponiveis = useMemo(() => {
     const opcoes: Array<{ value: typeof metrica; label: string }> = []
@@ -434,6 +442,20 @@ export default function FarolPainelMetas() {
     },
     enabled: metrica !== 'combinado' && !!vinculoAtivo,
   })
+
+  // Auto-seleciona a vigência VIGENTE (aberta) assim que a lista chega —
+  // é sempre isso que o usuário quer ver primeiro (pedido do Claudio
+  // 11/09/2026: "já carregar a tabela vigente"). Cai pra fechada mais
+  // recente só se não houver nenhuma aberta (ex: vínculo sem vigência do
+  // mês corrente cadastrada ainda). Reavalia sempre que a lista muda
+  // (troca de indústria/vínculo já zera vigenciaID no onValueChange, mas
+  // fechada não), sem sobrescrever uma escolha manual ainda válida.
+  useEffect(() => {
+    if (vigencias.length === 0) return
+    if (vigencias.some(v => String(v.id) === vigenciaID)) return
+    const preferida = vigencias.find(v => v.status === 'aberta') ?? vigencias[0]
+    setVigenciaID(String(preferida.id))
+  }, [vigencias])
 
   const { data: painel, isLoading, isFetching } = useQuery<Painel>({
     queryKey: ['farol-metas-painel', vinculoAtivo?.id, vigenciaID, nivel, fluxo, filtroGGV?.codigo, filtroCRV?.codigo, filtroRCA?.codigo, redeAberta?.cod_princ],
@@ -479,6 +501,15 @@ export default function FarolPainelMetas() {
   }, [vigenciasCobertura, vigenciasSortimento])
 
   const periodoSelecionado = periodosCombinados.find(p => p.chave === vigenciaCombinadaKey)
+
+  // Mesmo auto-select do modo individual (ver useEffect de vigenciaID
+  // acima), aplicado ao Período do modo Combinado.
+  useEffect(() => {
+    if (periodosCombinados.length === 0) return
+    if (periodosCombinados.some(p => p.chave === vigenciaCombinadaKey)) return
+    const preferido = periodosCombinados.find(p => p.cobertura.status === 'aberta') ?? periodosCombinados[0]
+    setVigenciaCombinadaKey(preferido.chave)
+  }, [periodosCombinados])
 
   // Filtro "Período: de/até" (pedido do Claudio em 10/09/2026) — default =
   // os bounds da vigência escolhida (que, pra vigência aberta/corrente,
