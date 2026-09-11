@@ -147,7 +147,7 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 
 		// Realizado ao nível de Rede (grão atômico), depois filtra pro
 		// escopo pedido — nunca expõe Redes de fora do Supervisor/RCA da URL.
-		realizadoEscopo, err := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, "", "")
+		realizadoEscopo, err := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, "")
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -190,11 +190,7 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 		if q.Get("recortes") == "1" {
 			resp.Recortes = map[string]*RealizadoResultado{}
 			for _, rec := range []string{"dia_anterior", "semana", "mes", "ano_corrente"} {
-				di, df, rerr := calcularRecorteDatas(rec)
-				if rerr != nil {
-					continue
-				}
-				rr, rerr2 := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, di, df)
+				rr, rerr2 := calcularRealizadoEscopoPublico(db, empresaID, vinculoID, vigenciaID, fluxo, scope, cod, formulaCodigo, vig.DataInicio, vig.DataFim, rec)
 				if rerr2 == nil {
 					resp.Recortes[rec] = rr
 				}
@@ -205,18 +201,17 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// calcularRealizadoEscopoPublico calcula o Realizado (ao vivo via
-// CalcularRealizadoComPeriodo — recortes de tempo nunca passam pelo
-// congelamento, mesma regra da Story 5.3) e já filtra pro escopo
-// Supervisor/RCA. dataInicioOverride/dataFimOverride vazios = período
-// inteiro da vigência (uso normal); preenchidos = recorte (Story 6.2).
-func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, scope, cod, formulaCodigo, dataInicioVigencia, dataFimVigencia, dataInicioOverride, dataFimOverride string) (*RealizadoResultado, error) {
+// calcularRealizadoEscopoPublico calcula o Realizado (servido do snapshot
+// diário desde 2026-09-11 — ver cabeçalho de farol_metas_congelamento.go) e
+// já filtra pro escopo Supervisor/RCA. recorte vazio = período inteiro da
+// vigência (uso normal); um dos 4 nomes de FR21 = recorte (Story 6.2).
+func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, scope, cod, formulaCodigo, dataInicioVigencia, dataFimVigencia, recorte string) (*RealizadoResultado, error) {
 	var realizadoCompleto *RealizadoResultado
 	var err error
-	if dataInicioOverride == "" {
+	if recorte == "" {
 		realizadoCompleto, err = obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, fluxo, "rede")
 	} else {
-		realizadoCompleto, err = CalcularRealizadoComPeriodo(db, empresaID, vinculoID, vigenciaID, fluxo, "rede", dataInicioOverride, dataFimOverride)
+		realizadoCompleto, err = obterOuCalcularRecorte(db, empresaID, vinculoID, vigenciaID, fluxo, "rede", recorte)
 	}
 	if err != nil {
 		return nil, err

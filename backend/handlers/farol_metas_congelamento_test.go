@@ -18,7 +18,16 @@ import (
 	"testing"
 )
 
-func TestObterOuCongelar_VigenciaAberta_SempreAoVivo(t *testing.T) {
+// TestObterOuCongelar_VigenciaAberta_UsaSnapshotComAutoCura cobre a mudança
+// de 2026-09-11 (decisão do Claudio, ver cabeçalho de
+// farol_metas_congelamento.go): vigência aberta agora também serve de
+// snapshot — o 1º acesso calcula ao vivo e grava (auto-cura), acessos
+// seguintes servem do snapshot MESMO que o dado bruto tenha mudado
+// (diferente do comportamento antigo, que era sempre ao vivo). Só o
+// prewarm diário (ou um novo INSERT explícito via salvarSnapshot) renova o
+// valor — é exatamente essa troca "sempre ao vivo" → "snapshot 1x/dia" que
+// tira a carga repetida de vendas_faturadas/vendas_transmitidas.
+func TestObterOuCongelar_VigenciaAberta_UsaSnapshotComAutoCura(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCONG Aberta", "cobertura_rede", "rede",
 		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
@@ -31,6 +40,7 @@ func TestObterOuCongelar_VigenciaAberta_SempreAoVivo(t *testing.T) {
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE ABERTA", loja, "TCALC-RCA9")
 	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 1000, 1, "2026-09-05")
 
+	// 1º acesso: sem snapshot ainda — calcula ao vivo e grava (auto-cura).
 	r1, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
 	if err != nil {
 		t.Fatalf("1ª chamada: %v", err)
@@ -39,21 +49,36 @@ func TestObterOuCongelar_VigenciaAberta_SempreAoVivo(t *testing.T) {
 		t.Fatalf("esperava 1000, veio %.2f", r1.Redes[0].Valor)
 	}
 
-	// muda o dado (vigência ainda aberta)
+	var snapshots int
+	var motivo string
+	db.QueryRow(`SELECT COUNT(*), MAX(motivo) FROM farol.metas_realizados_snapshot WHERE vigencia_id = $1 AND recorte = ''`, vigenciaID).Scan(&snapshots, &motivo)
+	if snapshots != 1 {
+		t.Fatalf("esperava 1 snapshot gravado no 1º acesso (auto-cura), veio %d", snapshots)
+	}
+	if motivo != "snapshot_diario" {
+		t.Errorf("motivo do snapshot de vigência aberta deveria ser snapshot_diario, veio %q", motivo)
+	}
+
+	// muda o dado (vigência ainda aberta) — sem prewarm rodar de novo.
 	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 500, 1, "2026-09-10")
 
 	r2, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
 	if err != nil {
 		t.Fatalf("2ª chamada: %v", err)
 	}
-	if r2.Redes[0].Valor != 1500 {
-		t.Errorf("vigência aberta deveria refletir o dado novo ao vivo — esperava 1500, veio %.2f", r2.Redes[0].Valor)
+	if r2.Redes[0].Valor != 1000 {
+		t.Errorf("2ª chamada deveria servir do snapshot (1000), não recalcular ao vivo — veio %.2f", r2.Redes[0].Valor)
 	}
 
-	var snapshots int
-	db.QueryRow(`SELECT COUNT(*) FROM farol.metas_realizados_snapshot WHERE vigencia_id = $1`, vigenciaID).Scan(&snapshots)
-	if snapshots != 0 {
-		t.Errorf("vigência aberta não deveria gravar snapshot nenhum, veio %d", snapshots)
+	// prewarm (mesmo mecanismo do daily) renova o snapshot com o dado novo.
+	prewarmMetasRealizados(db, empresaID)
+
+	r3, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("3ª chamada (pós-prewarm): %v", err)
+	}
+	if r3.Redes[0].Valor != 1500 {
+		t.Errorf("depois do prewarm esperava 1500, veio %.2f", r3.Redes[0].Valor)
 	}
 }
 

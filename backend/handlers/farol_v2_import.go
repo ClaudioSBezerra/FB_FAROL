@@ -1042,6 +1042,12 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 			invalidateVendasPeriodoCache(spCtx.EmpresaID)
 			invalidateAggMesCache(spCtx.EmpresaID)
 		}
+		// Renova o snapshot do Painel de Objetivos com o dado que acabou de
+		// chegar — em background, não bloqueia a resposta do import (mesmo
+		// padrão do refreshUFMV acima). Sem isso, uma carga manual fora do
+		// horário do prewarm diário deixaria o snapshot desatualizado até o
+		// próximo prewarm (ver farol_metas_prewarm.go).
+		go prewarmMetasRealizados(db, spCtx.EmpresaID)
 		log.Printf("[farol:agg] ImportJob=%s UPSERT total (%d meses) em %v",
 			jobID, len(mesesTocados), time.Since(tAgg))
 	} else {

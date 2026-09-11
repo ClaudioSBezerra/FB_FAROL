@@ -321,6 +321,11 @@ func ExecutarCargaJCIntervalo(db *sql.DB, de, ate time.Time, pularExistentes boo
 			invalidateVendasPeriodoCacheMeses(empresaID, ym, ym)
 			invalidateAggMesCacheMeses(empresaID, ym, ym)
 		}
+		// Renova o snapshot do Painel de Objetivos (ver farol_metas_prewarm.go)
+		// com o intervalo que acabou de ser carregado — síncrono aqui (ao
+		// contrário do import de 1 dia) porque essa consolidação já roda em
+		// background própria (chamada por goroutine do endpoint manual).
+		prewarmMetasRealizados(db, empresaID)
 		log.Printf("[jc:carga] consolidação final concluída em %v", time.Since(t0).Round(time.Second))
 	}
 

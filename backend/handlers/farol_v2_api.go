@@ -4233,6 +4233,7 @@ func PrewarmDiario(db *sql.DB, empresaID string) {
 	prewarmFilialCache(db, empresaID)
 	prewarmEscopoPessoaCache(db, empresaID)
 	prewarmDailyRanges(db, empresaID)
+	prewarmMetasRealizados(db, empresaID)
 	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
 }
 

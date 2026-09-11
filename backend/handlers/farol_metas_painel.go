@@ -157,14 +157,11 @@ func MetasPainelHandler(db *sql.DB) http.HandlerFunc {
 		if r.URL.Query().Get("recortes") == "1" {
 			resp.Recortes = map[string]*RealizadoResultado{}
 			for _, rec := range []string{"dia_anterior", "semana", "mes", "ano_corrente"} {
-				di, df, rerr := calcularRecorteDatas(rec)
-				if rerr != nil {
-					continue
-				}
-				// Recortes são sempre ao vivo — não passam pelo congelamento
-				// (Story 4.3): "dia anterior"/"semana" são leitura de momentum
-				// recente, não o número oficial mensal que precisa ficar estável.
-				rr, rerr2 := CalcularRealizadoComPeriodo(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel, di, df)
+				// Recortes seguem o mesmo snapshot diário da vigência aberta desde
+				// 2026-09-11 (ver cabeçalho de farol_metas_congelamento.go) — cada
+				// um tem sua própria linha (coluna recorte), renovada 1x/dia pelo
+				// prewarm, com auto-cura ao vivo no primeiro acesso sem snapshot.
+				rr, rerr2 := obterOuCalcularRecorte(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, nivel, rec)
 				if rerr2 == nil {
 					_ = aplicarFiltroHierarquiaEEscopo(rr, formulaCodigo, nivel, codGGV, codCRV, codRCA, vig.DataInicio, vig.DataFim)
 					resp.Recortes[rec] = rr
