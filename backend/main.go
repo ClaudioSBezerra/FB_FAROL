@@ -287,6 +287,36 @@ func onDBConnected() {
 		os.Exit(0)
 	}
 
+	// FAROL_PREWARM_GERAL_ONCE=1 — mesmo princípio do ONCE acima, mas pro
+	// PrewarmStartup do Painel Geral (baseCache/aggMesCache). Existe
+	// especificamente pra VALIDAR a camada L2 (farol.painel_cache_snapshot,
+	// migration 235, 11/09/2026) sem esperar outro redeploy: rodado num
+	// processo NOVO (cache em memória sempre frio, igual um boot de
+	// verdade), se a L2 já tiver linha pra alguma chave, o tempo cai de
+	// segundos pra milissegundos — prova que a leitura veio do banco, não
+	// recalculou.
+	if os.Getenv("FAROL_PREWARM_GERAL_ONCE") == "1" {
+		rows, err := database.Query(`SELECT id::text FROM companies`)
+		if err != nil {
+			log.Fatalf("FAROL_PREWARM_GERAL_ONCE: falha ao listar empresas: %v", err)
+		}
+		var empresaIDs []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				empresaIDs = append(empresaIDs, id)
+			}
+		}
+		rows.Close()
+		for _, id := range empresaIDs {
+			t0 := time.Now()
+			handlers.PrewarmStartup(database, id)
+			log.Printf("FAROL_PREWARM_GERAL_ONCE: empresa=%s em %v", id, time.Since(t0))
+		}
+		log.Printf("FAROL_PREWARM_GERAL_ONCE: concluído para %d empresa(s)", len(empresaIDs))
+		os.Exit(0)
+	}
+
 	// Aquece o baseCache (positivados/base_cli) logo após conectar — sem isto,
 	// todo restart do backend (deploy nosso, crash, redeploy do Coolify) zera
 	// o cache em memória e os primeiros usuários reais pagam do zero o custo
