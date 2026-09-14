@@ -81,6 +81,15 @@ func PrewarmMetasRealizados(db *sql.DB, empresaID string) {
 	}
 	n, falhas := 0, 0
 	for _, vv := range vinculos {
+		// Itens Realizados (migration 236) — 1x por vínculo×fluxo, fora do
+		// loop de nível/recorte abaixo (não varia com isso, é sempre a
+		// vigência inteira). No-op silencioso pra vínculo de Cobertura.
+		for _, fluxo := range fluxosPrewarmObjetivos {
+			if err := RecalcularItensRealizado(db, empresaID, vv.VinculoID, vv.VigenciaID, fluxo); err != nil {
+				log.Printf("[farol:objetivos] prewarm: falha ao recalcular Itens Realizado vinculo=%d vigencia=%d fluxo=%s: %v",
+					vv.VinculoID, vv.VigenciaID, fluxo, err)
+			}
+		}
 		for _, fluxo := range fluxosPrewarmObjetivos {
 			for _, nivel := range niveisPrewarmObjetivos {
 				for _, recorte := range recortesPrewarmObjetivos {

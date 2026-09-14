@@ -3,13 +3,18 @@ package handlers
 // farol_metas_painel_itens_test.go — cobre o drill-down de itens por
 // Rede/Loja pedido pelo Claudio em 10/09/2026: "clicar na rede traz os
 // itens que venderam e não venderam" (Quantidade e Valor).
+//
+// Desde a migration 236 (14/09/2026) o cálculo saiu do request e virou
+// RecalcularItensRealizado (grava farol.metas_itens_realizado) +
+// calcularItensPorEscopo (só lê de lá) — os testes abaixo primeiro rodam o
+// recálculo com os fixtures, depois conferem a leitura.
 
 import "testing"
 
-// TestCalcularItensPorEscopo_VendeuENaoVendeu cobre o caso central: um EAN
-// com 2 cod_prod (variantes) soma Qtd/Valor das duas; um EAN nunca vendido
+// TestItensRealizado_VendeuENaoVendeu cobre o caso central: um EAN com 2
+// cod_prod (variantes) soma Qtd/Valor das duas; um EAN nunca vendido
 // aparece com Vendeu=false, Qtd=0, Valor=0 — não é descartado da lista.
-func TestCalcularItensPorEscopo_VendeuENaoVendeu(t *testing.T) {
+func TestItensRealizado_VendeuENaoVendeu(t *testing.T) {
 	db, empresaID := biTestDB(t)
 
 	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TITENS Sortimento", "sortimento_rede", "rede",
@@ -35,7 +40,11 @@ func TestCalcularItensPorEscopo_VendeuENaoVendeu(t *testing.T) {
 	inserirVendaFaturadaFixture(t, empresaID, cnpj2, "PRODV2", "TCALC-RCAITENS", "1", 45, 3, "2026-07-10")
 	// PRODNUNCA nunca é vendido por ninguém.
 
-	itens, err := calcularItensPorEscopo(db, empresaID, vinculoID, vigenciaID, "faturado", []string{cnpj1, cnpj2})
+	if err := RecalcularItensRealizado(db, empresaID, vinculoID, vigenciaID, "faturado"); err != nil {
+		t.Fatalf("RecalcularItensRealizado: %v", err)
+	}
+
+	itens, err := calcularItensPorEscopo(db, empresaID, vigenciaID, "faturado", []string{cnpj1, cnpj2})
 	if err != nil {
 		t.Fatalf("calcularItensPorEscopo: %v", err)
 	}
@@ -75,7 +84,7 @@ func TestCalcularItensPorEscopo_VendeuENaoVendeu(t *testing.T) {
 
 	// Escopo de UMA loja só (cnpj1): EAN-VENDIDO deve refletir só a compra
 	// do cnpj1 (PRODV1: qtd 2, R$20), não a soma das duas lojas.
-	itensLoja1, err := calcularItensPorEscopo(db, empresaID, vinculoID, vigenciaID, "faturado", []string{cnpj1})
+	itensLoja1, err := calcularItensPorEscopo(db, empresaID, vigenciaID, "faturado", []string{cnpj1})
 	if err != nil {
 		t.Fatalf("calcularItensPorEscopo (loja1): %v", err)
 	}
@@ -90,10 +99,10 @@ func TestCalcularItensPorEscopo_VendeuENaoVendeu(t *testing.T) {
 	}
 }
 
-// TestCalcularItensPorEscopo_VinculoNaoSortimento_Erro confirma que o
-// drill-down recusa vínculos de Cobertura (só existe pra Sortimento — a
-// única métrica com lista de Itens Válidos).
-func TestCalcularItensPorEscopo_VinculoNaoSortimento_Erro(t *testing.T) {
+// TestRecalcularItensRealizado_VinculoCobertura_NoOp confirma que vínculos
+// de Cobertura (sem lista de Itens Válidos — a única métrica que tem é
+// Sortimento) não geram nenhuma linha em metas_itens_realizado.
+func TestRecalcularItensRealizado_VinculoCobertura_NoOp(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TITENS Cobertura", "cobertura_rede", "rede",
 		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
@@ -101,8 +110,15 @@ func TestCalcularItensPorEscopo_VinculoNaoSortimento_Erro(t *testing.T) {
 	t.Cleanup(cleanup)
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
 
-	_, err := calcularItensPorEscopo(db, empresaID, vinculoID, vigenciaID, "faturado", []string{"70000000000199"})
-	if err == nil {
-		t.Fatalf("esperava erro pra vínculo de Cobertura, veio nil")
+	if err := RecalcularItensRealizado(db, empresaID, vinculoID, vigenciaID, "faturado"); err != nil {
+		t.Fatalf("RecalcularItensRealizado (Cobertura): esperava no-op silencioso, veio erro: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM farol.metas_itens_realizado WHERE vigencia_id = $1`, vigenciaID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("metas_itens_realizado tem %d linha(s) pra vínculo de Cobertura, want 0", n)
 	}
 }

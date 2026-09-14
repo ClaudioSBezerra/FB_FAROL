@@ -264,6 +264,18 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		}
 		log.Printf("MetasClientesValidos: %d linhas importadas, %d com erro (ignoradas) (vinculo=%d, vigencia=%d) empresa %s por %s",
 			len(rows), len(erros), vinculoID, vigenciaID, spCtx.EmpresaID, spCtx.UserID)
+
+		// Lista de Clientes Válidos mudou — o agregado de Itens Realizados
+		// (migration 236) é por CNPJ, então fica obsoleto na hora igual à
+		// reimportação de Itens Válidos (ver farol_metas_itens_validos_csv.go).
+		// No-op silencioso se este vínculo for Cobertura (RecalcularItensRealizado
+		// já trata).
+		for _, fluxo := range []string{"faturado", "transmitido"} {
+			if err := RecalcularItensRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo); err != nil {
+				log.Printf("MetasClientesValidos: falha ao recalcular Itens Realizado (vinculo=%d vigencia=%d fluxo=%s): %v", vinculoID, vigenciaID, fluxo, err)
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok": true, "clientes_importados": len(rows),

@@ -13,13 +13,33 @@ package handlers
 // — é uma ferramenta operacional ("o que falta vender"), não o indicador
 // oficial (que seguiu intocado em farol_metas_calculo.go).
 //
+// ─── Migration 236 (14/09/2026) — de "ao vivo" pra "agregado persistido" ────
+// Até aqui esta tela calculava tudo por request: somava Qtd/Valor por
+// cod_prod pros CNPJs do escopo pedido, e pros itens SEM nenhuma venda ali
+// buscava o nome mais recente escaneando vendas_faturadas/vendas_transmitidas
+// inteiras (sem filtro de data — nome de produto não muda com o tempo, então
+// nunca dava pra restringir por período). Isso mediu 51s em produção pra uma
+// rede de 1 loja só. Além do gargalo, o Claudio pediu (mesma sessão) pra
+// reaproveitar esse "o que não vendeu" em painéis futuros, principalmente a
+// visão do RCA no mobile (ION VENDAS).
+//
+// RecalcularItensRealizado agora faz esse cálculo 1x pra TODOS os clientes
+// válidos da vigência (não só o escopo de uma request) e grava em
+// farol.metas_itens_realizado (grão CNPJ×EAN) — chamado no prewarm diário
+// (farol_metas_prewarm.go) e logo após reimportar Itens/Clientes Válidos
+// (a lista mudou, o cálculo anterior fica obsoleto na hora). A leitura
+// (calcularItensPorEscopo) virou um SELECT simples filtrado pelos CNPJs do
+// escopo, sem nenhum cálculo nem scan de vendas_* na hora da request.
+//
 // Nome do produto: vendas_faturadas/transmitidas trazem nome_prod, mas só
 // pra quem TEM venda no escopo/período pedido. Item sem nenhuma venda ali
-// cai no fallback de nomesHistoricosPorCodProd (última venda conhecida
-// daquele cod_prod, em QUALQUER cliente/período) — sem isso, um item nunca
-// vendido àquele cliente ficaria sem nome nenhum (não existe cadastro de
+// cai no fallback de nomesHistoricosPorCodProd — não existe cadastro de
 // produto independente de venda no Farol, só o que vem denormalizado na
-// própria linha de venda, migration 168).
+// própria linha de venda (migration 168). Essa busca lê de
+// farol.agg_sazonalidade_produto_ano (grão empresa×ano×cod_prod, ~54 mil
+// linhas nesta empresa, cod_prod na chave primária) em vez de vendas_*
+// direto (milhões de linhas, particionado por data, sem índice que sirva
+// um filtro só por cod_prod).
 
 import (
 	"database/sql"
@@ -27,7 +47,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,19 +70,20 @@ type itemAgregado struct {
 	Nome  string
 }
 
-// somaQtdValorPorCodProd soma quantidade E valor (pvenda) vendidos por
-// cod_prod, pros CNPJs pedidos, numa única consulta agregada — mesmo
-// princípio de somaPvendaClientes/qtdPorCodProdClientes (farol_metas_calculo.go):
-// 1 consulta cobrindo todos os CNPJs, não 1 por CNPJ.
-func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]itemAgregado, error) {
-	out := map[string]itemAgregado{}
+// qtdValorPorCodProdPorCliente soma quantidade E valor (pvenda) vendidos por
+// cod_prod, POR CNPJ (GROUP BY cnpj, cod_prod) — grão fino que
+// RecalcularItensRealizado precisa pra gravar 1 linha por CNPJ×EAN. Mesmo
+// princípio de qtdPorCodProdClientes (farol_metas_calculo.go): 1 consulta
+// cobrindo todos os CNPJs da vigência, não 1 por CNPJ.
+func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]itemAgregado, error) {
+	out := map[string]map[string]itemAgregado{}
 	if len(cnpjs) == 0 {
 		return out, nil
 	}
 	somar := func(tabela, colData string) error {
 		t0 := time.Now()
 		query := fmt.Sprintf(`
-			SELECT cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM %s
+			SELECT cnpj, cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM %s
 			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
 		`, tabela, colData)
 		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
@@ -75,7 +95,7 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		query += " GROUP BY cod_prod"
+		query += " GROUP BY cnpj, cod_prod"
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			return err
@@ -83,24 +103,29 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 		defer rows.Close()
 		n := 0
 		for rows.Next() {
-			var codProd, nome string
+			var cnpj, codProd, nome string
 			var qt, valor float64
-			if err := rows.Scan(&codProd, &qt, &valor, &nome); err != nil {
+			if err := rows.Scan(&cnpj, &codProd, &qt, &valor, &nome); err != nil {
 				return err
 			}
-			a := out[codProd]
+			porCliente, ok := out[cnpj]
+			if !ok {
+				porCliente = map[string]itemAgregado{}
+				out[cnpj] = porCliente
+			}
+			a := porCliente[codProd]
 			a.Qtd += qt
 			a.Valor += valor
 			if nome != "" {
 				a.Nome = nome
 			}
-			out[codProd] = a
+			porCliente[codProd] = a
 			n++
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		log.Printf("[farol:objetivos] somaQtdValorPorCodProd tabela=%s cnpjs=%d período=[%s..%s] → %d itens em %v",
+		log.Printf("[farol:objetivos] qtdValorPorCodProdPorCliente tabela=%s cnpjs=%d período=[%s..%s] → %d linhas em %v",
 			tabela, len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
 		return nil
 	}
@@ -119,24 +144,20 @@ func somaQtdValorPorCodProd(db *sql.DB, empresaID string, cnpjs []string, dataIn
 	return out, nil
 }
 
-// nomesHistoricosPorCodProd resolve o nome de exibição de cod_prods que
-// não tiveram nenhuma venda no escopo/período pedido — pega a venda mais
-// recente daquele cod_prod em QUALQUER cliente/período do Farol (não existe
-// cadastro de produto independente de venda). Lista vazia não gera query.
+// nomesHistoricosPorCodProd resolve o nome de exibição de cod_prods que não
+// tiveram NENHUMA venda, de nenhum cliente, na vigência inteira — pega o
+// nome mais recente daquele cod_prod (qualquer cliente/período do Farol).
+// Lista vazia não gera query.
 func nomesHistoricosPorCodProd(db *sql.DB, empresaID string, codProds []string) (map[string]string, error) {
 	out := map[string]string{}
 	if len(codProds) == 0 {
 		return out, nil
 	}
 	rows, err := db.Query(`
-		SELECT DISTINCT ON (cod_prod) cod_prod, nome_prod FROM (
-			SELECT cod_prod, nome_prod, data_faturamento AS data FROM vendas_faturadas
-				WHERE empresa_id = $1 AND cod_prod = ANY($2) AND nome_prod <> ''
-			UNION ALL
-			SELECT cod_prod, nome_prod, data_transmissao AS data FROM vendas_transmitidas
-				WHERE empresa_id = $1 AND cod_prod = ANY($2) AND nome_prod <> ''
-		) x
-		ORDER BY cod_prod, data DESC
+		SELECT DISTINCT ON (cod_prod) cod_prod, nome_prod
+		FROM farol.agg_sazonalidade_produto_ano
+		WHERE empresa_id = $1 AND cod_prod = ANY($2) AND nome_prod <> ''
+		ORDER BY cod_prod, ano DESC
 	`, empresaID, pq.Array(codProds))
 	if err != nil {
 		return nil, err
@@ -152,107 +173,195 @@ func nomesHistoricosPorCodProd(db *sql.DB, empresaID string, codProds []string) 
 	return out, rows.Err()
 }
 
-// calcularItensPorEscopo monta o drill-down de itens (vendeu/não vendeu,
-// Qtd, Valor) pro conjunto de CNPJs pedido — Rede inteira (todas as lojas)
-// ou uma loja só, dependendo de quantos cnpjs o chamador passar. Agrupa por
-// EAN (não por cod_prod): um EAN pode ter N cod_prod — ver cabeçalho do
-// arquivo de Sortimento — e o indicador de "vendeu" é por EAN, igual ao
-// oficial (contarEANsPositivados).
-func calcularItensPorEscopo(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo string, cnpjs []string) ([]PainelItemLinha, error) {
+// RecalcularItensRealizado recalcula e grava (replace total, por
+// vigência+fluxo) o realizado por CNPJ×EAN de uma vigência de Sortimento —
+// TODOS os clientes válidos dela, não um escopo/request específico. Vínculo
+// de Cobertura (sem itens_validos) é no-op silencioso — quem chama (prewarm,
+// import de Itens/Clientes Válidos) não precisa checar formula_codigo antes.
+//
+// Chamada de: PrewarmMetasRealizados (1x/dia, junto do snapshot de
+// Realizado) e logo após reimportar farol.metas_itens_validos ou
+// farol.metas_clientes_validos de uma vigência (a lista mudou, o cálculo
+// anterior fica obsoleto na hora — sem isso o diálogo "Itens" mostraria
+// dado velho até o prewarm do dia seguinte rodar).
+func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo string) error {
 	var dataInicio, dataFim, formulaCodigo string
 	var industriaID int
-	err := db.QueryRow(`
+	if err := db.QueryRow(`
 		SELECT v.data_inicio::text, v.data_fim::text, mv.industria_id, tm.formula_codigo
 		FROM farol.metas_vigencias v
 		JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 		WHERE v.id = $1 AND v.vinculo_id = $2 AND v.empresa_id = $3
-	`, vigenciaID, vinculoID, empresaID).Scan(&dataInicio, &dataFim, &industriaID, &formulaCodigo)
-	if err != nil {
-		return nil, fmt.Errorf("vínculo/vigência não encontrado: %w", err)
+	`, vigenciaID, vinculoID, empresaID).Scan(&dataInicio, &dataFim, &industriaID, &formulaCodigo); err != nil {
+		return fmt.Errorf("vínculo/vigência não encontrado: %w", err)
 	}
 	if formulaCodigo != "sortimento_rede" {
-		return nil, fmt.Errorf("drill-down de itens só existe pro Tipo de Métrica Sortimento (formula_codigo=sortimento_rede)")
+		return nil // Cobertura não tem itens_validos — nada a fazer.
+	}
+
+	t0 := time.Now()
+	itens, err := lerItensValidos(db, empresaID, vigenciaID)
+	if err != nil {
+		return err
+	}
+	if len(itens) == 0 {
+		return nil // vigência sem Itens Válidos importados ainda.
+	}
+	clientes, err := lerClientesValidos(db, empresaID, vigenciaID)
+	if err != nil {
+		return err
+	}
+	if len(clientes) == 0 {
+		return nil // vigência sem Clientes Válidos importados ainda.
 	}
 
 	var tiposVendaValidos []string
 	if err := db.QueryRow(`SELECT tipos_venda_validos FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).
 		Scan(pq.Array(&tiposVendaValidos)); err != nil {
-		return nil, fmt.Errorf("erro ao ler tipos_venda_validos: %w", err)
+		return fmt.Errorf("erro ao ler tipos_venda_validos: %w", err)
 	}
 	codFornec, err := codFornecDaIndustria(db, empresaID, industriaID)
 	if err != nil {
-		return nil, err
-	}
-	itens, err := lerItensValidos(db, empresaID, vigenciaID)
-	if err != nil {
-		return nil, err
-	}
-	if len(itens) == 0 {
-		return nil, fmt.Errorf("nenhum Item Válido importado pra esta vigência")
+		return err
 	}
 
-	linhasPorCodProd, err := somaQtdValorPorCodProd(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+	cnpjs := make([]string, len(clientes))
+	for i, c := range clientes {
+		cnpjs[i] = c.CNPJ
+	}
+	linhasPorCliente, err := qtdValorPorCodProdPorCliente(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var faltantes []string
-	for _, it := range itens {
-		if _, ok := linhasPorCodProd[it.CodProd]; !ok {
-			faltantes = append(faltantes, it.CodProd)
-		}
-	}
-	nomesFallback, err := nomesHistoricosPorCodProd(db, empresaID, faltantes)
-	if err != nil {
-		return nil, err
-	}
-
-	type acc struct {
-		Qtd, Valor float64
-		Nome       string
-		Vendeu     bool
-	}
-	porEan := map[string]*acc{}
-	var ordem []string
-	for _, it := range itens {
-		a, ok := porEan[it.EAN]
-		if !ok {
-			a = &acc{}
-			porEan[it.EAN] = a
-			ordem = append(ordem, it.EAN)
-		}
-		if l, ok := linhasPorCodProd[it.CodProd]; ok {
-			a.Qtd += l.Qtd
-			a.Valor += l.Valor
-			if l.Qtd > 0 {
-				a.Vendeu = true
-			}
-			if a.Nome == "" && l.Nome != "" {
-				a.Nome = l.Nome
+	// Nome dos itens que NENHUM cliente da vigência vendeu (só esses
+	// precisam do fallback histórico — os outros já vieram com nome de
+	// alguma venda real acima).
+	nomePorCodProd := map[string]string{}
+	for _, linhas := range linhasPorCliente {
+		for codProd, a := range linhas {
+			if a.Nome != "" {
+				nomePorCodProd[codProd] = a.Nome
 			}
 		}
-		if a.Nome == "" {
-			a.Nome = nomesFallback[it.CodProd]
+	}
+	var semNenhumaVenda []string
+	for _, it := range itens {
+		if _, ok := nomePorCodProd[it.CodProd]; !ok {
+			semNenhumaVenda = append(semNenhumaVenda, it.CodProd)
 		}
+	}
+	nomesFallback, err := nomesHistoricosPorCodProd(db, empresaID, semNenhumaVenda)
+	if err != nil {
+		return err
+	}
+	nomeDoCodProd := func(codProd string) string {
+		if n := nomePorCodProd[codProd]; n != "" {
+			return n
+		}
+		return nomesFallback[codProd]
 	}
 
-	out := make([]PainelItemLinha, 0, len(ordem))
-	for _, ean := range ordem {
-		a := porEan[ean]
-		out = append(out, PainelItemLinha{EAN: ean, Nome: a.Nome, Qtd: a.Qtd, Valor: a.Valor, Vendeu: a.Vendeu})
+	tx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	// Não vendidos primeiro — é o que direciona a ação (o que falta vender);
-	// dentro de cada grupo, ordem alfabética pelo nome (EAN como desempate).
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Vendeu != out[j].Vendeu {
-			return !out[i].Vendeu
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM farol.metas_itens_realizado WHERE vigencia_id = $1 AND fluxo = $2`, vigenciaID, fluxo); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(pq.CopyInSchema("farol", "metas_itens_realizado",
+		"empresa_id", "vinculo_id", "vigencia_id", "fluxo", "cnpj", "ean", "nome", "qtd", "valor", "vendeu"))
+	if err != nil {
+		return err
+	}
+	for _, c := range clientes {
+		porCodProd := linhasPorCliente[c.CNPJ]
+		// Agrega por EAN antes de gravar — um EAN pode ter N cod_prod (mesmo
+		// princípio de contarEANsPositivados em farol_metas_calculo.go); sem
+		// isso a mesma loja geraria 2 linhas pro mesmo EAN e violaria o
+		// UNIQUE (vigencia_id, fluxo, cnpj, ean).
+		type acc struct {
+			Qtd, Valor float64
+			Nome       string
+			Vendeu     bool
 		}
-		if out[i].Nome != out[j].Nome {
-			return out[i].Nome < out[j].Nome
+		porEan := map[string]*acc{}
+		var ordem []string
+		for _, it := range itens {
+			a, ok := porEan[it.EAN]
+			if !ok {
+				a = &acc{}
+				porEan[it.EAN] = a
+				ordem = append(ordem, it.EAN)
+			}
+			if l, ok2 := porCodProd[it.CodProd]; ok2 {
+				a.Qtd += l.Qtd
+				a.Valor += l.Valor
+				if l.Qtd > 0 {
+					a.Vendeu = true
+				}
+			}
+			if a.Nome == "" {
+				a.Nome = nomeDoCodProd(it.CodProd)
+			}
 		}
-		return out[i].EAN < out[j].EAN
-	})
+		for _, ean := range ordem {
+			a := porEan[ean]
+			if _, err := stmt.Exec(empresaID, vinculoID, vigenciaID, fluxo, c.CNPJ, ean, a.Nome, a.Qtd, a.Valor, a.Vendeu); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := stmt.Exec(); err != nil {
+		return err
+	}
+	if err := stmt.Close(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	log.Printf("[farol:objetivos] RecalcularItensRealizado vinculo=%d vigencia=%d fluxo=%s → %d clientes × %d itens em %v",
+		vinculoID, vigenciaID, fluxo, len(clientes), len(itens), time.Since(t0))
+	return nil
+}
+
+// calcularItensPorEscopo lê o drill-down de itens (vendeu/não vendeu, Qtd,
+// Valor) já persistido em farol.metas_itens_realizado, pro conjunto de
+// CNPJs pedido — Rede inteira (todas as lojas) ou uma loja só, dependendo
+// de quantos cnpjs o chamador passar. Soma por EAN (bool_or pro "vendeu",
+// já que uma Rede tem várias lojas — basta 1 vender pra contar "vendeu" na
+// visão agregada da Rede).
+func calcularItensPorEscopo(db *sql.DB, empresaID string, vigenciaID int, fluxo string, cnpjs []string) ([]PainelItemLinha, error) {
+	rows, err := db.Query(`
+		SELECT ean, MAX(nome) FILTER (WHERE nome <> ''), SUM(qtd), SUM(valor), bool_or(vendeu)
+		FROM farol.metas_itens_realizado
+		WHERE empresa_id = $1 AND vigencia_id = $2 AND fluxo = $3 AND cnpj = ANY($4)
+		GROUP BY ean
+		ORDER BY bool_or(vendeu), MAX(nome), ean
+	`, empresaID, vigenciaID, fluxo, pq.Array(cnpjs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PainelItemLinha
+	for rows.Next() {
+		var it PainelItemLinha
+		var nome sql.NullString
+		if err := rows.Scan(&it.EAN, &nome, &it.Qtd, &it.Valor, &it.Vendeu); err != nil {
+			return nil, err
+		}
+		it.Nome = nome.String
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("nenhum Item Válido calculado ainda pra esta vigência — aguarde o próximo prewarm ou reimporte os Itens Válidos")
+	}
 	return out, nil
 }
 
@@ -315,7 +424,7 @@ func MetasPainelItensHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		q := r.URL.Query()
-		vinculoID, err1 := strconv.Atoi(q.Get("vinculo_sortimento_id"))
+		_, err1 := strconv.Atoi(q.Get("vinculo_sortimento_id"))
 		vigenciaID, err2 := strconv.Atoi(q.Get("vigencia_sortimento_id"))
 		if err1 != nil || err2 != nil {
 			http.Error(w, `{"error":"vinculo_sortimento_id e vigencia_sortimento_id são obrigatórios"}`, http.StatusBadRequest)
@@ -349,7 +458,7 @@ func MetasPainelItensHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		itens, err := calcularItensPorEscopo(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo, cnpjs)
+		itens, err := calcularItensPorEscopo(db, spCtx.EmpresaID, vigenciaID, fluxo, cnpjs)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 			return

@@ -717,7 +717,7 @@ export default function FarolPainelMetas() {
   // clicar numa Rede (aba "Resumo Redes") mostra os itens de TODAS as
   // lojas dela; clicar numa loja (aba "Resumo Rede×Cliente") mostra só os
   // itens daquele CNPJ. Pedido do Claudio em 10/09/2026.
-  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; titulo: string } | null>(null)
+  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; titulo: string; objetivo: number } | null>(null)
   const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
     queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj],
     queryFn: async () => {
@@ -1004,7 +1004,7 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: r.fantasia || r.razao || r.cod_princ })}
+                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: r.fantasia || r.razao || r.cod_princ, objetivo: r.sortimento_objetivo })}
                         >
                           <TableCell className="font-mono text-xs">{r.cod_princ}</TableCell>
                           <TableCell className="text-sm">{r.razao}</TableCell>
@@ -1086,7 +1086,7 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})` })}
+                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})`, objetivo: c.sortimento_objetivo })}
                         >
                           <TableCell className="font-mono text-xs">{c.cod_princ}</TableCell>
                           <TableCell className="font-mono text-xs">{c.cnpj}</TableCell>
@@ -1281,7 +1281,20 @@ export default function FarolPainelMetas() {
           {isLoadingItens ? (
             <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
           ) : (
-            <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+            <>
+              {/* Resumo vendeu/objetivo — pedido do Claudio 14/09/2026: a
+                  lista de itens sozinha não deixava claro se bateu a meta;
+                  objetivo vem da mesma faixa de meta que já aparece na
+                  coluna "Obj. EANs" da tabela (Sortimento mede EANs
+                  distintos vendidos, não linhas desta lista). */}
+              {itensAlvo && (
+                <div className="flex flex-wrap gap-4 text-sm border rounded-lg p-3 bg-muted/30">
+                  <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
+                  <span><strong>{itensLista.length}</strong> itens no catálogo</span>
+                  <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
+                </div>
+              )}
+              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1307,7 +1320,8 @@ export default function FarolPainelMetas() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
