@@ -1302,12 +1302,13 @@ export default function FarolPainelMetas() {
                     <TableHead>Produto</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
+                    <TableHead className="text-right">Objetivo</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
                   {itensLista.map((it, i) => (
                     <TableRow key={i}>
@@ -1315,6 +1316,11 @@ export default function FarolPainelMetas() {
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
                       <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
                       <TableCell className="text-right">{fmtBRL(it.valor)}</TableCell>
+                      {/* Objetivo é da REDE inteira (qtd de EANs distintos a
+                          bater no mês), não do produto — repetido em toda
+                          linha só pra ficar visível rolando a lista, mesmo
+                          padrão de "Obj. EANs" na tabela Resumo Redes. */}
+                      <TableCell className="text-right text-muted-foreground">{itensAlvo && fmt(itensAlvo.objetivo)}</TableCell>
                       <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
                     </TableRow>
                   ))}
