@@ -149,6 +149,17 @@ async function parseFechamentoComercialXlsx(file: File, vinculosCobertura: MetaV
     out.push(valores.join(';'))
   }
   if (out.length === 1) {
+    // Caso mais comum na prática: o arquivo é o modelo "Acompanhamento"
+    // (aba "Resumo Redes" existe, mas os números ainda não foram fechados —
+    // colunas de Objetivo/Valor Venda vêm todas em branco/0). O arquivo com
+    // os números de verdade costuma ter "fechamento" no nome.
+    if (semIndustria.size === 1 && semIndustria.has(0)) {
+      throw new Error(
+        `A coluna "Objetivo Cobertura" veio vazia/zero em TODAS as linhas da aba "${abaNome}" — este parece ser o ` +
+        `modelo de acompanhamento (números ainda não fechados), não o fechamento final. Procure o arquivo cujo ` +
+        `nome tem "fechamento" (é o que já vem com Valor Venda e Objetivo preenchidos).`
+      )
+    }
     throw new Error(
       semIndustria.size > 0
         ? `Nenhuma linha casou com o Objetivo Cobertura de um vínculo cadastrado (valores vistos na planilha: ${[...semIndustria].join(', ')}) — confira se limiar_valor_medio está certo em Objetivos por Indústria`
