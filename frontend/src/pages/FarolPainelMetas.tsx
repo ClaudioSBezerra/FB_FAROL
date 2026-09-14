@@ -472,6 +472,69 @@ export default function FarolPainelMetas() {
     enabled: metrica !== 'combinado' && !!vinculoAtivo && !!vigenciaID,
   })
 
+  // ─── Filtros por seleção (GGV/Supervisor/RCA/Rede) no modo individual ────────
+  // Pedido do Claudio 14/09/2026: até aqui só dava pra "descer" no modo
+  // individual clicando linha por linha (abrirGrupo) — sem select direto,
+  // achar uma Rede específica (ex: PRATIKO) exigia saber de cor o
+  // caminho GGV→CRV→RCA dela. Busca a mesma lista de Redes SEM filtro
+  // nenhum (nivel=rede, sem cod_ggv/cod_crv/cod_rca) só pra montar as
+  // opções dos selects — independente do nivel/filtro que a tabela
+  // principal está mostrando agora. Mesmo endpoint que abrirGrupo/painel
+  // já usa, então nenhuma rota nova no backend.
+  const { data: todasRedesResp } = useQuery<Painel>({
+    queryKey: ['farol-metas-painel-todas-redes', vinculoAtivo?.id, vigenciaID, fluxo],
+    queryFn: async () => {
+      const p = new URLSearchParams({ vinculo_id: String(vinculoAtivo!.id), vigencia_id: vigenciaID, fluxo, nivel: 'rede' })
+      const r = await fetch(`/api/farol/metas-painel?${p}`, { headers })
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    enabled: metrica !== 'combinado' && !!vinculoAtivo && !!vigenciaID,
+  })
+  const todasRedesIndiv = todasRedesResp?.realizado.redes ?? []
+  const optsGGVIndiv = useMemo(
+    () => dedup(todasRedesIndiv.map(r => ({ v: r.cod_ggv, l: `${r.cod_ggv} — ${r.nome_ggv}` }))),
+    [todasRedesIndiv],
+  )
+  const optsCRVIndiv = useMemo(
+    () => dedup(todasRedesIndiv.filter(r => !filtroGGV || r.cod_ggv === filtroGGV.codigo)
+      .map(r => ({ v: r.cod_crv, l: `${r.cod_crv} — ${r.nome_crv}` }))),
+    [todasRedesIndiv, filtroGGV],
+  )
+  const optsRCAIndiv = useMemo(
+    () => dedup(todasRedesIndiv.filter(r => (!filtroGGV || r.cod_ggv === filtroGGV.codigo) && (!filtroCRV || r.cod_crv === filtroCRV.codigo))
+      .map(r => ({ v: r.cod_rca, l: `${r.cod_rca} — ${r.nome_rca}` }))),
+    [todasRedesIndiv, filtroGGV, filtroCRV],
+  )
+  const optsRedeIndiv = useMemo(
+    () => dedup(todasRedesIndiv
+      .filter(r => (!filtroGGV || r.cod_ggv === filtroGGV.codigo) && (!filtroCRV || r.cod_crv === filtroCRV.codigo) && (!filtroRCA || r.cod_rca === filtroRCA.codigo))
+      .map(r => ({ v: r.cod_princ, l: r.fantasia || r.razao || r.cod_princ }))),
+    [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA],
+  )
+  // Selecionar direto pelo select pula pro próximo nível, igual abrirGrupo
+  // já faz ao clicar numa linha — mantém nivel e filtro sempre "casados".
+  const selecionarGGVIndiv = (v: string) => {
+    if (!v) { setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('ggv'); return }
+    const nome = todasRedesIndiv.find(r => r.cod_ggv === v)?.nome_ggv ?? v
+    setFiltroGGV({ codigo: v, nome }); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('crv')
+  }
+  const selecionarCRVIndiv = (v: string) => {
+    if (!v) { setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel(filtroGGV ? 'crv' : 'ggv'); return }
+    const nome = todasRedesIndiv.find(r => r.cod_crv === v)?.nome_crv ?? v
+    setFiltroCRV({ codigo: v, nome }); setFiltroRCA(null); setRedeAberta(null); setNivel('rca')
+  }
+  const selecionarRCAIndiv = (v: string) => {
+    if (!v) { setFiltroRCA(null); setRedeAberta(null); setNivel(filtroCRV ? 'rca' : filtroGGV ? 'crv' : 'ggv'); return }
+    const nome = todasRedesIndiv.find(r => r.cod_rca === v)?.nome_rca ?? v
+    setFiltroRCA({ codigo: v, nome }); setRedeAberta(null); setNivel('rede')
+  }
+  const selecionarRedeIndiv = (v: string) => {
+    if (!v) { setRedeAberta(null); return }
+    const rede = todasRedesIndiv.find(r => r.cod_princ === v)
+    if (rede) { setNivel('rede'); setRedeAberta(rede) }
+  }
+
   // ─── Modo combinado — Cobertura + Sortimento juntos, uma linha por Rede ──────
 
   const { data: vigenciasCobertura = [] } = useQuery<Vigencia[]>({
@@ -1071,6 +1134,22 @@ export default function FarolPainelMetas() {
             >
               Projeção
             </button>
+          </div>
+
+          {/* Filtros por seleção — GGV/Supervisor/RCA/Rede — pra achar direto
+              sem precisar clicar linha por linha (pedido do Claudio
+              14/09/2026). Valem pras duas abas acima; escolher aqui move o
+              nivel/drill igual clicar numa linha moveria. */}
+          <div className="flex flex-wrap gap-2 items-end border rounded-lg p-4">
+            <FiltroSelect label="GGV" value={filtroGGV?.codigo ?? ''} opts={optsGGVIndiv} onChange={selecionarGGVIndiv} />
+            <FiltroSelect label="Supervisor (CRV)" value={filtroCRV?.codigo ?? ''} opts={optsCRVIndiv} onChange={selecionarCRVIndiv} />
+            <FiltroSelect label="RCA" value={filtroRCA?.codigo ?? ''} opts={optsRCAIndiv} onChange={selecionarRCAIndiv} />
+            <FiltroSelect label="Rede" value={redeAberta?.cod_princ ?? ''} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
+            {(filtroGGV || filtroCRV || filtroRCA || redeAberta) && (
+              <button className="text-xs text-primary hover:underline pb-2.5" onClick={() => voltarPara('ggv')}>
+                Limpar filtros
+              </button>
+            )}
           </div>
 
           {aba === 'projecao' ? (
