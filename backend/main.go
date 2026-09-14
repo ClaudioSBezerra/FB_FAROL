@@ -649,6 +649,12 @@ func main() {
 	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
 	http.HandleFunc("/api/farol/metas-painel-itens", withSP(handlers.MetasPainelItensHandler, "somente_leitura"))
 
+	// Comparativo Fechamento Comercial (Painel Vendas) — pedido do Claudio
+	// 14/09/2026: compara o fechamento que o fornecedor manda por fora com
+	// o que o motor do Farol calculou pro mesmo período.
+	http.HandleFunc("/api/farol/fechamento-comercial-importar-csv", withSP(handlers.FechamentoComercialImportarCSVHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/fechamento-comercial-comparativo", withSP(handlers.FechamentoComercialComparativoHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

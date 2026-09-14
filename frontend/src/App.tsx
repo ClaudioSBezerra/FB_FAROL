@@ -68,6 +68,7 @@ const FarolUsuarios = lazy(() => import('./pages/farol/FarolUsuarios'))
 const FarolBI = lazy(() => import('./pages/farol/FarolBI'))
 const FarolAssistente = lazy(() => import('./pages/farol/FarolAssistente'))
 const FarolRelatorios = lazy(() => import('./pages/farol/FarolRelatorios'))
+const FarolComparativoFechamento = lazy(() => import('./pages/farol/FarolComparativoFechamento'))
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
 import { FarolAjudaChat } from '@/components/farol/FarolAjudaChat'
@@ -305,6 +306,7 @@ function AppLayout() {
                   recorte agora é feito DENTRO de FarolRelatorios.tsx (abas
                   escondidas + aba padrão), não mais no gate da rota. */}
               <Route path="/farol/relatorios" element={<ProtectedRoute><FarolRelatorios /></ProtectedRoute>} />
+              <Route path="/farol/comparativo-fechamento" element={<ProtectedRoute><FarolComparativoFechamento /></ProtectedRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
               <Route path="/farol"                              element={<ProtectedRoute><FarolWebList /></ProtectedRoute>} />

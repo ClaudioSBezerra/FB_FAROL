@@ -22,6 +22,12 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel Vendas',
     tabs: [
       { label: 'Painel Vendas',  path: '/farol/v2' },
+      // Comparativo Fechamento Comercial — pedido do Claudio 14/09/2026:
+      // compara o fechamento que o fornecedor manda por fora com a apuração
+      // oficial do Farol. Import fica atrás de gestor_geral no backend (a
+      // própria tela já depende de GET /api/farol/metas-vinculos, que é
+      // gestor_geral — não vale esconder só aqui e deixar a rota exposta).
+      { label: 'Comparativo Fechamento Comercial', path: '/farol/comparativo-fechamento' },
       // Envio do resumo semanal — só admin e admin_fbtax. A tela expõe os
       // tokens de todos os destinatários, e token abre o quadro sem senha:
       // é credencial, não configuração. O backend faz a mesma checagem, então
