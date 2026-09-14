@@ -541,10 +541,11 @@ func MetasPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 
 // MetasPublicPainelCombinadoHandler — GET /api/farol/public/metas-painel-combinado
 //
-//	?cnpj=&scope=sup|rca&cod=&vinculo_cobertura_id=&vigencia_cobertura_id=&vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=
+//	?cnpj=&scope=sup|rca|ggv&cod=&vinculo_cobertura_id=&vigencia_cobertura_id=&vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=
 //
 // Mesmo recorte de segurança do painel público de métrica única
-// (farol_metas_public.go): nunca expõe Rede fora do Supervisor/RCA da URL.
+// (farol_metas_public.go): nunca expõe Rede fora do GGV/Supervisor/RCA da
+// URL. scope=ggv adicionado 14/09/2026, pedido do Claudio.
 func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -561,9 +562,9 @@ func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 		vigenciaCoberturaID, err2 := strconv.Atoi(q.Get("vigencia_cobertura_id"))
 		vinculoSortimentoID, err3 := strconv.Atoi(q.Get("vinculo_sortimento_id"))
 		vigenciaSortimentoID, err4 := strconv.Atoi(q.Get("vigencia_sortimento_id"))
-		if (scope != "sup" && scope != "rca") || cod == "" || err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		if (scope != "sup" && scope != "rca" && scope != "ggv") || cod == "" || err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "scope (sup|rca), cod e os 4 ids de vínculo/vigência são obrigatórios"})
+			json.NewEncoder(w).Encode(map[string]string{"error": "scope (sup|rca|ggv), cod e os 4 ids de vínculo/vigência são obrigatórios"})
 			return
 		}
 		fluxo := q.Get("fluxo")
@@ -580,34 +581,35 @@ func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// dentroDoEscopo — mesmo teste pras 3 opções de escopo (ggv adicionado
+		// 14/09/2026, pedido do Claudio): rca estreita por RCA, sup por CRV
+		// (Supervisor), ggv por GGV — CRV/GGV são o dono importado do CSV de
+		// Clientes Válidos (ver farol_metas_calculo.go), não precisa de JOIN
+		// em vendas pra resolver.
+		dentroDoEscopoRede := func(codGGV, codCRV, codRCA string) bool {
+			switch scope {
+			case "rca":
+				return codRCA == cod
+			case "ggv":
+				return codGGV == cod
+			default: // "sup"
+				return codCRV == cod
+			}
+		}
+
 		redesFiltradas := make([]PainelCombinadoRede, 0, len(resp.Redes))
 		for _, rede := range resp.Redes {
-			if scope == "rca" {
-				if rede.CodRCA == cod {
-					redesFiltradas = append(redesFiltradas, rede)
-				}
-				continue
-			}
-			// scope == "sup": CRV é o dono importado do CSV de Clientes
-			// Válidos (ver farol_metas_calculo.go) — não precisa mais de JOIN
-			// em vendas pra resolver.
-			if rede.CodCRV == cod {
+			if dentroDoEscopoRede(rede.CodGGV, rede.CodCRV, rede.CodRCA) {
 				redesFiltradas = append(redesFiltradas, rede)
 			}
 		}
 		resp.Redes = redesFiltradas
 
 		// Mesmo recorte pra Clientes — endpoint SEM auth, nunca pode vazar
-		// CNPJ fora do Supervisor/RCA da URL.
+		// CNPJ fora do GGV/Supervisor/RCA da URL.
 		clientesFiltrados := make([]PainelCombinadoCliente, 0, len(resp.Clientes))
 		for _, c := range resp.Clientes {
-			if scope == "rca" {
-				if c.CodRCA == cod {
-					clientesFiltrados = append(clientesFiltrados, c)
-				}
-				continue
-			}
-			if c.CodCRV == cod {
+			if dentroDoEscopoRede(c.CodGGV, c.CodCRV, c.CodRCA) {
 				clientesFiltrados = append(clientesFiltrados, c)
 			}
 		}

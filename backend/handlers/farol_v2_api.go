@@ -4781,19 +4781,23 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 
 		scope := strings.ToLower(strings.TrimSpace(q.Get("scope")))
 		cod := strings.TrimSpace(q.Get("cod"))
-		if cod == "" || (scope != "sup" && scope != "rca") {
+		if cod == "" || (scope != "sup" && scope != "rca" && scope != "ggv") {
 			log.Printf("[farol:public] params inválidos — cnpj=%q scope=%q cod=%q", rawCNPJ, scope, cod)
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error": "scope (sup|rca) e cod obrigatórios",
+				"error": "scope (sup|rca|ggv) e cod obrigatórios",
 				"scope": scope, "cod": cod,
 			})
 			return
 		}
-		// Aceita view=V02 (Por RCA, default) ou V05 (Por Fornecedor).
-		// Ambas começam em cod_supervisor — o escopo público é sempre o supervisor.
+		// Aceita view=V02 (Por RCA, default) ou V05 (Por Fornecedor) pros
+		// escopos sup/rca — ambas começam em cod_supervisor. GGV usa SEMPRE
+		// V03 (começa em cod_gerente, um nível acima) — pedido do Claudio
+		// 14/09/2026: acesso público pra GGV, além de sup/rca que já existiam.
 		view := strings.ToUpper(strings.TrimSpace(q.Get("view")))
-		if view != "V02" && view != "V05" {
+		if scope == "ggv" {
+			view = "V03"
+		} else if view != "V02" && view != "V05" {
 			view = "V02"
 		}
 		log.Printf("[farol:public] cnpj=%q → empresa=%s scope=%s cod=%s view=%s", rawCNPJ, empresaID, scope, cod, view)
@@ -4803,6 +4807,10 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		// Drill base fixado pela URL (não pode ser removido pelo usuário).
 		var baseDrill []drillStep
 		switch scope {
+		case "ggv":
+			baseDrill = []drillStep{
+				{Level: "cod_gerente", Value: cod, Label: lookupNome(db, empresaID, "cod_gerente", "nome_gerente", cod)},
+			}
 		case "sup":
 			baseDrill = []drillStep{
 				{Level: "cod_supervisor", Value: cod, Label: lookupNome(db, empresaID, "cod_supervisor", "nome_supervisor", cod)},

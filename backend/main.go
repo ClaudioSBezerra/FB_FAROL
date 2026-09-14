@@ -867,9 +867,17 @@ func main() {
 		// React Router ver, evitando que /:cod e /:cnpj/:kind/:cod (que seriam
 		// mais específicos que /*) engulam outras rotas autenticadas.
 		ionNumericPath := regexp.MustCompile(`^/(\d+)$`)
-		ionCnpjPath := regexp.MustCompile(`^/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
-		// /m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod (ION passa uppercase) → /m/CNPJ/sup|rca/cod
-		ionMobileCnpj := regexp.MustCompile(`^/m/(\d{14})/([Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)$`)
+		// Grupo 4 (sufixo) captura qualquer coisa depois do código —
+		// /metas-industria, /forn/:codFornec — que antes não era reconhecida
+		// aqui: sem casar o "$" no fim, essas URLs (ex: CNPJ/RCA/cod/metas-industria
+		// vindo em maiúsculo do ION) caíam direto pro SPA SEM normalizar
+		// caixa, e o front então detectava o escopo errado (ver
+		// FarolPublicMetasPanel.tsx/FarolPublicPanel.tsx: comparação de
+		// scope é case-sensitive). Achado real 14/09/2026: RCA/metas-industria
+		// maiúsculo carregava a tela mas com dado de SUP por engano.
+		ionCnpjPath := regexp.MustCompile(`^/(\d{14})/([Gg][Gg][Vv]|[Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)(/.*)?$`)
+		// /m/CNPJ/SUP|RCA|GGV/cod[/sufixo] (ION passa uppercase) → /m/CNPJ/sup|rca|ggv/cod[/sufixo]
+		ionMobileCnpj := regexp.MustCompile(`^/m/(\d{14})/([Gg][Gg][Vv]|[Ss][Uu][Pp]|[Rr][Cc][Aa])/(\d+)(/.*)?$`)
 
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -882,16 +890,16 @@ func main() {
 				http.Redirect(w, r, "/m/"+m[1], http.StatusFound)
 				return
 			}
-			// /CNPJ/SUP/cod ou /CNPJ/RCA/cod → /m/CNPJ/sup|rca/cod
+			// /CNPJ/SUP|RCA|GGV/cod[/sufixo] → /m/CNPJ/sup|rca|ggv/cod[/sufixo]
 			if m := ionCnpjPath.FindStringSubmatch(r.URL.Path); m != nil {
 				kind := strings.ToLower(m[2])
-				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3], http.StatusFound)
+				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3]+m[4], http.StatusFound)
 				return
 			}
-			// /m/CNPJ/SUP/cod ou /m/CNPJ/RCA/cod (ION passa uppercase) → /m/CNPJ/sup|rca/cod
+			// /m/CNPJ/SUP|RCA|GGV/cod[/sufixo] (ION passa uppercase) → /m/CNPJ/sup|rca|ggv/cod[/sufixo]
 			if m := ionMobileCnpj.FindStringSubmatch(r.URL.Path); m != nil {
 				kind := strings.ToLower(m[2])
-				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3], http.StatusFound)
+				http.Redirect(w, r, "/m/"+m[1]+"/"+kind+"/"+m[3]+m[4], http.StatusFound)
 				return
 			}
 

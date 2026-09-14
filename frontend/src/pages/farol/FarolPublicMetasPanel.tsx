@@ -144,11 +144,20 @@ function ChipRow<T extends string>({ label, options, value, onChange }: {
 // ─── Page — painel mobile público, mesmo padrão sem login de FarolPublicPanel ──
 
 export default function FarolPublicMetasPanel() {
-  const params = useParams<{ cnpj?: string; cod?: string; codRca?: string }>()
-  const isRca = window.location.pathname.includes('/rca/')
+  const params = useParams<{ cnpj?: string; cod?: string; codRca?: string; codGgv?: string }>()
+  // codGgv/codRca vêm de rotas com nome de param PRÓPRIO (ver App.tsx) —
+  // saber qual rota casou sem depender de window.location.pathname. A
+  // versão antiga (`pathname.includes('/rca/')`) é sensível a maiúscula: o
+  // ION manda a URL com "/RCA/" maiúsculo, e o redirect server-side
+  // (main.go) só normalizava pra minúsculo o formato SEM sufixo — com
+  // "/metas-industria" no fim, a URL chegava aqui ainda maiúscula, o
+  // `.includes('/rca/')` dava falso, e a tela mostrava dado de Supervisor
+  // pro código de RCA por engano (achado real 14/09/2026).
+  const isGgv = !!params.codGgv
+  const isRca = !!params.codRca
   const cnpj = (params.cnpj || (isRca ? params.cod : '') || '').replace(/\D/g, '')
-  const scope: 'sup' | 'rca' = isRca ? 'rca' : 'sup'
-  const scopeCod = isRca ? (params.codRca || '') : (params.cod || '')
+  const scope: 'sup' | 'rca' | 'ggv' = isGgv ? 'ggv' : isRca ? 'rca' : 'sup'
+  const scopeCod = isGgv ? (params.codGgv || '') : isRca ? (params.codRca || '') : (params.cod || '')
 
   const [industriaID, setIndustriaID] = useState('')
   const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
@@ -306,7 +315,7 @@ export default function FarolPublicMetasPanel() {
     <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-md mx-auto">
       <div>
         <h1 className="text-lg font-semibold">Objetivos por Indústria</h1>
-        <p className="text-xs text-muted-foreground">{scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
+        <p className="text-xs text-muted-foreground">{scope === 'ggv' ? 'Visão do GGV' : scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
       </div>
 
       <div className="space-y-3">

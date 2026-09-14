@@ -97,13 +97,15 @@ func MetasPublicVigenciasHandler(db *sql.DB) http.HandlerFunc {
 
 // MetasPublicPainelHandler — GET /api/farol/public/metas-painel
 //
-//	?cnpj=&scope=sup|rca&cod=&vinculo_id=&vigencia_id=&fluxo=&recortes=1
+//	?cnpj=&scope=sup|rca|ggv&cod=&vinculo_id=&vigencia_id=&fluxo=&recortes=1
 //
 // Mesmo shape de resposta do painel admin (farol_metas_painel.go), mas
-// SEMPRE recortado pro Supervisor/RCA da URL — nunca mostra a empresa
-// inteira. Nível de agregação é implícito: scope=rca → mostra as Redes
-// daquele RCA; scope=sup → mostra o rollup por RCA dentro daquele
-// Supervisor (mesmo "nível=rca" do painel admin, só filtrado).
+// SEMPRE recortado pro GGV/Supervisor/RCA da URL — nunca mostra a empresa
+// inteira. Todos os escopos devolvem nível "rede" (a lista de Redes já vem
+// filtrada por filtrarRedesPorEscopo abaixo): scope=rca → Redes daquele
+// RCA; scope=sup → Redes daquele Supervisor (todos os RCAs dele); scope=ggv
+// → Redes daquele GGV (todos os Supervisores/RCAs dele) — adicionado
+// 14/09/2026, pedido do Claudio.
 func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -118,9 +120,9 @@ func MetasPublicPainelHandler(db *sql.DB) http.HandlerFunc {
 		cod := strings.TrimSpace(q.Get("cod"))
 		vinculoID, err1 := strconv.Atoi(q.Get("vinculo_id"))
 		vigenciaID, err2 := strconv.Atoi(q.Get("vigencia_id"))
-		if (scope != "sup" && scope != "rca") || cod == "" || err1 != nil || err2 != nil {
+		if (scope != "sup" && scope != "rca" && scope != "ggv") || cod == "" || err1 != nil || err2 != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "scope (sup|rca), cod, vinculo_id e vigencia_id são obrigatórios"})
+			json.NewEncoder(w).Encode(map[string]string{"error": "scope (sup|rca|ggv), cod, vinculo_id e vigencia_id são obrigatórios"})
 			return
 		}
 		fluxo := q.Get("fluxo")
@@ -237,9 +239,16 @@ func calcularRealizadoEscopoPublico(db *sql.DB, empresaID string, vinculoID, vig
 // importado do CSV de Clientes Válidos (farol_metas_calculo.go) — por isso
 // vira um simples filtro em memória via filtrarRedesPorHierarquia.
 func filtrarRedesPorEscopo(redes []RealizadoRede, scope, cod string) []RealizadoRede {
-	if scope == "rca" {
+	switch scope {
+	case "rca":
 		return filtrarRedesPorHierarquia(redes, "", "", cod)
+	case "ggv":
+		// Pedido do Claudio 14/09/2026: acesso público pra GGV, além de
+		// sup/rca que já existiam — toda Rede cujo GGV (dono importado)
+		// seja este código, sem estreitar por CRV/RCA (GGV vê TODAS as
+		// Redes de todos os Supervisores/RCAs dele).
+		return filtrarRedesPorHierarquia(redes, cod, "", "")
+	default: // "sup": toda Rede cujo CRV (dono importado) seja este código.
+		return filtrarRedesPorHierarquia(redes, "", cod, "")
 	}
-	// scope == "sup": toda Rede cujo CRV (dono importado) seja este código.
-	return filtrarRedesPorHierarquia(redes, "", cod, "")
 }

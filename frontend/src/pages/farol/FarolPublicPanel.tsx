@@ -305,12 +305,17 @@ function CardVendaPublic({ card, onClick }: { card: CardItem; onClick: () => voi
 // ─── Componente principal ────────────────────────────────────────────────
 
 export default function FarolPublicPanel() {
-  const params = useParams<{ cnpj?: string; cod?: string; codRca?: string }>()
+  const params = useParams<{ cnpj?: string; cod?: string; codRca?: string; codGgv?: string }>()
 
+  // codGgv/codRca vêm de rotas com nome de param PRÓPRIO (ver App.tsx) só
+  // pra dar um jeito barato e robusto de saber qual rota casou — mesmo
+  // truque já usado pra RCA. Sem isso, "cod" sozinho não diria se é
+  // Supervisor ou GGV (as duas rotas teriam o mesmo shape de params).
+  const isGgv    = !!params.codGgv
   const isRca    = !!params.codRca
-  const scope    = isRca ? 'rca' : 'sup'
-  const scopeCod = (isRca ? params.codRca : params.cod) || ''
-  // No formato /m/:cnpj/sup/:cod o CNPJ vem em :cnpj;
+  const scope    = isGgv ? 'ggv' : isRca ? 'rca' : 'sup'
+  const scopeCod = (isGgv ? params.codGgv : isRca ? params.codRca : params.cod) || ''
+  // No formato /m/:cnpj/sup|ggv/:cod o CNPJ vem em :cnpj;
   // no /m/:cod/rca/:codRca (ION: CNPJ/RCA/cod) o CNPJ vem em :cod.
   const cnpj = (params.cnpj || (isRca ? params.cod : '') || '').replace(/\D/g, '')
 
@@ -392,7 +397,7 @@ export default function FarolPublicPanel() {
 
   const baseLen     = scope === 'rca' ? 2 : 1
   const scopeStep   = data?.drill_path?.[baseLen - 1]
-  const scopeLabel  = scope === 'rca' ? 'RCA' : 'Supervisor'
+  const scopeLabel  = scope === 'rca' ? 'RCA' : scope === 'ggv' ? 'GGV' : 'Supervisor'
   const scopeNome   = scopeStep?.label || scopeCod
 
   const handleDrill = (card: CardItem) => {
@@ -471,7 +476,7 @@ export default function FarolPublicPanel() {
           )}
 
           <a
-            href={scope === 'sup' ? `/m/${cnpj}/sup/${scopeCod}/metas-industria` : `/m/${cnpj}/rca/${scopeCod}/metas-industria`}
+            href={`/m/${cnpj}/${scope}/${scopeCod}/metas-industria`}
             className="px-4 py-2.5 text-base font-bold uppercase tracking-wide rounded-lg border-2 border-slate-300 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
           >
             Objetivos Indústria

@@ -366,13 +366,19 @@ function App() {
             <Route path="/reset-senha"     element={<ResetPassword />} />
 
             {/* Farol ION VENDAS (público — link parametrizado, sem login).
-                Os redirects /701 → /m/701 e /CNPJ/SUP|RCA/cod → /m/... são feitos
-                server-side em main.go. Todas as rotas /m/... abrem o painel novo
-                (FarolPublicPanel) escopado por CNPJ + SUPV/RCA, sobre as views novas.
-                A rota /m/:cod/rca/:codRca atende ambos formatos (cod=supervisor OU CNPJ). */}
+                Os redirects /701 → /m/701 e /CNPJ/SUP|RCA|GGV/cod → /m/... são
+                feitos server-side em main.go. Todas as rotas /m/... abrem o
+                painel novo (FarolPublicPanel) escopado por CNPJ + GGV/SUPV/RCA,
+                sobre as views novas. A rota /m/:cod/rca/:codRca atende ambos
+                formatos (cod=supervisor OU CNPJ). GGV adicionado 14/09/2026
+                (pedido do Claudio) segue o formato "limpo" do SUP (:cnpj
+                explícito) — sem legado de URL antiga do ION pra herdar. */}
             <Route path="/m/:cnpj/sup/:cod"                 element={<FarolPublicPanel />} />
             <Route path="/m/:cnpj/sup/:cod/forn/:codFornec" element={<FarolPublicPanel />} />
             <Route path="/m/:cnpj/sup/:cod/metas-industria" element={<FarolPublicMetasPanel />} />
+            <Route path="/m/:cnpj/ggv/:codGgv"                 element={<FarolPublicPanel />} />
+            <Route path="/m/:cnpj/ggv/:codGgv/forn/:codFornec" element={<FarolPublicPanel />} />
+            <Route path="/m/:cnpj/ggv/:codGgv/metas-industria" element={<FarolPublicMetasPanel />} />
             <Route path="/m/:cod"                           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/forn/:codFornec"           element={<FarolPublicPanel />} />
             <Route path="/m/:cod/rca/:codRca"               element={<FarolPublicPanel />} />
