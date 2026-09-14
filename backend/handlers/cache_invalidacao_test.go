@@ -244,7 +244,8 @@ func TestPeriodosComuns(t *testing.T) {
 	jul := periodosComuns(time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC))
 	esperadosJul := []ymRange{
 		{202601, 202607}, // YTD — combinação vista no log de produção
-		{202501, 202512}, // comparativo do YTD
+		{202501, 202512}, // comparativo do preset "Ano x Ano" (YTD x ano anterior inteiro)
+		{202501, 202507}, // comparativo do "Período de/até" Jan-hoje (YTD x mesmo intervalo ano anterior)
 		{202607, 202607},
 		{202507, 202507},
 		{202606, 202606}, // mês fechado que o painel abriu por padrão

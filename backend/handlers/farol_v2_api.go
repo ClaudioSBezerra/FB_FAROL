@@ -3821,11 +3821,18 @@ func periodosComuns(agora time.Time) []ymRange {
 	}
 	return []ymRange{
 		{ano*100 + 1, ymAtual},              // YTD do ano corrente
-		{(ano-1)*100 + 1, (ano-1)*100 + 12}, // ano anterior completo (comparativo do YTD)
-		{ymAtual, ymAtual},                  // mês corrente
-		{ymAtual - 100, ymAtual - 100},      // mesmo mês do ano anterior
-		{ymMesAnt, ymMesAnt},                // mês anterior (fechado)
-		{ymMesAnt - 100, ymMesAnt - 100},    // mês anterior do ano anterior
+		{(ano-1)*100 + 1, (ano-1)*100 + 12}, // ano anterior completo (comparativo do preset "Ano x Ano")
+		{(ano-1)*100 + 1, ymAtual - 100},    // ano anterior ATÉ O MESMO MÊS (comparativo do "Período de/até"
+		// Jan-hoje, que o front manda como datas explícitas dia-a-dia
+		// deslocadas -1 ano — NÃO é o mesmo bucket do preset "Ano x
+		// Ano" acima. Sem esta entrada, todo 1º usuário do dia que abre
+		// o Painel Geral com "Período de/até" (o uso mais comum) pagava
+		// a folha inteira por nível/drill tocado: 409ms-2,49s medidos em
+		// produção 11/09/2026, heverton.sa, GGV→Supervisor→Cliente.
+		{ymAtual, ymAtual},               // mês corrente
+		{ymAtual - 100, ymAtual - 100},   // mesmo mês do ano anterior
+		{ymMesAnt, ymMesAnt},             // mês anterior (fechado)
+		{ymMesAnt - 100, ymMesAnt - 100}, // mês anterior do ano anterior
 	}
 }
 
