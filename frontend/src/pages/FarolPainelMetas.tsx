@@ -291,6 +291,17 @@ function primeiroEUltimoDiaDoMes(): { inicio: string; fim: string } {
   return { inicio: fmtd(new Date(y, m, 1)), fim: fmtd(new Date(y, m + 1, 0)) }
 }
 
+// rotuloRede — "código — razão (fantasia)", mesmo padrão "código — nome" que
+// os filtros de GGV/Supervisor/RCA já usavam — pedido do Claudio 14/09/2026:
+// o filtro de Rede só mostrava a fantasia, sem código, e quem procura pelo
+// código (comum pra RCA/GGV que decora número, não nome) não achava
+// digitando. Código na frente também faz o type-ahead nativo do Select
+// (Radix) funcionar batendo pelo número.
+function rotuloRede(cod: string, razao: string, fantasia: string): string {
+  const nome = fantasia && fantasia !== razao ? `${razao} (${fantasia})` : (razao || fantasia || cod)
+  return `${cod} — ${nome}`
+}
+
 // dedup — lista de {v: código, l: rótulo} única por código, ordenada pelo
 // rótulo. Alimenta os selects da barra de filtros da visão Combinada.
 function dedup(items: { v: string; l: string }[]) {
@@ -509,7 +520,7 @@ export default function FarolPainelMetas() {
   const optsRedeIndiv = useMemo(
     () => dedup(todasRedesIndiv
       .filter(r => (!filtroGGV || r.cod_ggv === filtroGGV.codigo) && (!filtroCRV || r.cod_crv === filtroCRV.codigo) && (!filtroRCA || r.cod_rca === filtroRCA.codigo))
-      .map(r => ({ v: r.cod_princ, l: r.fantasia || r.razao || r.cod_princ }))),
+      .map(r => ({ v: r.cod_princ, l: rotuloRede(r.cod_princ, r.razao, r.fantasia) }))),
     [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA],
   )
   // Selecionar direto pelo select pula pro próximo nível, igual abrirGrupo
@@ -646,7 +657,7 @@ export default function FarolPainelMetas() {
   const optsRede = useMemo(
     () => dedup(redesCombinado
       .filter(r => (!fGGV || r.cod_ggv === fGGV) && (!fCRV || r.cod_crv === fCRV) && (!fRCA || r.cod_rca === fRCA))
-      .map(r => ({ v: r.cod_princ, l: r.fantasia || r.razao || r.cod_princ }))),
+      .map(r => ({ v: r.cod_princ, l: rotuloRede(r.cod_princ, r.razao, r.fantasia) }))),
     [redesCombinado, fGGV, fCRV, fRCA],
   )
   const optsCliente = useMemo(() => {
