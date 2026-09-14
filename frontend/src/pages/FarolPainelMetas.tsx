@@ -10,6 +10,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
 import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch } from 'lucide-react'
+import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -778,9 +779,25 @@ export default function FarolPainelMetas() {
 
   return (
     <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
-      <div>
-        <h1 className="text-xl font-semibold">Painel de Objetivos por Indústria</h1>
-        <p className="text-sm text-muted-foreground">Objetivo × Realizado por Tipo de Métrica, navegável pela hierarquia GGV → CRV → RCA → Rede.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Painel de Objetivos por Indústria</h1>
+          <p className="text-sm text-muted-foreground">Objetivo × Realizado por Tipo de Métrica, navegável pela hierarquia GGV → CRV → RCA → Rede.</p>
+        </div>
+        {/* Racional do cálculo (Cobertura/Sortimento) — pedido do Claudio e
+            Heverton 14/09/2026: precisa estar visível na tela, não só em
+            conversa. Só aparece com Indústria selecionada (precisa saber
+            qual vínculo consultar pro limiar/faixas reais). */}
+        {industriaSelecionada && (
+          <div className="pt-1">
+            <BotaoComoFunciona
+              industriaNome={industriaSelecionada.nome}
+              vinculoCoberturaId={industriaSelecionada.cobertura?.id}
+              vinculoSortimentoId={industriaSelecionada.sortimento?.id}
+              limiarCobertura={industriaSelecionada.cobertura?.parametros_valores?.limiar_valor_medio as number | undefined}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3 items-end border rounded-lg p-4">

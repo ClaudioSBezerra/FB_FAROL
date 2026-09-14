@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { exportToExcel } from '@/lib/exportToExcel'
+import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import type * as XLSXType from 'xlsx'
 
 // Comparativo Fechamento Comercial (Painel Vendas) — pedido do Claudio
@@ -311,9 +312,21 @@ export default function FarolComparativoFechamento() {
   return (
     <div className="p-6 space-y-6">
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-        <div className="flex items-center gap-2 mb-1">
-          <Scale className="h-5 w-5 text-slate-600" />
-          <h2 className="text-lg font-semibold text-slate-900">Comparativo Fechamento Comercial</h2>
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <div className="flex items-center gap-2">
+            <Scale className="h-5 w-5 text-slate-600" />
+            <h2 className="text-lg font-semibold text-slate-900">Comparativo Fechamento Comercial</h2>
+          </div>
+          {/* Racional do cálculo — pedido do Claudio e Heverton 14/09/2026,
+              mesmo componente usado no Painel de Objetivos por Indústria. */}
+          {industriaID && (
+            <BotaoComoFunciona
+              industriaNome={industrias.find(i => String(i.id) === industriaID)?.nome ?? ''}
+              vinculoCoberturaId={vinculosCobertura.find(v => String(v.industria_id) === industriaID)?.id}
+              vinculoSortimentoId={vinculos.find(v => v.formula_codigo === 'sortimento_rede' && String(v.industria_id) === industriaID)?.id}
+              limiarCobertura={vinculosCobertura.find(v => String(v.industria_id) === industriaID)?.parametros_valores?.limiar_valor_medio as number | undefined}
+            />
+          )}
         </div>
         <p className="text-sm text-slate-500 mb-4">
           Sobe o fechamento que o fornecedor manda por fora (aba "Resumo Redes" do modelo da JC) e compara, Rede a
