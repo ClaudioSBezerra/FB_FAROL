@@ -783,6 +783,11 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		if ci := q.Get("cod_industria"); ci != "" {
 			resolveIndustriaFilter(db, spCtx.EmpresaID, ci, filters)
 		}
+		// Rede (cross-filter novo, 14/09/2026) — resolvida pro filtro cod_cli
+		// por trás (ver resolveRedeFilter).
+		if rd := q.Get("cod_cliprinc"); rd != "" {
+			resolveRedeFilter(db, spCtx.EmpresaID, rd, filters)
+		}
 		// Recorte da persona — SOBRESCREVE o que veio na URL (ver farol_escopo.go).
 		// Vale para qualquer view: o GGV abre Indústrias e vê as indústrias todas,
 		// mas com os números apenas da equipe dele.
@@ -1067,6 +1072,75 @@ func resolveIndustriaFilter(db *sql.DB, empresaID, raw string, filters multiFilt
 	}
 	if !achouAlgum && len(filters["cod_fornec"]) == 0 {
 		filters["cod_fornec"] = []string{"__industria_sem_fornecedores__"}
+	}
+}
+
+// resolveRedeFilter — traduz o filtro cruzado "Rede" (?cod_cliprinc=75215,...)
+// pros cod_cli que pertencem a essas redes, e funde no filtro `cod_cli` já
+// existente (mesmo padrão de resolveIndustriaFilter, que funde em cod_fornec).
+//
+// Por que resolver pra cod_cli em vez de criar um caminho de filtro novo:
+// cod_cliprinc não é ambíguo como cod_fornec/uf/empresa (um cliente pertence
+// A UMA rede só, igual RCA/Supervisor/Gerente) — então filtrar por um
+// CONJUNTO de cod_cli (a composição da(s) rede(s) escolhida(s)) reaproveita
+// 100% do roteamento agg/scan-ao-vivo que cod_cli já tem (orgAncestors,
+// pickAggForCrossFilter, etc.), sem precisar ensinar esse motor sobre mais
+// uma coluna nem arriscar o mesmo bug de dupla-contagem que fornec/uf/filial
+// tiveram quando viraram filtro cruzado (ver comentário de
+// pickAggForCrossFilter). Decisão de 14/09/2026.
+//
+// Fonte: vendas_faturadas UNION vendas_transmitidas — um cliente pode
+// aparecer só num dos dois fluxos num dado mês; a filiação à rede é atributo
+// do cliente, não do fluxo, então a união garante que o filtro funciona
+// igual em qualquer aba (Faturado/Transmitido).
+func resolveRedeFilter(db *sql.DB, empresaID, raw string, filters multiFilters) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	var redes []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			redes = append(redes, p)
+		}
+	}
+	if len(redes) == 0 {
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT DISTINCT cod_cli FROM vendas_faturadas
+		 WHERE empresa_id = $1 AND cod_cliprinc = ANY($2) AND cod_cli <> ''
+		UNION
+		SELECT DISTINCT cod_cli FROM vendas_transmitidas
+		 WHERE empresa_id = $1 AND cod_cliprinc = ANY($2) AND cod_cli <> ''
+	`, empresaID, pq.Array(redes))
+	if err != nil {
+		log.Printf("[farol:rede] resolver filtro cod_cliprinc ERRO: %v", err)
+		filters["cod_cli"] = []string{"__rede_erro_consulta__"}
+		return
+	}
+	defer rows.Close()
+
+	existentes := map[string]bool{}
+	for _, c := range filters["cod_cli"] {
+		existentes[c] = true
+	}
+	achouAlgum := false
+	for rows.Next() {
+		var cod string
+		if rows.Scan(&cod) != nil {
+			continue
+		}
+		achouAlgum = true
+		if !existentes[cod] {
+			filters["cod_cli"] = append(filters["cod_cli"], cod)
+			existentes[cod] = true
+		}
+	}
+	if !achouAlgum && len(filters["cod_cli"]) == 0 {
+		filters["cod_cli"] = []string{"__rede_sem_clientes__"}
 	}
 }
 
@@ -4488,6 +4562,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			"supervisor": {"agg_%s_v02_l0_mes", "cod_supervisor"},
 			"rca":        {"agg_%s_v04_l0_mes", "cod_rca"},
 			"cli":        {"agg_%s_v01_l4_mes", "cod_cli"},
+			"cliprinc":   {"agg_%s_v06_l0_mes", "cod_cliprinc"},
 		}
 
 		// fetchDim(dimName) — retorna [{key, label}] para a dim solicitada.
@@ -4615,6 +4690,16 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]any{"cli": cli})
 			return
 		}
+		// LAZY-LOAD do cod_cliprinc (Rede, 14/09/2026): mesma ordem de grandeza
+		// de cardinalidade que cli (~35k redes vs ~39k clientes) — mesmo
+		// tratamento: só carrega quando o front pede ?dim=cliprinc (abertura do
+		// dropdown "Rede").
+		if onlyDim == "cliprinc" {
+			cliprinc := fetchDim("cod_cliprinc", "cliprinc")
+			log.Printf("[dims] fluxo=%s dim=cliprinc total=%v", fluxo.name, time.Since(t0))
+			json.NewEncoder(w).Encode(map[string]any{"cliprinc": cliprinc})
+			return
+		}
 
 		var (
 			fornec, gerente, supervisor, rca []dimOption
@@ -4639,6 +4724,7 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			"supervisor": supervisor,
 			"rca":        rca,
 			"cli":        []dimOption{}, // lazy: carregado via ?dim=cli ao abrir dropdown
+			"cliprinc":   []dimOption{}, // lazy: carregado via ?dim=cliprinc ao abrir dropdown
 			"uf":         uf,
 			"empresa":    empresa,
 		}

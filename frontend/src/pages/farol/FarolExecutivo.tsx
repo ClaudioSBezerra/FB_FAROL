@@ -156,6 +156,7 @@ interface DimsResponse {
   supervisor?: DimOption[]
   rca?: DimOption[]
   cli?: DimOption[]
+  cliprinc?: DimOption[]
   uf?: string[]
   // empresa passou a vir com rótulo na mig 204 ({key:"20", label:"JC CONCEICAO
   // DO JACUIPE-BA"}). optionsFor já aceitava as duas formas, então a mudança no
@@ -893,6 +894,24 @@ function useDimsCli(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: 
   })
 }
 
+// Lazy-load do dropdown de Rede (cod_cliprinc): ~35k opções, mesma ordem de
+// grandeza de Cliente — mesmo tratamento (só busca quando o dropdown abre
+// pela 1ª vez, ver cliprincEnabled).
+function useDimsCliprinc(fluxo: Fluxo, ref_inicio: string, ref_fim: string, enabled: boolean) {
+  return useQuery<{ cliprinc: DimOption[] }>({
+    queryKey: ['farol-v2-dims-cliprinc', fluxo, ref_inicio, ref_fim],
+    enabled: enabled && !!ref_inicio && !!ref_fim,
+    queryFn: async () => {
+      const p = new URLSearchParams({ fluxo, ref_inicio, ref_fim, dim: 'cliprinc' })
+      const r = await fetch(`/api/v2/farol/dims?${p}`)
+      if (!r.ok) throw new Error('Falha ao carregar redes')
+      return r.json()
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
 // useIndustrias — opções do filtro cruzado "FORN DIST" (canônico,
 // deduplicado — cadastro em /gestao/industrias, distinto do FORN.GERAL cru
 // de cod_fornec; rótulo do chip era "Indústria", renomeado pra "FORN DIST"
@@ -1006,6 +1025,8 @@ export default function FarolExecutivo() {
   // Lazy-load do dropdown de Cliente: só ativa após o usuário abri-lo uma vez.
   const [cliEnabled, setCliEnabled] = useState(false)
   const dimsCliQ = useDimsCli(fluxo, refInicio, refFim, cliEnabled)
+  const [cliprincEnabled, setCliprincEnabled] = useState(false)
+  const dimsCliprincQ = useDimsCliprinc(fluxo, refInicio, refFim, cliprincEnabled)
   const industriasQ = useIndustrias()
 
   const handleDrill = (card: CardItem) => {
@@ -1095,6 +1116,12 @@ export default function FarolExecutivo() {
     { col: 'cod_gerente',    label: 'Gerente',    from: 'gerente' },
     { col: 'cod_supervisor', label: 'Supervisor', from: 'supervisor' },
     { col: 'cod_rca',        label: 'RCA',        from: 'rca' },
+    // Rede (cod_cliprinc) — cross-filter novo, 14/09/2026, pedido do Claudio:
+    // achar uma rede específica exigia saber de cor os clientes dela e
+    // filtrar um por um em "Cliente". Resolvido pro filtro cod_cli por trás
+    // (resolveRedeFilter, farol_v2_api.go) — cada cliente pertence a uma
+    // única rede, sem risco de dupla-contagem.
+    { col: 'cod_cliprinc',   label: 'Rede',       from: 'cliprinc' },
     { col: 'cod_cli',        label: 'Cliente',    from: 'cli' },
     { col: 'uf',             label: 'UF',         from: 'uf' },
     // Filial — RESTAURADO em 06/08/2026. Foi removido em 27/07 sob a premissa
@@ -1113,8 +1140,9 @@ export default function FarolExecutivo() {
   ]
 
   const optionsFor = (from: keyof DimsResponse): { key: string; label: string }[] => {
-    // Cliente vem do hook lazy (dimsCliQ); as demais do dims padrão.
+    // Cliente e Rede vêm dos hooks lazy (dimsCliQ/dimsCliprincQ); as demais do dims padrão.
     if (from === 'cli') return dimsCliQ.data?.cli ?? []
+    if (from === 'cliprinc') return dimsCliprincQ.data?.cliprinc ?? []
     const v = dimsQ.data?.[from]
     if (!v) return []
     if (Array.isArray(v) && typeof v[0] === 'string') {
@@ -1272,10 +1300,10 @@ export default function FarolExecutivo() {
           // listaria apenas ele mesmo (o servidor já recorta as dims). Some,
           // em vez de ocupar espaço prometendo uma decisão que não existe.
           //
-          // Exceção: a dim de Cliente carrega sob demanda (lazy) e começa
-          // vazia; escondê-la por estar "vazia" a tiraria da tela para todo
-          // mundo, para sempre.
-          if (d.from !== 'cli' && opts.length <= 1 && (filters[d.col] ?? []).length === 0) {
+          // Exceção: as dims de Cliente e Rede carregam sob demanda (lazy) e
+          // começam vazias; escondê-las por estarem "vazias" as tiraria da
+          // tela para todo mundo, para sempre.
+          if (d.from !== 'cli' && d.from !== 'cliprinc' && opts.length <= 1 && (filters[d.col] ?? []).length === 0) {
             return null
           }
           return (
@@ -1285,8 +1313,11 @@ export default function FarolExecutivo() {
               options={opts}
               selected={filters[d.col] ?? []}
               onChange={(vs) => setFilter(d.col, vs)}
-              onOpen={d.from === 'cli' ? () => setCliEnabled(true) : undefined}
-              loading={d.from === 'cli' && cliEnabled && dimsCliQ.isLoading}
+              onOpen={d.from === 'cli' ? () => setCliEnabled(true)
+                    : d.from === 'cliprinc' ? () => setCliprincEnabled(true)
+                    : undefined}
+              loading={(d.from === 'cli' && cliEnabled && dimsCliQ.isLoading) ||
+                       (d.from === 'cliprinc' && cliprincEnabled && dimsCliprincQ.isLoading)}
               single={SINGLE_SELECT_COLS.has(d.col)}
             />
           )
