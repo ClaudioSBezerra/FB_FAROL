@@ -421,7 +421,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	for i, c := range clientes {
 		cnpjs[i] = c.CNPJ
 	}
-	valoresPorCliente, err := somaPvendaClientes(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
+	valoresPorCliente, err := somaPvendaClientes(db, empresaID, clientes, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +453,41 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	return out, nil
 }
 
+// cnpjCodPrincPares separa uma lista de clienteValido em dois arrays
+// paralelos (cnpj[i] pertence à Rede codPrinc[i]) — usados pra montar o
+// JOIN cnpj+cod_cliprinc descrito em filtrarPorClienteEDono abaixo.
+func cnpjCodPrincPares(clientes []clienteValido) (cnpjs, codPrincs []string) {
+	cnpjs = make([]string, len(clientes))
+	codPrincs = make([]string, len(clientes))
+	for i, c := range clientes {
+		cnpjs[i] = c.CNPJ
+		codPrincs[i] = c.CodPrinc
+	}
+	return
+}
+
+// filtrarPorClienteEDono monta o trecho de JOIN que restringe uma consulta
+// em vendas_faturadas/transmitidas/ccd a exatamente os pares (cnpj,
+// cod_cliprinc) da lista de Clientes Válidos — não só o CNPJ. Existe porque
+// o MESMO CNPJ pode estar cadastrado no ERP como client PRINCIPAL em uma
+// filial e como cliente AVULSO (cod_cliprinc apontando pra ele mesmo, sem
+// Rede) em outra — bug real achado em 15/09/2026 (Heverton reportou "está
+// considerando venda de outro código de cliente"): rede 148604, CNPJ
+// 47260527000119 tinha R$11.087,45 na filial 11 (cod_cliprinc=148604,
+// correto) E R$4.932,77 na filial 1 (cod_cliprinc=252710, um cliente
+// TOTALMENTE diferente que só coincide no CNPJ) — o filtro antigo (só
+// `cnpj = ANY(...)`) somava as duas, inflando a Rede. `alias` é o alias da
+// tabela na query externa (ex.: "v"). Retorna o SQL do JOIN e os args (na
+// ordem: cnpjs, codPrincs) — o chamador começa os $ a partir de `proximoArg`.
+func filtrarPorClienteEDono(alias string, proximoArg int, cnpjs, codPrincs []string) (joinSQL string, args []any) {
+	joinSQL = fmt.Sprintf(
+		"JOIN (SELECT unnest($%d::text[]) AS cnpj, unnest($%d::text[]) AS cod_princ) cv ON %s.cnpj = cv.cnpj AND %s.cod_cliprinc = cv.cod_princ",
+		proximoArg, proximoArg+1, alias, alias,
+	)
+	args = []any{pq.Array(cnpjs), pq.Array(codPrincs)}
+	return
+}
+
 // somaPvendaClientes soma pvenda (Faturado/Transmitido) de TODOS os CNPJs
 // da vigência numa ÚNICA consulta agregada (GROUP BY cnpj) — substitui, em
 // 2026-09-10, uma versão que rodava 1 consulta POR CNPJ (400+ round-trips
@@ -466,28 +501,34 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 // vínculo (ex: 396 Unilever HC), sem o qual a "média de compras" da Rede
 // incluiria compras de QUALQUER fornecedor (bug corrigido 2026-09-04). CNPJ
 // sem nenhuma venda no período simplesmente não aparece no mapa — o
-// chamador trata a ausência como 0.
-func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]float64, error) {
+// chamador trata a ausência como 0. Desde 15/09/2026 também exige que o
+// `cod_cliprinc` da linha de venda bata com a Rede do Cliente Válido (ver
+// filtrarPorClienteEDono) — não basta o CNPJ.
+func somaPvendaClientes(db *sql.DB, empresaID string, clientes []clienteValido, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]float64, error) {
 	out := map[string]float64{}
-	if len(cnpjs) == 0 {
+	if len(clientes) == 0 {
 		return out, nil
 	}
+	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
 	somar := func(tabela, colData string) error {
 		t0 := time.Now()
+		joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
 		query := fmt.Sprintf(`
-			SELECT cnpj, SUM(pvenda) FROM %s
-			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4
-		`, tabela, colData)
-		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+			SELECT v.cnpj, SUM(v.pvenda) FROM %s v
+			%s
+			WHERE v.empresa_id = $1 AND v.%s BETWEEN $4 AND $5
+		`, tabela, joinSQL, colData)
+		args := append([]any{empresaID}, joinArgs...)
+		args = append(args, dataInicio, dataFim)
 		if len(tiposVenda) > 0 {
-			query += fmt.Sprintf(" AND tipo_venda = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(tiposVenda))
 		}
 		if len(codFornec) > 0 {
-			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		query += " GROUP BY cnpj"
+		query += " GROUP BY v.cnpj"
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			return err
@@ -515,7 +556,7 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
-		if err := subtrairDevolucaoCancelamento(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+		if err := subtrairDevolucaoCancelamento(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
 			return nil, err
 		}
 	case "transmitido":
@@ -537,20 +578,24 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 // 1, não 12 (ver contarEANsPositivados, que agora também trata líquido <= 0
 // como "não positivado"). vendas_ccd não tem coluna tipo_venda (só faz
 // sentido nas linhas Faturadas — ver migration 190), por isso não filtra
-// por tiposVenda aqui, só por cod_fornec (mesma Indústria do vínculo).
-func subtrairDevolucaoCancelamento(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]float64) error {
+// por tiposVenda aqui, só por cod_fornec (mesma Indústria do vínculo) e por
+// cod_cliprinc (mesmo racional de filtrarPorClienteEDono).
+func subtrairDevolucaoCancelamento(db *sql.DB, empresaID string, cnpjs, codPrincs []string, dataInicio, dataFim string, codFornec []string, out map[string]float64) error {
 	t0 := time.Now()
-	query := `
-		SELECT cnpj, SUM(pvenda) FROM vendas_ccd
-		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
-		  AND evento IN ('DEVOLVIDO', 'CANCELADO')
-	`
-	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
+	query := fmt.Sprintf(`
+		SELECT v.cnpj, SUM(v.pvenda) FROM vendas_ccd v
+		%s
+		WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $4 AND $5
+		  AND v.evento IN ('DEVOLVIDO', 'CANCELADO')
+	`, joinSQL)
+	args := append([]any{empresaID}, joinArgs...)
+	args = append(args, dataInicio, dataFim)
 	if len(codFornec) > 0 {
-		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 		args = append(args, pq.Array(codFornec))
 	}
-	query += " GROUP BY cnpj"
+	query += " GROUP BY v.cnpj"
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
@@ -596,7 +641,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	for i, c := range clientes {
 		cnpjs[i] = c.CNPJ
 	}
-	linhasPorCliente, err := qtdPorCodProdClientes(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
+	linhasPorCliente, err := qtdPorCodProdClientes(db, empresaID, clientes, dataInicio, dataFim, fluxo, tiposVenda, codFornec)
 	if err != nil {
 		return nil, err
 	}
@@ -712,27 +757,31 @@ func exigeQuantidadeMinima(embalagem string, qtUnitCx float64) bool {
 // Filtra por cod_fornec da Indústria do vínculo (mesmo bug corrigido de
 // Cobertura, ver somaPvendaClientes). Retorna map[cnpj]map[cod_prod]agregada
 // — CNPJ sem nenhuma venda simplesmente não aparece na chave externa.
-func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]vendaProdutoAgregada, error) {
+func qtdPorCodProdClientes(db *sql.DB, empresaID string, clientes []clienteValido, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]vendaProdutoAgregada, error) {
 	out := map[string]map[string]vendaProdutoAgregada{}
-	if len(cnpjs) == 0 {
+	if len(clientes) == 0 {
 		return out, nil
 	}
+	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
 	somar := func(tabela, colData string) error {
 		t0 := time.Now()
+		joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
 		query := fmt.Sprintf(`
-			SELECT cnpj, cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM %s
-			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
-		`, tabela, colData)
-		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+			SELECT v.cnpj, v.cod_prod, SUM(v.qt), MAX(v.embalagem), MAX(v.qt_unit_cx) FROM %s v
+			%s
+			WHERE v.empresa_id = $1 AND v.%s BETWEEN $4 AND $5 AND v.cod_prod <> ''
+		`, tabela, joinSQL, colData)
+		args := append([]any{empresaID}, joinArgs...)
+		args = append(args, dataInicio, dataFim)
 		if len(tiposVenda) > 0 {
-			query += fmt.Sprintf(" AND tipo_venda = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(tiposVenda))
 		}
 		if len(codFornec) > 0 {
-			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		query += " GROUP BY cnpj, cod_prod"
+		query += " GROUP BY v.cnpj, v.cod_prod"
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			return err
@@ -769,7 +818,7 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
-		if err := subtrairDevolucaoCancelamentoQtd(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+		if err := subtrairDevolucaoCancelamentoQtd(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
 			return nil, err
 		}
 	case "transmitido":
@@ -784,23 +833,26 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 
 // subtrairDevolucaoCancelamentoQtd é a versão de subtrairDevolucaoCancelamento
 // pro grão cnpj×cod_prod (Sortimento) — mesmo racional (só Faturado, só
-// cod_fornec, sem tipo_venda). embalagem/qt_unit_cx só são preenchidos se
-// ainda não vieram do bruto (produto SÓ aparece em CCD, ex.: devolução de
-// venda de um mês anterior — caso raro, mas o líquido negativo resultante já
-// é tratado por contarEANsPositivados).
-func subtrairDevolucaoCancelamentoQtd(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]vendaProdutoAgregada) error {
+// cod_fornec/cod_cliprinc, sem tipo_venda). embalagem/qt_unit_cx só são
+// preenchidos se ainda não vieram do bruto (produto SÓ aparece em CCD, ex.:
+// devolução de venda de um mês anterior — caso raro, mas o líquido negativo
+// resultante já é tratado por contarEANsPositivados).
+func subtrairDevolucaoCancelamentoQtd(db *sql.DB, empresaID string, cnpjs, codPrincs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]vendaProdutoAgregada) error {
 	t0 := time.Now()
-	query := `
-		SELECT cnpj, cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM vendas_ccd
-		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
-		  AND cod_prod <> '' AND evento IN ('DEVOLVIDO', 'CANCELADO')
-	`
-	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
+	query := fmt.Sprintf(`
+		SELECT v.cnpj, v.cod_prod, SUM(v.qt), MAX(v.embalagem), MAX(v.qt_unit_cx) FROM vendas_ccd v
+		%s
+		WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $4 AND $5
+		  AND v.cod_prod <> '' AND v.evento IN ('DEVOLVIDO', 'CANCELADO')
+	`, joinSQL)
+	args := append([]any{empresaID}, joinArgs...)
+	args = append(args, dataInicio, dataFim)
 	if len(codFornec) > 0 {
-		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 		args = append(args, pq.Array(codFornec))
 	}
-	query += " GROUP BY cnpj, cod_prod"
+	query += " GROUP BY v.cnpj, v.cod_prod"
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err

@@ -75,27 +75,31 @@ type itemAgregado struct {
 // RecalcularItensRealizado precisa pra gravar 1 linha por CNPJ×EAN. Mesmo
 // princípio de qtdPorCodProdClientes (farol_metas_calculo.go): 1 consulta
 // cobrindo todos os CNPJs da vigência, não 1 por CNPJ.
-func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]itemAgregado, error) {
+func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, clientes []clienteValido, dataInicio, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]itemAgregado, error) {
 	out := map[string]map[string]itemAgregado{}
-	if len(cnpjs) == 0 {
+	if len(clientes) == 0 {
 		return out, nil
 	}
+	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
 	somar := func(tabela, colData string) error {
 		t0 := time.Now()
+		joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
 		query := fmt.Sprintf(`
-			SELECT cnpj, cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM %s
-			WHERE empresa_id = $1 AND cnpj = ANY($2) AND %s BETWEEN $3 AND $4 AND cod_prod <> ''
-		`, tabela, colData)
-		args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+			SELECT v.cnpj, v.cod_prod, SUM(v.qt), SUM(v.pvenda), MAX(v.nome_prod) FROM %s v
+			%s
+			WHERE v.empresa_id = $1 AND v.%s BETWEEN $4 AND $5 AND v.cod_prod <> ''
+		`, tabela, joinSQL, colData)
+		args := append([]any{empresaID}, joinArgs...)
+		args = append(args, dataInicio, dataFim)
 		if len(tiposVenda) > 0 {
-			query += fmt.Sprintf(" AND tipo_venda = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(tiposVenda))
 		}
 		if len(codFornec) > 0 {
-			query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+			query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 			args = append(args, pq.Array(codFornec))
 		}
-		query += " GROUP BY cnpj, cod_prod"
+		query += " GROUP BY v.cnpj, v.cod_prod"
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			return err
@@ -134,7 +138,7 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, 
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
-		if err := subtrairDevolucaoCancelamentoItens(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+		if err := subtrairDevolucaoCancelamentoItens(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
 			return nil, err
 		}
 	case "transmitido":
@@ -150,20 +154,24 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, 
 // subtrairDevolucaoCancelamentoItens espelha subtrairDevolucaoCancelamentoQtd
 // (farol_metas_calculo.go) pro grão Qtd+Valor deste drill-down — mesmo
 // racional: só Faturado, líquido direto (sem separar bruto/devolução em
-// campo à parte), sem filtro de tipo_venda (vendas_ccd não tem essa coluna).
-func subtrairDevolucaoCancelamentoItens(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]itemAgregado) error {
+// campo à parte), sem filtro de tipo_venda (vendas_ccd não tem essa coluna),
+// e mesmo filtro por cod_cliprinc (ver filtrarPorClienteEDono).
+func subtrairDevolucaoCancelamentoItens(db *sql.DB, empresaID string, cnpjs, codPrincs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]itemAgregado) error {
 	t0 := time.Now()
-	query := `
-		SELECT cnpj, cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM vendas_ccd
-		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
-		  AND cod_prod <> '' AND evento IN ('DEVOLVIDO', 'CANCELADO')
-	`
-	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
+	query := fmt.Sprintf(`
+		SELECT v.cnpj, v.cod_prod, SUM(v.qt), SUM(v.pvenda), MAX(v.nome_prod) FROM vendas_ccd v
+		%s
+		WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $4 AND $5
+		  AND v.cod_prod <> '' AND v.evento IN ('DEVOLVIDO', 'CANCELADO')
+	`, joinSQL)
+	args := append([]any{empresaID}, joinArgs...)
+	args = append(args, dataInicio, dataFim)
 	if len(codFornec) > 0 {
-		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
 		args = append(args, pq.Array(codFornec))
 	}
-	query += " GROUP BY cnpj, cod_prod"
+	query += " GROUP BY v.cnpj, v.cod_prod"
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
@@ -280,11 +288,7 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 		return err
 	}
 
-	cnpjs := make([]string, len(clientes))
-	for i, c := range clientes {
-		cnpjs[i] = c.CNPJ
-	}
-	linhasPorCliente, err := qtdValorPorCodProdPorCliente(db, empresaID, cnpjs, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+	linhasPorCliente, err := qtdValorPorCodProdPorCliente(db, empresaID, clientes, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
 	if err != nil {
 		return err
 	}
