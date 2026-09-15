@@ -385,6 +385,11 @@ func main() {
 		http.Handle("/api/mcp", mcpHandler)
 		log.Printf("[farol:mcp] rota /api/mcp habilitada")
 	}
+	// API REST simples pro mesmo dado — é o formato que os agentes do
+	// Paperclip realmente usam (ver farol_jc_rest.go).
+	if restHandler, ok := handlers.NewFarolJCRestHandler(getDB); ok {
+		http.Handle("/api/farol-jc/", http.StripPrefix("/api/farol-jc", restHandler))
+	}
 
 	// ── Health ────────────────────────────────────────────────────────────────
 	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {

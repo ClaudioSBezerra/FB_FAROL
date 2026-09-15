@@ -222,96 +222,106 @@ func registrarToolObjetivosIndustria(server *mcp.Server, db *sql.DB, empresaID s
 		Description: "Resultado de Cobertura e Sortimento por Rede de um programa de Objetivos por Indústria " +
 			"(ex: Unilever HC/Food) num período — quantas Redes estão atingindo a meta e quanto falta, por Rede.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in objetivosIndustriaInput) (*mcp.CallToolResult, objetivosIndustriaOutput, error) {
-		var out objetivosIndustriaOutput
-		fluxo := strings.TrimSpace(in.Fluxo)
-		if fluxo == "" {
-			fluxo = "faturado"
-		}
-		if fluxo != "faturado" && fluxo != "transmitido" {
-			return nil, out, fmt.Errorf("fluxo inválido: %q (use 'faturado' ou 'transmitido')", in.Fluxo)
-		}
+		out, err := calcularObjetivosIndustria(db, empresaID, in.Industria, in.Periodo, in.Fluxo)
+		return nil, out, err
+	})
+}
 
-		industriaID, nomeCanonico, err := resolverIndustriaID(db, empresaID, in.Industria)
-		if err != nil {
-			return nil, out, err
-		}
-		dataInicio, dataFim, err := parsePeriodo(in.Periodo)
-		if err != nil {
-			return nil, out, err
-		}
+// calcularObjetivosIndustria contém a lógica em si — extraída em 15/09/2026
+// pra ser reusada tanto pela tool de MCP quanto pelo endpoint REST simples
+// (RestObjetivosIndustriaHandler), já que os agentes do Paperclip chamam
+// API REST direto (não mantêm sessão MCP — ver farol_jc_rest.go pro
+// racional completo dessa decisão).
+func calcularObjetivosIndustria(db *sql.DB, empresaID, industria, periodo, fluxoIn string) (objetivosIndustriaOutput, error) {
+	var out objetivosIndustriaOutput
+	fluxo := strings.TrimSpace(fluxoIn)
+	if fluxo == "" {
+		fluxo = "faturado"
+	}
+	if fluxo != "faturado" && fluxo != "transmitido" {
+		return out, fmt.Errorf("fluxo inválido: %q (use 'faturado' ou 'transmitido')", fluxoIn)
+	}
 
-		out.Industria = nomeCanonico
-		out.Periodo = in.Periodo
-		out.Fluxo = fluxo
+	industriaID, nomeCanonico, err := resolverIndustriaID(db, empresaID, industria)
+	if err != nil {
+		return out, err
+	}
+	dataInicio, dataFim, err := parsePeriodo(periodo)
+	if err != nil {
+		return out, err
+	}
 
-		vinculoCob, vigenciaCob, temCob, err := resolverVinculoVigencia(db, empresaID, industriaID, "cobertura_rede", dataInicio, dataFim)
-		if err != nil {
-			return nil, out, err
-		}
-		vinculoSort, vigenciaSort, temSort, err := resolverVinculoVigencia(db, empresaID, industriaID, "sortimento_rede", dataInicio, dataFim)
-		if err != nil {
-			return nil, out, err
-		}
-		if !temCob && !temSort {
-			return nil, out, fmt.Errorf("%s não tem vigência de Cobertura nem Sortimento cadastrada pro período %s", nomeCanonico, in.Periodo)
-		}
+	out.Industria = nomeCanonico
+	out.Periodo = periodo
+	out.Fluxo = fluxo
 
-		porRede := map[string]*redeObjetivo{}
-		ordem := []string{}
-		pegar := func(cp string) *redeObjetivo {
-			if r, ok := porRede[cp]; ok {
-				return r
-			}
-			r := &redeObjetivo{CodPrinc: cp}
-			porRede[cp] = r
-			ordem = append(ordem, cp)
+	vinculoCob, vigenciaCob, temCob, err := resolverVinculoVigencia(db, empresaID, industriaID, "cobertura_rede", dataInicio, dataFim)
+	if err != nil {
+		return out, err
+	}
+	vinculoSort, vigenciaSort, temSort, err := resolverVinculoVigencia(db, empresaID, industriaID, "sortimento_rede", dataInicio, dataFim)
+	if err != nil {
+		return out, err
+	}
+	if !temCob && !temSort {
+		return out, fmt.Errorf("%s não tem vigência de Cobertura nem Sortimento cadastrada pro período %s", nomeCanonico, periodo)
+	}
+
+	porRede := map[string]*redeObjetivo{}
+	ordem := []string{}
+	pegar := func(cp string) *redeObjetivo {
+		if r, ok := porRede[cp]; ok {
 			return r
 		}
+		r := &redeObjetivo{CodPrinc: cp}
+		porRede[cp] = r
+		ordem = append(ordem, cp)
+		return r
+	}
 
-		if temCob {
-			res, err := obterOuCongelarRealizado(db, empresaID, vinculoCob, vigenciaCob, fluxo, "rede")
-			if err != nil {
-				return nil, out, fmt.Errorf("erro calculando Cobertura: %w", err)
-			}
-			for _, rd := range res.Redes {
-				r := pegar(rd.CodPrinc)
-				r.Razao, r.Fantasia, r.QtLojas = rd.Razao, rd.Fantasia, rd.QtLojas
-				r.NomeGGV, r.NomeCRV, r.NomeRCA = rd.NomeGGV, rd.NomeCRV, rd.NomeRCA
-				valorTotal, valorMedio, atingiu := rd.ValorTotal, rd.Valor, rd.Atingiu
-				r.CoberturaValorTotal, r.CoberturaValorMedio, r.CoberturaAtingiu = &valorTotal, &valorMedio, &atingiu
-				if atingiu {
-					out.CoberturaRedesAtingindo++
-				} else {
-					out.CoberturaRedesFaltando++
-				}
+	if temCob {
+		res, err := obterOuCongelarRealizado(db, empresaID, vinculoCob, vigenciaCob, fluxo, "rede")
+		if err != nil {
+			return out, fmt.Errorf("erro calculando Cobertura: %w", err)
+		}
+		for _, rd := range res.Redes {
+			r := pegar(rd.CodPrinc)
+			r.Razao, r.Fantasia, r.QtLojas = rd.Razao, rd.Fantasia, rd.QtLojas
+			r.NomeGGV, r.NomeCRV, r.NomeRCA = rd.NomeGGV, rd.NomeCRV, rd.NomeRCA
+			valorTotal, valorMedio, atingiu := rd.ValorTotal, rd.Valor, rd.Atingiu
+			r.CoberturaValorTotal, r.CoberturaValorMedio, r.CoberturaAtingiu = &valorTotal, &valorMedio, &atingiu
+			if atingiu {
+				out.CoberturaRedesAtingindo++
+			} else {
+				out.CoberturaRedesFaltando++
 			}
 		}
-		if temSort {
-			res, err := obterOuCongelarRealizado(db, empresaID, vinculoSort, vigenciaSort, fluxo, "rede")
-			if err != nil {
-				return nil, out, fmt.Errorf("erro calculando Sortimento: %w", err)
-			}
-			for _, rd := range res.Redes {
-				r := pegar(rd.CodPrinc)
-				r.Razao, r.Fantasia, r.QtLojas = rd.Razao, rd.Fantasia, rd.QtLojas
-				r.NomeGGV, r.NomeCRV, r.NomeRCA = rd.NomeGGV, rd.NomeCRV, rd.NomeRCA
-				media, atingiu := rd.Valor, rd.Atingiu
-				r.SortimentoMedioEans, r.SortimentoAtingiu = &media, &atingiu
-				if atingiu {
-					out.SortimentoRedesAtingindo++
-				} else {
-					out.SortimentoRedesFaltando++
-				}
+	}
+	if temSort {
+		res, err := obterOuCongelarRealizado(db, empresaID, vinculoSort, vigenciaSort, fluxo, "rede")
+		if err != nil {
+			return out, fmt.Errorf("erro calculando Sortimento: %w", err)
+		}
+		for _, rd := range res.Redes {
+			r := pegar(rd.CodPrinc)
+			r.Razao, r.Fantasia, r.QtLojas = rd.Razao, rd.Fantasia, rd.QtLojas
+			r.NomeGGV, r.NomeCRV, r.NomeRCA = rd.NomeGGV, rd.NomeCRV, rd.NomeRCA
+			media, atingiu := rd.Valor, rd.Atingiu
+			r.SortimentoMedioEans, r.SortimentoAtingiu = &media, &atingiu
+			if atingiu {
+				out.SortimentoRedesAtingindo++
+			} else {
+				out.SortimentoRedesFaltando++
 			}
 		}
+	}
 
-		for _, cp := range ordem {
-			out.Redes = append(out.Redes, *porRede[cp])
-		}
-		out.TotalRedes = len(out.Redes)
+	for _, cp := range ordem {
+		out.Redes = append(out.Redes, *porRede[cp])
+	}
+	out.TotalRedes = len(out.Redes)
 
-		return nil, out, nil
-	})
+	return out, nil
 }
 
 // ─── Tool: farol_comparativo_fechamento ─────────────────────────────────────
@@ -335,31 +345,38 @@ func registrarToolComparativoFechamento(server *mcp.Server, db *sql.DB, empresaI
 		Description: "Compara, Rede a Rede, o fechamento que a indústria (fornecedor) reportou por fora com o que o " +
 			"Farol calculou pro mesmo período — mostra onde os números divergem e por quanto.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in comparativoFechamentoInput) (*mcp.CallToolResult, comparativoFechamentoOutput, error) {
-		var out comparativoFechamentoOutput
-		industriaID, nomeCanonico, err := resolverIndustriaID(db, empresaID, in.Industria)
-		if err != nil {
-			return nil, out, err
-		}
-		dataInicio, dataFim, err := parsePeriodo(in.Periodo)
-		if err != nil {
-			return nil, out, err
-		}
-
-		linhas, err := gerarComparativoFechamento(db, empresaID, industriaID, dataInicio, dataFim)
-		if err != nil {
-			return nil, out, err
-		}
-
-		out.Industria = nomeCanonico
-		out.Periodo = in.Periodo
-		out.Linhas = linhas
-		out.Total = len(linhas)
-		for _, l := range linhas {
-			if l.Status != "OK" {
-				out.Divergentes++
-			}
-		}
-
-		return nil, out, nil
+		out, err := calcularComparativoFechamento(db, empresaID, in.Industria, in.Periodo)
+		return nil, out, err
 	})
+}
+
+// calcularComparativoFechamento é o equivalente de calcularObjetivosIndustria
+// pro comparativo — mesmo racional de extração pra reuso entre MCP e REST.
+func calcularComparativoFechamento(db *sql.DB, empresaID, industria, periodo string) (comparativoFechamentoOutput, error) {
+	var out comparativoFechamentoOutput
+	industriaID, nomeCanonico, err := resolverIndustriaID(db, empresaID, industria)
+	if err != nil {
+		return out, err
+	}
+	dataInicio, dataFim, err := parsePeriodo(periodo)
+	if err != nil {
+		return out, err
+	}
+
+	linhas, err := gerarComparativoFechamento(db, empresaID, industriaID, dataInicio, dataFim)
+	if err != nil {
+		return out, err
+	}
+
+	out.Industria = nomeCanonico
+	out.Periodo = periodo
+	out.Linhas = linhas
+	out.Total = len(linhas)
+	for _, l := range linhas {
+		if l.Status != "OK" {
+			out.Divergentes++
+		}
+	}
+
+	return out, nil
 }
