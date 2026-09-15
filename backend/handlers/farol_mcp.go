@@ -142,17 +142,46 @@ func listarNomesIndustrias(db *sql.DB, empresaID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// parsePeriodo aceita "AAAA-MM" (ex: "2026-08") e devolve o primeiro e o
-// último dia do mês, no formato que as queries de vigência esperam
-// (DATE, "AAAA-MM-DD").
+// parsePeriodo aceita DOIS formatos e devolve data_inicio/data_fim no
+// formato que as queries de vigência esperam (DATE, "AAAA-MM-DD"):
+//  1. Intervalo explícito "DD/MM/AAAA a DD/MM/AAAA" (ex: "01/08/2026 a
+//     31/08/2026") — formato pedido pelo Claudio 15/09/2026 pra ficar mais
+//     natural pro agente de IA construir (é como uma pessoa fala período).
+//  2. "AAAA-MM" (ex: "2026-08") — mês inteiro, formato original, mantido
+//     por compatibilidade.
 func parsePeriodo(periodo string) (dataInicio, dataFim string, err error) {
-	t, err := time.Parse("2006-01", strings.TrimSpace(periodo))
-	if err != nil {
-		return "", "", fmt.Errorf("período inválido: %q — use o formato AAAA-MM, ex: 2026-08", periodo)
+	p := strings.TrimSpace(periodo)
+
+	if partes := strings.SplitN(p, " a ", 2); len(partes) == 2 {
+		ini, err1 := time.Parse("02/01/2006", strings.TrimSpace(partes[0]))
+		fim, err2 := time.Parse("02/01/2006", strings.TrimSpace(partes[1]))
+		if err1 == nil && err2 == nil {
+			if fim.Before(ini) {
+				return "", "", fmt.Errorf("período inválido: data final (%s) é antes da inicial (%s)", partes[1], partes[0])
+			}
+			return ini.Format("2006-01-02"), fim.Format("2006-01-02"), nil
+		}
 	}
-	primeiro := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-	ultimo := primeiro.AddDate(0, 1, -1)
-	return primeiro.Format("2006-01-02"), ultimo.Format("2006-01-02"), nil
+
+	if t, err2 := time.Parse("2006-01", p); err2 == nil {
+		primeiro := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		ultimo := primeiro.AddDate(0, 1, -1)
+		return primeiro.Format("2006-01-02"), ultimo.Format("2006-01-02"), nil
+	}
+
+	return "", "", fmt.Errorf(
+		"período inválido: %q — use 'DD/MM/AAAA a DD/MM/AAAA' (ex: 01/08/2026 a 31/08/2026) ou 'AAAA-MM' (ex: 2026-08)",
+		periodo)
+}
+
+// formatarDataBR converte "AAAA-MM-DD" (formato interno) pra "DD/MM/AAAA"
+// (formato de exibição, mesmo que a entrada aceita em parsePeriodo).
+func formatarDataBR(dataISO string) string {
+	t, err := time.Parse("2006-01-02", dataISO)
+	if err != nil {
+		return dataISO
+	}
+	return t.Format("02/01/2006")
 }
 
 // resolverVinculoVigencia acha o vínculo+vigência de um formula_codigo
@@ -203,9 +232,11 @@ type redeObjetivo struct {
 }
 
 type objetivosIndustriaOutput struct {
-	Industria string `json:"industria"`
-	Periodo   string `json:"periodo"`
-	Fluxo     string `json:"fluxo"`
+	Industria  string `json:"industria"`
+	Periodo    string `json:"periodo"`
+	DataInicio string `json:"data_inicio"`
+	DataFim    string `json:"data_fim"`
+	Fluxo      string `json:"fluxo"`
 
 	TotalRedes               int `json:"total_redes"`
 	CoberturaRedesAtingindo  int `json:"cobertura_redes_atingindo,omitempty"`
@@ -253,6 +284,7 @@ func calcularObjetivosIndustria(db *sql.DB, empresaID, industria, periodo, fluxo
 
 	out.Industria = nomeCanonico
 	out.Periodo = periodo
+	out.DataInicio, out.DataFim = formatarDataBR(dataInicio), formatarDataBR(dataFim)
 	out.Fluxo = fluxo
 
 	vinculoCob, vigenciaCob, temCob, err := resolverVinculoVigencia(db, empresaID, industriaID, "cobertura_rede", dataInicio, dataFim)
@@ -334,6 +366,8 @@ type comparativoFechamentoInput struct {
 type comparativoFechamentoOutput struct {
 	Industria   string             `json:"industria"`
 	Periodo     string             `json:"periodo"`
+	DataInicio  string             `json:"data_inicio"`
+	DataFim     string             `json:"data_fim"`
 	Total       int                `json:"total"`
 	Divergentes int                `json:"divergentes"`
 	Linhas      []comparativoLinha `json:"linhas"`
@@ -370,6 +404,7 @@ func calcularComparativoFechamento(db *sql.DB, empresaID, industria, periodo str
 
 	out.Industria = nomeCanonico
 	out.Periodo = periodo
+	out.DataInicio, out.DataFim = formatarDataBR(dataInicio), formatarDataBR(dataFim)
 	out.Linhas = linhas
 	out.Total = len(linhas)
 	for _, l := range linhas {

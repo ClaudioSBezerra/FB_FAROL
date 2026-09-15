@@ -37,6 +37,19 @@ func NewFarolJCRestHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/industrias", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONErro(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		nomes, err := listarNomesIndustrias(getDB(), empresaID)
+		if err != nil {
+			writeJSONErro(w, http.StatusInternalServerError, "erro ao listar indústrias")
+			return
+		}
+		writeJSON(w, map[string]any{"industrias": nomes})
+	})
+
 	mux.HandleFunc("/objetivos-industria", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSONErro(w, http.StatusMethodNotAllowed, "method not allowed")
