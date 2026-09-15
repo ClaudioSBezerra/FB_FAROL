@@ -286,149 +286,161 @@ func FechamentoComercialComparativoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Acha o vínculo de Cobertura e o de Sortimento desta indústria (0
-		// ou 1 de cada — uq_farol_metas_vinculos_empresa_industria_tipo já
-		// garante isso) com vigência EXATA pro período pedido.
-		var vinculoCobID, vigenciaCobID sql.NullInt64
-		var vinculoSortID, vigenciaSortID sql.NullInt64
-		_ = db.QueryRow(`
-			SELECT mv.id, v.id FROM farol.metas_vinculos mv
-			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id AND tm.formula_codigo = 'cobertura_rede'
-			JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id AND v.data_inicio = $3 AND v.data_fim = $4
-			WHERE mv.empresa_id = $1 AND mv.industria_id = $2
-		`, spCtx.EmpresaID, industriaID, dataInicio, dataFim).Scan(&vinculoCobID, &vigenciaCobID)
-		_ = db.QueryRow(`
-			SELECT mv.id, v.id FROM farol.metas_vinculos mv
-			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id AND tm.formula_codigo = 'sortimento_rede'
-			JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id AND v.data_inicio = $3 AND v.data_fim = $4
-			WHERE mv.empresa_id = $1 AND mv.industria_id = $2
-		`, spCtx.EmpresaID, industriaID, dataInicio, dataFim).Scan(&vinculoSortID, &vigenciaSortID)
-
-		if !vigenciaCobID.Valid && !vigenciaSortID.Valid {
-			http.Error(w, `{"error":"nenhuma vigência de Cobertura ou Sortimento desta indústria bate com esse período exato — cadastre a vigência primeiro"}`, http.StatusBadRequest)
-			return
-		}
-
-		cobPorRede := map[string]RealizadoRede{}
-		sortPorRede := map[string]RealizadoRede{}
-		if vigenciaCobID.Valid {
-			res, err := obterOuCongelarRealizado(db, spCtx.EmpresaID, int(vinculoCobID.Int64), int(vigenciaCobID.Int64), "faturado", "rede")
-			if err == nil {
-				for _, rd := range res.Redes {
-					cobPorRede[rd.CodPrinc] = rd
-				}
-			}
-		}
-		if vigenciaSortID.Valid {
-			res, err := obterOuCongelarRealizado(db, spCtx.EmpresaID, int(vinculoSortID.Int64), int(vigenciaSortID.Int64), "faturado", "rede")
-			if err == nil {
-				for _, rd := range res.Redes {
-					sortPorRede[rd.CodPrinc] = rd
-				}
-			}
-		}
-
-		rows, err := db.Query(`
-			SELECT cod_princ, razao, fantasia, qt_lojas, valor_venda, qt_eans_vendidos,
-			       cod_ggv, nome_ggv, cod_crv, nome_crv, cod_rca, nome_rca
-			FROM farol.fechamento_comercial_externo
-			WHERE empresa_id = $1 AND industria_id = $2 AND data_inicio = $3 AND data_fim = $4
-		`, spCtx.EmpresaID, industriaID, dataInicio, dataFim)
+		out, err := gerarComparativoFechamento(db, spCtx.EmpresaID, industriaID, dataInicio, dataFim)
 		if err != nil {
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 			return
 		}
-		defer rows.Close()
-		externoPorRede := map[string]comparativoLinha{}
-		var ordem []string
-		for rows.Next() {
-			var l comparativoLinha
-			if err := rows.Scan(&l.CodPrinc, &l.Razao, &l.Fantasia, &l.QtLojas, &l.ValorVendaExt, &l.EansExt,
-				&l.CodGGV, &l.NomeGGV, &l.CodCRV, &l.NomeCRV, &l.CodRCA, &l.NomeRCA); err != nil {
-				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-				return
-			}
-			externoPorRede[l.CodPrinc] = l
-			ordem = append(ordem, l.CodPrinc)
-		}
-		if err := rows.Err(); err != nil {
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			return
-		}
-
-		vistos := map[string]bool{}
-		var out []comparativoLinha
-		processar := func(cp string) {
-			if vistos[cp] {
-				return
-			}
-			vistos[cp] = true
-			l, temExterno := externoPorRede[cp]
-			l.CodPrinc = cp
-			cob, temCob := cobPorRede[cp]
-			sort_, temSort := sortPorRede[cp]
-			if temCob {
-				l.ValorVendaFarol = cob.ValorTotal
-				if l.Razao == "" {
-					l.Razao, l.Fantasia = cob.Razao, cob.Fantasia
-				}
-				if l.QtLojas == 0 {
-					l.QtLojas = cob.QtLojas
-				}
-				if l.CodGGV == "" {
-					l.CodGGV, l.NomeGGV, l.CodCRV, l.NomeCRV, l.CodRCA, l.NomeRCA = cob.CodGGV, cob.NomeGGV, cob.CodCRV, cob.NomeCRV, cob.CodRCA, cob.NomeRCA
-				}
-			}
-			if temSort {
-				l.EansFarol = sort_.Valor
-				if l.Razao == "" {
-					l.Razao, l.Fantasia = sort_.Razao, sort_.Fantasia
-				}
-				if l.QtLojas == 0 {
-					l.QtLojas = sort_.QtLojas
-				}
-				if l.CodGGV == "" {
-					l.CodGGV, l.NomeGGV, l.CodCRV, l.NomeCRV, l.CodRCA, l.NomeRCA = sort_.CodGGV, sort_.NomeGGV, sort_.CodCRV, sort_.NomeCRV, sort_.CodRCA, sort_.NomeRCA
-				}
-			}
-			temFarol := temCob || temSort
-			l.DiferencaValor = l.ValorVendaFarol - l.ValorVendaExt
-			if l.ValorVendaExt != 0 {
-				l.DiferencaValorP = l.DiferencaValor / l.ValorVendaExt * 100
-			}
-			l.DiferencaEans = l.EansFarol - l.EansExt
-			switch {
-			case !temExterno:
-				l.Status = "SO_FAROL"
-			case !temFarol:
-				l.Status = "SO_EXTERNO"
-			case absFloat(l.DiferencaValorP) > 5 || absFloat(l.DiferencaEans) >= 2:
-				l.Status = "DIVERGE"
-			default:
-				l.Status = "OK"
-			}
-			out = append(out, l)
-		}
-		for _, cp := range ordem {
-			processar(cp)
-		}
-		for cp := range cobPorRede {
-			processar(cp)
-		}
-		for cp := range sortPorRede {
-			processar(cp)
-		}
-
-		sort.Slice(out, func(i, j int) bool {
-			oi, oj := statusOrdem(out[i].Status), statusOrdem(out[j].Status)
-			if oi != oj {
-				return oi < oj
-			}
-			return absFloat(out[i].DiferencaValorP) > absFloat(out[j].DiferencaValorP)
-		})
 
 		json.NewEncoder(w).Encode(map[string]any{"linhas": out, "total": len(out)})
 	}
+}
+
+// gerarComparativoFechamento contém a lógica de cruzamento em si (extraída
+// de FechamentoComercialComparativoHandler em 15/09/2026 pra ser reusada
+// pela tool de MCP `farol_comparativo_fechamento`, sem duplicar a regra —
+// ver farol_mcp.go). Não escreve resposta HTTP, só devolve as linhas
+// ordenadas (mesma ordem de sempre: SO_FAROL/SO_EXTERNO/DIVERGE primeiro,
+// depois OK, dentro de cada grupo por maior divergência %).
+func gerarComparativoFechamento(db *sql.DB, empresaID string, industriaID int, dataInicio, dataFim string) ([]comparativoLinha, error) {
+	// Acha o vínculo de Cobertura e o de Sortimento desta indústria (0
+	// ou 1 de cada — uq_farol_metas_vinculos_empresa_industria_tipo já
+	// garante isso) com vigência EXATA pro período pedido.
+	var vinculoCobID, vigenciaCobID sql.NullInt64
+	var vinculoSortID, vigenciaSortID sql.NullInt64
+	_ = db.QueryRow(`
+		SELECT mv.id, v.id FROM farol.metas_vinculos mv
+		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id AND tm.formula_codigo = 'cobertura_rede'
+		JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id AND v.data_inicio = $3 AND v.data_fim = $4
+		WHERE mv.empresa_id = $1 AND mv.industria_id = $2
+	`, empresaID, industriaID, dataInicio, dataFim).Scan(&vinculoCobID, &vigenciaCobID)
+	_ = db.QueryRow(`
+		SELECT mv.id, v.id FROM farol.metas_vinculos mv
+		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id AND tm.formula_codigo = 'sortimento_rede'
+		JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id AND v.data_inicio = $3 AND v.data_fim = $4
+		WHERE mv.empresa_id = $1 AND mv.industria_id = $2
+	`, empresaID, industriaID, dataInicio, dataFim).Scan(&vinculoSortID, &vigenciaSortID)
+
+	if !vigenciaCobID.Valid && !vigenciaSortID.Valid {
+		return nil, fmt.Errorf("nenhuma vigência de Cobertura ou Sortimento desta indústria bate com esse período exato — cadastre a vigência primeiro")
+	}
+
+	cobPorRede := map[string]RealizadoRede{}
+	sortPorRede := map[string]RealizadoRede{}
+	if vigenciaCobID.Valid {
+		res, err := obterOuCongelarRealizado(db, empresaID, int(vinculoCobID.Int64), int(vigenciaCobID.Int64), "faturado", "rede")
+		if err == nil {
+			for _, rd := range res.Redes {
+				cobPorRede[rd.CodPrinc] = rd
+			}
+		}
+	}
+	if vigenciaSortID.Valid {
+		res, err := obterOuCongelarRealizado(db, empresaID, int(vinculoSortID.Int64), int(vigenciaSortID.Int64), "faturado", "rede")
+		if err == nil {
+			for _, rd := range res.Redes {
+				sortPorRede[rd.CodPrinc] = rd
+			}
+		}
+	}
+
+	rows, err := db.Query(`
+		SELECT cod_princ, razao, fantasia, qt_lojas, valor_venda, qt_eans_vendidos,
+		       cod_ggv, nome_ggv, cod_crv, nome_crv, cod_rca, nome_rca
+		FROM farol.fechamento_comercial_externo
+		WHERE empresa_id = $1 AND industria_id = $2 AND data_inicio = $3 AND data_fim = $4
+	`, empresaID, industriaID, dataInicio, dataFim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	externoPorRede := map[string]comparativoLinha{}
+	var ordem []string
+	for rows.Next() {
+		var l comparativoLinha
+		if err := rows.Scan(&l.CodPrinc, &l.Razao, &l.Fantasia, &l.QtLojas, &l.ValorVendaExt, &l.EansExt,
+			&l.CodGGV, &l.NomeGGV, &l.CodCRV, &l.NomeCRV, &l.CodRCA, &l.NomeRCA); err != nil {
+			return nil, err
+		}
+		externoPorRede[l.CodPrinc] = l
+		ordem = append(ordem, l.CodPrinc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	vistos := map[string]bool{}
+	var out []comparativoLinha
+	processar := func(cp string) {
+		if vistos[cp] {
+			return
+		}
+		vistos[cp] = true
+		l, temExterno := externoPorRede[cp]
+		l.CodPrinc = cp
+		cob, temCob := cobPorRede[cp]
+		sort_, temSort := sortPorRede[cp]
+		if temCob {
+			l.ValorVendaFarol = cob.ValorTotal
+			if l.Razao == "" {
+				l.Razao, l.Fantasia = cob.Razao, cob.Fantasia
+			}
+			if l.QtLojas == 0 {
+				l.QtLojas = cob.QtLojas
+			}
+			if l.CodGGV == "" {
+				l.CodGGV, l.NomeGGV, l.CodCRV, l.NomeCRV, l.CodRCA, l.NomeRCA = cob.CodGGV, cob.NomeGGV, cob.CodCRV, cob.NomeCRV, cob.CodRCA, cob.NomeRCA
+			}
+		}
+		if temSort {
+			l.EansFarol = sort_.Valor
+			if l.Razao == "" {
+				l.Razao, l.Fantasia = sort_.Razao, sort_.Fantasia
+			}
+			if l.QtLojas == 0 {
+				l.QtLojas = sort_.QtLojas
+			}
+			if l.CodGGV == "" {
+				l.CodGGV, l.NomeGGV, l.CodCRV, l.NomeCRV, l.CodRCA, l.NomeRCA = sort_.CodGGV, sort_.NomeGGV, sort_.CodCRV, sort_.NomeCRV, sort_.CodRCA, sort_.NomeRCA
+			}
+		}
+		temFarol := temCob || temSort
+		l.DiferencaValor = l.ValorVendaFarol - l.ValorVendaExt
+		if l.ValorVendaExt != 0 {
+			l.DiferencaValorP = l.DiferencaValor / l.ValorVendaExt * 100
+		}
+		l.DiferencaEans = l.EansFarol - l.EansExt
+		switch {
+		case !temExterno:
+			l.Status = "SO_FAROL"
+		case !temFarol:
+			l.Status = "SO_EXTERNO"
+		case absFloat(l.DiferencaValorP) > 5 || absFloat(l.DiferencaEans) >= 2:
+			l.Status = "DIVERGE"
+		default:
+			l.Status = "OK"
+		}
+		out = append(out, l)
+	}
+	for _, cp := range ordem {
+		processar(cp)
+	}
+	for cp := range cobPorRede {
+		processar(cp)
+	}
+	for cp := range sortPorRede {
+		processar(cp)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		oi, oj := statusOrdem(out[i].Status), statusOrdem(out[j].Status)
+		if oi != oj {
+			return oi < oj
+		}
+		return absFloat(out[i].DiferencaValorP) > absFloat(out[j].DiferencaValorP)
+	})
+
+	return out, nil
 }
 
 func absFloat(f float64) float64 {

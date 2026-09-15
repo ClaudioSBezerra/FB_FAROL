@@ -374,6 +374,14 @@ func main() {
 		port = "8082"
 	}
 
+	// ── MCP (Paperclip) ──────────────────────────────────────────────────────
+	// Só monta se FAROL_MCP_EMPRESA_ID e FAROL_MCP_TOKEN estiverem setados —
+	// ver handlers/farol_mcp.go pro racional completo.
+	if mcpHandler, ok := handlers.NewMCPHandler(getDB); ok {
+		http.Handle("/mcp", mcpHandler)
+		log.Printf("[farol:mcp] rota /mcp habilitada")
+	}
+
 	// ── Health ────────────────────────────────────────────────────────────────
 	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
