@@ -162,8 +162,17 @@ func construirEmailObjetivosIndustria(out objetivosIndustriaOutput, comp *compar
 				divergentes = append(divergentes, l)
 			}
 		}
+		// Severidade combina as duas dimensões que decidem o status DIVERGE
+		// (ver gerarComparativoFechamento: >5% de valor OU >=2 de diferença
+		// de EANs) — ordenar só por valor escondia divergências que eram na
+		// verdade 100% de Sortimento/EANs com valor em R$ ~zero (achado
+		// 15/09/2026: diferença de ponto flutuante tipo -7e-05 aparecendo
+		// como "R$ 0,00" sem nenhuma explicação visível na tabela).
+		severidade := func(l comparativoLinha) float64 {
+			return absFloat(l.DiferencaValorP) + absFloat(l.DiferencaEans)*3
+		}
 		sort.Slice(divergentes, func(i, j int) bool {
-			return absFloat(divergentes[i].DiferencaValorP) > absFloat(divergentes[j].DiferencaValorP)
+			return severidade(divergentes[i]) > severidade(divergentes[j])
 		})
 		limite := divergentes
 		resto := 0
@@ -175,11 +184,21 @@ func construirEmailObjetivosIndustria(out objetivosIndustriaOutput, comp *compar
 			comp.Divergentes, comp.Total)
 		b.WriteString(`<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px">`)
 		for _, l := range limite {
+			var partes []string
+			if absFloat(l.DiferencaValorP) > 0.05 {
+				partes = append(partes, fmt.Sprintf("%s (%.1f%%)", brlSimples(l.DiferencaValor), l.DiferencaValorP))
+			}
+			if absFloat(l.DiferencaEans) >= 0.5 {
+				partes = append(partes, fmt.Sprintf("%+.1f EANs", l.DiferencaEans))
+			}
+			if len(partes) == 0 {
+				partes = append(partes, "diferença mínima")
+			}
 			fmt.Fprintf(&b, `<tr>
 <td style="padding:9px 0;border-bottom:1px solid #eef1f0">%s
   <div style="color:#667;font-size:12.5px;margin-top:2px">Rede %s</div></td>
-<td style="padding:9px 0;border-bottom:1px solid #eef1f0;text-align:right;white-space:nowrap;font-weight:bold;color:#A34A1B">%s (%.1f%%)</td>
-</tr>`, esc(l.Fantasia), esc(l.CodPrinc), brlSimples(l.DiferencaValor), l.DiferencaValorP)
+<td style="padding:9px 0;border-bottom:1px solid #eef1f0;text-align:right;white-space:nowrap;font-weight:bold;color:#A34A1B">%s</td>
+</tr>`, esc(l.Fantasia), esc(l.CodPrinc), strings.Join(partes, " · "))
 		}
 		b.WriteString(`</table>`)
 		if resto > 0 {
