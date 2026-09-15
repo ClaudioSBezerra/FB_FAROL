@@ -702,6 +702,8 @@ func main() {
 	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
 	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
 	http.HandleFunc("/api/farol/public/metas-painel-combinado", publicHandler(handlers.MetasPublicPainelCombinadoHandler))
+	// Drill-down "Produtos" (Sortimento) sem login — pedido do José Costa (CEO) 15/09/2026.
+	http.HandleFunc("/api/farol/public/metas-painel-itens", publicHandler(handlers.MetasPublicPainelItensHandler))
 	// Módulo de limpeza inteligente — inventário + limpeza por tabela (escopo empresa)
 	http.HandleFunc("/api/v2/farol/cleanup/inventory", withSP(handlers.CleanupInventoryHandler, "gestor_geral"))
 	http.HandleFunc("/api/v2/farol/cleanup", withSP(handlers.CleanupExecuteHandler, "gestor_geral"))

@@ -252,3 +252,83 @@ func filtrarRedesPorEscopo(redes []RealizadoRede, scope, cod string) []Realizado
 		return filtrarRedesPorHierarquia(redes, "", cod, "")
 	}
 }
+
+// codsHierarquiaEscopo traduz scope+cod da URL pública (sup|rca|ggv) nos 3
+// parâmetros codGGV/codCRV/codRCA que cnpjsDoEscopoNaVigencia já aceita —
+// mesmo trio usado por filtrarRedesPorEscopo acima, só que aqui pra filtrar
+// CNPJ (não Rede) na query de Itens Válidos.
+func codsHierarquiaEscopo(scope, cod string) (codGGV, codCRV, codRCA string) {
+	switch scope {
+	case "rca":
+		return "", "", cod
+	case "ggv":
+		return cod, "", ""
+	default: // "sup"
+		return "", cod, ""
+	}
+}
+
+// MetasPublicPainelItensHandler — GET /api/farol/public/metas-painel-itens
+//
+//	?cnpj=&scope=sup|rca|ggv&cod=&vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cod_princ=  (Rede)
+//	?cnpj=&scope=sup|rca|ggv&cod=&vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cliente_cnpj= (Loja)
+//
+// Drill-down "Produtos" (Sortimento) pedido do José Costa (CEO) 15/09/2026:
+// o RCA em campo precisa ver, sem login, quais EANs o Cliente vendeu ou não
+// — mesmo dado que MetasPainelItensHandler já serve pro painel web
+// autenticado, aqui recortado pro escopo GGV/Supervisor/RCA da URL (mesmo
+// padrão de segurança dos outros handlers públicos deste arquivo: nunca
+// expõe CNPJ fora do organograma do link). O param de CNPJ da EMPRESA já é
+// "cnpj" nesta família de endpoints — por isso o CNPJ da loja usa nome
+// próprio ("cliente_cnpj") pra não colidir.
+func MetasPublicPainelItensHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query()
+		empresaID := resolveEmpresaCNPJ(db, q.Get("cnpj"))
+		if empresaID == "" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "empresa não encontrada para este CNPJ"})
+			return
+		}
+		scope := strings.ToLower(strings.TrimSpace(q.Get("scope")))
+		cod := strings.TrimSpace(q.Get("cod"))
+		vigenciaID, err := strconv.Atoi(q.Get("vigencia_sortimento_id"))
+		if (scope != "sup" && scope != "rca" && scope != "ggv") || cod == "" || err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "scope (sup|rca|ggv), cod e vigencia_sortimento_id são obrigatórios"})
+			return
+		}
+		fluxo := q.Get("fluxo")
+		if fluxo == "" {
+			fluxo = "faturado"
+		}
+		codPrinc := strings.TrimSpace(q.Get("cod_princ"))
+		clienteCNPJ := strings.TrimSpace(q.Get("cliente_cnpj"))
+		if codPrinc == "" && clienteCNPJ == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "informe cod_princ (Rede) ou cliente_cnpj (Loja)"})
+			return
+		}
+
+		codGGV, codCRV, codRCA := codsHierarquiaEscopo(scope, cod)
+		cnpjs, err := cnpjsDoEscopoNaVigencia(db, empresaID, vigenciaID, codPrinc, clienteCNPJ, codGGV, codCRV, codRCA)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+			return
+		}
+		if len(cnpjs) == 0 {
+			json.NewEncoder(w).Encode(map[string]any{"itens": []PainelItemLinha{}})
+			return
+		}
+
+		itens, err := calcularItensPorEscopo(db, empresaID, vigenciaID, fluxo, cnpjs)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"itens": itens})
+	}
+}

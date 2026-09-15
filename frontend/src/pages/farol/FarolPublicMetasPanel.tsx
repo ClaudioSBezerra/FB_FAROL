@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Target, TrendingDown, TrendingUp, AlertTriangle } from 'lucide-react'
+import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,10 +20,25 @@ interface Vigencia {
   status: 'aberta' | 'fechada'
 }
 
-interface RealizadoRede {
-  cod_princ: string
+// RealizadoCliente — nível 5 (CNPJ/loja) dentro de uma Rede, já embutido na
+// resposta da Rede (sem chamada extra). Pedido do José Costa (CEO)
+// 15/09/2026: o RCA precisa ver o NOME da Rede e abrir Cliente/Produto sem
+// sair da tela.
+interface RealizadoCliente {
+  cnpj: string
+  razao: string
+  fantasia: string
   valor: number
   atingiu: boolean
+}
+
+interface RealizadoRede {
+  cod_princ: string
+  razao: string
+  fantasia: string
+  valor: number
+  atingiu: boolean
+  clientes?: RealizadoCliente[]
 }
 
 interface PainelFaixa {
@@ -37,6 +52,16 @@ interface Realizado {
   projecao: number
   parcial: boolean
   redes: RealizadoRede[]
+}
+
+// PainelItemLinha — drill-down "Produtos" (Sortimento): EAN vendido ou não
+// pelo Cliente/Rede no período.
+interface PainelItemLinha {
+  ean: string
+  nome: string
+  qtd: number
+  valor: number
+  vendeu: boolean
 }
 
 interface Painel {
@@ -63,6 +88,8 @@ interface PainelMetricaResumo {
 
 interface PainelCombinadoRede {
   cod_princ: string
+  razao: string
+  fantasia: string
   cod_rca: string
   cobertura_valor: number
   cobertura_objetivo: number
@@ -73,11 +100,26 @@ interface PainelCombinadoRede {
   sortimento_falta: number
 }
 
+// PainelCombinadoCliente — 1 linha por CNPJ/loja, já filtrada pro escopo do
+// link (mesmo endpoint que a Rede) — usada pro drill-down de Clientes no
+// modo Combinado (Cobertura + Sortimento lado a lado).
+interface PainelCombinadoCliente {
+  cod_princ: string
+  cnpj: string
+  razao: string
+  fantasia: string
+  cobertura_valor: number
+  cobertura_objetivo: number
+  sortimento_valor: number
+  sortimento_objetivo: number
+}
+
 interface PainelCombinado {
   industria_nome: string
   cobertura: PainelMetricaResumo
   sortimento: PainelMetricaResumo
   redes: PainelCombinadoRede[]
+  clientes: PainelCombinadoCliente[]
 }
 
 interface Industria {
@@ -141,6 +183,68 @@ function ChipRow<T extends string>({ label, options, value, onChange }: {
   )
 }
 
+// nomeOuCodigo — Rede/Cliente pelo nome (fantasia > razão), com o código
+// como fallback só se não houver nome nenhum cadastrado. Mesma prioridade
+// da versão web (FarolPainelMetas.tsx).
+const nomeOuCodigo = (fantasia: string, razao: string, codigo: string) => fantasia || razao || codigo
+
+function StatusBadge({ atingiu, label }: { atingiu: boolean; label?: string }) {
+  return (
+    <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+      {label ?? (atingiu ? 'Coberta' : 'Não coberta')}
+    </span>
+  )
+}
+
+// ClienteDrillDown — 1 linha de Cliente dentro de uma Rede aberta, com o
+// drill-down de Produtos embutido (nível 6) quando o próprio Cliente está
+// aberto. `badges` carrega 1 (modo individual) ou 2 (Combinado: Cobertura +
+// Sortimento) indicadores — o pedido do CEO foi "Coberto e Não Coberto"
+// pra Cliente E Produto, não só pra Rede.
+function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSortimento, isLoadingItens, itens }: {
+  nome: string
+  cnpj: string
+  badges: Array<{ atingiu: boolean; label: string }>
+  clienteAberto: string | null
+  onToggle: (cnpj: string) => void
+  temSortimento: boolean
+  isLoadingItens: boolean
+  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean }[]
+}) {
+  const aberto = clienteAberto === cnpj
+  return (
+    <div>
+      <button type="button" onClick={() => onToggle(cnpj)} className="w-full flex items-center justify-between gap-2 py-1 text-left active:opacity-70">
+        <span className="text-xs flex items-center gap-1.5 min-w-0">
+          <ChevronDown className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${aberto ? '' : '-rotate-90'}`} />
+          <span className="truncate">{nome}</span>
+        </span>
+        <span className="flex gap-1 shrink-0">
+          {badges.map((b, i) => <StatusBadge key={i} atingiu={b.atingiu} label={b.label} />)}
+        </span>
+      </button>
+      {aberto && (
+        <div className="pl-5 pb-1.5 space-y-1">
+          {!temSortimento ? (
+            <div className="text-[11px] text-muted-foreground py-1">Produtos indisponíveis nesta métrica</div>
+          ) : isLoadingItens ? (
+            <div className="text-[11px] text-muted-foreground py-1">Carregando produtos...</div>
+          ) : !itens || itens.length === 0 ? (
+            <div className="text-[11px] text-muted-foreground py-1">Nenhum Item Válido calculado ainda</div>
+          ) : (
+            itens.map(it => (
+              <div key={it.ean} className="flex items-center justify-between gap-2 text-[11px] py-0.5">
+                <span className="truncate min-w-0">{it.nome || it.ean}</span>
+                <StatusBadge atingiu={it.vendeu} label={it.vendeu ? 'Coberto' : 'Não coberto'} />
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page — painel mobile público, mesmo padrão sem login de FarolPublicPanel ──
 
 export default function FarolPublicMetasPanel() {
@@ -165,6 +269,20 @@ export default function FarolPublicMetasPanel() {
   const [vigenciaCombinadaKey, setVigenciaCombinadaKey] = useState('')
   const [fluxo, setFluxo] = useState('faturado')
   const [aba, setAba] = useState<'oficiais' | 'projecao'>('oficiais')
+
+  // ─── Drill-down Rede → Cliente → Produto (pedido do José Costa/CEO,
+  // 15/09/2026): tudo na MESMA visão, sem navegar pra outra tela — toca na
+  // Rede pra abrir os Clientes dela, toca no Cliente pra abrir os Produtos.
+  const [redeAberta, setRedeAberta] = useState<string | null>(null) // cod_princ
+  const [clienteAberto, setClienteAberto] = useState<string | null>(null) // cnpj
+  const fecharDrillDown = () => { setRedeAberta(null); setClienteAberto(null) }
+  const alternarRede = (codPrinc: string) => {
+    setClienteAberto(null)
+    setRedeAberta(atual => (atual === codPrinc ? null : codPrinc))
+  }
+  const alternarCliente = (cnpjCliente: string) => {
+    setClienteAberto(atual => (atual === cnpjCliente ? null : cnpjCliente))
+  }
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
     queryKey: ['public-metas-vinculos', cnpj],
@@ -307,6 +425,35 @@ export default function FarolPublicMetasPanel() {
     enabled: !!cnpj && !!scopeCod && metrica === 'combinado' && !!periodoSelecionado,
   })
 
+  // ─── Drill-down "Produtos" (nível 6) — só quando Sortimento está
+  // resolvido pro período atual: sempre no modo Combinado; no modo
+  // individual só quando a métrica escolhida É Sortimento (no modo
+  // Cobertura isolada não há vigência de Sortimento selecionada pra
+  // cruzar o período).
+  const sortimentoVinculoID = metrica === 'combinado' ? industriaSelecionada?.sortimento?.id
+    : metrica === 'sortimento' ? vinculoAtivo?.id
+    : undefined
+  const sortimentoVigenciaID = metrica === 'combinado' ? periodoSelecionado?.sortimento.id
+    : metrica === 'sortimento' ? (vigenciaID ? Number(vigenciaID) : undefined)
+    : undefined
+
+  const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
+    queryKey: ['public-metas-painel-itens', cnpj, scope, scopeCod, sortimentoVinculoID, sortimentoVigenciaID, fluxo, clienteAberto],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        cnpj, scope, cod: scopeCod,
+        vinculo_sortimento_id: String(sortimentoVinculoID),
+        vigencia_sortimento_id: String(sortimentoVigenciaID),
+        fluxo,
+        cliente_cnpj: clienteAberto!,
+      })
+      const r = await fetch(`/api/farol/public/metas-painel-itens?${p}`)
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    enabled: !!cnpj && !!scopeCod && !!sortimentoVinculoID && !!sortimentoVigenciaID && !!clienteAberto,
+  })
+
   if (!cnpj || !scopeCod) {
     return <div className="p-6 text-center text-sm text-muted-foreground">Link inválido.</div>
   }
@@ -323,7 +470,7 @@ export default function FarolPublicMetasPanel() {
           label="Indústria"
           options={industrias.map(i => ({ value: String(i.id), label: i.nome }))}
           value={industriaID}
-          onChange={v => { setIndustriaID(v); setVigenciaID(''); setVigenciaCombinadaKey('') }}
+          onChange={v => { setIndustriaID(v); setVigenciaID(''); setVigenciaCombinadaKey(''); fecharDrillDown() }}
         />
 
         {industriaSelecionada && (
@@ -331,7 +478,7 @@ export default function FarolPublicMetasPanel() {
             label="Métrica"
             options={metricasDisponiveis.map(m => ({ value: m.value, label: m.label }))}
             value={metrica}
-            onChange={v => { setMetrica(v); setVigenciaID(''); setVigenciaCombinadaKey('') }}
+            onChange={v => { setMetrica(v); setVigenciaID(''); setVigenciaCombinadaKey(''); fecharDrillDown() }}
           />
         )}
 
@@ -340,7 +487,7 @@ export default function FarolPublicMetasPanel() {
             label="Período"
             options={periodosCombinados.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
             value={vigenciaCombinadaKey}
-            onChange={setVigenciaCombinadaKey}
+            onChange={v => { setVigenciaCombinadaKey(v); fecharDrillDown() }}
           />
         )}
         {industriaSelecionada && metrica !== 'combinado' && (
@@ -348,7 +495,7 @@ export default function FarolPublicMetasPanel() {
             label="Período"
             options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
             value={vigenciaID}
-            onChange={setVigenciaID}
+            onChange={v => { setVigenciaID(v); fecharDrillDown() }}
           />
         )}
         {industriaSelecionada && (
@@ -356,7 +503,7 @@ export default function FarolPublicMetasPanel() {
             label="Visão"
             options={FLUXOS}
             value={fluxo}
-            onChange={setFluxo}
+            onChange={v => { setFluxo(v); fecharDrillDown() }}
           />
         )}
       </div>
@@ -386,20 +533,53 @@ export default function FarolPublicMetasPanel() {
               {painelCombinado.redes.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
               )}
-              {painelCombinado.redes.map((r, i) => (
-                <div key={i} className="px-3 py-2.5 border-b last:border-0 text-sm space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{r.cod_princ}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.cobertura_atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {r.cobertura_atingiu ? 'Coberta' : 'Não coberta'}
-                    </span>
+              {painelCombinado.redes.map((r, i) => {
+                const aberta = redeAberta === r.cod_princ
+                const clientesDaRede = painelCombinado.clientes.filter(c => c.cod_princ === r.cod_princ)
+                return (
+                  <div key={i} className="border-b last:border-0">
+                    <button
+                      type="button"
+                      onClick={() => alternarRede(r.cod_princ)}
+                      className="w-full px-3 py-2.5 text-sm text-left space-y-1 active:bg-slate-50"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium flex items-center gap-1.5 min-w-0">
+                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+                          <span className="truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                        </span>
+                        <StatusBadge atingiu={r.cobertura_atingiu} />
+                      </div>
+                      <div className="text-xs text-muted-foreground flex justify-between pl-5">
+                        <span>Cobertura: {fmt(r.cobertura_valor)} / {fmt(r.cobertura_objetivo)}</span>
+                        <span>Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)}</span>
+                      </div>
+                    </button>
+                    {aberta && (
+                      <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
+                        {clientesDaRede.length === 0 ? (
+                          <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
+                        ) : clientesDaRede.map(c => (
+                          <ClienteDrillDown
+                            key={c.cnpj}
+                            nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
+                            cnpj={c.cnpj}
+                            badges={[
+                              { atingiu: c.cobertura_valor >= c.cobertura_objetivo, label: c.cobertura_valor >= c.cobertura_objetivo ? 'Cobertura' : 'Sem cobertura' },
+                              { atingiu: c.sortimento_valor >= c.sortimento_objetivo, label: c.sortimento_valor >= c.sortimento_objetivo ? 'Sortimento' : 'Sem sortimento' },
+                            ]}
+                            clienteAberto={clienteAberto}
+                            onToggle={alternarCliente}
+                            temSortimento={!!sortimentoVinculoID}
+                            isLoadingItens={isLoadingItens}
+                            itens={itensResp?.itens}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-muted-foreground flex justify-between">
-                    <span>Cobertura: {fmt(r.cobertura_valor)} / {fmt(r.cobertura_objetivo)}</span>
-                    <span>Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)}</span>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )
@@ -445,14 +625,43 @@ export default function FarolPublicMetasPanel() {
                 {painel.realizado.redes.length === 0 && (
                   <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
                 )}
-                {painel.realizado.redes.map((r, i) => (
-                  <div key={i} className="px-3 py-2 flex items-center justify-between border-b last:border-0 text-sm">
-                    <span>{r.cod_princ}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {r.atingiu ? 'Coberta' : 'Não coberta'}
-                    </span>
-                  </div>
-                ))}
+                {painel.realizado.redes.map((r, i) => {
+                  const aberta = redeAberta === r.cod_princ
+                  return (
+                    <div key={i} className="border-b last:border-0">
+                      <button
+                        type="button"
+                        onClick={() => alternarRede(r.cod_princ)}
+                        className="w-full px-3 py-2 flex items-center justify-between gap-2 text-sm text-left active:bg-slate-50"
+                      >
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+                          <span className="truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                        </span>
+                        <StatusBadge atingiu={r.atingiu} />
+                      </button>
+                      {aberta && (
+                        <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
+                          {!r.clientes || r.clientes.length === 0 ? (
+                            <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
+                          ) : r.clientes.map(c => (
+                            <ClienteDrillDown
+                              key={c.cnpj}
+                              nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
+                              cnpj={c.cnpj}
+                              badges={[{ atingiu: c.atingiu, label: c.atingiu ? 'Coberta' : 'Não coberta' }]}
+                              clienteAberto={clienteAberto}
+                              onToggle={alternarCliente}
+                              temSortimento={!!sortimentoVinculoID}
+                              isLoadingItens={isLoadingItens}
+                              itens={itensResp?.itens}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </>
           ) : (

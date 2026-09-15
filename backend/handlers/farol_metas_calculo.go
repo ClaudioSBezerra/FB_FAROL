@@ -62,6 +62,12 @@ type RealizadoCliente struct {
 	Razao    string  `json:"razao"`
 	Fantasia string  `json:"fantasia"`
 	Valor    float64 `json:"valor"`
+	// Atingiu — mesmo comparativo do nível Rede (Cobertura: valor da loja
+	// >= limiar do vínculo; Sortimento: valor da loja >= maior faixa
+	// cadastrada), aqui aplicado à loja isolada. Pedido do José Costa (CEO)
+	// 15/09/2026: o painel mobile do RCA precisa mostrar Coberto/Não
+	// coberto por Cliente, não só por Rede.
+	Atingiu bool `json:"atingiu"`
 	// UF — resolvida AQUI (cálculo, gravado no snapshot) e nunca ao vivo no
 	// momento da leitura (decisão do Claudio 11/09/2026: "tem que ser pá
 	// pum na tela" — nada de consulta viva no clique do RCA/Supervisor).
@@ -237,6 +243,9 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 		}
 		for i := range redes {
 			redes[i].Atingiu = redes[i].Valor >= objetivo
+			for j := range redes[i].Clientes {
+				redes[i].Clientes[j].Atingiu = redes[i].Clientes[j].Valor >= objetivo
+			}
 		}
 	}
 
@@ -429,7 +438,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ]})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], Atingiu: valor >= limiar})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
