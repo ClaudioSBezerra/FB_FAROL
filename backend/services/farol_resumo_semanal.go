@@ -556,12 +556,14 @@ func SegundaDaSemana(t time.Time) time.Time {
 
 // ─── Envio ───────────────────────────────────────────────────────────────────
 
-// sendHTMLReport — multipart/alternative com texto puro e HTML.
+// SendHTMLReport — multipart/alternative com texto puro e HTML. Exportada
+// em 15/09/2026 pro handler de e-mail do Painel de Objetivos por Indústria
+// (farol_jc_rest.go) reusar, em vez de duplicar a construção do MIME.
 //
 // As duas partes de propósito: cliente corporativo que bloqueia HTML mostra a
 // alternativa em texto em vez de um e-mail em branco, e o filtro de spam vê um
 // e-mail bem formado em vez de HTML solto.
-func sendHTMLReport(to []string, subject, texto, htmlBody string) error {
+func SendHTMLReport(to []string, subject, texto, htmlBody string) error {
 	if len(to) == 0 {
 		return fmt.Errorf("nenhum destinatário informado")
 	}
@@ -675,7 +677,7 @@ func EnviarResumoSemanal(db *sql.DB, empresaID string, ano, mes int, ate time.Ti
 		}
 
 		assunto := fmt.Sprintf("[FAROL] Dinheiro na mesa · %s · %s", rotulo, brl(r.TotalMesa))
-		if err := sendHTMLReport([]string{d.email}, assunto, CorpoTexto(r), htmlBody); err != nil {
+		if err := SendHTMLReport([]string{d.email}, assunto, CorpoTexto(r), htmlBody); err != nil {
 			res.Erro = err.Error()
 		} else {
 			res.Enviado = true
@@ -831,7 +833,7 @@ func EnviarResumoTeste(db *sql.DB, empresaID string, ano, mes int, ate time.Time
 	r.PrimeiroEnvio = true
 
 	assunto := fmt.Sprintf("[FAROL] Dinheiro na mesa · %s · %s", r.Mes, brl(r.TotalMesa))
-	return r, sendHTMLReport([]string{para}, assunto, CorpoTexto(r), CorpoHTML(r))
+	return r, SendHTMLReport([]string{para}, assunto, CorpoTexto(r), CorpoHTML(r))
 }
 
 // ─── Token do link público ───────────────────────────────────────────────────
