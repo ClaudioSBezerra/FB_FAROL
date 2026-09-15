@@ -378,8 +378,12 @@ func main() {
 	// Só monta se FAROL_MCP_EMPRESA_ID e FAROL_MCP_TOKEN estiverem setados —
 	// ver handlers/farol_mcp.go pro racional completo.
 	if mcpHandler, ok := handlers.NewMCPHandler(getDB); ok {
-		http.Handle("/mcp", mcpHandler)
-		log.Printf("[farol:mcp] rota /mcp habilitada")
+		// /api/mcp (não /mcp) porque o Traefik deste serviço só encaminha
+		// PathPrefix("/api/") pra este container (ver rótulo
+		// traefik.http.routers.farol-api.rule) — usar outro prefixo exigiria
+		// mudar roteamento no Coolify, e isso já resolve sem tocar em infra.
+		http.Handle("/api/mcp", mcpHandler)
+		log.Printf("[farol:mcp] rota /api/mcp habilitada")
 	}
 
 	// ── Health ────────────────────────────────────────────────────────────────
