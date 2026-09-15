@@ -515,6 +515,9 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
+		if err := subtrairDevolucaoCancelamento(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
 	case "transmitido":
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
@@ -523,6 +526,52 @@ func somaPvendaClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio
 		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
 	}
 	return out, nil
+}
+
+// subtrairDevolucaoCancelamento abate de `out[cnpj]` (map já preenchido com o
+// bruto Faturado) o pvenda de eventos DEVOLVIDO/CANCELADO de vendas_ccd no
+// mesmo período — só existe pra Faturado (Transmitido não tem CCD, é NF
+// ainda não faturada). Decisão do Claudio (15/09/2026): tratar direto como
+// líquido, sem expor bruto/devolução em campos separados — o caso que gerou
+// a confusão foi um item com 12 caixas faturadas e 11 devolvidas: líquido é
+// 1, não 12 (ver contarEANsPositivados, que agora também trata líquido <= 0
+// como "não positivado"). vendas_ccd não tem coluna tipo_venda (só faz
+// sentido nas linhas Faturadas — ver migration 190), por isso não filtra
+// por tiposVenda aqui, só por cod_fornec (mesma Indústria do vínculo).
+func subtrairDevolucaoCancelamento(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]float64) error {
+	t0 := time.Now()
+	query := `
+		SELECT cnpj, SUM(pvenda) FROM vendas_ccd
+		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
+		  AND evento IN ('DEVOLVIDO', 'CANCELADO')
+	`
+	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	if len(codFornec) > 0 {
+		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(codFornec))
+	}
+	query += " GROUP BY cnpj"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var cnpj string
+		var v float64
+		if err := rows.Scan(&cnpj, &v); err != nil {
+			return err
+		}
+		out[cnpj] -= v
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	log.Printf("[farol:objetivos] subtrairDevolucaoCancelamento cnpjs=%d período=[%s..%s] → %d grupos em %v",
+		len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+	return nil
 }
 
 // ─── Sortimento por Rede ────────────────────────────────────────────────────
@@ -601,6 +650,9 @@ func contarEANsPositivados(linhas map[string]vendaProdutoAgregada, eanPorCodProd
 		ean, ok := eanPorCodProd[codProd]
 		if !ok {
 			continue // produto vendido não está na lista de Itens Válidos deste programa
+		}
+		if agregada.Qtd <= 0 {
+			continue // líquido (Faturado - devolvido/cancelado) zerado ou negativo: não positivou
 		}
 		if exigeQuantidadeMinima(agregada.Embalagem, agregada.QtUnitCx) && agregada.Qtd < qtdMinima {
 			continue
@@ -717,6 +769,9 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
+		if err := subtrairDevolucaoCancelamentoQtd(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
 	case "transmitido":
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
@@ -725,6 +780,61 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, cnpjs []string, dataIni
 		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
 	}
 	return out, nil
+}
+
+// subtrairDevolucaoCancelamentoQtd é a versão de subtrairDevolucaoCancelamento
+// pro grão cnpj×cod_prod (Sortimento) — mesmo racional (só Faturado, só
+// cod_fornec, sem tipo_venda). embalagem/qt_unit_cx só são preenchidos se
+// ainda não vieram do bruto (produto SÓ aparece em CCD, ex.: devolução de
+// venda de um mês anterior — caso raro, mas o líquido negativo resultante já
+// é tratado por contarEANsPositivados).
+func subtrairDevolucaoCancelamentoQtd(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]vendaProdutoAgregada) error {
+	t0 := time.Now()
+	query := `
+		SELECT cnpj, cod_prod, SUM(qt), MAX(embalagem), MAX(qt_unit_cx) FROM vendas_ccd
+		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
+		  AND cod_prod <> '' AND evento IN ('DEVOLVIDO', 'CANCELADO')
+	`
+	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	if len(codFornec) > 0 {
+		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(codFornec))
+	}
+	query += " GROUP BY cnpj, cod_prod"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var cnpj, codProd, embalagem string
+		var qt, qtUnitCx float64
+		if err := rows.Scan(&cnpj, &codProd, &qt, &embalagem, &qtUnitCx); err != nil {
+			return err
+		}
+		porCliente, ok := out[cnpj]
+		if !ok {
+			porCliente = map[string]vendaProdutoAgregada{}
+			out[cnpj] = porCliente
+		}
+		agregada := porCliente[codProd]
+		agregada.Qtd -= qt
+		if agregada.Embalagem == "" {
+			agregada.Embalagem = embalagem
+		}
+		if agregada.QtUnitCx == 0 {
+			agregada.QtUnitCx = qtUnitCx
+		}
+		porCliente[codProd] = agregada
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	log.Printf("[farol:objetivos] subtrairDevolucaoCancelamentoQtd cnpjs=%d período=[%s..%s] → %d grupos em %v",
+		len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+	return nil
 }
 
 // ─── Rollup por nível hierárquico ──────────────────────────────────────────────

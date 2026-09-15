@@ -134,6 +134,9 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, 
 		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
 			return nil, err
 		}
+		if err := subtrairDevolucaoCancelamentoItens(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
 	case "transmitido":
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
@@ -142,6 +145,57 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, cnpjs []string, 
 		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
 	}
 	return out, nil
+}
+
+// subtrairDevolucaoCancelamentoItens espelha subtrairDevolucaoCancelamentoQtd
+// (farol_metas_calculo.go) pro grão Qtd+Valor deste drill-down — mesmo
+// racional: só Faturado, líquido direto (sem separar bruto/devolução em
+// campo à parte), sem filtro de tipo_venda (vendas_ccd não tem essa coluna).
+func subtrairDevolucaoCancelamentoItens(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, codFornec []string, out map[string]map[string]itemAgregado) error {
+	t0 := time.Now()
+	query := `
+		SELECT cnpj, cod_prod, SUM(qt), SUM(pvenda), MAX(nome_prod) FROM vendas_ccd
+		WHERE empresa_id = $1 AND cnpj = ANY($2) AND data_evento BETWEEN $3 AND $4
+		  AND cod_prod <> '' AND evento IN ('DEVOLVIDO', 'CANCELADO')
+	`
+	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
+	if len(codFornec) > 0 {
+		query += fmt.Sprintf(" AND cod_fornec = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(codFornec))
+	}
+	query += " GROUP BY cnpj, cod_prod"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var cnpj, codProd, nome string
+		var qt, valor float64
+		if err := rows.Scan(&cnpj, &codProd, &qt, &valor, &nome); err != nil {
+			return err
+		}
+		porCliente, ok := out[cnpj]
+		if !ok {
+			porCliente = map[string]itemAgregado{}
+			out[cnpj] = porCliente
+		}
+		a := porCliente[codProd]
+		a.Qtd -= qt
+		a.Valor -= valor
+		if a.Nome == "" && nome != "" {
+			a.Nome = nome
+		}
+		porCliente[codProd] = a
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	log.Printf("[farol:objetivos] subtrairDevolucaoCancelamentoItens cnpjs=%d período=[%s..%s] → %d grupos em %v",
+		len(cnpjs), dataInicio, dataFim, n, time.Since(t0))
+	return nil
 }
 
 // nomesHistoricosPorCodProd resolve o nome de exibição de cod_prods que não
