@@ -390,7 +390,7 @@ export default function FarolPublicMetasPanel() {
                 <div key={i} className="px-3 py-2.5 border-b last:border-0 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-medium">{r.cod_princ}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.cobertura_atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.cobertura_atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                       {r.cobertura_atingiu ? 'Coberta' : 'Não coberta'}
                     </span>
                   </div>
@@ -448,7 +448,7 @@ export default function FarolPublicMetasPanel() {
                 {painel.realizado.redes.map((r, i) => (
                   <div key={i} className="px-3 py-2 flex items-center justify-between border-b last:border-0 text-sm">
                     <span>{r.cod_princ}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                       {r.atingiu ? 'Coberta' : 'Não coberta'}
                     </span>
                   </div>
