@@ -15,11 +15,53 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 
 	"fb_farol/services"
 )
+
+// emailsPermitidos/emailPermitido — mesma allowlist do FB_CEREBRO
+// (EMAILS_PERMITIDOS, decisão de 16/09/2026 de manter o padrão entre os
+// dois serviços): antes, /objetivos-industria-email mandava pra
+// QUALQUER endereço que aparecesse no corpo de uma task do Paperclip,
+// sem nenhuma trava — um e-mail digitado errado (ou de propósito) por
+// quem cria a task saía sem checagem nenhuma. Aceita e-mail exato ou
+// domínio inteiro prefixado com "@" (ex: "@ferreiracosta.com.br" libera
+// qualquer pessoa desse domínio, sem precisar redeployar a cada
+// contratação) — domínio de provedor público (gmail, hotmail) nunca deve
+// ser liberado por domínio, só por endereço exato.
+func emailsPermitidos() []string {
+	raw := os.Getenv("EMAILS_PERMITIDOS")
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func emailPermitido(email string, permitidos []string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	for _, p := range permitidos {
+		if strings.HasPrefix(p, "@") {
+			if strings.HasSuffix(email, p) {
+				return true
+			}
+			continue
+		}
+		if p == email {
+			return true
+		}
+	}
+	return false
+}
 
 func esc(s string) string { return html.EscapeString(s) }
 
@@ -255,6 +297,15 @@ func registrarRotaEmailObjetivosIndustria(mux *http.ServeMux, getDB func() *sql.
 		industria, periodo, email := q.Get("industria"), q.Get("periodo"), strings.TrimSpace(q.Get("email"))
 		if industria == "" || periodo == "" || email == "" {
 			writeJSONErro(w, http.StatusBadRequest, "parâmetros obrigatórios: industria, periodo (AAAA-MM ou DD/MM/AAAA a DD/MM/AAAA), email")
+			return
+		}
+		permitidos := emailsPermitidos()
+		if len(permitidos) == 0 {
+			writeJSONErro(w, http.StatusServiceUnavailable, "EMAILS_PERMITIDOS não configurado neste serviço")
+			return
+		}
+		if !emailPermitido(email, permitidos) {
+			writeJSONErro(w, http.StatusForbidden, "destinatário não autorizado")
 			return
 		}
 		if err := enviarEmailObjetivosIndustria(getDB(), empresaID, industria, periodo, q.Get("fluxo"), email); err != nil {
