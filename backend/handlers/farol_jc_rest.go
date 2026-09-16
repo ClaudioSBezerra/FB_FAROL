@@ -30,8 +30,8 @@ import (
 // racional de fail-safe do NewMCPHandler: sem as env vars, não monta nada.
 func NewFarolJCRestHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 	empresaID := strings.TrimSpace(os.Getenv("FAROL_MCP_EMPRESA_ID"))
-	token := strings.TrimSpace(os.Getenv("FAROL_MCP_TOKEN"))
-	if empresaID == "" || token == "" {
+	tokens := tokensValidosFarolJC()
+	if empresaID == "" || len(tokens) == 0 {
 		return nil, false
 	}
 
@@ -93,7 +93,7 @@ func NewFarolJCRestHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 	registrarRotaEmailObjetivosIndustria(mux, getDB, empresaID)
 
 	log.Printf("[farol:mcp] rotas REST /api/farol-jc/{objetivos-industria,comparativo-fechamento,objetivos-industria-email} habilitadas")
-	return authMiddleware(token, mux), true
+	return authMiddleware(tokens, mux), true
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

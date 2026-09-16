@@ -43,8 +43,8 @@ import (
 // sem token por engano.
 func NewMCPHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 	empresaID := strings.TrimSpace(os.Getenv("FAROL_MCP_EMPRESA_ID"))
-	token := strings.TrimSpace(os.Getenv("FAROL_MCP_TOKEN"))
-	if empresaID == "" || token == "" {
+	tokens := tokensValidosFarolJC()
+	if empresaID == "" || len(tokens) == 0 {
 		log.Printf("[farol:mcp] desligado — defina FAROL_MCP_EMPRESA_ID e FAROL_MCP_TOKEN pra habilitar")
 		return nil, false
 	}
@@ -61,17 +61,40 @@ func NewMCPHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 	}
 
 	streamable := mcp.NewStreamableHTTPHandler(getServer, nil)
-	return authMiddleware(token, streamable), true
+	return authMiddleware(tokens, streamable), true
+}
+
+// tokensValidosFarolJC junta os tokens aceitos pelos endpoints agent-facing
+// do Farol (MCP + REST): FAROL_MCP_TOKEN (agente chamando direto, ex.:
+// Paperclip) e FAROL_GATEWAY_TOKEN (chamada server-to-server do Gateway
+// FB_CEREBRO) — dois tokens de classes diferentes, AD-6 da espinha de
+// arquitetura de 16/09/2026 (revogar um não derruba o outro).
+func tokensValidosFarolJC() []string {
+	var out []string
+	for _, env := range []string{"FAROL_MCP_TOKEN", "FAROL_GATEWAY_TOKEN"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // authMiddleware exige `Authorization: Bearer <token>` — o MCP expõe dado
 // comercial real (venda, meta, cliente) pra fora via internet (Paperclip é
-// SaaS externo), não pode ficar aberto só porque "é read-only".
-func authMiddleware(token string, next http.Handler) http.Handler {
-	want := "Bearer " + token
+// SaaS externo), não pode ficar aberto só porque "é read-only". Aceita
+// mais de um token válido (um por classe de chamador — ex.: agente direto
+// vs. Gateway FB_CEREBRO — AD-6 da espinha de arquitetura de 16/09/2026):
+// revogar o token de um chamador não precisa derrubar o outro.
+func authMiddleware(tokens []string, next http.Handler) http.Handler {
+	valido := map[string]bool{}
+	for _, t := range tokens {
+		if t != "" {
+			valido["Bearer "+t] = true
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := r.Header.Get("Authorization")
-		if got == "" || got != want {
+		if got == "" || !valido[got] {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
