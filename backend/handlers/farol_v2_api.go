@@ -2126,7 +2126,17 @@ func tryValorRapidoViaV01(db *sql.DB, empresaID string, fluxo fluxoCtx, view, gr
 	if !ok {
 		return nil, false
 	}
-	if len(filters) != 1 || len(filters["cod_fornec"]) == 0 {
+	// Só 1 cod_fornec: com 2+ (o caso normal do filtro "Indústria", que quase
+	// sempre mapeia pra vários cod_fornec) a agg_fat_v01_l1_mes* pode estar
+	// desatualizada/corrompida sem ninguém notar — SUM(pvenda)/liquido viria
+	// direto da tabela pré-agregada sem nenhuma conferência ao vivo. Achado
+	// 18/09/2026: esse atalho não tinha o guard fornecMultiValor que
+	// pickAggForCrossFilter já aplica pro caminho de positivados — o teste
+	// TestFarolV2Cards_FiltroIndustria_MesCompletoIgnoraAggCorrompida provava
+	// isso inserindo uma linha corrompida e conferindo que o valor
+	// devolvido NÃO vem dela. Com 1 fornecedor só (filtro manual, não
+	// Indústria) o risco não existe — mantém o atalho rápido nesse caso.
+	if len(filters) != 1 || len(filters["cod_fornec"]) != 1 {
 		return nil, false
 	}
 	rangeDias := int(periodFim.Sub(periodIni).Hours()/24) + 1
