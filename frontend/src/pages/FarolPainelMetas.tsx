@@ -8,8 +8,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info } from 'lucide-react'
 import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 
@@ -964,24 +965,42 @@ export default function FarolPainelMetas() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="border rounded-lg p-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Cobertura — redes cobertas
+            <TooltipProvider delayDuration={150}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Target className="w-4 h-4" /> Cobertura — redes cobertas
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 cursor-default" />
+                      </TooltipTrigger>
+                      <TooltipContent className="text-xs max-w-xs">
+                        <p>Conta Redes cujo <strong>valor médio de compra entre as lojas dela</strong> ultrapassa o limiar (faixa) cadastrado — é uma média por loja, não a soma/faturamento total da Rede.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className="text-2xl font-semibold">
+                    {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
+                  </div>
                 </div>
-                <div className="text-2xl font-semibold">
-                  {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Target className="w-4 h-4" /> Sortimento — redes no objetivo de EANs
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 cursor-default" />
+                      </TooltipTrigger>
+                      <TooltipContent className="text-xs max-w-xs">
+                        <p>Conta Redes cuja <strong>média de EANs distintos vendidos entre as lojas dela</strong> atinge o objetivo da vigência (mesmo objetivo pra toda Rede, grande ou pequena). Não é a soma/união de tudo que a Rede vendeu — uma Rede pode vender vários EANs diferentes espalhados pelas lojas e ainda assim não bater a média por loja.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className="text-2xl font-semibold">
+                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
+                  </div>
                 </div>
               </div>
-              <div className="border rounded-lg p-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Sortimento — redes no objetivo de EANs
-                </div>
-                <div className="text-2xl font-semibold">
-                  {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
-                </div>
-              </div>
-            </div>
+            </TooltipProvider>
 
             {(abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
