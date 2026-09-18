@@ -739,7 +739,14 @@ export default function FarolPainelMetas() {
   // GGVs×CRVs"/"...×RCAs" — aí o escopo é codGGV+codCRV(+codRCA), agregando
   // TODAS as Redes daquele grupo (backend: cnpjsDoEscopoNaVigencia já
   // aceitava isso, só faltava o clique no frontend).
-  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; codGGV?: string; codCRV?: string; codRCA?: string; titulo: string; objetivo: number } | null>(null)
+  // qtdRedes/qtdAtingindo só vêm preenchidos quando o dialog abre de uma
+  // linha de rollup (GGVxCRV/GGVxCRVxRCA) — usados só pra deixar claro que
+  // a lista de itens abaixo é a UNIÃO das lojas do grupo, não o que decide
+  // atingiu/não atingiu (isso é por Rede, média por loja — ver PRD:
+  // "Sortimento = média de EANs distintos entre as lojas da Rede"). Achado
+  // 18/09/2026: sem essa nota, "22 vendidos ≥ Objetivo 19" ao lado de
+  // "0 de 9 redes atingindo" parecia contradição — não é, são duas contas.
+  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; codGGV?: string; codCRV?: string; codRCA?: string; titulo: string; objetivo: number; qtdRedes?: number; qtdAtingindo?: number } | null>(null)
   const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
     queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj, itensAlvo?.codGGV, itensAlvo?.codCRV, itensAlvo?.codRCA],
     queryFn: async () => {
@@ -1007,6 +1014,8 @@ export default function FarolPainelMetas() {
                             ? `${g.nome_ggv} / ${g.nome_crv} / ${g.nome_rca}`
                             : `${g.nome_ggv} / ${g.nome_crv}`,
                           objetivo: g.sortimento_objetivo,
+                          qtdRedes: g.qtd_redes,
+                          qtdAtingindo: g.qtd_atingindo_sortimento,
                         })}
                       >
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
@@ -1347,6 +1356,26 @@ export default function FarolPainelMetas() {
                   <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
                   <span><strong>{itensLista.length}</strong> itens no catálogo</span>
                   <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
+                </div>
+              )}
+              {/* Nota só aparece vindo de uma linha de rollup (GGVxCRV/
+                  GGVxCRVxRCA) — achado 18/09/2026: sem isso, "22 vendidos ≥
+                  Objetivo 19" ao lado de "0 de 9 redes atingindo" parece
+                  contradição. Não é: esta lista é a UNIÃO de todas as lojas
+                  do grupo; quem decide atingiu/não atingiu é a MÉDIA de
+                  EANs distintos por loja, calculada Rede a Rede (regra do
+                  PRD, não bug) — uma Rede inteira pode passar dessa soma e
+                  ainda assim nenhuma Rede dela, individualmente, bater a
+                  média sozinha. */}
+              {itensAlvo && itensAlvo.qtdRedes !== undefined && (
+                <div className="flex items-start gap-2 text-xs border border-amber-300 bg-amber-50 rounded-lg p-3 -mt-2">
+                  <span className="text-amber-800">
+                    Esta lista soma <strong>todas as lojas das {itensAlvo.qtdRedes} Redes</strong> deste
+                    grupo (união — vendeu se qualquer loja vendeu). O objetivo de {fmt(itensAlvo.objetivo)} EANs
+                    vale <strong>por Rede</strong> (média de EANs distintos entre as lojas dela, não a soma do
+                    grupo) — por isso <strong>{itensAlvo.qtdAtingindo ?? 0} de {itensAlvo.qtdRedes}</strong> Redes
+                    deste grupo atingem sozinhas, mesmo esta lista somando mais que o objetivo.
+                  </span>
                 </div>
               )}
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
