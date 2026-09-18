@@ -430,10 +430,15 @@ func calcularItensPorEscopo(db *sql.DB, empresaID string, vigenciaID int, fluxo 
 func cnpjsDoEscopoNaVigencia(db *sql.DB, empresaID string, vigenciaID int, codPrinc, cnpjUnico, codGGV, codCRV, codRCA string) ([]string, error) {
 	query := `SELECT cnpj FROM farol.metas_clientes_validos WHERE vigencia_id = $1 AND empresa_id = $2`
 	args := []any{vigenciaID, empresaID}
+	// cnpjUnico/codPrinc são independentes (não if/else): um drill-down de
+	// GGV×CRV (ou GGV×CRV×RCA) chega aqui sem nenhum dos dois — só com
+	// codGGV/codCRV abaixo — e o if/else antigo forçava "AND cod_princ = ''"
+	// nesse caso, que nunca bate com nada (bug achado 18/09/2026, pedido do
+	// Claudio pra estender o drill-down de itens pras abas de rollup).
 	if cnpjUnico != "" {
 		query += fmt.Sprintf(" AND cnpj = $%d", len(args)+1)
 		args = append(args, cnpjUnico)
-	} else {
+	} else if codPrinc != "" {
 		query += fmt.Sprintf(" AND cod_princ = $%d", len(args)+1)
 		args = append(args, codPrinc)
 	}
@@ -467,8 +472,10 @@ func cnpjsDoEscopoNaVigencia(db *sql.DB, empresaID string, vigenciaID int, codPr
 
 // MetasPainelItensHandler — GET /api/farol/metas-painel-itens
 //
-//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cod_princ=  (Rede)
-//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cnpj=       (Loja)
+//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cod_princ=              (Rede)
+//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cnpj=                   (Loja)
+//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cod_ggv=&cod_crv=       (Resumo GGVs×CRVs)
+//	?vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=&cod_ggv=&cod_crv=&cod_rca= (Resumo GGVs×CRVs×RCAs)
 func MetasPainelItensHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -494,10 +501,6 @@ func MetasPainelItensHandler(db *sql.DB) http.HandlerFunc {
 		}
 		codPrinc := strings.TrimSpace(q.Get("cod_princ"))
 		cnpjUnico := strings.TrimSpace(q.Get("cnpj"))
-		if codPrinc == "" && cnpjUnico == "" {
-			http.Error(w, `{"error":"informe cod_princ (Rede) ou cnpj (Loja)"}`, http.StatusBadRequest)
-			return
-		}
 
 		codGGV, codCRV, codRCA, negarEscopo := escopoHierarquiaMetas(spCtx)
 		if negarEscopo {
@@ -505,6 +508,16 @@ func MetasPainelItensHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		codGGV, codCRV, codRCA = resolverFiltroDrillDown(q, codGGV, codCRV, codRCA)
+
+		// Aceita 4 formas de escopo — Rede, Loja, ou o rollup de uma linha
+		// das abas "Resumo GGVs×CRVs"/"...×RCAs" (cod_ggv+cod_crv, com ou sem
+		// cod_rca). Pedido do Claudio em 18/09/2026: o drill-down de itens
+		// que já existia pra Rede/Cliente também abrir clicando numa linha
+		// dessas duas abas de rollup.
+		if codPrinc == "" && cnpjUnico == "" && codGGV == "" && codCRV == "" {
+			http.Error(w, `{"error":"informe cod_princ (Rede), cnpj (Loja) ou cod_ggv+cod_crv (Resumo GGVs×CRVs)"}`, http.StatusBadRequest)
+			return
+		}
 
 		cnpjs, err := cnpjsDoEscopoNaVigencia(db, spCtx.EmpresaID, vigenciaID, codPrinc, cnpjUnico, codGGV, codCRV, codRCA)
 		if err != nil {

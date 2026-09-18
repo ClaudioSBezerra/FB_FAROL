@@ -99,6 +99,50 @@ func TestItensRealizado_VendeuENaoVendeu(t *testing.T) {
 	}
 }
 
+// TestCnpjsDoEscopoNaVigencia_PorGGVCRV_SemCodPrincNemCnpj cobre o fix de
+// 18/09/2026: clicar numa linha das abas "Resumo GGVs×CRVs"/"...×RCAs" (sem
+// nenhuma Rede/Loja específica, só cod_ggv+cod_crv) precisa devolver os
+// CNPJs de TODAS as Redes daquele par — antes, o if/else de
+// cnpjsDoEscopoNaVigencia forçava um filtro cod_princ vazio nesse caso
+// (nenhum dos dois preenchido) e a lista sempre voltava vazia.
+func TestCnpjsDoEscopoNaVigencia_PorGGVCRV_SemCodPrincNemCnpj(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TITENSGGV Sortimento", "sortimento_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "qtd_minima_positivacao", Label: "Qtd mínima", Type: "integer"}},
+		map[string]any{"qtd_minima_positivacao": 1.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
+
+	// inserirClienteValidoFixture grava sempre cod_ggv="TCALC-GGV" e
+	// cod_crv="TCALC-CRV" — 2 Redes diferentes (REDE A/REDE B) caindo no
+	// MESMO par GGV×CRV, pra confirmar que o agrupamento junta as duas.
+	cnpj1, cnpj2 := "70000000000201", "70000000000202"
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A", cnpj1, "TCALC-RCAITENSGGV")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE B", cnpj2, "TCALC-RCAITENSGGV")
+
+	cnpjs, err := cnpjsDoEscopoNaVigencia(db, empresaID, vigenciaID, "", "", "TCALC-GGV", "TCALC-CRV", "")
+	if err != nil {
+		t.Fatalf("cnpjsDoEscopoNaVigencia: %v", err)
+	}
+	achou := map[string]bool{}
+	for _, c := range cnpjs {
+		achou[c] = true
+	}
+	if !achou[cnpj1] || !achou[cnpj2] {
+		t.Errorf("cnpjsDoEscopoNaVigencia(cod_ggv=TCALC-GGV, cod_crv=TCALC-CRV) = %v, want conter %s e %s (as 2 Redes do par)", cnpjs, cnpj1, cnpj2)
+	}
+
+	// cod_crv de outro par não deveria trazer nada.
+	vazio, err := cnpjsDoEscopoNaVigencia(db, empresaID, vigenciaID, "", "", "TCALC-GGV", "CRV-INEXISTENTE", "")
+	if err != nil {
+		t.Fatalf("cnpjsDoEscopoNaVigencia (crv inexistente): %v", err)
+	}
+	if len(vazio) != 0 {
+		t.Errorf("cnpjsDoEscopoNaVigencia com cod_crv inexistente devolveu %d cnpjs, want 0", len(vazio))
+	}
+}
+
 // TestRecalcularItensRealizado_VinculoCobertura_NoOp confirma que vínculos
 // de Cobertura (sem lista de Itens Válidos — a única métrica que tem é
 // Sortimento) não geram nenhuma linha em metas_itens_realizado.

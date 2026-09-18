@@ -14,16 +14,40 @@ import (
 	"time"
 )
 
+// codPrincDoClienteValidoFixture resolve o cod_cliprinc que a venda
+// precisa carregar pra bater com o JOIN de filtrarPorClienteEDono (fix de
+// 15/09/2026, commit 383b13a: exige v.cod_cliprinc = cliente_valido.cod_princ,
+// não só o CNPJ). Lookup em vez de um parâmetro novo nos 38 call-sites de
+// inserirVenda{Faturada,Transmitida}Fixture — cada teste já chama
+// inserirClienteValidoFixture ANTES de gerar a venda daquele CNPJ, então
+// o cod_princ já está lá pra achar. Achado 18/09/2026: essa lacuna deixou
+// 18 testes desta suíte falhando silenciosamente (o backend local ficou
+// travado numa migration antiga por 15 dias, então ninguém rodou os testes
+// contra um banco migrado até agora). CNPJ sem Cliente Válido cadastrado
+// (raro, só em teste que verifica exclusão) cai no próprio CNPJ — não bate
+// com nenhum cod_princ real, preservando o comportamento de "fora do
+// escopo" que esses testes verificam.
+func codPrincDoClienteValidoFixture(t *testing.T, empresaID, cnpj string) string {
+	t.Helper()
+	db, _ := biTestDB(t)
+	var codPrinc string
+	if err := db.QueryRow(`SELECT cod_princ FROM farol.metas_clientes_validos WHERE empresa_id = $1 AND cnpj = $2 ORDER BY id DESC LIMIT 1`, empresaID, cnpj).Scan(&codPrinc); err != nil {
+		return cnpj
+	}
+	return codPrinc
+}
+
 // inserirVendaFaturadaFixture insere uma linha crua em vendas_faturadas —
 // não existe handler de import aqui, os testes de cálculo precisam
 // popular a base diretamente, como o job de importação faria.
 func inserirVendaFaturadaFixture(t *testing.T, empresaID, codCli, codProd, codRCA, tipoVenda string, pvenda, qt float64, data string) {
 	t.Helper()
 	db, _ := biTestDB(t)
+	codCliprinc := codPrincDoClienteValidoFixture(t, empresaID, codCli)
 	_, err := db.Exec(`
-		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
-		VALUES ($1, $2, $3, $4, $5, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $6, $7, $8)
-	`, empresaID, data, codCli, codProd, codRCA, tipoVenda, pvenda, qt)
+		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
+		VALUES ($1, $2, $3, $4, $5, $6, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $7, $8, $9)
+	`, empresaID, data, codCli, codCliprinc, codProd, codRCA, tipoVenda, pvenda, qt)
 	if err != nil {
 		t.Fatalf("inserir fixture de venda faturada: %v", err)
 	}
@@ -42,10 +66,11 @@ func limparVendasFaturadasFixture(t *testing.T, empresaID string, cnpjs []string
 func inserirVendaTransmitidaFixture(t *testing.T, empresaID, codCli, codProd, codRCA, tipoVenda string, pvenda, qt float64, data string) {
 	t.Helper()
 	db, _ := biTestDB(t)
+	codCliprinc := codPrincDoClienteValidoFixture(t, empresaID, codCli)
 	_, err := db.Exec(`
-		INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cnpj, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
-		VALUES ($1, $2, $3, $4, $5, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $6, $7, $8)
-	`, empresaID, data, codCli, codProd, codRCA, tipoVenda, pvenda, qt)
+		INSERT INTO vendas_transmitidas (empresa_id, data_transmissao, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt)
+		VALUES ($1, $2, $3, $4, $5, $6, 'SUP-01', 'Supervisor Teste', 'GER-01', 'Gerente Teste', $7, $8, $9)
+	`, empresaID, data, codCli, codCliprinc, codProd, codRCA, tipoVenda, pvenda, qt)
 	if err != nil {
 		t.Fatalf("inserir fixture de venda transmitida: %v", err)
 	}

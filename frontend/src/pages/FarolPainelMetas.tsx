@@ -195,6 +195,11 @@ interface GrupoCombinado {
   qtd_falta_cobertura: number
   qtd_atingindo_sortimento: number
   qtd_falta_sortimento: number
+  // Objetivo de Sortimento (qtd de EANs distintos) — mesmo valor pra toda
+  // Rede da vigência (é uma faixa única cadastrada, não por Rede), então
+  // pegar da 1ª Rede do grupo já representa o grupo inteiro. Usado só pro
+  // drill-down de Itens (ver itensAlvo abaixo) — pedido do Claudio 18/09/2026.
+  sortimento_objetivo: number
 }
 
 // agruparCombinado — rollup client-side (sem round-trip extra: as Redes já
@@ -214,6 +219,7 @@ function agruparCombinado(redes: PainelCombinadoRede[], comRCA: boolean): GrupoC
         ...(comRCA ? { cod_rca: r.cod_rca, nome_rca: r.nome_rca } : {}),
         qtd_redes: 0, qtd_atingindo_cobertura: 0, qtd_falta_cobertura: 0,
         qtd_atingindo_sortimento: 0, qtd_falta_sortimento: 0,
+        sortimento_objetivo: r.sortimento_objetivo,
       }
       porChave.set(chave, g)
       ordem.push(chave)
@@ -728,10 +734,14 @@ export default function FarolPainelMetas() {
   // ─── Drill-down "Itens" (Sortimento): vendeu/não vendeu, Qtd e Valor —
   // clicar numa Rede (aba "Resumo Redes") mostra os itens de TODAS as
   // lojas dela; clicar numa loja (aba "Resumo Rede×Cliente") mostra só os
-  // itens daquele CNPJ. Pedido do Claudio em 10/09/2026.
-  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; titulo: string; objetivo: number } | null>(null)
+  // itens daquele CNPJ. Pedido do Claudio em 10/09/2026. Estendido em
+  // 18/09/2026 pra também abrir clicando numa linha das abas "Resumo
+  // GGVs×CRVs"/"...×RCAs" — aí o escopo é codGGV+codCRV(+codRCA), agregando
+  // TODAS as Redes daquele grupo (backend: cnpjsDoEscopoNaVigencia já
+  // aceitava isso, só faltava o clique no frontend).
+  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; codGGV?: string; codCRV?: string; codRCA?: string; titulo: string; objetivo: number } | null>(null)
   const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
-    queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj],
+    queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj, itensAlvo?.codGGV, itensAlvo?.codCRV, itensAlvo?.codRCA],
     queryFn: async () => {
       const p = new URLSearchParams({
         vinculo_sortimento_id: String(industriaSelecionada!.sortimento!.id),
@@ -739,7 +749,12 @@ export default function FarolPainelMetas() {
         fluxo,
       })
       if (itensAlvo!.cnpj) p.set('cnpj', itensAlvo!.cnpj)
-      else p.set('cod_princ', itensAlvo!.codPrinc!)
+      else if (itensAlvo!.codPrinc) p.set('cod_princ', itensAlvo!.codPrinc)
+      else {
+        p.set('cod_ggv', itensAlvo!.codGGV!)
+        p.set('cod_crv', itensAlvo!.codCRV!)
+        if (itensAlvo!.codRCA) p.set('cod_rca', itensAlvo!.codRCA)
+      }
       const r = await fetch(`/api/farol/metas-painel-itens?${p}`, { headers })
       if (!r.ok) throw new Error(await r.text())
       return r.json()
@@ -963,6 +978,7 @@ export default function FarolPainelMetas() {
 
             {(abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <p className="text-xs text-muted-foreground px-3 pt-2">Clique num grupo pra ver os itens que venderam e não venderam em todas as Redes dele.</p>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -981,7 +997,18 @@ export default function FarolPainelMetas() {
                       <TableRow><TableCell colSpan={abaCombinado === 'ggv_crv_rca' ? 8 : 7} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte/filtros</TableCell></TableRow>
                     )}
                     {(abaCombinado === 'ggv_crv' ? gruposGGVCRV : gruposGGVCRVRCA).map((g, i) => (
-                      <TableRow key={i}>
+                      <TableRow
+                        key={i}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setItensAlvo({
+                          codGGV: g.cod_ggv, codCRV: g.cod_crv,
+                          ...(abaCombinado === 'ggv_crv_rca' ? { codRCA: g.cod_rca } : {}),
+                          titulo: abaCombinado === 'ggv_crv_rca'
+                            ? `${g.nome_ggv} / ${g.nome_crv} / ${g.nome_rca}`
+                            : `${g.nome_ggv} / ${g.nome_crv}`,
+                          objetivo: g.sortimento_objetivo,
+                        })}
+                      >
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>
                         {abaCombinado === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
