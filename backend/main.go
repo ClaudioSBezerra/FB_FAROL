@@ -654,6 +654,7 @@ func main() {
 	// admin acima (NFR2: edição restrita, visualização ampla).
 	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
 	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-itens-realizado/reprocessar", withSP(handlers.MetasItensRealizadoReprocessarHandler, "gestor_geral"))
 
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
 	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))

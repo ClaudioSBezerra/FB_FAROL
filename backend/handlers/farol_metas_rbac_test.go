@@ -60,6 +60,7 @@ func TestRBAC_SomenteLeitura_TodosEndpointsDeEscrita403(t *testing.T) {
 		{"MetasClientesValidosImportarCSVHandler POST", MetasClientesValidosImportarCSVHandler(db), http.MethodPost, "/api/farol/metas-clientes-validos-importar-csv?vinculo_id=1&vigencia_id=1"},
 		{"MetasItensValidosImportarCSVHandler POST", MetasItensValidosImportarCSVHandler(db), http.MethodPost, "/api/farol/metas-itens-validos-importar-csv?vinculo_id=1&vigencia_id=1"},
 		{"MetasRealizadoReprocessarHandler POST", MetasRealizadoReprocessarHandler(db), http.MethodPost, "/api/farol/metas-realizado/reprocessar?vinculo_id=1&vigencia_id=1"},
+		{"MetasItensRealizadoReprocessarHandler POST", MetasItensRealizadoReprocessarHandler(db), http.MethodPost, "/api/farol/metas-itens-realizado/reprocessar?vinculo_id=1&vigencia_id=1"},
 	}
 
 	for _, c := range casos {

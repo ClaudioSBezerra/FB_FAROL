@@ -172,3 +172,56 @@ func MetasRealizadoReprocessarHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(resultado)
 	}
 }
+
+// ─── MetasItensRealizadoReprocessarHandler — POST .../metas-itens-realizado/reprocessar ──
+
+// POST /api/farol/metas-itens-realizado/reprocessar?vinculo_id=&vigencia_id=&fluxo=
+//
+// RecalcularItensRealizado (farol_metas_painel_itens.go) é uma tabela
+// persistida SEPARADA de metas_realizados_snapshot — alimenta só o
+// drill-down "Itens" (vendeu/não vendeu), não o indicador oficial. Até
+// 19/09/2026 só era chamada por PrewarmMetasRealizados (1x/dia, só vínculos
+// com vigência ABERTA) e pelo reimport de Itens/Clientes Válidos — uma
+// vigência FECHADA nunca era recalculada de novo, mesmo com uma correção de
+// motor (ex: fix de cod_prod com 2+ EANs, achado 18-19/09/2026). Endpoint
+// novo pra cobrir esse buraco: mesmo padrão de auth/auditoria do
+// reprocessar de Realizado (FR17 — reprocessamento de mês fechado é ação
+// explícita de gestor).
+func MetasItensRealizadoReprocessarHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !hasSpRole(spCtx.SpRole, "gestor_geral") {
+			http.Error(w, "Forbidden: gestor_geral necessário — reprocessamento de mês fechado é ação de gestor", http.StatusForbidden)
+			return
+		}
+		vinculoID, err1 := strconv.Atoi(r.URL.Query().Get("vinculo_id"))
+		vigenciaID, err2 := strconv.Atoi(r.URL.Query().Get("vigencia_id"))
+		if err1 != nil || err2 != nil {
+			http.Error(w, "vinculo_id e vigencia_id são obrigatórios", http.StatusBadRequest)
+			return
+		}
+		fluxo := r.URL.Query().Get("fluxo")
+		if fluxo == "" {
+			fluxo = "faturado"
+		}
+
+		if err := RecalcularItensRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "metas_itens_realizado", strconv.Itoa(vigenciaID), "reprocessar_manual", map[string]any{
+			"vinculo_id": vinculoID, "fluxo": fluxo,
+		})
+		log.Printf("MetasCongelamento: reprocessamento manual de Itens Realizado vinculo=%d vigencia=%d fluxo=%s por %s", vinculoID, vigenciaID, fluxo, spCtx.UserID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
