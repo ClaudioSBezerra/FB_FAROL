@@ -77,13 +77,18 @@ func TestMetasClientesValidos_ImportarLoteValido(t *testing.T) {
 	}
 }
 
-// TestMetasClientesValidos_CNPJSemRCA_ImportaParcialComAviso — FR11 (todo
-// CNPJ precisa de RCA) continua valendo por LINHA, mas desde 08/09/2026
-// (decisão do Heverton, pra aprovar o MVP com a planilha real da JC, que tem
-// pendência conhecida de RCA faltando em algumas linhas) uma linha inválida
-// não trava mais o lote inteiro (era FR9/Story 3.1) — vira só um aviso, e o
-// resto do arquivo entra normalmente.
-func TestMetasClientesValidos_CNPJSemRCA_ImportaParcialComAviso(t *testing.T) {
+// TestMetasClientesValidos_CNPJSemRCA_ImportaNormalmente — até 19/09/2026,
+// cod_rca vazio era erro (FR11 original) e a linha virava só um AVISO,
+// EXCLUÍDA da importação — não só da visão por RCA, de Rede/CRV/GGV/empresa
+// também. Achado real reconferindo com o Carlos: existem clientes ativos
+// (ex: cod_princ 18705, 31 lojas, R$101 mil em vendas) com CRV/GGV mas
+// genuinamente sem RCA vinculado no cadastro da JC — "deve ficar zerado
+// mesmo", não é erro de dado. Agora cod_rca vazio importa normalmente
+// (mesma categoria de razao/fantasia/nome_ggv/nome_crv/nome_rca — só
+// cnpj/cod_princ/cod_ggv/cod_crv continuam obrigatórios); o motor já
+// agrupa cod_rca vazio como "(sem dono resolvido)" só na visão POR RCA
+// (agregarPorNivel), sem excluir o cliente dos outros níveis.
+func TestMetasClientesValidos_CNPJSemRCA_ImportaNormalmente(t *testing.T) {
 	db, empresaID := biTestDB(t)
 	userID := tipoMetricaTestUserID(t, db)
 	vinculoID, cleanup := criarVinculoFixture(t, db, empresaID, "TCV SemRCA")
@@ -96,15 +101,17 @@ func TestMetasClientesValidos_CNPJSemRCA_ImportaParcialComAviso(t *testing.T) {
 	w := httptest.NewRecorder()
 	MetasClientesValidosImportarCSVHandler(db)(w, clientesValidosImportReq(empresaID, userID, fmt.Sprint(vinculoID), fmt.Sprint(vigenciaID), csvContent))
 	if w.Code != http.StatusOK {
-		t.Fatalf("1 linha válida + 1 sem RCA → status %d, want 200 (importação parcial), body=%s", w.Code, w.Body.String())
+		t.Fatalf("1 linha com RCA + 1 sem RCA → status %d, want 200, body=%s", w.Code, w.Body.String())
 	}
-	if n := contarClientesValidos(t, db, vigenciaID); n != 1 {
-		t.Errorf("esperava 1 cliente importado (a linha com RCA), veio %d", n)
+	if n := contarClientesValidos(t, db, vigenciaID); n != 2 {
+		t.Errorf("esperava 2 clientes importados (RCA vazio não é mais motivo de exclusão), veio %d", n)
 	}
-	var resp map[string]json.RawMessage
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if _, ok := resp["avisos"]; !ok {
-		t.Errorf("resposta deveria listar a linha sem RCA em 'avisos': %s", w.Body.String())
+	var codRCA string
+	if err := db.QueryRow(`SELECT cod_rca FROM farol.metas_clientes_validos WHERE vigencia_id = $1 AND cnpj = '11222333000182'`, vigenciaID).Scan(&codRCA); err != nil {
+		t.Fatalf("cliente sem RCA não foi importado: %v", err)
+	}
+	if codRCA != "" {
+		t.Errorf("cod_rca = %q, want vazio", codRCA)
 	}
 }
 
@@ -118,8 +125,11 @@ func TestMetasClientesValidos_TodasLinhasInvalidas_400NadaApagado(t *testing.T) 
 	t.Cleanup(cleanup)
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
 
+	// cod_rca vazio não invalida mais uma linha (ver
+	// TestMetasClientesValidos_CNPJSemRCA_ImportaNormalmente) — as 2 linhas
+	// abaixo precisam de outro campo obrigatório faltando (cod_crv/cod_ggv).
 	csvContent := clientesValidosHeader + "\n" +
-		"11222333000181;REDEMAIS;;;G1;;C1;;;\n" +
+		"11222333000181;REDEMAIS;;;G1;;;;RCA001;\n" +
 		"11222333000182;REDEMAIS;;;;;C1;;RCA001;\n"
 	w := httptest.NewRecorder()
 	MetasClientesValidosImportarCSVHandler(db)(w, clientesValidosImportReq(empresaID, userID, fmt.Sprint(vinculoID), fmt.Sprint(vigenciaID), csvContent))

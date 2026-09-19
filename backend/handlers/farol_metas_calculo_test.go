@@ -297,6 +297,79 @@ func TestCalcularRealizado_AgregacaoPorRCA(t *testing.T) {
 	}
 }
 
+// TestCalcularRealizado_ClienteSemRCA_ContaEmCRVGGVMasIsoladoNaRCA cobre o
+// achado real de 19/09/2026 (conferência com o Carlos): existem clientes
+// ativos com CRV/GGV mas sem RCA vinculado no cadastro da JC — "deve ficar
+// zerado mesmo", não é erro de dado. Até 19/09/2026 uma linha de Cliente
+// Válido sem cod_rca era descartada da IMPORTAÇÃO inteira (não só da visão
+// por RCA) — um caso real (cod_princ 18705, 31 lojas, R$101 mil em vendas)
+// sumia da base inteira por isso. Agora cod_rca vazio importa normalmente;
+// este teste confirma que o cálculo não esconde esse cliente de CRV/GGV,
+// só isola ele como "(sem dono resolvido)" na visão por RCA.
+func TestCalcularRealizado_ClienteSemRCA_ContaEmCRVGGVMasIsoladoNaRCA(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC SemRCA", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-05-01", "2026-05-31")
+
+	lojaComRCA, lojaSemRCA := "55555555000201", "55555555000202"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{lojaComRCA, lojaSemRCA}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE COM RCA", lojaComRCA, "TCALC-RCASEM")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SEM RCA", lojaSemRCA, "") // cod_rca vazio de propósito
+	inserirVendaFaturadaFixture(t, empresaID, lojaComRCA, "PROD1", "TCALC-RCASEM", "1", 1000, 1, "2026-05-05")
+	inserirVendaFaturadaFixture(t, empresaID, lojaSemRCA, "PROD1", "", "1", 2000, 1, "2026-05-06")
+
+	// Nível Rede: as 2 Redes aparecem, nenhuma escondida.
+	porRede, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado nível rede: %v", err)
+	}
+	if len(porRede.Redes) != 2 {
+		t.Fatalf("esperava 2 Redes (cliente sem RCA não pode sumir), veio %d: %+v", len(porRede.Redes), porRede.Redes)
+	}
+
+	// Nível CRV/GGV: as 2 Redes compartilham o mesmo CRV/GGV fixture
+	// ("TCALC-CRV"/"TCALC-GGV") — precisa agregar as 2 juntas, cod_rca vazio
+	// não pode excluir a Rede desse rollup.
+	for _, nivel := range []string{"crv", "ggv"} {
+		resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", nivel)
+		if err != nil {
+			t.Fatalf("CalcularRealizado nível %s: %v", nivel, err)
+		}
+		if len(resultado.Grupos) != 1 {
+			t.Fatalf("nível %s: esperava 1 grupo (mesmo CRV/GGV pras 2 Redes), veio %d: %+v", nivel, len(resultado.Grupos), resultado.Grupos)
+		}
+		if resultado.Grupos[0].QtdRedes != 2 {
+			t.Errorf("nível %s: deveria agregar 2 Redes (com e sem RCA), veio %d", nivel, resultado.Grupos[0].QtdRedes)
+		}
+	}
+
+	// Nível RCA: agora sim separa — 1 grupo pro RCA real, 1 grupo
+	// "(sem dono resolvido)" pra Rede sem RCA (não pode juntar os dois nem
+	// sumir com o sem-RCA).
+	porRCA, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rca")
+	if err != nil {
+		t.Fatalf("CalcularRealizado nível rca: %v", err)
+	}
+	if len(porRCA.Grupos) != 2 {
+		t.Fatalf("esperava 2 grupos de RCA (1 real + 1 'sem dono resolvido'), veio %d: %+v", len(porRCA.Grupos), porRCA.Grupos)
+	}
+	var achouSemDono bool
+	for _, g := range porRCA.Grupos {
+		if g.Codigo == "(sem dono resolvido)" {
+			achouSemDono = true
+			if g.QtdRedes != 1 {
+				t.Errorf("grupo 'sem dono resolvido' deveria ter 1 Rede, veio %d", g.QtdRedes)
+			}
+		}
+	}
+	if !achouSemDono {
+		t.Errorf("esperava um grupo '(sem dono resolvido)' pra Rede sem RCA: %+v", porRCA.Grupos)
+	}
+}
+
 // TestCalcularRealizado_FluxoTransmitido cobre a Story 4.2 (FR15): o fluxo
 // "transmitido" lê vendas_transmitidas, não vendas_faturadas.
 func TestCalcularRealizado_FluxoTransmitido(t *testing.T) {

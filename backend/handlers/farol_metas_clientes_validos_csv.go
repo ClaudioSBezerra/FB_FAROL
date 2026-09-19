@@ -25,10 +25,23 @@ package handlers
 // válida — evita apagar a lista antiga da vigência sem nenhum substituto.
 //
 // Formato CSV (';'): cnpj;cod_princ;razao;fantasia;cod_ggv;nome_ggv;cod_crv;nome_crv;cod_rca;nome_rca
-// Colunas obrigatórias (não-vazias): cnpj, cod_princ, cod_ggv, cod_crv, cod_rca
+// Colunas obrigatórias (não-vazias): cnpj, cod_princ, cod_ggv, cod_crv
 // (são as chaves usadas pro rollup GGV→CRV→RCA→Rede — sem elas o painel não
 // tem como agrupar). razao/fantasia/nome_ggv/nome_crv/nome_rca são só
 // rótulo de exibição — podem vir vazios sem travar a importação.
+//
+// cod_rca (e nome_rca) TAMBÉM pode vir vazio desde 19/09/2026 — achado
+// reconferindo com o Carlos: existem clientes reais, ativos, com CRV/GGV
+// mas sem RCA vinculado no cadastro da JC ("deve ficar zerado mesmo").
+// Até aqui cod_rca era obrigatório (FR11 original) e uma linha sem ele
+// virava aviso e ERA DESCARTADA da importação — excluindo o cliente até
+// de Rede/CRV/GGV/empresa, não só da visão por RCA (achado real: cliente
+// cod_princ 18705, 31 lojas, R$101 mil em vendas, sumido da base inteira
+// por causa disso). `agregarPorNivel` já trata cod_rca vazio sem quebrar
+// (agrupa como "(sem dono resolvido)" só na visão POR RCA) — o cliente
+// segue contando normalmente em Rede/CRV/GGV/empresa, que é o
+// comportamento correto (decisão do Claudio 19/09/2026: "não pode ser
+// ignorado").
 //
 // Rota: POST /api/farol/metas-clientes-validos-importar-csv?vinculo_id=&vigencia_id=
 
@@ -194,10 +207,9 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem cod_crv — todo CNPJ deve ter CRV vinculado", row.cnpj)})
 				linhaErro = true
 			}
-			if row.codRCA == "" {
-				erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s sem cod_rca — todo CNPJ deve ter RCA vinculado (FR11)", row.cnpj)})
-				linhaErro = true
-			}
+			// cod_rca vazio NÃO é mais erro (ver comentário grande no topo do
+			// arquivo, achado 19/09/2026) — cliente sem RCA ainda conta em
+			// Rede/CRV/GGV/empresa, só fica fora da visão por RCA.
 			if !linhaErro {
 				if primeira, dup := cnpjsVistos[row.cnpj]; dup {
 					erros = append(erros, clienteValidoLinhaErro{Linha: linhaAtual, Erro: fmt.Sprintf("CNPJ %s duplicado no arquivo (já aparece na linha %d)", row.cnpj, primeira)})
