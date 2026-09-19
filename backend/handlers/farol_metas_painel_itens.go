@@ -334,26 +334,39 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 	if err != nil {
 		return err
 	}
+	// Agrupa por componente conexo (ver agruparItensPorComponente em
+	// farol_metas_calculo.go), não por EAN cru — cobre tanto "1 EAN, N
+	// cod_prod" (variantes/embalagem, caso normal) quanto "1 cod_prod, N
+	// EANs" (achado 18-19/09/2026: mesma venda gravada como positivação de
+	// 2 EANs ao mesmo tempo, inflando "vendidos" no drill-down — mesmo fix
+	// aplicado no indicador oficial em calcularSortimentoPorRede).
+	grupoDoCodProd := agruparItensPorComponente(itens)
 	for _, c := range clientes {
 		porCodProd := linhasPorCliente[c.CNPJ]
-		// Agrega por EAN antes de gravar — um EAN pode ter N cod_prod (mesmo
-		// princípio de contarEANsPositivados em farol_metas_calculo.go); sem
-		// isso a mesma loja geraria 2 linhas pro mesmo EAN e violaria o
-		// UNIQUE (vigencia_id, fluxo, cnpj, ean).
 		type acc struct {
 			Qtd, Valor float64
 			Nome       string
 			Vendeu     bool
 		}
-		porEan := map[string]*acc{}
+		porGrupo := map[string]*acc{}
 		var ordem []string
+		codProdContadoNoGrupo := map[string]map[string]bool{}
 		for _, it := range itens {
-			a, ok := porEan[it.EAN]
+			grupo := grupoDoCodProd[it.CodProd]
+			a, ok := porGrupo[grupo]
 			if !ok {
 				a = &acc{}
-				porEan[it.EAN] = a
-				ordem = append(ordem, it.EAN)
+				porGrupo[grupo] = a
+				ordem = append(ordem, grupo)
+				codProdContadoNoGrupo[grupo] = map[string]bool{}
 			}
+			if codProdContadoNoGrupo[grupo][it.CodProd] {
+				// mesmo cod_prod, 2ª linha do grupo (por causa do outro EAN
+				// dele) — já contado, não soma de novo (senão a Qtd/Valor
+				// duplicariam junto com o Vendeu).
+				continue
+			}
+			codProdContadoNoGrupo[grupo][it.CodProd] = true
 			if l, ok2 := porCodProd[it.CodProd]; ok2 {
 				a.Qtd += l.Qtd
 				a.Valor += l.Valor
@@ -365,9 +378,9 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 				a.Nome = nomeDoCodProd(it.CodProd)
 			}
 		}
-		for _, ean := range ordem {
-			a := porEan[ean]
-			if _, err := stmt.Exec(empresaID, vinculoID, vigenciaID, fluxo, c.CNPJ, ean, a.Nome, a.Qtd, a.Valor, a.Vendeu); err != nil {
+		for _, grupo := range ordem {
+			a := porGrupo[grupo]
+			if _, err := stmt.Exec(empresaID, vinculoID, vigenciaID, fluxo, c.CNPJ, grupo, a.Nome, a.Qtd, a.Valor, a.Vendeu); err != nil {
 				return err
 			}
 		}

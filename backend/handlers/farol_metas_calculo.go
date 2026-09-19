@@ -627,13 +627,17 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		return nil, fmt.Errorf("vínculo não tem o parâmetro qtd_minima_positivacao preenchido — obrigatório pra Sortimento por Rede")
 	}
 
-	// cod_prod -> ean (um EAN pode ter N cod_prod — BASE EANS da JC mostra
-	// itens com mais de 2 códigos JC pro mesmo produto, ver dúvida C
-	// resolvida 2026-09-04: "pode ter mais")
-	eanPorCodProd := map[string]string{}
-	for _, it := range itens {
-		eanPorCodProd[it.CodProd] = it.EAN
-	}
+	// cod_prod -> chave do grupo de item (ver agruparItensPorComponente) —
+	// cobre tanto "1 EAN, N cod_prod" (variantes/embalagem, caso normal)
+	// quanto "1 cod_prod, N EANs" (achado 18-19/09/2026, confirmado pelo
+	// Carlos: alguns produtos têm mesmo 2 EANs válidos cadastrados). Até
+	// 19/09/2026 isso era um `map[string]string{}` com atribuição direta
+	// (eanPorCodProd[it.CodProd] = it.EAN) — quando um cod_prod aparecia em
+	// 2 linhas de itens (2 EANs diferentes), a ORDEM não-determinística de
+	// `itens` (lerItensValidos não tem ORDER BY) decidia qual EAN "vencia",
+	// arriscando o mesmo cálculo dar resultados diferentes em dias
+	// diferentes sem nenhum dado ter mudado.
+	grupoDoCodProd := agruparItensPorComponente(itens)
 
 	ordem, porRede := agruparPorRede(clientes)
 
@@ -656,7 +660,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		var somaEANsPorLoja float64
 		clientesResultado := make([]RealizadoCliente, 0, len(clientesDaRede))
 		for _, c := range clientesDaRede {
-			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], eanPorCodProd, qtdMinima)
+			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], grupoDoCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
 			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ]})
 		}
@@ -684,15 +688,86 @@ type vendaProdutoAgregada struct {
 	QtUnitCx  float64
 }
 
-// contarEANsPositivados conta quantos EANs distintos (da lista de Itens
-// Válidos) aparecem nas linhas já agregadas de UM cliente (ver
-// qtdPorCodProdClientes — `linhas` é o resultado[cnpj]), respeitando a
-// regra de quantidade mínima (FR12) — ver exigeQuantidadeMinima. `linhas`
-// nil (cliente sem nenhuma venda no período) itera zero vezes e devolve 0.
-func contarEANsPositivados(linhas map[string]vendaProdutoAgregada, eanPorCodProd map[string]string, qtdMinima float64) float64 {
-	eansPositivados := map[string]bool{}
+// agruparItensPorComponente resolve, pra cada cod_prod da lista de Itens
+// Válidos, a chave do "item de verdade" que ele pertence — componente
+// conexo do grafo bipartido cod_prod↔EAN (união por componentes, não só
+// olhando 1 EAN de cada vez). Cobre os 2 padrões que a base real tem:
+//   - 1 EAN, N cod_prod (variantes/embalagem — caso normal, resolvido
+//     desde sempre por um simples map cod_prod->ean)
+//   - N EANs, 1 (ou mais) cod_prod em comum — achado 18-19/09/2026
+//     comparando com a conferência do Carlos: 44 dos 100 cod_prod da
+//     vigência de Agosto/HC apareciam ligados a 2+ EANs ao mesmo tempo.
+//     Confirmado com o Carlos: "pode ter 2 EANs válidos" pro mesmo
+//     produto — não é erro de importação (a leitura do CSV é um passe
+//     direto ean;cod_prod, sem transformação), é a própria base de
+//     referência que registra isso. Mas contar cada EAN duplicado como
+//     uma positivação À PARTE infla o Sortimento: uma venda só do
+//     produto contava 2x (ou até 4x). Validado contra os 4 clientes que
+//     o Carlos mandou pra conferência: agrupando por componente conexo
+//     em vez de por EAN cru, o resultado do Farol fecha o gap de
+//     13-20 pontos acima do Carlos pra 1-3 pontos abaixo, nos 4 casos.
+//
+// Chave do grupo = o menor EAN do componente (string comparável,
+// determinístico — não depende de ordem de iteração do slice `itens`
+// nem de iteração de map, ao contrário do `map[string]string` com
+// atribuição direta que existia até 19/09/2026).
+func agruparItensPorComponente(itens []itemValido) map[string]string {
+	pai := map[string]string{}
+	var raiz func(string) string
+	raiz = func(x string) string {
+		if _, ok := pai[x]; !ok {
+			pai[x] = x
+		}
+		for pai[x] != x {
+			pai[x] = pai[pai[x]]
+			x = pai[x]
+		}
+		return x
+	}
+	unir := func(a, b string) {
+		ra, rb := raiz(a), raiz(b)
+		if ra != rb {
+			pai[ra] = rb
+		}
+	}
+	for _, it := range itens {
+		unir("P:"+it.CodProd, "E:"+it.EAN)
+	}
+
+	eansPorRaiz := map[string][]string{}
+	for _, it := range itens {
+		r := raiz("E:" + it.EAN)
+		eansPorRaiz[r] = append(eansPorRaiz[r], it.EAN)
+	}
+	canonicoPorRaiz := map[string]string{}
+	for r, eans := range eansPorRaiz {
+		menor := eans[0]
+		for _, e := range eans {
+			if e < menor {
+				menor = e
+			}
+		}
+		canonicoPorRaiz[r] = menor
+	}
+
+	grupoDoCodProd := map[string]string{}
+	for _, it := range itens {
+		grupoDoCodProd[it.CodProd] = canonicoPorRaiz[raiz("P:"+it.CodProd)]
+	}
+	return grupoDoCodProd
+}
+
+// contarEANsPositivados conta quantos GRUPOS distintos de item (ver
+// agruparItensPorComponente — normalmente 1 grupo = 1 EAN, mas cobre o
+// caso de cod_prod com 2+ EANs) aparecem nas linhas já agregadas de UM
+// cliente (ver qtdPorCodProdClientes — `linhas` é o resultado[cnpj]),
+// respeitando a regra de quantidade mínima (FR12) — ver
+// exigeQuantidadeMinima. `linhas` nil (cliente sem nenhuma venda no
+// período) itera zero vezes e devolve 0.
+func contarEANsPositivados(linhas map[string]vendaProdutoAgregada, grupoDoCodProd map[string]string, qtdMinima float64) float64 {
+	gruposPositivados := map[string]bool{}
 	for codProd, agregada := range linhas {
-		ean, ok := eanPorCodProd[codProd]
+		grupo, ok := grupoDoCodProd[codProd]
 		if !ok {
 			continue // produto vendido não está na lista de Itens Válidos deste programa
 		}
@@ -702,9 +777,9 @@ func contarEANsPositivados(linhas map[string]vendaProdutoAgregada, eanPorCodProd
 		if exigeQuantidadeMinima(agregada.Embalagem, agregada.QtUnitCx) && agregada.Qtd < qtdMinima {
 			continue
 		}
-		eansPositivados[ean] = true
+		gruposPositivados[grupo] = true
 	}
-	return float64(len(eansPositivados))
+	return float64(len(gruposPositivados))
 }
 
 // exigeQuantidadeMinima decide se um item exige a venda de 3+ unidades pra

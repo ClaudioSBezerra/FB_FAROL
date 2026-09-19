@@ -99,6 +99,98 @@ func TestItensRealizado_VendeuENaoVendeu(t *testing.T) {
 	}
 }
 
+// TestItensRealizado_CodProdComDoisEANs_ContaUmaVezSo cobre o achado de
+// 18-19/09/2026 (conferência com o Carlos, cliente real 154161 SUPERMERCADO
+// SOUSA): a base de Itens Válidos pode ter o MESMO cod_prod cadastrado sob
+// 2 EANs diferentes (confirmado pelo Carlos: "pode ter 2 EANs válidos").
+// Antes do fix, uma única venda desse cod_prod virava 2 linhas em
+// metas_itens_realizado (uma por EAN) e contava 2x em contarEANsPositivados
+// — agrupando por componente conexo (agruparItensPorComponente), agora
+// conta 1 vez só, e o outro EAN da base (nunca vendido por nenhum cod_prod)
+// continua contando como item distinto.
+func TestItensRealizado_CodProdComDoisEANs_ContaUmaVezSo(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TITENSDUP Sortimento", "sortimento_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "qtd_minima_positivacao", Label: "Qtd mínima", Type: "integer"}},
+		map[string]any{"qtd_minima_positivacao": 1.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpj := "70000000000301"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{cnpj}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE DUP", cnpj, "TCALC-RCADUP")
+
+	// EAN-DUPLICADO tem 2 cod_prod DIFERENTES, cada um mapeado a um EAN
+	// PRÓPRIO — mas os dois EANs também aparecem cruzados: PRODDUP1 está em
+	// EAN-A e EAN-B (mesmo padrão achado na base real: cod_prod 477328 em
+	// 7891150044906 E 7891150107489). EAN-OUTRO nunca é vendido.
+	db.Exec(`DELETE FROM farol.metas_itens_validos WHERE vigencia_id = $1`, vigenciaID)
+	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod) VALUES
+		($1,$2,$3,'EAN-A','PRODDUP1'),
+		($1,$2,$3,'EAN-B','PRODDUP1'),
+		($1,$2,$3,'EAN-OUTRO','PRODNUNCA')`, empresaID, vinculoID, vigenciaID)
+
+	// 1 única venda de PRODDUP1 — qtd 1, R$50.
+	inserirVendaFaturadaFixture(t, empresaID, cnpj, "PRODDUP1", "TCALC-RCADUP", "1", 50, 1, "2026-08-05")
+
+	if err := RecalcularItensRealizado(db, empresaID, vinculoID, vigenciaID, "faturado"); err != nil {
+		t.Fatalf("RecalcularItensRealizado: %v", err)
+	}
+
+	itens, err := calcularItensPorEscopo(db, empresaID, vigenciaID, "faturado", []string{cnpj})
+	if err != nil {
+		t.Fatalf("calcularItensPorEscopo: %v", err)
+	}
+	// 2 grupos esperados: {EAN-A,EAN-B} (1 grupo só, canônico = EAN-A por
+	// ordem alfabética) + EAN-OUTRO — NUNCA 3 (seria o bug: 1 linha por EAN
+	// cru, contando a mesma venda 2x).
+	if len(itens) != 2 {
+		t.Fatalf("len(itens) = %d, want 2 (1 grupo do cod_prod duplicado + EAN-OUTRO nunca vendido) — itens: %+v", len(itens), itens)
+	}
+
+	var vendido *PainelItemLinha
+	for i := range itens {
+		if itens[i].Vendeu {
+			vendido = &itens[i]
+		}
+	}
+	if vendido == nil {
+		t.Fatalf("nenhum item marcado como vendido — esperava 1: %+v", itens)
+	}
+	if vendido.EAN != "EAN-A" {
+		t.Errorf("EAN do grupo vendido = %q, want EAN-A (canônico = menor EAN do componente)", vendido.EAN)
+	}
+	if vendido.Qtd != 1 || vendido.Valor != 50 {
+		t.Errorf("grupo vendido Qtd/Valor = %.0f/%.2f, want 1/50 (a venda não pode ser contada 2x só porque o cod_prod tem 2 EANs)", vendido.Qtd, vendido.Valor)
+	}
+
+	// Confere que o indicador OFICIAL (calcularSortimentoPorRede, via
+	// CalcularRealizado) também conta 1 só, não 2 — é o número que decide
+	// "atingiu"/"não atingiu" de verdade, não o drill-down.
+	var tiposVenda []string
+	db.QueryRow(`SELECT tipos_venda_validos FROM farol.metas_vinculos WHERE id = $1`, vinculoID)
+	itensValidos, err := lerItensValidos(db, empresaID, vigenciaID)
+	if err != nil {
+		t.Fatalf("lerItensValidos: %v", err)
+	}
+	clientes, err := lerClientesValidos(db, empresaID, vigenciaID)
+	if err != nil {
+		t.Fatalf("lerClientesValidos: %v", err)
+	}
+	redes, err := calcularSortimentoPorRede(db, empresaID, clientes, itensValidos,
+		map[string]any{"qtd_minima_positivacao": 1.0}, "2026-08-01", "2026-08-31", "faturado", tiposVenda, nil)
+	if err != nil {
+		t.Fatalf("calcularSortimentoPorRede: %v", err)
+	}
+	if len(redes) != 1 {
+		t.Fatalf("len(redes) = %d, want 1", len(redes))
+	}
+	if redes[0].Valor != 1 {
+		t.Errorf("Sortimento oficial da Rede = %.1f, want 1 (1 grupo positivado, não 2 — mesma venda não pode contar em dobro)", redes[0].Valor)
+	}
+}
+
 // TestCnpjsDoEscopoNaVigencia_PorGGVCRV_SemCodPrincNemCnpj cobre o fix de
 // 18/09/2026: clicar numa linha das abas "Resumo GGVs×CRVs"/"...×RCAs" (sem
 // nenhuma Rede/Loja específica, só cod_ggv+cod_crv) precisa devolver os
