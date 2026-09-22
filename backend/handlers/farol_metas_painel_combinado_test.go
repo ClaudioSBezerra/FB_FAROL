@@ -298,3 +298,30 @@ func TestCalcularPainelCombinado_ClienteTrazDataUltimaCompra(t *testing.T) {
 		t.Errorf("DataUltimaCompra = %q, want 2026-08-22 (a venda mais recente do cliente, não a primeira)", cliente.DataUltimaCompra)
 	}
 }
+
+// TestRecalcularResumoCombinadoParaEscopo_RecontaSoARedeFiltrada — bug real
+// achado pelo Claudio 22/09/2026 ("não estou conseguindo entender o
+// resultado"): a visão do RCA mostrava "Cobertura — redes cobertas: 69" e
+// "Sortimento — média de EANs: 4,41" no topo — números da EMPRESA INTEIRA,
+// sem nenhuma relação com as ~6 Redes daquele RCA listadas logo abaixo (que
+// já vinham corretamente filtradas). Prova que recalcularResumoCombinadoParaEscopo
+// reconta count/média só sobre a lista JÁ FILTRADA, descartando qualquer
+// valor anterior no resumo (viria pré-populado com o total global).
+func TestRecalcularResumoCombinadoParaEscopo_RecontaSoARedeFiltrada(t *testing.T) {
+	redes := []PainelCombinadoRede{
+		{CoberturaAtingiu: true, SortimentoValor: 10},
+		{CoberturaAtingiu: false, SortimentoValor: 20},
+		{CoberturaAtingiu: true, SortimentoValor: 30},
+	}
+	cobertura := &PainelMetricaResumo{RealizadoTotal: 69} // valor "global" que deveria ser descartado
+	sortimento := &PainelMetricaResumo{RealizadoTotal: 4.41}
+
+	recalcularResumoCombinadoParaEscopo(redes, cobertura, sortimento)
+
+	if cobertura.RealizadoTotal != 2 {
+		t.Errorf("Cobertura.RealizadoTotal = %v, want 2 (2 de 3 redes atingiram, não o total global de 69)", cobertura.RealizadoTotal)
+	}
+	if sortimento.RealizadoTotal != 20 {
+		t.Errorf("Sortimento.RealizadoTotal = %v, want 20 (média de 10+20+30 nas 3 redes, não o total global de 4.41)", sortimento.RealizadoTotal)
+	}
+}

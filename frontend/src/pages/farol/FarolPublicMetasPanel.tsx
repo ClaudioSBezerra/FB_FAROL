@@ -63,6 +63,10 @@ interface PainelItemLinha {
   qtd: number
   valor: number
   vendeu: boolean
+  // data_ultima_venda — pedido do Claudio 22/09/2026: fato do PRODUTO
+  // (diferente de dataUltimaCompra do Cliente, mostrado 1x acima da lista)
+  // — quando ESTE item foi vendido pela última vez, mesmo fora do período.
+  data_ultima_venda?: string
 }
 
 interface Painel {
@@ -211,7 +215,7 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
   onToggle: (cnpj: string) => void
   temSortimento: boolean
   isLoadingItens: boolean
-  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean }[]
+  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean; data_ultima_venda?: string }[]
   dataUltimaCompra?: string
 }) {
   const aberto = clienteAberto === cnpj
@@ -248,7 +252,17 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
           ) : (
             itens.map(it => (
               <div key={it.ean} className="flex items-center justify-between gap-2 text-[11px] py-0.5">
-                <span className="truncate min-w-0">{it.nome || it.ean}</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {/* Dt.Ult.Venda — pedido do Claudio 22/09/2026: fato do
+                      PRODUTO, diferente do Dt.Ult.Cmp acima (fato do
+                      Cliente) — quando ESTE item foi vendido pela última
+                      vez, mesmo fora do período (útil nos "Não coberto":
+                      mostra se já foi comprado antes ou nunca). */}
+                  <span className="shrink-0 font-mono text-muted-foreground">
+                    {it.data_ultima_venda ? new Date(it.data_ultima_venda + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                  </span>
+                  <span className="truncate min-w-0">{it.nome || it.ean}</span>
+                </span>
                 <StatusBadge atingiu={it.vendeu} label={it.vendeu ? 'Coberto' : 'Não coberto'} />
               </div>
             ))

@@ -62,6 +62,15 @@ type PainelItemLinha struct {
 	Qtd    float64 `json:"qtd"`
 	Valor  float64 `json:"valor"`
 	Vendeu bool    `json:"vendeu"`
+	// DataUltimaVenda — pedido do Claudio 22/09/2026: diferente de
+	// "Dt.Ult.Cmp" (fato do Cliente, qualquer produto desta indústria,
+	// dentro do período — ver resolverDataUltimaCompraClientes), este é o
+	// fato do PRODUTO — quando ESTE EAN/grupo específico foi vendido pela
+	// última vez pra este cliente, útil sobretudo nos "Não coberto" (mostra
+	// se já foi vendido antes, só não neste período, ou nunca). Não tem
+	// limite inferior de data (histórico completo), só não passa do fim da
+	// vigência (sem vazar período futuro — mesmo cuidado do Dt.Ult.Cmp).
+	DataUltimaVenda string `json:"data_ultima_venda,omitempty"`
 }
 
 type itemAgregado struct {
@@ -148,6 +157,72 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, clientes []clien
 	default:
 		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
 	}
+	return out, nil
+}
+
+// dataUltimaVendaPorCodProdPorCliente resolve, POR CNPJ×cod_prod, a data da
+// venda mais recente — SEM limite inferior (histórico completo: item "Não
+// coberto" neste período pode ter sido vendido meses atrás, é exatamente o
+// que essa data existe pra mostrar), mas nunca depois de dataFim (não vaza
+// período futuro pra quem está olhando um mês fechado — mesmo cuidado do
+// Dt.Ult.Cmp, ver resolverDataUltimaCompraClientes). Usa só a tabela do
+// próprio fluxo (Faturado ou Transmitido), igual qtdValorPorCodProdPorCliente
+// — "quando foi vendido" aqui segue o mesmo fluxo que decide "vendeu".
+func dataUltimaVendaPorCodProdPorCliente(db *sql.DB, empresaID string, clientes []clienteValido, dataFim, fluxo string, tiposVenda, codFornec []string) (map[string]map[string]time.Time, error) {
+	out := map[string]map[string]time.Time{}
+	if len(clientes) == 0 {
+		return out, nil
+	}
+	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
+	tabela, colData := "vendas_faturadas", "data_faturamento"
+	if fluxo == "transmitido" {
+		tabela, colData = "vendas_transmitidas", "data_transmissao"
+	} else if fluxo != "faturado" {
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+	}
+	t0 := time.Now()
+	joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)
+	query := fmt.Sprintf(`
+		SELECT v.cnpj, v.cod_prod, MAX(v.%s) FROM %s v
+		%s
+		WHERE v.empresa_id = $1 AND v.%s <= $4 AND v.cod_prod <> ''
+	`, colData, tabela, joinSQL, colData)
+	args := append([]any{empresaID}, joinArgs...)
+	args = append(args, dataFim)
+	if len(tiposVenda) > 0 {
+		query += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(tiposVenda))
+	}
+	if len(codFornec) > 0 {
+		query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(codFornec))
+	}
+	query += " GROUP BY v.cnpj, v.cod_prod"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var cnpj, codProd string
+		var data time.Time
+		if err := rows.Scan(&cnpj, &codProd, &data); err != nil {
+			return nil, err
+		}
+		porCliente, ok := out[cnpj]
+		if !ok {
+			porCliente = map[string]time.Time{}
+			out[cnpj] = porCliente
+		}
+		porCliente[codProd] = data
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	log.Printf("[farol:objetivos] dataUltimaVendaPorCodProdPorCliente tabela=%s cnpjs=%d até=%s → %d linhas em %v",
+		tabela, len(cnpjs), dataFim, n, time.Since(t0))
 	return out, nil
 }
 
@@ -292,6 +367,10 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 	if err != nil {
 		return err
 	}
+	dataUltimaVendaPorCliente, err := dataUltimaVendaPorCodProdPorCliente(db, empresaID, clientes, dataFim, fluxo, tiposVendaValidos, codFornec)
+	if err != nil {
+		return err
+	}
 
 	// Nome dos itens que NENHUM cliente da vigência vendeu (só esses
 	// precisam do fallback histórico — os outros já vieram com nome de
@@ -330,7 +409,7 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 		return err
 	}
 	stmt, err := tx.Prepare(pq.CopyInSchema("farol", "metas_itens_realizado",
-		"empresa_id", "vinculo_id", "vigencia_id", "fluxo", "cnpj", "ean", "nome", "qtd", "valor", "vendeu"))
+		"empresa_id", "vinculo_id", "vigencia_id", "fluxo", "cnpj", "ean", "nome", "qtd", "valor", "vendeu", "data_ultima_venda"))
 	if err != nil {
 		return err
 	}
@@ -343,10 +422,12 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 	grupoDoCodProd := agruparItensPorComponente(itens)
 	for _, c := range clientes {
 		porCodProd := linhasPorCliente[c.CNPJ]
+		dataPorCodProd := dataUltimaVendaPorCliente[c.CNPJ]
 		type acc struct {
-			Qtd, Valor float64
-			Nome       string
-			Vendeu     bool
+			Qtd, Valor      float64
+			Nome            string
+			Vendeu          bool
+			DataUltimaVenda time.Time
 		}
 		porGrupo := map[string]*acc{}
 		var ordem []string
@@ -359,6 +440,12 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 				porGrupo[grupo] = a
 				ordem = append(ordem, grupo)
 				codProdContadoNoGrupo[grupo] = map[string]bool{}
+			}
+			// Data última venda: MAX entre os cod_prod do grupo, mesmo os
+			// já "contados" pra Qtd/Valor acima (aqui não duplica nada, só
+			// compara datas — sem o `continue` do bloco de Qtd/Valor).
+			if data, ok2 := dataPorCodProd[it.CodProd]; ok2 && data.After(a.DataUltimaVenda) {
+				a.DataUltimaVenda = data
 			}
 			if codProdContadoNoGrupo[grupo][it.CodProd] {
 				// mesmo cod_prod, 2ª linha do grupo (por causa do outro EAN
@@ -380,7 +467,11 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 		}
 		for _, grupo := range ordem {
 			a := porGrupo[grupo]
-			if _, err := stmt.Exec(empresaID, vinculoID, vigenciaID, fluxo, c.CNPJ, grupo, a.Nome, a.Qtd, a.Valor, a.Vendeu); err != nil {
+			var dataUltimaVenda any
+			if !a.DataUltimaVenda.IsZero() {
+				dataUltimaVenda = a.DataUltimaVenda
+			}
+			if _, err := stmt.Exec(empresaID, vinculoID, vigenciaID, fluxo, c.CNPJ, grupo, a.Nome, a.Qtd, a.Valor, a.Vendeu, dataUltimaVenda); err != nil {
 				return err
 			}
 		}
@@ -407,7 +498,7 @@ func RecalcularItensRealizado(db *sql.DB, empresaID string, vinculoID, vigenciaI
 // visão agregada da Rede).
 func calcularItensPorEscopo(db *sql.DB, empresaID string, vigenciaID int, fluxo string, cnpjs []string) ([]PainelItemLinha, error) {
 	rows, err := db.Query(`
-		SELECT ean, MAX(nome) FILTER (WHERE nome <> ''), SUM(qtd), SUM(valor), bool_or(vendeu)
+		SELECT ean, MAX(nome) FILTER (WHERE nome <> ''), SUM(qtd), SUM(valor), bool_or(vendeu), MAX(data_ultima_venda)
 		FROM farol.metas_itens_realizado
 		WHERE empresa_id = $1 AND vigencia_id = $2 AND fluxo = $3 AND cnpj = ANY($4)
 		GROUP BY ean
@@ -421,10 +512,14 @@ func calcularItensPorEscopo(db *sql.DB, empresaID string, vigenciaID int, fluxo 
 	for rows.Next() {
 		var it PainelItemLinha
 		var nome sql.NullString
-		if err := rows.Scan(&it.EAN, &nome, &it.Qtd, &it.Valor, &it.Vendeu); err != nil {
+		var dataUltimaVenda sql.NullTime
+		if err := rows.Scan(&it.EAN, &nome, &it.Qtd, &it.Valor, &it.Vendeu, &dataUltimaVenda); err != nil {
 			return nil, err
 		}
 		it.Nome = nome.String
+		if dataUltimaVenda.Valid {
+			it.DataUltimaVenda = dataUltimaVenda.Time.Format("2006-01-02")
+		}
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {

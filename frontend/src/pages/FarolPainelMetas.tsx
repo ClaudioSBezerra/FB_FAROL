@@ -168,6 +168,10 @@ interface PainelItemLinha {
   qtd: number
   valor: number
   vendeu: boolean
+  // data_ultima_venda — pedido do Claudio 22/09/2026: fato do PRODUTO
+  // (diferente de Dt.Ult.Cmp, fato do Cliente) — quando ESTE item foi
+  // vendido pela última vez, mesmo que não tenha vendido NESTA vigência.
+  data_ultima_venda?: string
 }
 
 // AbaCombinado — as 4 abas da visão Combinado, cada uma batizada e
@@ -1415,6 +1419,13 @@ export default function FarolPainelMetas() {
                   <TableRow>
                     <TableHead>EAN</TableHead>
                     <TableHead>Produto</TableHead>
+                    {/* Dt.Ult.Venda — pedido do Claudio 22/09/2026: fato do
+                        PRODUTO (diferente de Dt.Ult.Cmp acima, que é fato
+                        do Cliente) — quando ESTE item foi vendido pela
+                        última vez, mesmo que não tenha vendido NESTA
+                        vigência (útil sobretudo nos "Não vendeu": mostra
+                        se já foi comprado antes ou nunca). */}
+                    <TableHead>Dt.Ult.Venda</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead className="text-right">Objetivo</TableHead>
@@ -1423,12 +1434,15 @@ export default function FarolPainelMetas() {
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
                   {itensLista.map((it, i) => (
                     <TableRow key={i}>
                       <TableCell className="font-mono text-xs">{it.ean}</TableCell>
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">
+                        {it.data_ultima_venda ? new Date(it.data_ultima_venda + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                      </TableCell>
                       <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
                       <TableCell className="text-right">{fmtBRL(it.valor)}</TableCell>
                       {/* Objetivo é da REDE inteira (qtd de EANs distintos a

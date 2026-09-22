@@ -567,6 +567,29 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 	}, nil
 }
 
+// recalcularResumoCombinadoParaEscopo recomputa Cobertura.RealizadoTotal e
+// Sortimento.RealizadoTotal a partir de uma lista de Redes JÁ FILTRADA por
+// GGV/CRV/RCA — bug real achado pelo Claudio 22/09/2026 ("não estou
+// conseguindo entender o resultado"): a visão do RCA mostrava "Cobertura —
+// redes cobertas: 69" e "Sortimento — média de EANs: 4,41" no topo, só que
+// esses 2 números vinham do cálculo da EMPRESA INTEIRA (calcularPainelCombinado
+// nunca soube de GGV/CRV/RCA) — o resto da tela (lista de Redes/Clientes)
+// já era filtrado corretamente, DEPOIS do cálculo, só esses 2 cards de
+// resumo é que ficavam pra trás. recalcularTotalDeRedes (farol_metas_calculo.go)
+// já resolve exatamente isso pro painel de métrica única (farol_metas_public.go)
+// desde sempre — o Combinado (adicionado depois, 2026-09-03) nunca ganhou o
+// mesmo tratamento. Projecao/Delta/FaixaAtual do resumo Combinado não são
+// usados em nenhuma tela hoje (só realizado_total) — ficam como estavam
+// (globais); se um dia aparecerem numa tela, precisam do mesmo recorte.
+func recalcularResumoCombinadoParaEscopo(redesFiltradas []PainelCombinadoRede, resumoCobertura, resumoSortimento *PainelMetricaResumo) {
+	realizadoRedes := make([]RealizadoRede, len(redesFiltradas))
+	for i, r := range redesFiltradas {
+		realizadoRedes[i] = RealizadoRede{Atingiu: r.CoberturaAtingiu, Valor: r.SortimentoValor}
+	}
+	resumoCobertura.RealizadoTotal = recalcularTotalDeRedes(realizadoRedes, "cobertura_rede").RealizadoTotal
+	resumoSortimento.RealizadoTotal = recalcularTotalDeRedes(realizadoRedes, "sortimento_rede").RealizadoTotal
+}
+
 // MetasPainelCombinadoHandler — GET /api/farol/metas-painel-combinado
 //
 //	?vinculo_cobertura_id=&vigencia_cobertura_id=&vinculo_sortimento_id=&vigencia_sortimento_id=&fluxo=
@@ -641,6 +664,7 @@ func MetasPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 				clientesFiltrados = append(clientesFiltrados, c)
 			}
 			resp.Clientes = clientesFiltrados
+			recalcularResumoCombinadoParaEscopo(resp.Redes, &resp.Cobertura, &resp.Sortimento)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -722,6 +746,7 @@ func MetasPublicPainelCombinadoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 		resp.Clientes = clientesFiltrados
+		recalcularResumoCombinadoParaEscopo(resp.Redes, &resp.Cobertura, &resp.Sortimento)
 
 		json.NewEncoder(w).Encode(resp)
 	}

@@ -258,3 +258,74 @@ func TestRecalcularItensRealizado_VinculoCobertura_NoOp(t *testing.T) {
 		t.Errorf("metas_itens_realizado tem %d linha(s) pra vínculo de Cobertura, want 0", n)
 	}
 }
+
+// TestItensRealizado_DataUltimaVenda — pedido do Claudio 22/09/2026: cada
+// PRODUTO tem sua PRÓPRIA data de última venda (diferente de "Dt.Ult.Cmp",
+// que é fato do Cliente — ver resolverDataUltimaCompraClientes). Cobre 3
+// casos: item vendido DENTRO da vigência, item "Não coberto" nesta
+// vigência mas vendido em período anterior (mostra a data histórica, não
+// vazio), e item vendido DEPOIS do fim da vigência (não pode vazar pro
+// passado — vigência de Agosto não pode saber de uma venda de Setembro).
+func TestItensRealizado_DataUltimaVenda(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TDUV Sortimento", "sortimento_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "qtd_minima_positivacao", Label: "Qtd mínima", Type: "integer"}},
+		map[string]any{"qtd_minima_positivacao": 1.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpj := "70000000000201"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{cnpj}) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE DUV", cnpj, "TCALC-RCADUV")
+
+	db.Exec(`DELETE FROM farol.metas_itens_validos WHERE vigencia_id = $1`, vigenciaID)
+	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod) VALUES
+		($1,$2,$3,'EAN-VENDIDO-AGOSTO','PRODV1'),
+		($1,$2,$3,'EAN-VENDIDO-SO-ANTES','PRODV2'),
+		($1,$2,$3,'EAN-SO-VENDIDO-DEPOIS','PRODV3'),
+		($1,$2,$3,'EAN-NUNCA-VENDIDO','PRODNUNCA')`, empresaID, vinculoID, vigenciaID)
+
+	inserirVendaFaturadaFixture(t, empresaID, cnpj, "PRODV1", "TCALC-RCADUV", "1", 20, 2, "2026-08-15")
+	inserirVendaFaturadaFixture(t, empresaID, cnpj, "PRODV2", "TCALC-RCADUV", "1", 10, 1, "2026-06-20") // antes da vigência
+	inserirVendaFaturadaFixture(t, empresaID, cnpj, "PRODV3", "TCALC-RCADUV", "1", 30, 3, "2026-09-05") // depois da vigência
+
+	if err := RecalcularItensRealizado(db, empresaID, vinculoID, vigenciaID, "faturado"); err != nil {
+		t.Fatalf("RecalcularItensRealizado: %v", err)
+	}
+	itens, err := calcularItensPorEscopo(db, empresaID, vigenciaID, "faturado", []string{cnpj})
+	if err != nil {
+		t.Fatalf("calcularItensPorEscopo: %v", err)
+	}
+	porEan := map[string]PainelItemLinha{}
+	for _, it := range itens {
+		porEan[it.EAN] = it
+	}
+
+	vendidoAgosto := porEan["EAN-VENDIDO-AGOSTO"]
+	if !vendidoAgosto.Vendeu || vendidoAgosto.DataUltimaVenda != "2026-08-15" {
+		t.Errorf("EAN-VENDIDO-AGOSTO: Vendeu=%v DataUltimaVenda=%q, want Vendeu=true DataUltimaVenda=2026-08-15",
+			vendidoAgosto.Vendeu, vendidoAgosto.DataUltimaVenda)
+	}
+
+	vendidoAntes := porEan["EAN-VENDIDO-SO-ANTES"]
+	if vendidoAntes.Vendeu {
+		t.Errorf("EAN-VENDIDO-SO-ANTES: Vendeu = true, want false (venda de junho, fora da vigência de agosto)")
+	}
+	if vendidoAntes.DataUltimaVenda != "2026-06-20" {
+		t.Errorf("EAN-VENDIDO-SO-ANTES: DataUltimaVenda = %q, want 2026-06-20 (histórico, mesmo não tendo vendido NESTA vigência)", vendidoAntes.DataUltimaVenda)
+	}
+
+	soVendidoDepois := porEan["EAN-SO-VENDIDO-DEPOIS"]
+	if soVendidoDepois.Vendeu {
+		t.Errorf("EAN-SO-VENDIDO-DEPOIS: Vendeu = true, want false (venda de setembro, fora da vigência de agosto)")
+	}
+	if soVendidoDepois.DataUltimaVenda != "" {
+		t.Errorf("EAN-SO-VENDIDO-DEPOIS: DataUltimaVenda = %q, want vazio (venda de setembro não pode vazar pra quem olha agosto)", soVendidoDepois.DataUltimaVenda)
+	}
+
+	nuncaVendido := porEan["EAN-NUNCA-VENDIDO"]
+	if nuncaVendido.DataUltimaVenda != "" {
+		t.Errorf("EAN-NUNCA-VENDIDO: DataUltimaVenda = %q, want vazio", nuncaVendido.DataUltimaVenda)
+	}
+}
