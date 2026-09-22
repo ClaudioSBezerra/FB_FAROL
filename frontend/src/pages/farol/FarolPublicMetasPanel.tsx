@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft } from 'lucide-react'
 
@@ -374,7 +374,12 @@ export default function FarolPublicMetasPanel() {
   // modo — pedido do Claudio 22/09/2026: Gamificação como uma tela à
   // parte, fora do fluxo Indústria/Métrica/Período (uma campanha pode
   // cruzar indústrias — não faz sentido escondida atrás desse seletor).
-  const [modo, setModo] = useState<'objetivos' | 'gamificacao'>('objetivos')
+  // Lê de ?aba=campanhas pra existirem 2 links prontos pra mandar por
+  // WhatsApp: um cai em Objetivos, outro já abre direto em Campanhas.
+  const [searchParams] = useSearchParams()
+  const [modo, setModo] = useState<'objetivos' | 'gamificacao'>(
+    searchParams.get('aba') === 'campanhas' ? 'gamificacao' : 'objetivos'
+  )
   const [industriaID, setIndustriaID] = useState('')
   const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
   const [vigenciaID, setVigenciaID] = useState('')
