@@ -19,6 +19,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -102,24 +103,24 @@ type PainelCombinadoCliente struct {
 	SortimentoObjetivo float64 `json:"sortimento_objetivo"`
 }
 
-// infoUltimaVendaCliente é o resultado de resolverUFClientes por CNPJ — UF e
-// data da venda mais recente vêm da MESMA linha vencedora (Faturado x
-// Transmitido, o que for mais recente), então saem juntos da mesma consulta
-// sem custo adicional (ver comentário da função).
-type infoUltimaVendaCliente struct {
-	UF               string
-	DataUltimaCompra time.Time
-}
-
-// resolverUFClientes resolve o UF e a data da venda mais RECENTE de cada
-// CNPJ — qualquer período, qualquer fornecedor, faturado OU transmitido (o
-// que vier depois na ordenação) — decisão do Claudio em 10/09/2026: não
-// existe UF na lista de Clientes Válidos nem em cadastro de cliente algum,
-// só nas linhas de venda (migration 156). A data da última compra (pedido
-// do Claudio 22/09/2026, visão do RCA no drill-down de Cliente) é a MESMA
-// data que já decidia qual UF vencia — não é uma consulta nova, só passou a
-// expor uma coluna que a query já calculava e descartava. CNPJ que nunca
+// resolverUFClientes resolve o UF de cada CNPJ a partir da venda mais
+// RECENTE dele — qualquer período, qualquer fornecedor, faturado OU
+// transmitido (o que vier depois na ordenação) — decisão do Claudio em
+// 10/09/2026: não existe UF na lista de Clientes Válidos nem em cadastro
+// de cliente algum, só nas linhas de venda (migration 156). CNPJ que nunca
 // vendeu nada no Farol simplesmente não aparece no mapa.
+//
+// Deliberadamente NÃO filtra por cod_fornec — UF é geografia do cliente,
+// não muda por indústria, então "qualquer fornecedor" é a resposta certa
+// pra essa pergunta. Achado 22/09/2026: uma versão anterior desta função
+// também devolvia a data da venda vencedora e essa data virou o campo
+// "Dt.Ult.Cmp" — só que "última venda em QUALQUER fornecedor" é a resposta
+// ERRADA pra "quando esse cliente comprou da indústria X" (RCA da Rede
+// SUPERMERCADO MENDES via visão UNILEVER FOOD via a tela mostrando
+// 21/09/2026 — data de uma venda da UNILEVER HC — quando a última compra
+// real de FOOD desse cliente foi 25/08/2026, quase um mês antes). Ver
+// resolverDataUltimaCompraClientes abaixo, que filtra por cod_fornec (e
+// tipos_venda) do vínculo, igual Cobertura/Sortimento já fazem.
 // resolverUFClientes — reescrita 2026-09-11 (decisão do Claudio: UF não pode
 // custar caro nem ao vivo nem no cálculo). A versão original fazia
 // DISTINCT ON sobre um UNION ALL das duas tabelas (empresa_id, cnpj) —
@@ -130,8 +131,8 @@ type infoUltimaVendaCliente struct {
 // só a linha mais recente de cada cliente direto, sem trazer o resto do
 // histórico. Mesmo resultado, mesmo empresaID/cnpjs — só o plano de
 // execução muda. Medido: 8.000ms → 20ms (400x).
-func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]infoUltimaVendaCliente, error) {
-	out := map[string]infoUltimaVendaCliente{}
+func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]string, error) {
+	out := map[string]string{}
 	if len(cnpjs) == 0 {
 		return out, nil
 	}
@@ -141,12 +142,7 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 		       WHEN vt.data IS NULL THEN vf.uf
 		       WHEN vf.data >= vt.data THEN vf.uf
 		       ELSE vt.uf
-		  END AS uf,
-		  CASE WHEN vf.data IS NULL THEN vt.data
-		       WHEN vt.data IS NULL THEN vf.data
-		       WHEN vf.data >= vt.data THEN vf.data
-		       ELSE vt.data
-		  END AS data_ultima_compra
+		  END AS uf
 		FROM unnest($2::text[]) AS c(cnpj)
 		LEFT JOIN LATERAL (
 		  SELECT uf, data_faturamento AS data FROM vendas_faturadas
@@ -166,11 +162,87 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 	defer rows.Close()
 	for rows.Next() {
 		var cnpj, uf string
-		var data time.Time
-		if err := rows.Scan(&cnpj, &uf, &data); err != nil {
+		if err := rows.Scan(&cnpj, &uf); err != nil {
 			return nil, err
 		}
-		out[cnpj] = infoUltimaVendaCliente{UF: uf, DataUltimaCompra: data}
+		out[cnpj] = uf
+	}
+	return out, rows.Err()
+}
+
+// resolverDataUltimaCompraClientes resolve a data da venda mais RECENTE de
+// cada CNPJ, restrita ao(s) cod_fornec (e, se houver, tipos_venda) do
+// VÍNCULO — mesmos filtros que somaPvendaClientes/qtdPorCodProdClientes já
+// aplicam pra calcular Cobertura/Sortimento (ver farol_metas_calculo.go).
+// "Dt.Ult.Cmp" no drill-down de Cliente precisa responder "quando esse
+// cliente comprou desta indústria", não "quando comprou de qualquer
+// fornecedor" (esse é o papel de resolverUFClientes, que fica como está —
+// UF não muda por indústria). Mesmo padrão LATERAL + LIMIT 1 por cnpj, um
+// índice por tabela — barato mesmo filtrando fornecedor/tipo de venda.
+func resolverDataUltimaCompraClientes(db *sql.DB, empresaID string, cnpjs, tiposVenda, codFornec []string) (map[string]time.Time, error) {
+	out := map[string]time.Time{}
+	if len(cnpjs) == 0 {
+		return out, nil
+	}
+	// Placeholders montados dinamicamente (mesmo padrão de
+	// somaPvendaClientes) — $3/$4 só entram na lista de args quando o
+	// filtro correspondente é usado. Passar um placeholder que não aparece
+	// em lugar nenhum do texto da query faz o Postgres rejeitar a consulta
+	// ("could not determine data type" ou "got N parameters but the
+	// statement requires M") — achado ao rodar os testes desta função.
+	args := []any{empresaID, pq.Array(cnpjs)}
+	placeholderTipoVenda, placeholderCodFornec := 0, 0
+	if len(tiposVenda) > 0 {
+		args = append(args, pq.Array(tiposVenda))
+		placeholderTipoVenda = len(args)
+	}
+	if len(codFornec) > 0 {
+		args = append(args, pq.Array(codFornec))
+		placeholderCodFornec = len(args)
+	}
+	filtro := func(alias string) string {
+		var cond strings.Builder
+		if placeholderTipoVenda > 0 {
+			fmt.Fprintf(&cond, " AND %s.tipo_venda = ANY($%d::text[])", alias, placeholderTipoVenda)
+		}
+		if placeholderCodFornec > 0 {
+			fmt.Fprintf(&cond, " AND %s.cod_fornec = ANY($%d::text[])", alias, placeholderCodFornec)
+		}
+		return cond.String()
+	}
+	filtroVF := filtro("vendas_faturadas")
+	filtroVT := filtro("vendas_transmitidas")
+	rows, err := db.Query(`
+		SELECT c.cnpj,
+		  CASE WHEN vf.data IS NULL THEN vt.data
+		       WHEN vt.data IS NULL THEN vf.data
+		       WHEN vf.data >= vt.data THEN vf.data
+		       ELSE vt.data
+		  END AS data_ultima_compra
+		FROM unnest($2::text[]) AS c(cnpj)
+		LEFT JOIN LATERAL (
+		  SELECT data_faturamento AS data FROM vendas_faturadas
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj`+filtroVF+`
+		  ORDER BY data_faturamento DESC LIMIT 1
+		) vf ON true
+		LEFT JOIN LATERAL (
+		  SELECT data_transmissao AS data FROM vendas_transmitidas
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj`+filtroVT+`
+		  ORDER BY data_transmissao DESC LIMIT 1
+		) vt ON true
+		WHERE vf.data IS NOT NULL OR vt.data IS NOT NULL
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cnpj string
+		var data time.Time
+		if err := rows.Scan(&cnpj, &data); err != nil {
+			return nil, err
+		}
+		out[cnpj] = data
 	}
 	return out, rows.Err()
 }

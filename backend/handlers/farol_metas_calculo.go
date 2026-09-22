@@ -402,9 +402,9 @@ func agruparPorRede(clientes []clienteValido) (ordem []string, porRede map[strin
 // origem" e não pediu tratamento especial, então a apuração por Rede
 // (FR18a) não fragmenta o cálculo: só o "dono pra exibir/agrupar" usa essa
 // regra de desempate.
-// formatarDataUltimaCompra converte o time.Time de infoUltimaVendaCliente
-// pra AAAA-MM-DD — zero value (cliente nunca vendeu nada, ausente do mapa)
-// vira string vazia, igual ao UF vazio no mesmo caso.
+// formatarDataUltimaCompra converte o time.Time de
+// resolverDataUltimaCompraClientes pra AAAA-MM-DD — zero value (cliente
+// nunca comprou desta indústria, ausente do mapa) vira string vazia.
 func formatarDataUltimaCompra(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -444,6 +444,14 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	if err != nil {
 		return nil, err
 	}
+	// Data da última compra DESTA indústria (não "qualquer fornecedor" —
+	// ver comentário de resolverDataUltimaCompraClientes, achado real
+	// 22/09/2026: RCA via 21/09 na tela de UNILEVER FOOD, mas essa venda
+	// era de UNILEVER HC; a última compra de FOOD tinha sido 25/08).
+	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, tiposVenda, codFornec)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -453,8 +461,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			info := ufPorCliente[c.CNPJ]
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: info.UF, DataUltimaCompra: formatarDataUltimaCompra(info.DataUltimaCompra), Atingiu: valor >= limiar})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), Atingiu: valor >= limiar})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
@@ -669,6 +676,13 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	if err != nil {
 		return nil, err
 	}
+	// Ver comentário equivalente em calcularCoberturaPorRede — data da
+	// última compra DESTA indústria, não "qualquer fornecedor" (esse é o
+	// papel do UF acima).
+	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, tiposVenda, codFornec)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -678,8 +692,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		for _, c := range clientesDaRede {
 			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], grupoDoCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
-			info := ufPorCliente[c.CNPJ]
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: info.UF, DataUltimaCompra: formatarDataUltimaCompra(info.DataUltimaCompra)})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ])})
 		}
 		media := somaEANsPorLoja / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)

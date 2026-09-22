@@ -9,79 +9,76 @@ import (
 	"testing"
 )
 
-// TestResolverUFClientes_DataUltimaCompraVemDaMesmaVendaQueDecideOUF —
-// pedido do Claudio 22/09/2026 (visão do RCA no drill-down de Cliente,
-// "Dt.Ult.Cmp"): a data não é uma consulta nova, é a mesma coluna que já
-// decidia qual UF vencia (Faturado x Transmitido, o mais recente) — aqui só
-// confirma que os dois valores saem coerentes: a data resolvida bate com a
-// venda mais recente de cada CNPJ, e o UF junto é o dessa mesma linha.
-func TestResolverUFClientes_DataUltimaCompraVemDaMesmaVendaQueDecideOUF(t *testing.T) {
+// TestResolverUFClientes_QualquerFornecedor confirma o comportamento
+// deliberado e inalterado de resolverUFClientes: UF vem da venda mais
+// recente em QUALQUER fornecedor (é geografia do cliente, não muda por
+// indústria) — ao contrário de resolverDataUltimaCompraClientes abaixo.
+func TestResolverUFClientes_QualquerFornecedor(t *testing.T) {
 	db, empresaID := biTestDB(t)
 
-	cnpjSoFaturado := "11111111000101"
-	cnpjSoTransmitido := "22222222000102"
-	cnpjFaturadoMaisRecente := "33333333000103"
-	cnpjSemVenda := "44444444000104"
-	cnpjs := []string{cnpjSoFaturado, cnpjSoTransmitido, cnpjFaturadoMaisRecente, cnpjSemVenda}
-
+	cnpj := "11111111000101"
 	t.Cleanup(func() {
-		for _, c := range cnpjs {
-			db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TUF-TEST'`, empresaID, c)
-			db.Exec(`DELETE FROM vendas_transmitidas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TUF-TEST'`, empresaID, c)
-		}
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TUF-TEST'`, empresaID, cnpj)
 	})
-
-	inserirVendaComUF := func(tabela, colData, cnpj, uf, data string) {
-		_, err := db.Exec(`
-			INSERT INTO `+tabela+` (empresa_id, `+colData+`, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt, uf)
-			VALUES ($1, $2, $3, $3, 'PROD-TUF', 'TUF-TEST', 'SUP', 'Sup', 'GER', 'Ger', '1', 100, 1, $4)
-		`, empresaID, data, cnpj, uf)
-		if err != nil {
-			t.Fatalf("inserir fixture %s: %v", tabela, err)
-		}
+	_, err := db.Exec(`
+		INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, cod_fornec, pvenda, qt, uf)
+		VALUES ($1, '2026-08-10', $2, $2, 'PROD-TUF', 'TUF-TEST', 'SUP', 'Sup', 'GER', 'Ger', '1', '999', 100, 1, 'SP')
+	`, empresaID, cnpj)
+	if err != nil {
+		t.Fatalf("inserir fixture: %v", err)
 	}
 
-	inserirVendaComUF("vendas_faturadas", "data_faturamento", cnpjSoFaturado, "SP", "2026-08-10")
-	inserirVendaComUF("vendas_transmitidas", "data_transmissao", cnpjSoTransmitido, "RJ", "2026-08-15")
-	inserirVendaComUF("vendas_faturadas", "data_faturamento", cnpjFaturadoMaisRecente, "MG", "2026-08-01")
-	inserirVendaComUF("vendas_transmitidas", "data_transmissao", cnpjFaturadoMaisRecente, "BA", "2026-07-20")
-
-	out, err := resolverUFClientes(db, empresaID, cnpjs)
+	out, err := resolverUFClientes(db, empresaID, []string{cnpj})
 	if err != nil {
 		t.Fatalf("resolverUFClientes: %v", err)
 	}
+	if out[cnpj] != "SP" {
+		t.Errorf("UF = %q, esperava SP (mesmo com cod_fornec 999, não filtrado)", out[cnpj])
+	}
+}
 
-	checar := func(cnpj, ufEsperado, dataEsperada string) {
-		info, ok := out[cnpj]
-		if ufEsperado == "" {
-			if ok {
-				t.Errorf("%s: esperava ausente do mapa, veio UF=%q data=%v", cnpj, info.UF, info.DataUltimaCompra)
-			}
-			return
-		}
-		if !ok {
-			t.Fatalf("%s: esperava presente no mapa, veio ausente", cnpj)
-		}
-		if info.UF != ufEsperado {
-			t.Errorf("%s: UF = %q, esperava %q", cnpj, info.UF, ufEsperado)
-		}
-		if got := info.DataUltimaCompra.Format("2006-01-02"); got != dataEsperada {
-			t.Errorf("%s: DataUltimaCompra = %q, esperava %q", cnpj, got, dataEsperada)
+// TestResolverDataUltimaCompraClientes_FiltraPorFornecedor — achado real
+// 22/09/2026: RCA 3691 via "Dt.Ult.Cmp" = 21/09 na tela de UNILEVER FOOD,
+// mas essa data era de uma venda de UNILEVER HC (cod_fornec 396); a última
+// compra REAL de FOOD (cod_fornec 131) desse cliente tinha sido quase um
+// mês antes. resolverDataUltimaCompraClientes precisa ignorar a venda mais
+// recente de outro fornecedor e enxergar só a da indústria do vínculo.
+func TestResolverDataUltimaCompraClientes_FiltraPorFornecedor(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	cnpj := "22222222000102"
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TDUF-TEST'`, empresaID, cnpj)
+	})
+	inserir := func(data, codFornec string) {
+		_, err := db.Exec(`
+			INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, cod_fornec, pvenda, qt, uf)
+			VALUES ($1, $2, $3, $3, 'PROD-TDUF', 'TDUF-TEST', 'SUP', 'Sup', 'GER', 'Ger', '1', $4, 100, 1, 'GO')
+		`, empresaID, data, cnpj, codFornec)
+		if err != nil {
+			t.Fatalf("inserir fixture: %v", err)
 		}
 	}
-	checar(cnpjSoFaturado, "SP", "2026-08-10")
-	checar(cnpjSoTransmitido, "RJ", "2026-08-15")
-	// venda faturada de 01/08 x transmitida de 20/07: a mais recente (01/08,
-	// Faturado) tem que vencer nos dois campos juntos — UF e data da MESMA
-	// linha, não um "melhor de cada".
-	checar(cnpjFaturadoMaisRecente, "MG", "2026-08-01")
-	checar(cnpjSemVenda, "", "")
+	inserir("2026-09-21", "396") // UNILEVER HC — mais recente, mas de OUTRA indústria
+	inserir("2026-08-25", "131") // UNILEVER FOOD — a indústria do vínculo sob teste
 
-	if got := formatarDataUltimaCompra(out[cnpjSoFaturado].DataUltimaCompra); got != "2026-08-10" {
-		t.Errorf("formatarDataUltimaCompra = %q, esperava 2026-08-10", got)
+	out, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, nil, []string{"131"})
+	if err != nil {
+		t.Fatalf("resolverDataUltimaCompraClientes: %v", err)
 	}
-	if got := formatarDataUltimaCompra(out[cnpjSemVenda].DataUltimaCompra); got != "" {
-		t.Errorf("formatarDataUltimaCompra do zero value deveria ser vazio, veio %q", got)
+	got := formatarDataUltimaCompra(out[cnpj])
+	if got != "2026-08-25" {
+		t.Errorf("DataUltimaCompra = %q, esperava 2026-08-25 (a venda de FOOD, não a de HC que é mais recente mas de outro fornecedor)", got)
+	}
+
+	// Sem filtro de cod_fornec (vínculo hipotético sem restrição de
+	// indústria) — aí sim a mais recente de qualquer fornecedor vence.
+	outSemFiltro, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, nil, nil)
+	if err != nil {
+		t.Fatalf("resolverDataUltimaCompraClientes sem filtro: %v", err)
+	}
+	if got := formatarDataUltimaCompra(outSemFiltro[cnpj]); got != "2026-09-21" {
+		t.Errorf("sem filtro de cod_fornec: DataUltimaCompra = %q, esperava 2026-09-21", got)
 	}
 }
 
