@@ -228,12 +228,6 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
       </button>
       {aberto && (
         <div className="pl-5 pb-1.5 space-y-1">
-          {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026: RCA/Supervisor no
-              drill-down de Cliente. Vem pronta do snapshot (nunca ao vivo,
-              mesma regra do UF — ver resolverUFClientes no backend). */}
-          <div className="text-[11px] text-muted-foreground">
-            Dt.Ult.Cmp: <strong>{dataUltimaCompra ? new Date(dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong>
-          </div>
           {!temSortimento ? (
             <div className="text-[11px] text-muted-foreground py-1">Produtos indisponíveis nesta métrica</div>
           ) : isLoadingItens ? (
@@ -243,7 +237,18 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
           ) : (
             itens.map(it => (
               <div key={it.ean} className="flex items-center justify-between gap-2 text-[11px] py-0.5">
-                <span className="truncate min-w-0">{it.nome || it.ean}</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {/* Dt.Ult.Cmp na frente do Item — pedido do Claudio
+                      22/09/2026 (ajustado no mesmo dia pra vir antes do nome
+                      do produto, não como linha solta acima da lista). Mesma
+                      data em toda a lista (é do Cliente, não do produto);
+                      vem pronta do snapshot (nunca ao vivo — mesma regra do
+                      UF, ver resolverUFClientes no backend). */}
+                  <span className="shrink-0 font-mono text-muted-foreground">
+                    {dataUltimaCompra ? new Date(dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                  </span>
+                  <span className="truncate min-w-0">{it.nome || it.ean}</span>
+                </span>
                 <StatusBadge atingiu={it.vendeu} label={it.vendeu ? 'Coberto' : 'Não coberto'} />
               </div>
             ))

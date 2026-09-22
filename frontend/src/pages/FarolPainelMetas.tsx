@@ -1376,13 +1376,6 @@ export default function FarolPainelMetas() {
                   <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
                   <span><strong>{itensLista.length}</strong> itens no catálogo</span>
                   <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
-                  {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026: só faz sentido
-                      pra 1 loja (cnpj), não pra um grupo de Redes/RCA/CRV/GGV
-                      somado (não existe "última compra" agregada de várias
-                      lojas com sentido único). */}
-                  {itensAlvo.cnpj && (
-                    <span>Dt.Ult.Cmp: <strong>{itensAlvo.dataUltimaCompra ? new Date(itensAlvo.dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong></span>
-                  )}
                 </div>
               )}
               {/* Nota só aparece vindo de uma linha de rollup (GGVxCRV/
@@ -1409,6 +1402,13 @@ export default function FarolPainelMetas() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026, ajustado no
+                        mesmo dia pra vir na frente do Item: mesma data pra
+                        toda a lista (é do Cliente, não do produto), repetida
+                        em cada linha só faz sentido pra 1 loja — em rollup
+                        (GGV/CRV/RCA/Redes somadas) não existe "última compra"
+                        agregada com sentido único, então mostra travessão. */}
+                    <TableHead>Dt.Ult.Cmp</TableHead>
                     <TableHead>EAN</TableHead>
                     <TableHead>Produto</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
@@ -1419,10 +1419,13 @@ export default function FarolPainelMetas() {
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
                   {itensLista.map((it, i) => (
                     <TableRow key={i}>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">
+                        {itensAlvo?.cnpj && itensAlvo.dataUltimaCompra ? new Date(itensAlvo.dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{it.ean}</TableCell>
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
                       <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
