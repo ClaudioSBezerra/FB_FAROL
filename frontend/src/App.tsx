@@ -68,6 +68,7 @@ const FarolUsuarios = lazy(() => import('./pages/farol/FarolUsuarios'))
 const FarolBI = lazy(() => import('./pages/farol/FarolBI'))
 const FarolAssistente = lazy(() => import('./pages/farol/FarolAssistente'))
 const FarolRelatorios = lazy(() => import('./pages/farol/FarolRelatorios'))
+const FarolGamificacao = lazy(() => import('./pages/farol/FarolGamificacao'))
 const FarolComparativoFechamento = lazy(() => import('./pages/farol/FarolComparativoFechamento'))
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { AjudaChat } from '@/components/AjudaChat'
@@ -115,6 +116,19 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
   const ok = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
   if (!ok) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+// FbtaxAdminRoute — restrito a admin_fbtax (só o Claudio, por enquanto).
+// Mais estrito que AdminOrTIRoute de propósito: Gamificação (22/09/2026) é
+// MVP com bônus em R$ visível, não deve aparecer nem pra "admin" de
+// plataforma de outra empresa nem pra persona TI.
+function FbtaxAdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, spRole } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  if (spRole !== 'admin_fbtax') return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -323,6 +337,7 @@ function AppLayout() {
               <Route path="/gestao/tipos-metrica" element={<ProtectedRoute><ConfigTiposMetrica /></ProtectedRoute>} />
               <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
               <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
+              <Route path="/farol/gamificacao" element={<FbtaxAdminRoute><FarolGamificacao /></FbtaxAdminRoute>} />
 
               {/* Configurações (admin) */}
               <Route path="/config/planos"      element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />

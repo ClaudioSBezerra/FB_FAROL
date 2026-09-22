@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText, Factory } from 'lucide-react'
+import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText, Factory, Trophy } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -39,6 +39,10 @@ interface RailItem {
   dev: boolean
   /** quando true, só aparece para admin OU TI */
   adminOrTI?: boolean
+  /** quando true, só aparece pra admin_fbtax (mais restrito que adminOrTI —
+   *  usado pelo MVP de Gamificação, 22/09/2026: não deve aparecer nem pra
+   *  "admin" de plataforma de outra empresa nem pra persona TI). */
+  fbtaxOnly?: boolean
   /** módulo necessário para exibir o item */
   requiredModulo?: string
 }
@@ -61,6 +65,11 @@ const mainItems: RailItem[] = [
   { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false },
   { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
   { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
+  // Gamificação — MVP restrito ao Claudio (22/09/2026, pedido do José
+  // Costa/CEO da JC): pontos/ranking/bônus por RCA. fbtaxOnly (não
+  // adminOrTI) de propósito — bônus em R$ visível não deve aparecer nem
+  // pra admin de outra empresa nem pra persona TI.
+  { id: 'gamificacao',    icon: Trophy,      label: 'Gamificação',         path: '/farol/gamificacao',    dev: false, fbtaxOnly: true },
 ]
 
 export function AppRail() {
@@ -104,6 +113,7 @@ export function AppRail() {
     ? mainItems.filter(it => it.id === 'importar' || it.id === 'relatorios')
     : mainItems.filter(it =>
         (!it.adminOrTI || canImport) &&
+        (!it.fbtaxOnly || spRole === 'admin_fbtax') &&
         (!it.requiredModulo || hasModulo(it.requiredModulo))
       )
   const active = getActiveModule(location.pathname)

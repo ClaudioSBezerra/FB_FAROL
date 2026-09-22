@@ -656,6 +656,16 @@ func main() {
 	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-itens-realizado/reprocessar", withSP(handlers.MetasItensRealizadoReprocessarHandler, "gestor_geral"))
 
+	// Gamificação — MVP (pedido do José Costa, CEO da JC, via Claudio
+	// 22/09/2026): pontos/ranking/bônus por RCA, restrito a admin_fbtax por
+	// enquanto (só o Claudio) — ver farol_gamificacao.go pro desenho.
+	http.HandleFunc("/api/farol/gamif-campanhas", withSP(handlers.GamifCampanhasHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-campanhas/", withSP(handlers.GamifCampanhaItemHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-campanhas-calcular", withSP(handlers.GamifCalcularHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-regras", withSP(handlers.GamifRegrasHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-regras/", withSP(handlers.GamifRegraItemHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-ranking", withSP(handlers.GamifRankingHandler, "admin_fbtax"))
+
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
 	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
 
