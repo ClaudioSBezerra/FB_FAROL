@@ -366,3 +366,77 @@ func TestCalcularPontuacaoCampanha_RedeCompletaAtingida_SoQuando100PorCento(t *t
 	}
 }
 
+// TestCalcularPontuacaoCampanha_RcaCompleto_MostraProgressoAntesDeCompletar
+// — pedido do Claudio 22/09/2026: "bater 100% todas as 6 redes do RCA...
+// apareceria pra ele que falta X pontos pra atingir o objetivo completo".
+// 2 RCAs no mesmo vínculo/vigência: RCA-A tem 2 Redes de 1 loja cada, as 2
+// batem (100% do portfólio — completo). RCA-B tem 2 Redes de 1 loja cada,
+// só 1 bate (50% — incompleto, mas precisa aparecer com "faltam 1 de 2").
+func TestCalcularPontuacaoCampanha_RcaCompleto_MostraProgressoAntesDeCompletar(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM RcaCompleto", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjA1, cnpjA2 := "80000000000501", "80000000000502" // RCA-A: as 2 batem
+	cnpjB1, cnpjB2 := "80000000000503", "80000000000504" // RCA-B: só 1 bate
+	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-A', 'TGAM-RCA-B')`, empresaID) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A1", cnpjA1, "TGAM-RCA-A")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A2", cnpjA2, "TGAM-RCA-A")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE B1", cnpjB1, "TGAM-RCA-B")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE B2", cnpjB2, "TGAM-RCA-B")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjA1, "PRODRCA", "TGAM-RCA-A", "1", 150, 1, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjA2, "PRODRCA", "TGAM-RCA-A", "1", 150, 1, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjB1, "PRODRCA", "TGAM-RCA-B", "1", 150, 1, "2026-08-10")
+	// cnpjB2 não compra nada — RCA-B fica 1 de 2 (incompleto).
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "rca_completo", vinculoID, vigenciaID, nil, 0, 100, 2000)
+
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	var pontosA, bonusA float64
+	var detalheA []byte
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total, detalhe FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-A'`, campanhaID).
+		Scan(&pontosA, &bonusA, &detalheA); err != nil {
+		t.Fatalf("ler pontuação RCA-A: %v", err)
+	}
+	if pontosA != 100 || bonusA != 2000 {
+		t.Errorf("RCA-A: pontos/bonus = %v/%v, want 100/2000 (2 de 2 Redes = completo)", pontosA, bonusA)
+	}
+	var detalheAParsed []map[string]any
+	json.Unmarshal(detalheA, &detalheAParsed)
+	if len(detalheAParsed) != 1 || detalheAParsed[0]["completo"] != true || detalheAParsed[0]["faltam"].(float64) != 0 {
+		t.Errorf("RCA-A: detalhe = %v, want completo=true faltam=0", detalheAParsed)
+	}
+
+	// RCA-B: incompleto, mas TEM que ter uma linha em gamif_pontuacao (0
+	// pontos desta regra) com o progresso — é isso que a "visão do RCA"
+	// usa pra mostrar "faltam 1 de 2" ANTES de ele completar.
+	var pontosB, bonusB float64
+	var detalheB []byte
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total, detalhe FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-B'`, campanhaID).
+		Scan(&pontosB, &bonusB, &detalheB); err != nil {
+		t.Fatalf("ler pontuação RCA-B (deveria existir mesmo incompleto, pra mostrar progresso): %v", err)
+	}
+	if pontosB != 0 || bonusB != 0 {
+		t.Errorf("RCA-B: pontos/bonus = %v/%v, want 0/0 (não completou, não ganha o prêmio)", pontosB, bonusB)
+	}
+	var detalheBParsed []map[string]any
+	json.Unmarshal(detalheB, &detalheBParsed)
+	if len(detalheBParsed) != 1 {
+		t.Fatalf("RCA-B: detalhe = %v, want 1 item de progresso", detalheBParsed)
+	}
+	d := detalheBParsed[0]
+	if d["completo"] != false || d["cobertos"].(float64) != 1 || d["total"].(float64) != 2 || d["faltam"].(float64) != 1 {
+		t.Errorf("RCA-B: detalhe = %v, want completo=false cobertos=1 total=2 faltam=1", d)
+	}
+}
+

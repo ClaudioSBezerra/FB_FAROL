@@ -33,7 +33,7 @@ interface Vigencia { id: number; vinculo_id: number; data_inicio: string; data_f
 interface GamifRegra {
   id: number
   campanha_id: number
-  tipo: 'cobertura_atingida' | 'sortimento_atingido' | 'rede_completa_atingida' | 'produto_especifico'
+  tipo: 'cobertura_atingida' | 'sortimento_atingido' | 'rede_completa_atingida' | 'rca_completo' | 'produto_especifico'
   descricao: string
   vinculo_id?: number
   vigencia_id?: number
@@ -64,12 +64,29 @@ interface GamifRankingLinha {
   bonus_total: number
 }
 
+// GamifDetalheItem — 1 entrada do detalhe de pontuação, gravado pelo motor
+// (CalcularPontuacaoCampanha). Regras "rca_completo" sempre trazem
+// cobertos/total/faltam (progresso), mesmo quando completo=false — é o
+// que permite mostrar "faltam N lojas" pro RCA antes de ele bater 100%.
+interface GamifDetalheItem {
+  regra_id: number
+  tipo: string
+  descricao: string
+  pontos?: number
+  bonus?: number
+  cobertos?: number
+  total?: number
+  faltam?: number
+  completo?: boolean
+}
+
 interface GamifMinhaPosicao {
   cod_rca: string
   posicao: number
   total_rcas: number
   pontos_total: number
   bonus_total: number
+  detalhe: GamifDetalheItem[]
 }
 
 const fmtBRL = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -79,6 +96,7 @@ const TIPO_LABEL: Record<string, string> = {
   cobertura_atingida: 'Cobertura atingida (por Cliente/Loja)',
   sortimento_atingido: 'Sortimento atingido (por Cliente/Loja)',
   rede_completa_atingida: 'Rede completa atingida (100% das lojas)',
+  rca_completo: 'RCA completo (100% de todas as Redes)',
   produto_especifico: 'Produto específico (por RCA)',
 }
 
@@ -173,11 +191,11 @@ export default function FarolGamificacao() {
     descricao: '', vinculo_id: '', vigencia_id: '',
     cod_prods: '', qtd_minima: '', pontos: '', valor_bonus: '',
   })
-  // rede_completa_atingida aceita vínculo de Cobertura OU Sortimento (não
-  // filtra por formula_codigo — "100% da Rede" faz sentido pras duas).
+  // rede_completa_atingida/rca_completo aceitam vínculo de Cobertura OU
+  // Sortimento (não filtra por formula_codigo — "100%" faz sentido pras duas).
   const vinculosDaIndustria = (vinculos ?? []).filter(v => {
     if (v.industria_id !== campanhaDetalhe?.industria_id) return false
-    if (formRegra.tipo === 'rede_completa_atingida') return v.formula_codigo === 'cobertura_rede' || v.formula_codigo === 'sortimento_rede'
+    if (formRegra.tipo === 'rede_completa_atingida' || formRegra.tipo === 'rca_completo') return v.formula_codigo === 'cobertura_rede' || v.formula_codigo === 'sortimento_rede'
     return v.formula_codigo === (formRegra.tipo === 'sortimento_atingido' ? 'sortimento_rede' : 'cobertura_rede')
   })
   const { data: vigenciasDoVinculo } = useQuery<Vigencia[]>({
@@ -375,6 +393,20 @@ export default function FarolGamificacao() {
                   <span><strong>{fmt(minhaPosicao.pontos_total)}</strong> pontos</span>
                   <span className="text-emerald-700"><strong>{fmtBRL(minhaPosicao.bonus_total)}</strong> em bônus</span>
                 </div>
+                {/* Progresso de metas "completo" (rca_completo) — pedido do
+                    Claudio 22/09/2026: mostra "faltam N lojas" mesmo antes
+                    de bater 100%, pra servir de motivação no meio do
+                    caminho, não só um resultado binário no fim do mês. */}
+                {minhaPosicao.detalhe?.filter(d => d.tipo === 'rca_completo').map((d, i) => (
+                  <div key={i} className={`mt-3 mx-auto max-w-xs rounded-lg border p-2 text-xs ${d.completo ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
+                    {d.completo ? (
+                      <>🏆 <strong>Objetivo completo!</strong> {d.total} de {d.total} Redes cobertas.</>
+                    ) : (
+                      <>Faltam <strong>{d.faltam}</strong> loja{d.faltam === 1 ? '' : 's'} de {d.total} pra bater o objetivo completo ({d.cobertos} já cobertas).</>
+                    )}
+                    {d.descricao && <div className="text-[10px] opacity-70 mt-0.5">{d.descricao}</div>}
+                  </div>
+                ))}
                 <p className="text-xs text-muted-foreground mt-3">Ele NÃO vê nomes de quem está na frente ou atrás — só a própria posição.</p>
               </div>
             ) : (
@@ -396,6 +428,7 @@ export default function FarolGamificacao() {
                     <SelectItem value="cobertura_atingida">Cobertura atingida (por Cliente/Loja)</SelectItem>
                     <SelectItem value="sortimento_atingido">Sortimento atingido (por Cliente/Loja)</SelectItem>
                     <SelectItem value="rede_completa_atingida">Rede completa atingida (100% das lojas)</SelectItem>
+                    <SelectItem value="rca_completo">RCA completo (100% de todas as Redes)</SelectItem>
                     <SelectItem value="produto_especifico">Produto específico (por RCA)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -408,7 +441,7 @@ export default function FarolGamificacao() {
               {formRegra.tipo !== 'produto_especifico' ? (
                 <>
                   <div>
-                    <Label>Vínculo ({formRegra.tipo === 'rede_completa_atingida' ? 'Cobertura ou Sortimento' : formRegra.tipo === 'sortimento_atingido' ? 'Sortimento' : 'Cobertura'} da indústria da campanha)</Label>
+                    <Label>Vínculo ({(formRegra.tipo === 'rede_completa_atingida' || formRegra.tipo === 'rca_completo') ? 'Cobertura ou Sortimento' : formRegra.tipo === 'sortimento_atingido' ? 'Sortimento' : 'Cobertura'} da indústria da campanha)</Label>
                     <Select value={formRegra.vinculo_id} onValueChange={v => setFormRegra(f => ({ ...f, vinculo_id: v, vigencia_id: '' }))}>
                       <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                       <SelectContent>

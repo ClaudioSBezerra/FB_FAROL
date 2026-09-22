@@ -46,17 +46,17 @@ import (
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 type GamifRegraResponse struct {
-	ID          int      `json:"id"`
-	CampanhaID  int      `json:"campanha_id"`
-	Tipo        string   `json:"tipo"` // cobertura_atingida | sortimento_atingido (por CLIENTE/loja) | rede_completa_atingida (por Rede, 100% das lojas) | produto_especifico (por RCA)
-	Descricao   string   `json:"descricao"`
-	VinculoID   *int     `json:"vinculo_id,omitempty"`
-	VigenciaID  *int     `json:"vigencia_id,omitempty"`
-	CodProds    []string `json:"cod_prods,omitempty"`
-	QtdMinima   float64  `json:"qtd_minima,omitempty"`
-	Fluxo       string   `json:"fluxo"`
-	Pontos      float64  `json:"pontos"`
-	ValorBonus  float64  `json:"valor_bonus"`
+	ID         int      `json:"id"`
+	CampanhaID int      `json:"campanha_id"`
+	Tipo       string   `json:"tipo"` // cobertura_atingida | sortimento_atingido (por CLIENTE/loja) | rede_completa_atingida (por Rede, 100% das lojas) | rca_completo (100% de TODAS as Redes do RCA) | produto_especifico (por RCA)
+	Descricao  string   `json:"descricao"`
+	VinculoID  *int     `json:"vinculo_id,omitempty"`
+	VigenciaID *int     `json:"vigencia_id,omitempty"`
+	CodProds   []string `json:"cod_prods,omitempty"`
+	QtdMinima  float64  `json:"qtd_minima,omitempty"`
+	Fluxo      string   `json:"fluxo"`
+	Pontos     float64  `json:"pontos"`
+	ValorBonus float64  `json:"valor_bonus"`
 }
 
 type GamifRegraRequest struct {
@@ -402,12 +402,15 @@ func validarGamifRegra(db *sql.DB, empresaID string, req GamifRegraRequest) stri
 		if formulaCodigo != formulaEsperada {
 			return fmt.Sprintf("o vínculo escolhido é do tipo %q, mas a regra é %q", formulaCodigo, req.Tipo)
 		}
-	case "rede_completa_atingida":
-		// Bônus extra por Rede 100% coberta (todas as lojas bateram), não
-		// por loja isolada — pedido do Claudio 22/09/2026, pra separar
-		// "Loja Individual" de "Rede Completa" como campanhas distintas.
-		// Aceita vínculo de Cobertura OU Sortimento (formula-agnóstico —
-		// "100% da Rede" faz sentido pras duas métricas).
+	case "rede_completa_atingida", "rca_completo":
+		// rede_completa_atingida: bônus extra por Rede 100% coberta (todas
+		// as lojas DAQUELA Rede bateram) — pedido do Claudio 22/09/2026,
+		// pra separar "Loja Individual" de "Rede Completa" como campanhas
+		// distintas. rca_completo: mesma ideia, mas pro PORTFÓLIO INTEIRO
+		// do RCA (todas as Redes dele, não só uma) — pedido do Claudio
+		// 22/09/2026, mostra progresso ("faltam N lojas") mesmo antes de
+		// completar. Ambas aceitam vínculo de Cobertura OU Sortimento
+		// (formula-agnóstico — "100%" faz sentido pras duas métricas).
 		if req.VinculoID == 0 || req.VigenciaID == 0 {
 			return "vinculo_id e vigencia_id são obrigatórios pra este tipo de regra"
 		}
@@ -434,7 +437,7 @@ func validarGamifRegra(db *sql.DB, empresaID string, req GamifRegraRequest) stri
 			return "qtd_minima precisa ser maior que zero"
 		}
 	default:
-		return "tipo inválido (use cobertura_atingida, sortimento_atingido, rede_completa_atingida ou produto_especifico)"
+		return "tipo inválido (use cobertura_atingida, sortimento_atingido, rede_completa_atingida, rca_completo ou produto_especifico)"
 	}
 	if req.Pontos <= 0 && req.ValorBonus <= 0 {
 		return "a regra precisa premiar algo — preencha pontos e/ou valor_bonus"
@@ -711,6 +714,83 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				for codRCA, nomeRCA := range rcasEnvolvidos {
 					somar(codRCA, nomeRCA, rg)
 				}
+			}
+		case "rca_completo":
+			// "Bater 100% de TODAS as Redes do RCA" — pedido do Claudio
+			// 22/09/2026: mais amplo que rede_completa_atingida (que é por
+			// UMA Rede). Junta TODOS os clientes de TODAS as Redes do
+			// vínculo/vigência, agrupa pelo dono real (CNPJ a CNPJ, não a
+			// aproximação da Rede) e só paga pro RCA cujo portfólio
+			// inteiro bateu. Diferente das outras regras: toca o
+			// acumulador de QUALQUER RCA com pelo menos 1 cliente no
+			// escopo, mesmo sem completar — pra guardar o PROGRESSO
+			// ("faltam N de M") no detalhe, visível na "visão do RCA"
+			// mesmo antes de bater o 100%. Sem isso a regra só existiria
+			// como resultado binário no fim do mês, sem servir de
+			// motivação no meio do caminho.
+			if !rg.VinculoID.Valid || !rg.VigenciaID.Valid {
+				continue
+			}
+			realizado, err := obterOuCongelarRealizado(db, empresaID, int(rg.VinculoID.Int64), int(rg.VigenciaID.Int64), rg.Fluxo, "rede")
+			if err != nil {
+				return fmt.Errorf("regra %d: %w", rg.ID, err)
+			}
+			donoPorCNPJ, err := donoRealPorCNPJ(db, empresaID, int(rg.VigenciaID.Int64))
+			if err != nil {
+				return fmt.Errorf("regra %d: %w", rg.ID, err)
+			}
+			type progressoRCA struct {
+				NomeRCA          string
+				Total, Atingiram int
+			}
+			progressoPorRCA := map[string]*progressoRCA{}
+			for _, rede := range realizado.Redes {
+				for _, cliente := range rede.Clientes {
+					codRCA, nomeRCA := rede.CodRCA, rede.NomeRCA
+					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
+						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
+					}
+					if codRCA == "" {
+						continue
+					}
+					p, ok := progressoPorRCA[codRCA]
+					if !ok {
+						p = &progressoRCA{}
+						progressoPorRCA[codRCA] = p
+					}
+					if nomeRCA != "" {
+						p.NomeRCA = nomeRCA
+					}
+					p.Total++
+					if cliente.Atingiu {
+						p.Atingiram++
+					}
+				}
+			}
+			for codRCA, p := range progressoPorRCA {
+				if p.Total == 0 {
+					continue
+				}
+				completo := p.Atingiram == p.Total
+				a, ok := porRCA[codRCA]
+				if !ok {
+					a = &gamifAcumuladorRCA{}
+					porRCA[codRCA] = a
+				}
+				if p.NomeRCA != "" {
+					a.NomeRCA = p.NomeRCA
+				}
+				item := map[string]any{
+					"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
+					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram, "completo": completo,
+				}
+				if completo {
+					a.Pontos += rg.Pontos
+					a.Bonus += rg.ValorBonus
+					item["pontos"] = rg.Pontos
+					item["bonus"] = rg.ValorBonus
+				}
+				a.Detalhe = append(a.Detalhe, item)
 			}
 		case "produto_especifico":
 			if len(rg.CodProds) == 0 || rg.QtdMinima <= 0 {
