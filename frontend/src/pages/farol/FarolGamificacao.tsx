@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Plus, Trash2, Trophy, RefreshCw, ArrowLeft, Eye } from 'lucide-react'
+import { Plus, Trash2, Trophy, RefreshCw, ArrowLeft, Eye, Pencil } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Gamificação — MVP (pedido do José Costa, CEO da JC, via Claudio
@@ -89,6 +89,10 @@ export default function FarolGamificacao() {
   const [campanhaSelecionada, setCampanhaSelecionada] = useState<number | null>(null)
   const [novaCampanhaOpen, setNovaCampanhaOpen] = useState(false)
   const [novaRegraOpen, setNovaRegraOpen] = useState(false)
+  // regraEditando — achado do Claudio 22/09/2026: "uma vez criada não
+  // estou conseguindo editar" — faltava o modo edição no dialog (só
+  // existia criar). null = criando regra nova; number = editando esse id.
+  const [regraEditando, setRegraEditando] = useState<number | null>(null)
   const [rcaSimulado, setRcaSimulado] = useState('')
 
   const { data: campanhas } = useQuery<GamifCampanha[]>({
@@ -178,7 +182,28 @@ export default function FarolGamificacao() {
     enabled: !!formRegra.vinculo_id,
   })
 
-  const criarRegra = useMutation({
+  const fecharDialogRegra = () => {
+    setNovaRegraOpen(false)
+    setRegraEditando(null)
+    setFormRegra({ tipo: 'cobertura_atingida', descricao: '', vinculo_id: '', vigencia_id: '', cod_prods: '', qtd_minima: '', pontos: '', valor_bonus: '' })
+  }
+
+  const abrirEdicaoRegra = (rg: GamifRegra) => {
+    setRegraEditando(rg.id)
+    setFormRegra({
+      tipo: rg.tipo,
+      descricao: rg.descricao ?? '',
+      vinculo_id: rg.vinculo_id ? String(rg.vinculo_id) : '',
+      vigencia_id: rg.vigencia_id ? String(rg.vigencia_id) : '',
+      cod_prods: (rg.cod_prods ?? []).join('\n'),
+      qtd_minima: rg.qtd_minima ? String(rg.qtd_minima) : '',
+      pontos: String(rg.pontos ?? ''),
+      valor_bonus: String(rg.valor_bonus ?? ''),
+    })
+    setNovaRegraOpen(true)
+  }
+
+  const salvarRegra = useMutation({
     mutationFn: async () => {
       const body: Record<string, unknown> = {
         campanha_id: campanhaSelecionada,
@@ -194,17 +219,17 @@ export default function FarolGamificacao() {
         body.vinculo_id = Number(formRegra.vinculo_id)
         body.vigencia_id = Number(formRegra.vigencia_id)
       }
-      const r = await fetch('/api/farol/gamif-regras', { method: 'POST', headers, body: JSON.stringify(body) })
+      const url = regraEditando ? `/api/farol/gamif-regras/${regraEditando}` : '/api/farol/gamif-regras'
+      const r = await fetch(url, { method: regraEditando ? 'PUT' : 'POST', headers, body: JSON.stringify(body) })
       if (!r.ok) throw new Error(await r.text())
-      return r.json()
+      return r.json().catch(() => ({}))
     },
     onSuccess: () => {
-      toast.success('Regra criada')
+      toast.success(regraEditando ? 'Regra atualizada' : 'Regra criada')
       qc.invalidateQueries({ queryKey: ['gamif-campanha', campanhaSelecionada] })
-      setNovaRegraOpen(false)
-      setFormRegra({ tipo: 'cobertura_atingida', descricao: '', vinculo_id: '', vigencia_id: '', cod_prods: '', qtd_minima: '', pontos: '', valor_bonus: '' })
+      fecharDialogRegra()
     },
-    onError: (e: Error) => toast.error(e.message || 'Erro ao criar regra'),
+    onError: (e: Error) => toast.error(e.message || 'Erro ao salvar regra'),
   })
 
   const excluirRegra = useMutation({
@@ -256,7 +281,7 @@ export default function FarolGamificacao() {
         <div className="border rounded-lg overflow-hidden">
           <div className="px-3 py-2 border-b flex items-center justify-between bg-muted/30">
             <span className="text-sm font-medium">Regras de pontuação</span>
-            <Button size="sm" variant="outline" onClick={() => setNovaRegraOpen(true)}><Plus className="w-3.5 h-3.5 mr-1" /> Nova regra</Button>
+            <Button size="sm" variant="outline" onClick={() => { setRegraEditando(null); setNovaRegraOpen(true) }}><Plus className="w-3.5 h-3.5 mr-1" /> Nova regra</Button>
           </div>
           <Table>
             <TableHeader>
@@ -282,7 +307,8 @@ export default function FarolGamificacao() {
                   </TableCell>
                   <TableCell className="text-right">{fmt(rg.pontos)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(rg.valor_bonus)}</TableCell>
-                  <TableCell>
+                  <TableCell className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => abrirEdicaoRegra(rg)}><Pencil className="w-3.5 h-3.5" /></Button>
                     <Button variant="ghost" size="sm" onClick={() => excluirRegra.mutate(rg.id)}><Trash2 className="w-3.5 h-3.5 text-red-500" /></Button>
                   </TableCell>
                 </TableRow>
@@ -353,10 +379,10 @@ export default function FarolGamificacao() {
           </div>
         )}
 
-        {/* Dialog: nova regra */}
-        <Dialog open={novaRegraOpen} onOpenChange={setNovaRegraOpen}>
+        {/* Dialog: nova regra / editar regra */}
+        <Dialog open={novaRegraOpen} onOpenChange={open => { if (!open) fecharDialogRegra() }}>
           <DialogContent className="max-w-lg">
-            <DialogHeader><DialogTitle>Nova regra de pontuação</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{regraEditando ? 'Editar regra de pontuação' : 'Nova regra de pontuação'}</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div>
                 <Label>Tipo</Label>
@@ -421,8 +447,8 @@ export default function FarolGamificacao() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setNovaRegraOpen(false)}>Cancelar</Button>
-              <Button onClick={() => criarRegra.mutate()} disabled={criarRegra.isPending}>Criar regra</Button>
+              <Button variant="ghost" onClick={fecharDialogRegra}>Cancelar</Button>
+              <Button onClick={() => salvarRegra.mutate()} disabled={salvarRegra.isPending}>{regraEditando ? 'Salvar alterações' : 'Criar regra'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

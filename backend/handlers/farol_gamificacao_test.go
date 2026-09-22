@@ -7,11 +7,28 @@ package handlers
 // (ex: microgarrafa de vodka), não a Rede inteira.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/lib/pq"
 )
+
+func gamifReq(method, url, empresaID, userID string, body any) *http.Request {
+	var buf bytes.Buffer
+	if body != nil {
+		json.NewEncoder(&buf).Encode(body)
+	}
+	r := httptest.NewRequest(method, url, &buf)
+	ctx := context.WithValue(r.Context(), SpContextKey, &FarolContext{
+		UserID: userID, SpRole: "admin_fbtax", EmpresaID: empresaID, AllFiliais: true,
+	})
+	return r.WithContext(ctx)
+}
 
 func criarGamifCampanhaFixture(t *testing.T, empresaID string, industriaID int, inicio, fim string) int {
 	t.Helper()
@@ -202,3 +219,46 @@ func TestGamifRanking_VisaoDoRCA_SoAPropriaPosicao(t *testing.T) {
 	// handler expõe.
 	_ = json.RawMessage(nil)
 }
+
+// TestGamifRegraItemHandler_PUT_EditaValoresExistentes — achado real do
+// Claudio 22/09/2026: "uma vez criada não estou conseguindo editar para
+// ajustar" — o handler só tinha DELETE, faltava PUT. Cobre o caso de uso
+// real: criar uma regra com pontos/bônus errados e corrigir sem precisar
+// excluir e recriar (perdendo o id/histórico).
+func TestGamifRegraItemHandler_PUT_EditaValoresExistentes(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM Edit", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	regraID := criarGamifRegraFixture(t, campanhaID, "cobertura_atingida", vinculoID, vigenciaID, nil, 0, 10, 300)
+
+	handler := GamifRegraItemHandler(db)
+	req := gamifReq(http.MethodPut, "/api/farol/gamif-regras/x", empresaID, "teste", GamifRegraRequest{
+		Tipo: "cobertura_atingida", Descricao: "ajustada", VinculoID: vinculoID, VigenciaID: vigenciaID,
+		Pontos: 25, ValorBonus: 450,
+	})
+	// pathSegment lê o path literal, não usa mux — precisa do id de verdade na URL.
+	req.URL.Path = "/api/farol/gamif-regras/" + strconv.Itoa(regraID)
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var descricao string
+	var pontos, bonus float64
+	if err := db.QueryRow(`SELECT descricao, pontos, valor_bonus FROM farol.gamif_regras WHERE id = $1`, regraID).
+		Scan(&descricao, &pontos, &bonus); err != nil {
+		t.Fatalf("ler regra editada: %v", err)
+	}
+	if descricao != "ajustada" || pontos != 25 || bonus != 450 {
+		t.Errorf("regra após PUT = (%q, %v, %v), want (ajustada, 25, 450)", descricao, pontos, bonus)
+	}
+}
+

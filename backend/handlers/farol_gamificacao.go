@@ -419,29 +419,87 @@ func GamifRegraItemHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if r.Method != http.MethodDelete {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		id, err := strconv.Atoi(pathSegment(r.URL.Path, "/api/farol/gamif-regras/"))
 		if err != nil {
 			http.Error(w, "ID inválido", http.StatusBadRequest)
 			return
 		}
-		res, err := db.Exec(`
-			DELETE FROM farol.gamif_regras WHERE id = $1 AND campanha_id IN (SELECT id FROM farol.gamif_campanhas WHERE empresa_id = $2)
-		`, id, spCtx.EmpresaID)
-		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
+
+		switch r.Method {
+		case http.MethodPut:
+			var req GamifRegraRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "corpo da requisição inválido", http.StatusBadRequest)
+				return
+			}
+			// campanha_id não vem no corpo de um PUT (a regra já pertence a
+			// uma campanha, não se move de campanha) — pega do registro
+			// existente pra validarGamifRegra funcionar igual ao POST.
+			if err := db.QueryRow(`
+				SELECT campanha_id FROM farol.gamif_regras WHERE id = $1 AND campanha_id IN (SELECT id FROM farol.gamif_campanhas WHERE empresa_id = $2)
+			`, id, spCtx.EmpresaID).Scan(&req.CampanhaID); err != nil {
+				if err == sql.ErrNoRows {
+					http.Error(w, "Regra não encontrada", http.StatusNotFound)
+					return
+				}
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			if msg := validarGamifRegra(db, spCtx.EmpresaID, req); msg != "" {
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+			if req.Fluxo == "" {
+				req.Fluxo = "faturado"
+			}
+			if req.CodProds == nil {
+				req.CodProds = []string{}
+			}
+			var vinculoID, vigenciaID any
+			if req.VinculoID != 0 {
+				vinculoID = req.VinculoID
+			}
+			if req.VigenciaID != 0 {
+				vigenciaID = req.VigenciaID
+			}
+			res, err := db.Exec(`
+				UPDATE farol.gamif_regras SET
+					tipo = $2, descricao = $3, vinculo_id = $4, vigencia_id = $5,
+					cod_prods = $6, qtd_minima = $7, fluxo = $8, pontos = $9, valor_bonus = $10
+				WHERE id = $1
+			`, id, req.Tipo, req.Descricao, vinculoID, vigenciaID, pq.Array(req.CodProds), req.QtdMinima, req.Fluxo, req.Pontos, req.ValorBonus)
+			if err != nil {
+				http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				http.Error(w, "Regra não encontrada", http.StatusNotFound)
+				return
+			}
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_regras", strconv.Itoa(id), "editar", req)
+			log.Printf("Gamificacao: editada regra %d empresa %s por %s", id, spCtx.EmpresaID, spCtx.UserID)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+
+		case http.MethodDelete:
+			res, err := db.Exec(`
+				DELETE FROM farol.gamif_regras WHERE id = $1 AND campanha_id IN (SELECT id FROM farol.gamif_campanhas WHERE empresa_id = $2)
+			`, id, spCtx.EmpresaID)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				http.Error(w, "Regra não encontrada", http.StatusNotFound)
+				return
+			}
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_regras", strconv.Itoa(id), "excluir", nil)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			http.Error(w, "Regra não encontrada", http.StatusNotFound)
-			return
-		}
-		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_regras", strconv.Itoa(id), "excluir", nil)
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}
 }
 
