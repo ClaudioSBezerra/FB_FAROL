@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Plus, Trash2, Trophy, RefreshCw, ArrowLeft, Eye, Pencil } from 'lucide-react'
+import { Plus, Trash2, Trophy, RefreshCw, ArrowLeft, Eye, Pencil, ChevronDown, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 // ─── Gamificação — MVP (pedido do José Costa, CEO da JC, via Claudio
@@ -62,6 +62,42 @@ interface GamifRankingLinha {
   nome_rca: string
   pontos_total: number
   bonus_total: number
+  detalhe: GamifDetalheItem[]
+}
+
+// agruparDetalhePorRegra — pedido do Claudio 22/09/2026 ("agora como
+// vamos visualizar?"): o motor grava 1 item de detalhe POR OCORRÊNCIA
+// (cada loja/Rede que bateu), então uma regra "por Loja" com 10 lojas
+// batendo vira 10 itens repetidos — bom pra auditoria, ruim pra exibir.
+// Aqui soma por regra_id: quantas ocorrências, quantos pontos/bônus cada
+// regra contribuiu pro total do RCA.
+interface GamifRegraAgregada {
+  regra_id: number
+  tipo: string
+  descricao: string
+  ocorrencias: number
+  pontos: number
+  bonus: number
+  // Só presente pra regras tipo rca_completo (progresso, não ocorrência).
+  progresso?: { cobertos: number; total: number; faltam: number; completo: boolean }
+}
+function agruparDetalhePorRegra(detalhe: GamifDetalheItem[] | undefined): GamifRegraAgregada[] {
+  const porRegra = new Map<number, GamifRegraAgregada>()
+  for (const d of detalhe ?? []) {
+    let agg = porRegra.get(d.regra_id)
+    if (!agg) {
+      agg = { regra_id: d.regra_id, tipo: d.tipo, descricao: d.descricao, ocorrencias: 0, pontos: 0, bonus: 0 }
+      porRegra.set(d.regra_id, agg)
+    }
+    if (d.tipo === 'rca_completo') {
+      agg.progresso = { cobertos: d.cobertos ?? 0, total: d.total ?? 0, faltam: d.faltam ?? 0, completo: !!d.completo }
+    } else {
+      agg.ocorrencias += 1
+    }
+    agg.pontos += d.pontos ?? 0
+    agg.bonus += d.bonus ?? 0
+  }
+  return [...porRegra.values()]
 }
 
 // GamifDetalheItem — 1 entrada do detalhe de pontuação, gravado pelo motor
@@ -100,6 +136,45 @@ const TIPO_LABEL: Record<string, string> = {
   produto_especifico: 'Produto específico (por RCA)',
 }
 
+// RegraBreakdownTable — composição do total por regra (o "como vamos
+// visualizar" pedido do Claudio 22/09/2026): sem isso, o ranking só mostra
+// o número final, sem dar pra comparar o que cada tipo de regra (por
+// Loja, Rede completa, RCA completo, Produto específico) contribuiu.
+function RegraBreakdownTable({ detalhe }: { detalhe: GamifDetalheItem[] }) {
+  const agregados = agruparDetalhePorRegra(detalhe)
+  if (agregados.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">Sem regras aplicáveis a este RCA ainda.</p>
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="text-xs">Regra</TableHead>
+          <TableHead className="text-xs">Descrição</TableHead>
+          <TableHead className="text-right text-xs">Ocorrências</TableHead>
+          <TableHead className="text-right text-xs">Pontos</TableHead>
+          <TableHead className="text-right text-xs">Bônus (R$)</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {agregados.map(a => (
+          <TableRow key={a.regra_id}>
+            <TableCell className="text-xs">{TIPO_LABEL[a.tipo] ?? a.tipo}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">{a.descricao || '—'}</TableCell>
+            <TableCell className="text-right text-xs">
+              {a.progresso
+                ? (a.progresso.completo ? `${a.progresso.total}/${a.progresso.total} ✓` : `${a.progresso.cobertos}/${a.progresso.total} (faltam ${a.progresso.faltam})`)
+                : a.ocorrencias}
+            </TableCell>
+            <TableCell className="text-right text-xs">{fmt(a.pontos)}</TableCell>
+            <TableCell className="text-right text-xs">{fmtBRL(a.bonus)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 export default function FarolGamificacao() {
   const { token } = useAuth()
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token])
@@ -113,6 +188,10 @@ export default function FarolGamificacao() {
   // existia criar). null = criando regra nova; number = editando esse id.
   const [regraEditando, setRegraEditando] = useState<number | null>(null)
   const [rcaSimulado, setRcaSimulado] = useState('')
+  // detalheExpandido — pedido do Claudio 22/09/2026 ("agora como vamos
+  // visualizar?"): admin vê a composição por regra sem precisar entrar
+  // no modo "Visão do RCA" (que é uma simulação de outra pessoa).
+  const [detalheExpandido, setDetalheExpandido] = useState<string | null>(null)
 
   const { data: campanhas } = useQuery<GamifCampanha[]>({
     queryKey: ['gamif-campanhas'],
@@ -347,6 +426,7 @@ export default function FarolGamificacao() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-8"></TableHead>
                 <TableHead className="w-14">#</TableHead>
                 <TableHead>RCA</TableHead>
                 <TableHead className="text-right">Pontos</TableHead>
@@ -356,24 +436,39 @@ export default function FarolGamificacao() {
             </TableHeader>
             <TableBody>
               {carregandoRanking && (
-                <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
               )}
               {!carregandoRanking && (rankingResp?.ranking ?? []).length === 0 && (
-                <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
               )}
-              {(rankingResp?.ranking ?? []).map(l => (
-                <TableRow key={l.cod_rca}>
-                  <TableCell className="font-bold text-muted-foreground">{l.posicao}º</TableCell>
-                  <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
-                  <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
-                  <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm" onClick={() => setRcaSimulado(l.cod_rca)}>
-                      <Eye className="w-3.5 h-3.5 mr-1" /> Visão do RCA
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {(rankingResp?.ranking ?? []).map(l => {
+                const aberto = detalheExpandido === l.cod_rca
+                return (
+                <Fragment key={l.cod_rca}>
+                  <TableRow className="cursor-pointer" onClick={() => setDetalheExpandido(aberto ? null : l.cod_rca)}>
+                    <TableCell>{aberto ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</TableCell>
+                    <TableCell className="font-bold text-muted-foreground">{l.posicao}º</TableCell>
+                    <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
+                    <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
+                    <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" onClick={e => { e.stopPropagation(); setRcaSimulado(l.cod_rca) }}>
+                        <Eye className="w-3.5 h-3.5 mr-1" /> Visão do RCA
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                  {aberto && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="bg-muted/20 p-0">
+                        <div className="px-4 py-2">
+                          <RegraBreakdownTable detalhe={l.detalhe} />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+                )
+              })}
             </TableBody>
           </Table>
         </div>
@@ -407,6 +502,11 @@ export default function FarolGamificacao() {
                     {d.descricao && <div className="text-[10px] opacity-70 mt-0.5">{d.descricao}</div>}
                   </div>
                 ))}
+                {/* Detalhamento por regra — mesma tabela do ranking do
+                    admin, aqui simulando o que o próprio RCA veria. */}
+                <div className="mt-3 text-left border rounded-lg overflow-hidden">
+                  <RegraBreakdownTable detalhe={minhaPosicao.detalhe} />
+                </div>
                 <p className="text-xs text-muted-foreground mt-3">Ele NÃO vê nomes de quem está na frente ou atrás — só a própria posição.</p>
               </div>
             ) : (
