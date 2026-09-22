@@ -939,23 +939,38 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 		codRCAFiltro := strings.TrimSpace(r.URL.Query().Get("cod_rca"))
 		ranking := []GamifRankingLinha{}
 		var minhaPosicao *GamifMinhaPosicaoResponse
-		totalRCAs := 0
+		totalRCAsComProgresso := 0 // COUNT(*) OVER () — inclui quem está zerado (rca_completo toca todo mundo do vínculo pra mostrar progresso, ver CalcularPontuacaoCampanha)
 		for rows.Next() {
 			var linha GamifRankingLinha
-			if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.Detalhe, &linha.Posicao, &totalRCAs); err != nil {
+			if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
 			}
 			if codRCAFiltro != "" {
 				if linha.CodRCA == codRCAFiltro {
+					// "Visão do RCA" continua funcionando pra quem está
+					// zerado — é exatamente quem precisa ver "faltam N
+					// lojas" (achado do Claudio 22/09/2026: com
+					// rca_completo ativo, a maioria do vínculo aparece
+					// zerada; a posição/total aqui refletem TODO MUNDO com
+					// progresso, não só quem já pontuou).
 					minhaPosicao = &GamifMinhaPosicaoResponse{
-						CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAs,
+						CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
 						PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, Detalhe: linha.Detalhe,
 					}
 				}
 				continue
 			}
-			ranking = append(ranking, linha)
+			// Ranking GERAL só mostra quem tem algo a mostrar (pontos ou
+			// bônus > 0) — achado do Claudio 22/09/2026 ("o ranking ficou
+			// estranho"): sem isso, uma regra rca_completo (que toca TODO
+			// mundo do vínculo pra rastrear progresso) inunda a lista de
+			// dezenas de RCAs zerados, virando ruído. Quem está zerado
+			// ainda aparece via "Visão do RCA" (?cod_rca=), que é onde o
+			// progresso de fato importa mostrar.
+			if linha.PontosTotal > 0 || linha.BonusTotal > 0 {
+				ranking = append(ranking, linha)
+			}
 		}
 		if err := rows.Err(); err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -972,6 +987,9 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 			json.NewEncoder(w).Encode(minhaPosicao)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"ranking": ranking, "total_rcas": totalRCAs})
+		// total_rcas aqui é a contagem de quem tem pontos/bônus > 0 (o
+		// "ranking" de verdade) — não totalRCAsComProgresso (que inclui
+		// zerados de regras tipo rca_completo).
+		json.NewEncoder(w).Encode(map[string]any{"ranking": ranking, "total_rcas": len(ranking)})
 	}
 }

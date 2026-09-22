@@ -421,7 +421,7 @@ export default function FarolGamificacao() {
         {/* Ranking */}
         <div className="border rounded-lg overflow-hidden">
           <div className="px-3 py-2 border-b bg-muted/30 text-sm font-medium">
-            Ranking ({rankingResp?.total_rcas ?? 0} RCA{(rankingResp?.total_rcas ?? 0) === 1 ? '' : 's'})
+            Ranking ({rankingResp?.total_rcas ?? 0} RCA{(rankingResp?.total_rcas ?? 0) === 1 ? '' : 's'} pontuando)
           </div>
           <Table>
             <TableHeader>

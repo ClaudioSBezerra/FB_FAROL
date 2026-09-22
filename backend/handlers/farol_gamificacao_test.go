@@ -85,7 +85,9 @@ func TestCalcularPontuacaoCampanha_CoberturaAtingida_SoQuemBateuOLimiar(t *testi
 	// serve pro prefixo TGAM usado aqui (achado rodando este teste várias
 	// vezes: lixo de execuções antigas acumulava e fazia RCA-P2 pontuar
 	// indevidamente num teste irmão). Limpeza própria por cod_rca exato.
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA1'`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA1'`, empresaID)
+	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE BATE", cnpjBate, "TGAM-RCA1")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE NAO BATE", cnpjNaoBate, "TGAM-RCA1")
 	inserirVendaFaturadaFixture(t, empresaID, cnpjBate, "PRODG1", "TGAM-RCA1", "1", 500, 1, "2026-08-10")
@@ -127,7 +129,9 @@ func TestCalcularPontuacaoCampanha_CoberturaAtingida_PremiaPorLojaNaoPelaMediaDa
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
 
 	cnpjBateSozinha, cnpjZerada := "80000000000301", "80000000000302"
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, empresaID)
+	})
 	// MESMA Rede (cod_princ "REDE MISTA") pras 2 lojas — a média das duas
 	// fica em 75 (150+0)/2, abaixo do limiar 100, então a Rede como um
 	// todo NÃO atinge — só a loja cnpjBateSozinha bate individualmente.
@@ -334,7 +338,9 @@ func TestCalcularPontuacaoCampanha_RedeCompletaAtingida_SoQuando100PorCento(t *t
 
 	cnpjCompleta1, cnpjCompleta2 := "80000000000401", "80000000000402"
 	cnpjParcialBate, cnpjParcialZerada := "80000000000403", "80000000000404"
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-RC'`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-RC'`, empresaID)
+	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE COMPLETA", cnpjCompleta1, "TGAM-RCA-RC")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE COMPLETA", cnpjCompleta2, "TGAM-RCA-RC")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE PARCIAL", cnpjParcialBate, "TGAM-RCA-RC")
@@ -383,7 +389,9 @@ func TestCalcularPontuacaoCampanha_RcaCompleto_MostraProgressoAntesDeCompletar(t
 
 	cnpjA1, cnpjA2 := "80000000000501", "80000000000502" // RCA-A: as 2 batem
 	cnpjB1, cnpjB2 := "80000000000503", "80000000000504" // RCA-B: só 1 bate
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-A', 'TGAM-RCA-B')`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-A', 'TGAM-RCA-B')`, empresaID)
+	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A1", cnpjA1, "TGAM-RCA-A")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE A2", cnpjA2, "TGAM-RCA-A")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE B1", cnpjB1, "TGAM-RCA-B")
@@ -440,3 +448,75 @@ func TestCalcularPontuacaoCampanha_RcaCompleto_MostraProgressoAntesDeCompletar(t
 	}
 }
 
+// TestGamifRankingHandler_RankingGeralSoMostraQuemPontuou — achado real do
+// Claudio 22/09/2026 ("o ranking ficou estranho"): uma regra rca_completo
+// toca TODO RCA do vínculo pra rastrear progresso (ver teste acima), o que
+// inundava o ranking geral com dezenas de RCAs zerados. O ranking geral
+// (sem ?cod_rca=) deve mostrar só quem tem pontos/bônus > 0; a "visão do
+// RCA" (?cod_rca=) continua achando o zerado, pra mostrar o progresso.
+func TestGamifRankingHandler_RankingGeralSoMostraQuemPontuou(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM RankLimpo", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjCompleto := "80000000000601"
+	cnpjIncompleto1, cnpjIncompleto2 := "80000000000602", "80000000000603"
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-OK', 'TGAM-RCA-ZERO')`, empresaID)
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE OK", cnpjCompleto, "TGAM-RCA-OK")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE ZERO 1", cnpjIncompleto1, "TGAM-RCA-ZERO")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE ZERO 2", cnpjIncompleto2, "TGAM-RCA-ZERO")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjCompleto, "PRODRANK", "TGAM-RCA-OK", "1", 150, 1, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjIncompleto1, "PRODRANK", "TGAM-RCA-ZERO", "1", 150, 1, "2026-08-10")
+	// cnpjIncompleto2 não compra nada — TGAM-RCA-ZERO fica 1 de 2 (não completa).
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "rca_completo", vinculoID, vigenciaID, nil, 0, 10, 300)
+
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	handler := GamifRankingHandler(db)
+
+	// Ranking geral: só TGAM-RCA-OK deve aparecer.
+	req := gamifReq(http.MethodGet, "/api/farol/gamif-ranking?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ranking geral: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var geral struct {
+		Ranking []struct {
+			CodRCA string `json:"cod_rca"`
+		} `json:"ranking"`
+		TotalRCAs int `json:"total_rcas"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &geral)
+	if geral.TotalRCAs != 1 || len(geral.Ranking) != 1 || geral.Ranking[0].CodRCA != "TGAM-RCA-OK" {
+		t.Errorf("ranking geral = %+v, want só TGAM-RCA-OK (TGAM-RCA-ZERO não pontuou, não deveria aparecer)", geral)
+	}
+
+	// Visão do RCA zerado: precisa continuar achando (é quem mais precisa
+	// ver o progresso), mesmo fora do ranking geral.
+	reqZero := gamifReq(http.MethodGet, "/api/farol/gamif-ranking?campanha_id="+strconv.Itoa(campanhaID)+"&cod_rca=TGAM-RCA-ZERO", empresaID, "teste", nil)
+	wZero := httptest.NewRecorder()
+	handler(wZero, reqZero)
+	if wZero.Code != http.StatusOK {
+		t.Fatalf("visão do RCA zerado: status = %d, body = %s (deveria achar mesmo com 0 pontos)", wZero.Code, wZero.Body.String())
+	}
+	var minhaPosicao struct {
+		Detalhe []map[string]any `json:"detalhe"`
+	}
+	json.Unmarshal(wZero.Body.Bytes(), &minhaPosicao)
+	if len(minhaPosicao.Detalhe) != 1 || minhaPosicao.Detalhe[0]["faltam"].(float64) != 1 {
+		t.Errorf("visão do RCA zerado: detalhe = %v, want faltam=1", minhaPosicao.Detalhe)
+	}
+}
