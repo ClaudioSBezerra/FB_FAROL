@@ -520,3 +520,72 @@ func TestGamifRankingHandler_RankingGeralSoMostraQuemPontuou(t *testing.T) {
 		t.Errorf("visão do RCA zerado: detalhe = %v, want faltam=1", minhaPosicao.Detalhe)
 	}
 }
+
+// TestGamifRankingHandler_DesempataPorVolumeCurvaABC — pedido do Claudio
+// 22/09/2026: "o critério de primeiro para segundo é a quantidade
+// vendida... tipo curva ABC de vendas". Regra produto_especifico paga
+// prêmio FIXO ao bater o mínimo (10 garrafas ou 188 rendem o mesmo bônus)
+// — sem desempate, todo mundo que bate empataria em 1º. Com
+// volume_desempate, quem vendeu mais rankeia acima mesmo com pontos/bônus
+// idênticos.
+func TestGamifRankingHandler_DesempataPorVolumeCurvaABC(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM ABC", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjTop, cnpjMinimo := "80000000000701", "80000000000702"
+	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-TOP', 'TGAM-RCA-MIN')`, empresaID) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE TOP", cnpjTop, "TGAM-RCA-TOP")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE MIN", cnpjMinimo, "TGAM-RCA-MIN")
+	// RCA-TOP vende MUITO mais (188), RCA-MIN só bate o mínimo (10) — os
+	// dois "bateram" a mesma regra e ganham o MESMO prêmio fixo.
+	inserirVendaFaturadaFixture(t, empresaID, cnpjTop, "PRODABC", "TGAM-RCA-TOP", "1", 1880, 188, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjMinimo, "PRODABC", "TGAM-RCA-MIN", "1", 100, 10, "2026-08-10")
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "produto_especifico", 0, 0, []string{"PRODABC"}, 10, 10, 300)
+
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	handler := GamifRankingHandler(db)
+	req := gamifReq(http.MethodGet, "/api/farol/gamif-ranking?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Ranking []struct {
+			Posicao         int     `json:"posicao"`
+			CodRCA          string  `json:"cod_rca"`
+			PontosTotal     float64 `json:"pontos_total"`
+			VolumeDesempate float64 `json:"volume_desempate"`
+		} `json:"ranking"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Ranking) != 2 {
+		t.Fatalf("ranking = %+v, want 2 RCAs (os dois bateram o mínimo)", resp.Ranking)
+	}
+	// Mesmo prêmio (empate em pontos), mas RCA-TOP (188) precisa vir ANTES
+	// de RCA-MIN (10) — desempate por volume, não ordem arbitrária/empate.
+	if resp.Ranking[0].CodRCA != "TGAM-RCA-TOP" || resp.Ranking[0].Posicao != 1 {
+		t.Errorf("1º colocado = %+v, want TGAM-RCA-TOP na posição 1 (vendeu 188 vs 10)", resp.Ranking[0])
+	}
+	if resp.Ranking[1].CodRCA != "TGAM-RCA-MIN" || resp.Ranking[1].Posicao != 2 {
+		t.Errorf("2º colocado = %+v, want TGAM-RCA-MIN na posição 2, NÃO empatado em 1º", resp.Ranking[1])
+	}
+	if resp.Ranking[0].PontosTotal != resp.Ranking[1].PontosTotal {
+		t.Errorf("pontos deveriam ser IGUAIS (prêmio fixo) — top=%v min=%v", resp.Ranking[0].PontosTotal, resp.Ranking[1].PontosTotal)
+	}
+	if resp.Ranking[0].VolumeDesempate != 188 || resp.Ranking[1].VolumeDesempate != 10 {
+		t.Errorf("volume_desempate = top:%v min:%v, want 188/10", resp.Ranking[0].VolumeDesempate, resp.Ranking[1].VolumeDesempate)
+	}
+}

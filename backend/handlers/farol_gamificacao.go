@@ -554,6 +554,13 @@ type gamifAcumuladorRCA struct {
 	NomeRCA string
 	Pontos  float64
 	Bonus   float64
+	// Volume — pedido do Claudio 22/09/2026 ("ranking estranho... curva
+	// ABC de vendas"): pontos/bônus de uma regra tipo produto_especifico
+	// são FIXOS ao bater o mínimo (quem vendeu 10 e quem vendeu 188
+	// empatavam em 1º) — Volume é a grandeza real por trás (qtd vendida,
+	// lojas/Redes atingidas) usada SÓ como critério de desempate no
+	// ranking, nunca como pontos/bônus em si.
+	Volume  float64
 	Detalhe []map[string]any
 }
 
@@ -617,7 +624,7 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	}
 
 	porRCA := map[string]*gamifAcumuladorRCA{}
-	somar := func(codRCA, nomeRCA string, rg gamifRegraInterna) {
+	somar := func(codRCA, nomeRCA string, rg gamifRegraInterna, volume float64) {
 		if codRCA == "" {
 			return
 		}
@@ -631,9 +638,10 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 		}
 		a.Pontos += rg.Pontos
 		a.Bonus += rg.ValorBonus
+		a.Volume += volume
 		a.Detalhe = append(a.Detalhe, map[string]any{
 			"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
-			"pontos": rg.Pontos, "bonus": rg.ValorBonus,
+			"pontos": rg.Pontos, "bonus": rg.ValorBonus, "volume": volume,
 		})
 	}
 
@@ -670,7 +678,9 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
 						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
 					}
-					somar(codRCA, nomeRCA, rg)
+					// Volume = 1 por loja que bateu — desempata no ranking
+					// por QUANTAS lojas o RCA cobriu, não só que cobriu.
+					somar(codRCA, nomeRCA, rg, 1)
 				}
 			}
 		case "rede_completa_atingida":
@@ -711,8 +721,10 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				if !todasAtingiram {
 					continue
 				}
+				// Volume = tamanho da Rede completada — Rede maior 100%
+				// coberta desempata acima de uma Rede pequena 100% coberta.
 				for codRCA, nomeRCA := range rcasEnvolvidos {
-					somar(codRCA, nomeRCA, rg)
+					somar(codRCA, nomeRCA, rg, float64(len(rede.Clientes)))
 				}
 			}
 		case "rca_completo":
@@ -780,9 +792,13 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				if p.NomeRCA != "" {
 					a.NomeRCA = p.NomeRCA
 				}
+				// Volume = lojas cobertas até agora — serve de desempate
+				// até pra quem ainda NÃO completou (compara progresso).
+				a.Volume += float64(p.Atingiram)
 				item := map[string]any{
 					"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
 					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram, "completo": completo,
+					"volume": p.Atingiram,
 				}
 				if completo {
 					a.Pontos += rg.Pontos
@@ -817,7 +833,11 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 					return err
 				}
 				if qtd >= rg.QtdMinima {
-					somar(codRCA, nomeRCA, rg)
+					// Volume = quantidade REAL vendida (não só "bateu") —
+					// é o caso que motivou o desempate: quem vendeu 188
+					// garrafas precisa ranquear acima de quem vendeu 10,
+					// mesmo os dois ganhando o mesmo prêmio fixo.
+					somar(codRCA, nomeRCA, rg, qtd)
 				}
 			}
 			rows2.Close()
@@ -838,9 +858,9 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	for codRCA, a := range porRCA {
 		detalheJSON, _ := json.Marshal(a.Detalhe)
 		if _, err := tx.Exec(`
-			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, detalhe)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, detalheJSON); err != nil {
+			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, a.Volume, detalheJSON); err != nil {
 			return err
 		}
 	}
@@ -887,21 +907,23 @@ func GamifCalcularHandler(db *sql.DB) http.HandlerFunc {
 // próprio RCA (decisão do Claudio 22/09/2026: mostra a posição, não quem
 // está na frente).
 type GamifRankingLinha struct {
-	Posicao     int             `json:"posicao"`
-	CodRCA      string          `json:"cod_rca"`
-	NomeRCA     string          `json:"nome_rca"`
-	PontosTotal float64         `json:"pontos_total"`
-	BonusTotal  float64         `json:"bonus_total"`
-	Detalhe     json.RawMessage `json:"detalhe"`
+	Posicao         int             `json:"posicao"`
+	CodRCA          string          `json:"cod_rca"`
+	NomeRCA         string          `json:"nome_rca"`
+	PontosTotal     float64         `json:"pontos_total"`
+	BonusTotal      float64         `json:"bonus_total"`
+	VolumeDesempate float64         `json:"volume_desempate"`
+	Detalhe         json.RawMessage `json:"detalhe"`
 }
 
 type GamifMinhaPosicaoResponse struct {
-	CodRCA      string          `json:"cod_rca"`
-	Posicao     int             `json:"posicao"`
-	TotalRCAs   int             `json:"total_rcas"`
-	PontosTotal float64         `json:"pontos_total"`
-	BonusTotal  float64         `json:"bonus_total"`
-	Detalhe     json.RawMessage `json:"detalhe"`
+	CodRCA          string          `json:"cod_rca"`
+	Posicao         int             `json:"posicao"`
+	TotalRCAs       int             `json:"total_rcas"`
+	PontosTotal     float64         `json:"pontos_total"`
+	BonusTotal      float64         `json:"bonus_total"`
+	VolumeDesempate float64         `json:"volume_desempate"`
+	Detalhe         json.RawMessage `json:"detalhe"`
 }
 
 func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
@@ -923,12 +945,19 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Curva ABC (pedido do Claudio 22/09/2026): entre RCAs empatados em
+		// pontos_total (regras tipo produto_especifico/rca_completo pagam
+		// prêmio FIXO ao bater o mínimo — 10 garrafas ou 188 rendem o
+		// mesmo bônus), o desempate é volume_desempate — a grandeza real
+		// por trás (qtd vendida, lojas atingidas), não uma ordem
+		// arbitrária. Pontos/bônus continuam os mesmos; só a POSIÇÃO no
+		// ranking passa a refletir quem vendeu mais de verdade.
 		rows, err := db.Query(`
-			SELECT cod_rca, nome_rca, pontos_total, bonus_total, detalhe,
-			       RANK() OVER (ORDER BY pontos_total DESC) AS posicao,
+			SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe,
+			       RANK() OVER (ORDER BY pontos_total DESC, volume_desempate DESC) AS posicao,
 			       COUNT(*) OVER () AS total_rcas
 			FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
-			ORDER BY pontos_total DESC, cod_rca
+			ORDER BY pontos_total DESC, volume_desempate DESC, cod_rca
 		`, campanhaID, spCtx.EmpresaID)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -942,7 +971,7 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 		totalRCAsComProgresso := 0 // COUNT(*) OVER () — inclui quem está zerado (rca_completo toca todo mundo do vínculo pra mostrar progresso, ver CalcularPontuacaoCampanha)
 		for rows.Next() {
 			var linha GamifRankingLinha
-			if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
+			if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
 			}
@@ -956,7 +985,7 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 					// progresso, não só quem já pontuou).
 					minhaPosicao = &GamifMinhaPosicaoResponse{
 						CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
-						PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, Detalhe: linha.Detalhe,
+						PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate, Detalhe: linha.Detalhe,
 					}
 				}
 				continue

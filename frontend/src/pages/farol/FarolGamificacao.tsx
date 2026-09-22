@@ -62,6 +62,10 @@ interface GamifRankingLinha {
   nome_rca: string
   pontos_total: number
   bonus_total: number
+  // volume_desempate — pedido do Claudio 22/09/2026 ("curva ABC de
+  // vendas"): critério de desempate quando pontos/bônus empatam (regras
+  // de prêmio fixo tipo produto_especifico) — não afeta o prêmio em si.
+  volume_desempate: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -122,6 +126,7 @@ interface GamifMinhaPosicao {
   total_rcas: number
   pontos_total: number
   bonus_total: number
+  volume_desempate: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -431,15 +436,16 @@ export default function FarolGamificacao() {
                 <TableHead>RCA</TableHead>
                 <TableHead className="text-right">Pontos</TableHead>
                 <TableHead className="text-right">Bônus (R$)</TableHead>
+                <TableHead className="text-right">Volume</TableHead>
                 <TableHead className="w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {carregandoRanking && (
-                <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
               )}
               {!carregandoRanking && (rankingResp?.ranking ?? []).length === 0 && (
-                <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
               )}
               {(rankingResp?.ranking ?? []).map(l => {
                 const aberto = detalheExpandido === l.cod_rca
@@ -451,6 +457,10 @@ export default function FarolGamificacao() {
                     <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
                     <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
                     <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
+                    {/* Volume — critério de desempate (curva ABC, pedido do
+                        Claudio 22/09/2026): quem vende mais aparece antes de
+                        quem só bateu o mínimo, mesmo com o mesmo prêmio. */}
+                    <TableCell className="text-right text-muted-foreground">{fmt(l.volume_desempate)}</TableCell>
                     <TableCell>
                       <Button variant="ghost" size="sm" onClick={e => { e.stopPropagation(); setRcaSimulado(l.cod_rca) }}>
                         <Eye className="w-3.5 h-3.5 mr-1" /> Visão do RCA
@@ -459,7 +469,7 @@ export default function FarolGamificacao() {
                   </TableRow>
                   {aberto && (
                     <TableRow>
-                      <TableCell colSpan={6} className="bg-muted/20 p-0">
+                      <TableCell colSpan={7} className="bg-muted/20 p-0">
                         <div className="px-4 py-2">
                           <RegraBreakdownTable detalhe={l.detalhe} />
                         </div>
