@@ -135,6 +135,7 @@ interface PainelCombinadoCliente {
   razao: string
   fantasia: string
   uf: string
+  data_ultima_compra?: string
   cod_ggv: string
   nome_ggv: string
   cod_crv: string
@@ -747,7 +748,7 @@ export default function FarolPainelMetas() {
   // "Sortimento = média de EANs distintos entre as lojas da Rede"). Achado
   // 18/09/2026: sem essa nota, "22 vendidos ≥ Objetivo 19" ao lado de
   // "0 de 9 redes atingindo" parecia contradição — não é, são duas contas.
-  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; codGGV?: string; codCRV?: string; codRCA?: string; titulo: string; objetivo: number; qtdRedes?: number; qtdAtingindo?: number } | null>(null)
+  const [itensAlvo, setItensAlvo] = useState<{ codPrinc?: string; cnpj?: string; codGGV?: string; codCRV?: string; codRCA?: string; titulo: string; objetivo: number; qtdRedes?: number; qtdAtingindo?: number; dataUltimaCompra?: string } | null>(null)
   const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
     queryKey: ['farol-metas-painel-itens', industriaSelecionada?.sortimento?.id, periodoSelecionado?.sortimento.id, fluxo, itensAlvo?.codPrinc, itensAlvo?.cnpj, itensAlvo?.codGGV, itensAlvo?.codCRV, itensAlvo?.codRCA],
     queryFn: async () => {
@@ -1169,7 +1170,7 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})`, objetivo: c.sortimento_objetivo })}
+                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})`, objetivo: c.sortimento_objetivo, dataUltimaCompra: c.data_ultima_compra })}
                         >
                           <TableCell className="font-mono text-xs">{c.cod_princ}</TableCell>
                           <TableCell className="font-mono text-xs">{c.cnpj}</TableCell>
@@ -1375,6 +1376,13 @@ export default function FarolPainelMetas() {
                   <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
                   <span><strong>{itensLista.length}</strong> itens no catálogo</span>
                   <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
+                  {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026: só faz sentido
+                      pra 1 loja (cnpj), não pra um grupo de Redes/RCA/CRV/GGV
+                      somado (não existe "última compra" agregada de várias
+                      lojas com sentido único). */}
+                  {itensAlvo.cnpj && (
+                    <span>Dt.Ult.Cmp: <strong>{itensAlvo.dataUltimaCompra ? new Date(itensAlvo.dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong></span>
+                  )}
                 </div>
               )}
               {/* Nota só aparece vindo de uma linha de rollup (GGVxCRV/

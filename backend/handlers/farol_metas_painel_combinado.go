@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -88,6 +89,7 @@ type PainelCombinadoCliente struct {
 	Razao              string  `json:"razao"`
 	Fantasia           string  `json:"fantasia"`
 	UF                 string  `json:"uf"` // ver PainelCombinadoRede.UF — aqui é exato (o CNPJ do próprio cliente, não um "dono" aproximado)
+	DataUltimaCompra   string  `json:"data_ultima_compra,omitempty"` // ver RealizadoCliente.DataUltimaCompra
 	CodGGV             string  `json:"cod_ggv"`
 	NomeGGV            string  `json:"nome_ggv"`
 	CodCRV             string  `json:"cod_crv"`
@@ -100,11 +102,23 @@ type PainelCombinadoCliente struct {
 	SortimentoObjetivo float64 `json:"sortimento_objetivo"`
 }
 
-// resolverUFClientes resolve o UF de cada CNPJ a partir da venda mais
-// RECENTE dele — qualquer período, qualquer fornecedor, faturado OU
-// transmitido (o que vier depois na ordenação) — decisão do Claudio em
-// 10/09/2026: não existe UF na lista de Clientes Válidos nem em cadastro
-// de cliente algum, só nas linhas de venda (migration 156). CNPJ que nunca
+// infoUltimaVendaCliente é o resultado de resolverUFClientes por CNPJ — UF e
+// data da venda mais recente vêm da MESMA linha vencedora (Faturado x
+// Transmitido, o que for mais recente), então saem juntos da mesma consulta
+// sem custo adicional (ver comentário da função).
+type infoUltimaVendaCliente struct {
+	UF               string
+	DataUltimaCompra time.Time
+}
+
+// resolverUFClientes resolve o UF e a data da venda mais RECENTE de cada
+// CNPJ — qualquer período, qualquer fornecedor, faturado OU transmitido (o
+// que vier depois na ordenação) — decisão do Claudio em 10/09/2026: não
+// existe UF na lista de Clientes Válidos nem em cadastro de cliente algum,
+// só nas linhas de venda (migration 156). A data da última compra (pedido
+// do Claudio 22/09/2026, visão do RCA no drill-down de Cliente) é a MESMA
+// data que já decidia qual UF vencia — não é uma consulta nova, só passou a
+// expor uma coluna que a query já calculava e descartava. CNPJ que nunca
 // vendeu nada no Farol simplesmente não aparece no mapa.
 // resolverUFClientes — reescrita 2026-09-11 (decisão do Claudio: UF não pode
 // custar caro nem ao vivo nem no cálculo). A versão original fazia
@@ -116,8 +130,8 @@ type PainelCombinadoCliente struct {
 // só a linha mais recente de cada cliente direto, sem trazer o resto do
 // histórico. Mesmo resultado, mesmo empresaID/cnpjs — só o plano de
 // execução muda. Medido: 8.000ms → 20ms (400x).
-func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]string, error) {
-	out := map[string]string{}
+func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[string]infoUltimaVendaCliente, error) {
+	out := map[string]infoUltimaVendaCliente{}
 	if len(cnpjs) == 0 {
 		return out, nil
 	}
@@ -127,7 +141,12 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 		       WHEN vt.data IS NULL THEN vf.uf
 		       WHEN vf.data >= vt.data THEN vf.uf
 		       ELSE vt.uf
-		  END AS uf
+		  END AS uf,
+		  CASE WHEN vf.data IS NULL THEN vt.data
+		       WHEN vt.data IS NULL THEN vf.data
+		       WHEN vf.data >= vt.data THEN vf.data
+		       ELSE vt.data
+		  END AS data_ultima_compra
 		FROM unnest($2::text[]) AS c(cnpj)
 		LEFT JOIN LATERAL (
 		  SELECT uf, data_faturamento AS data FROM vendas_faturadas
@@ -147,10 +166,11 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 	defer rows.Close()
 	for rows.Next() {
 		var cnpj, uf string
-		if err := rows.Scan(&cnpj, &uf); err != nil {
+		var data time.Time
+		if err := rows.Scan(&cnpj, &uf, &data); err != nil {
 			return nil, err
 		}
-		out[cnpj] = uf
+		out[cnpj] = infoUltimaVendaCliente{UF: uf, DataUltimaCompra: data}
 	}
 	return out, rows.Err()
 }
@@ -162,7 +182,7 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 // duas métricas têm sua PRÓPRIA lista de Clientes Válidos (vínculos
 // diferentes), então o cruzamento é por CNPJ dentro da mesma Rede, não uma
 // suposição de que as duas listas são idênticas.
-func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, realizadoSortimento *RealizadoResultado, ufPorCliente map[string]string) []PainelCombinadoCliente {
+func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, realizadoSortimento *RealizadoResultado, ufPorCliente, dataUltimaCompraPorCliente map[string]string) []PainelCombinadoCliente {
 	contextoPorRede := make(map[string]PainelCombinadoRede, len(redes))
 	for _, r := range redes {
 		contextoPorRede[r.CodPrinc] = r
@@ -185,8 +205,9 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 			s := sortMap[c.CNPJ]
 			out = append(out, PainelCombinadoCliente{
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
-				UF:     ufPorCliente[c.CNPJ],
-				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
+				UF:               ufPorCliente[c.CNPJ],
+				DataUltimaCompra: dataUltimaCompraPorCliente[c.CNPJ],
+				CodGGV:           ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaValor: c.Valor, CoberturaObjetivo: ctx.CoberturaObjetivo,
 				SortimentoValor: s.Valor, SortimentoObjetivo: ctx.SortimentoObjetivo,
@@ -204,8 +225,9 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 			}
 			out = append(out, PainelCombinadoCliente{
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
-				UF:     ufPorCliente[c.CNPJ],
-				CodGGV: ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
+				UF:               ufPorCliente[c.CNPJ],
+				DataUltimaCompra: dataUltimaCompraPorCliente[c.CNPJ],
+				CodGGV:           ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaObjetivo: ctx.CoberturaObjetivo,
 				SortimentoValor:   c.Valor, SortimentoObjetivo: ctx.SortimentoObjetivo,
@@ -418,18 +440,23 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		})
 	}
 
-	// UF — já vem resolvida DENTRO de cada RealizadoCliente (ver
-	// calcularCoberturaPorRede/calcularSortimentoPorRede em
-	// farol_metas_calculo.go): antes esta função fazia uma consulta viva
-	// separada (resolverUFClientes) em TODA leitura do painel — 8s medidos
-	// em produção (decisão do Claudio 11/09/2026: isso não pode acontecer
-	// no clique, só no prewarm). Aqui só remonta o mapa a partir do que já
-	// foi calculado, sem tocar o banco.
+	// UF/DataUltimaCompra — já vêm resolvidos DENTRO de cada
+	// RealizadoCliente (ver calcularCoberturaPorRede/
+	// calcularSortimentoPorRede em farol_metas_calculo.go): antes esta
+	// função fazia uma consulta viva separada (resolverUFClientes) em TODA
+	// leitura do painel — 8s medidos em produção (decisão do Claudio
+	// 11/09/2026: isso não pode acontecer no clique, só no prewarm). Aqui
+	// só remonta os mapas a partir do que já foi calculado, sem tocar o
+	// banco.
 	ufPorCliente := map[string]string{}
+	dataUltimaCompraPorCliente := map[string]string{}
 	for _, r := range realizadoCobertura.Redes {
 		for _, c := range r.Clientes {
 			if c.UF != "" {
 				ufPorCliente[c.CNPJ] = c.UF
+			}
+			if c.DataUltimaCompra != "" {
+				dataUltimaCompraPorCliente[c.CNPJ] = c.DataUltimaCompra
 			}
 		}
 	}
@@ -437,6 +464,9 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		for _, c := range r.Clientes {
 			if _, ok := ufPorCliente[c.CNPJ]; !ok && c.UF != "" {
 				ufPorCliente[c.CNPJ] = c.UF
+			}
+			if _, ok := dataUltimaCompraPorCliente[c.CNPJ]; !ok && c.DataUltimaCompra != "" {
+				dataUltimaCompraPorCliente[c.CNPJ] = c.DataUltimaCompra
 			}
 		}
 	}
@@ -450,7 +480,7 @@ func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, v
 		}
 	}
 
-	clientes := montarClientesCombinado(redes, realizadoCobertura, realizadoSortimento, ufPorCliente)
+	clientes := montarClientesCombinado(redes, realizadoCobertura, realizadoSortimento, ufPorCliente, dataUltimaCompraPorCliente)
 
 	return &PainelCombinadoResponse{
 		IndustriaNome: industriaNome, Vigencia: vig,

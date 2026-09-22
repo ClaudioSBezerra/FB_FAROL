@@ -9,6 +9,82 @@ import (
 	"testing"
 )
 
+// TestResolverUFClientes_DataUltimaCompraVemDaMesmaVendaQueDecideOUF —
+// pedido do Claudio 22/09/2026 (visão do RCA no drill-down de Cliente,
+// "Dt.Ult.Cmp"): a data não é uma consulta nova, é a mesma coluna que já
+// decidia qual UF vencia (Faturado x Transmitido, o mais recente) — aqui só
+// confirma que os dois valores saem coerentes: a data resolvida bate com a
+// venda mais recente de cada CNPJ, e o UF junto é o dessa mesma linha.
+func TestResolverUFClientes_DataUltimaCompraVemDaMesmaVendaQueDecideOUF(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	cnpjSoFaturado := "11111111000101"
+	cnpjSoTransmitido := "22222222000102"
+	cnpjFaturadoMaisRecente := "33333333000103"
+	cnpjSemVenda := "44444444000104"
+	cnpjs := []string{cnpjSoFaturado, cnpjSoTransmitido, cnpjFaturadoMaisRecente, cnpjSemVenda}
+
+	t.Cleanup(func() {
+		for _, c := range cnpjs {
+			db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TUF-TEST'`, empresaID, c)
+			db.Exec(`DELETE FROM vendas_transmitidas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TUF-TEST'`, empresaID, c)
+		}
+	})
+
+	inserirVendaComUF := func(tabela, colData, cnpj, uf, data string) {
+		_, err := db.Exec(`
+			INSERT INTO `+tabela+` (empresa_id, `+colData+`, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt, uf)
+			VALUES ($1, $2, $3, $3, 'PROD-TUF', 'TUF-TEST', 'SUP', 'Sup', 'GER', 'Ger', '1', 100, 1, $4)
+		`, empresaID, data, cnpj, uf)
+		if err != nil {
+			t.Fatalf("inserir fixture %s: %v", tabela, err)
+		}
+	}
+
+	inserirVendaComUF("vendas_faturadas", "data_faturamento", cnpjSoFaturado, "SP", "2026-08-10")
+	inserirVendaComUF("vendas_transmitidas", "data_transmissao", cnpjSoTransmitido, "RJ", "2026-08-15")
+	inserirVendaComUF("vendas_faturadas", "data_faturamento", cnpjFaturadoMaisRecente, "MG", "2026-08-01")
+	inserirVendaComUF("vendas_transmitidas", "data_transmissao", cnpjFaturadoMaisRecente, "BA", "2026-07-20")
+
+	out, err := resolverUFClientes(db, empresaID, cnpjs)
+	if err != nil {
+		t.Fatalf("resolverUFClientes: %v", err)
+	}
+
+	checar := func(cnpj, ufEsperado, dataEsperada string) {
+		info, ok := out[cnpj]
+		if ufEsperado == "" {
+			if ok {
+				t.Errorf("%s: esperava ausente do mapa, veio UF=%q data=%v", cnpj, info.UF, info.DataUltimaCompra)
+			}
+			return
+		}
+		if !ok {
+			t.Fatalf("%s: esperava presente no mapa, veio ausente", cnpj)
+		}
+		if info.UF != ufEsperado {
+			t.Errorf("%s: UF = %q, esperava %q", cnpj, info.UF, ufEsperado)
+		}
+		if got := info.DataUltimaCompra.Format("2006-01-02"); got != dataEsperada {
+			t.Errorf("%s: DataUltimaCompra = %q, esperava %q", cnpj, got, dataEsperada)
+		}
+	}
+	checar(cnpjSoFaturado, "SP", "2026-08-10")
+	checar(cnpjSoTransmitido, "RJ", "2026-08-15")
+	// venda faturada de 01/08 x transmitida de 20/07: a mais recente (01/08,
+	// Faturado) tem que vencer nos dois campos juntos — UF e data da MESMA
+	// linha, não um "melhor de cada".
+	checar(cnpjFaturadoMaisRecente, "MG", "2026-08-01")
+	checar(cnpjSemVenda, "", "")
+
+	if got := formatarDataUltimaCompra(out[cnpjSoFaturado].DataUltimaCompra); got != "2026-08-10" {
+		t.Errorf("formatarDataUltimaCompra = %q, esperava 2026-08-10", got)
+	}
+	if got := formatarDataUltimaCompra(out[cnpjSemVenda].DataUltimaCompra); got != "" {
+		t.Errorf("formatarDataUltimaCompra do zero value deveria ser vazio, veio %q", got)
+	}
+}
+
 // TestCalcularPainelCombinado_PeriodoManual_EstreitaOCalculo confirma que
 // passar data_inicio/data_fim MENORES que a vigência inteira realmente
 // recalcula só aquela janela — não é um filtro cosmético.
@@ -139,5 +215,70 @@ func TestCalcularPainelCombinado_PeriodoIgualAosBoundsNaoBypassaCongelamento(t *
 	}
 	if respOverrideDiferente.Redes[0].CoberturaValor != 1030 {
 		t.Fatalf("override diferente dos bounds: cobertura_valor = %.0f, want 1030 (130+900, ao vivo)", respOverrideDiferente.Redes[0].CoberturaValor)
+	}
+}
+
+// TestCalcularPainelCombinado_ClienteTrazDataUltimaCompra — pedido do
+// Claudio 22/09/2026 (visão do RCA no drill-down de Cliente, "Dt.Ult.Cmp").
+// TestResolverUFClientes_* já cobre a função isolada; este cobre a cadeia
+// inteira até a resposta que o front consome (calcularCoberturaPorRede →
+// RealizadoCliente.DataUltimaCompra → montarClientesCombinado →
+// PainelCombinadoCliente.DataUltimaCompra), com uma venda de verdade
+// (fixture não seta uf por padrão — aqui insere direto pra ter o dado que
+// a data depende).
+func TestCalcularPainelCombinado_ClienteTrazDataUltimaCompra(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoCob, cleanupCob := criarVinculoComFormula(t, empresaID, "TDUC Cobertura", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanupCob)
+	vigCob := criarVigenciaFixture(t, db, empresaID, vinculoCob, "2026-08-01", "2026-08-31")
+
+	vinculoSort, cleanupSort := criarVinculoComFormula(t, empresaID, "TDUC Sortimento", "sortimento_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "qtd_minima_positivacao", Label: "Qtd mínima", Type: "integer"}},
+		map[string]any{"qtd_minima_positivacao": 1.0})
+	t.Cleanup(cleanupSort)
+	vigSort := criarVigenciaFixture(t, db, empresaID, vinculoSort, "2026-08-01", "2026-08-31")
+	db.Exec(`INSERT INTO farol.metas_faixas (empresa_id, vigencia_id, faixa, valor_meta) VALUES ($1,$2,1,1)`, empresaID, vigSort)
+
+	cnpj := "50000000000280"
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cnpj = $2 AND cod_rca = 'TDUC-RCA'`, empresaID, cnpj)
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoCob, vigCob, "REDE DUC", cnpj, "TDUC-RCA")
+	inserirClienteValidoFixture(t, empresaID, vinculoSort, vigSort, "REDE DUC", cnpj, "TDUC-RCA")
+	db.Exec(`DELETE FROM farol.metas_itens_validos WHERE vigencia_id = $1`, vigSort)
+	db.Exec(`INSERT INTO farol.metas_itens_validos (empresa_id, vinculo_id, vigencia_id, ean, cod_prod) VALUES ($1,$2,$3,'EANDUC','PRODDUC')`,
+		empresaID, vinculoSort, vigSort)
+
+	codCliprinc := codPrincDoClienteValidoFixture(t, empresaID, cnpj)
+	inserirVendaComUF := func(data string) {
+		_, err := db.Exec(`
+			INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cnpj, cod_cliprinc, cod_prod, cod_rca, cod_supervisor, nome_supervisor, cod_gerente, nome_gerente, tipo_venda, pvenda, qt, uf)
+			VALUES ($1, $2, $3, $4, 'PRODDUC', 'TDUC-RCA', 'SUP', 'Sup', 'GER', 'Ger', '1', 150, 1, 'GO')
+		`, empresaID, data, cnpj, codCliprinc)
+		if err != nil {
+			t.Fatalf("inserir venda com uf: %v", err)
+		}
+	}
+	inserirVendaComUF("2026-08-05")
+	inserirVendaComUF("2026-08-22") // a mais recente — deve vencer
+
+	resp, err := calcularPainelCombinado(db, empresaID, vinculoCob, vigCob, vinculoSort, vigSort, "faturado", "", "")
+	if err != nil {
+		t.Fatalf("calcularPainelCombinado: %v", err)
+	}
+	var cliente *PainelCombinadoCliente
+	for i := range resp.Clientes {
+		if resp.Clientes[i].CNPJ == cnpj {
+			cliente = &resp.Clientes[i]
+		}
+	}
+	if cliente == nil {
+		t.Fatalf("cliente %s não apareceu em resp.Clientes (%+v)", cnpj, resp.Clientes)
+	}
+	if cliente.DataUltimaCompra != "2026-08-22" {
+		t.Errorf("DataUltimaCompra = %q, want 2026-08-22 (a venda mais recente do cliente, não a primeira)", cliente.DataUltimaCompra)
 	}
 }

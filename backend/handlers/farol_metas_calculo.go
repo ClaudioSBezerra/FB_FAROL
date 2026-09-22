@@ -79,6 +79,11 @@ type RealizadoCliente struct {
 	// que só rodam no prewarm (1x/dia) ou na auto-cura do 1º acesso —
 	// nunca mais numa leitura que já tem snapshot.
 	UF string `json:"uf,omitempty"`
+	// DataUltimaCompra — mesma origem e mesmo motivo de nunca ser ao vivo
+	// que UF acima (pedido do Claudio 22/09/2026: visão do RCA no
+	// drill-down de Cliente, "Dt.Ult.Cmp"). Formato AAAA-MM-DD; vazio se o
+	// cliente nunca vendeu nada.
+	DataUltimaCompra string `json:"data_ultima_compra,omitempty"`
 }
 
 type RealizadoRede struct {
@@ -397,6 +402,16 @@ func agruparPorRede(clientes []clienteValido) (ordem []string, porRede map[strin
 // origem" e não pediu tratamento especial, então a apuração por Rede
 // (FR18a) não fragmenta o cálculo: só o "dono pra exibir/agrupar" usa essa
 // regra de desempate.
+// formatarDataUltimaCompra converte o time.Time de infoUltimaVendaCliente
+// pra AAAA-MM-DD — zero value (cliente nunca vendeu nada, ausente do mapa)
+// vira string vazia, igual ao UF vazio no mesmo caso.
+func formatarDataUltimaCompra(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
 func redeRepresentante(clientesDaRede []clienteValido) clienteValido {
 	menor := clientesDaRede[0]
 	for _, c := range clientesDaRede[1:] {
@@ -438,7 +453,8 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], Atingiu: valor >= limiar})
+			info := ufPorCliente[c.CNPJ]
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: info.UF, DataUltimaCompra: formatarDataUltimaCompra(info.DataUltimaCompra), Atingiu: valor >= limiar})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
@@ -662,7 +678,8 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		for _, c := range clientesDaRede {
 			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], grupoDoCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ]})
+			info := ufPorCliente[c.CNPJ]
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: info.UF, DataUltimaCompra: formatarDataUltimaCompra(info.DataUltimaCompra)})
 		}
 		media := somaEANsPorLoja / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)

@@ -30,6 +30,7 @@ interface RealizadoCliente {
   fantasia: string
   valor: number
   atingiu: boolean
+  data_ultima_compra?: string
 }
 
 interface RealizadoRede {
@@ -112,6 +113,7 @@ interface PainelCombinadoCliente {
   cobertura_objetivo: number
   sortimento_valor: number
   sortimento_objetivo: number
+  data_ultima_compra?: string
 }
 
 interface PainelCombinado {
@@ -201,7 +203,7 @@ function StatusBadge({ atingiu, label }: { atingiu: boolean; label?: string }) {
 // aberto. `badges` carrega 1 (modo individual) ou 2 (Combinado: Cobertura +
 // Sortimento) indicadores — o pedido do CEO foi "Coberto e Não Coberto"
 // pra Cliente E Produto, não só pra Rede.
-function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSortimento, isLoadingItens, itens }: {
+function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSortimento, isLoadingItens, itens, dataUltimaCompra }: {
   nome: string
   cnpj: string
   badges: Array<{ atingiu: boolean; label: string }>
@@ -210,6 +212,7 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
   temSortimento: boolean
   isLoadingItens: boolean
   itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean }[]
+  dataUltimaCompra?: string
 }) {
   const aberto = clienteAberto === cnpj
   return (
@@ -225,6 +228,12 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
       </button>
       {aberto && (
         <div className="pl-5 pb-1.5 space-y-1">
+          {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026: RCA/Supervisor no
+              drill-down de Cliente. Vem pronta do snapshot (nunca ao vivo,
+              mesma regra do UF — ver resolverUFClientes no backend). */}
+          <div className="text-[11px] text-muted-foreground">
+            Dt.Ult.Cmp: <strong>{dataUltimaCompra ? new Date(dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong>
+          </div>
           {!temSortimento ? (
             <div className="text-[11px] text-muted-foreground py-1">Produtos indisponíveis nesta métrica</div>
           ) : isLoadingItens ? (
@@ -573,6 +582,7 @@ export default function FarolPublicMetasPanel() {
                             temSortimento={!!sortimentoVinculoID}
                             isLoadingItens={isLoadingItens}
                             itens={itensResp?.itens}
+                            dataUltimaCompra={c.data_ultima_compra}
                           />
                         ))}
                       </div>
@@ -655,6 +665,7 @@ export default function FarolPublicMetasPanel() {
                               temSortimento={!!sortimentoVinculoID}
                               isLoadingItens={isLoadingItens}
                               itens={itensResp?.itens}
+                              dataUltimaCompra={c.data_ultima_compra}
                             />
                           ))}
                         </div>
