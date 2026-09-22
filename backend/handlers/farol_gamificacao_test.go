@@ -110,6 +110,60 @@ func TestCalcularPontuacaoCampanha_CoberturaAtingida_SoQuemBateuOLimiar(t *testi
 	}
 }
 
+// TestCalcularPontuacaoCampanha_CoberturaAtingida_PremiaPorLojaNaoPelaMediaDaRede
+// — achado real do Claudio 22/09/2026: "cada RCA é responsável pelo cliente
+// e pela Rede dele... esse acompanhamento tem que ser no último nível".
+// Uma Rede com 2 lojas onde só 1 bate o limiar tem MÉDIA abaixo do limiar
+// (Rede.Atingiu = false) — mas aquela loja específica bateu a própria
+// meta, e o RCA não controla a outra loja isoladamente. A regra tem que
+// premiar a loja que bateu, mesmo com a Rede como um todo não batendo.
+func TestCalcularPontuacaoCampanha_CoberturaAtingida_PremiaPorLojaNaoPelaMediaDaRede(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM Loja", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjBateSozinha, cnpjZerada := "80000000000301", "80000000000302"
+	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, empresaID) })
+	// MESMA Rede (cod_princ "REDE MISTA") pras 2 lojas — a média das duas
+	// fica em 75 (150+0)/2, abaixo do limiar 100, então a Rede como um
+	// todo NÃO atinge — só a loja cnpjBateSozinha bate individualmente.
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE MISTA", cnpjBateSozinha, "TGAM-RCA-LOJA")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE MISTA", cnpjZerada, "TGAM-RCA-LOJA")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjBateSozinha, "PRODLOJA", "TGAM-RCA-LOJA", "1", 150, 1, "2026-08-10")
+	// cnpjZerada não compra nada — Valor = 0 no Realizado.
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "cobertura_atingida", vinculoID, vigenciaID, nil, 0, 10, 300)
+
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	// Confirma a premissa: a Rede como um todo NÃO atinge (média 75 < 100).
+	realizado, err := obterOuCongelarRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("obterOuCongelarRealizado: %v", err)
+	}
+	if len(realizado.Redes) != 1 || realizado.Redes[0].Atingiu {
+		t.Fatalf("premissa do teste furou: Rede.Atingiu deveria ser false (média 75 < 100), Redes=%+v", realizado.Redes)
+	}
+
+	var pontos, bonus float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, campanhaID).
+		Scan(&pontos, &bonus); err != nil {
+		t.Fatalf("ler pontuação (a Rede não atingiu, mas 1 loja sim — RCA deveria pontuar mesmo assim): %v", err)
+	}
+	if pontos != 10 || bonus != 300 {
+		t.Errorf("pontos/bonus = %v/%v, want 10/300 (premia a 1 loja que bateu, mesmo a Rede como um todo não batendo)", pontos, bonus)
+	}
+}
+
 // TestCalcularPontuacaoCampanha_ProdutoEspecifico_SoQuemBateuAQuantidade —
 // caso real que motivou o 3º tipo de regra (José Costa/vodka): incentivo
 // por SKU específico, não pela Rede/Cobertura inteira. RCA1 vende o

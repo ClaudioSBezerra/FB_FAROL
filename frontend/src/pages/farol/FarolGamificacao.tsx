@@ -76,8 +76,8 @@ const fmtBRL = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'currenc
 const fmt = (n: number) => (n ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
 const TIPO_LABEL: Record<string, string> = {
-  cobertura_atingida: 'Cobertura atingida (por Rede)',
-  sortimento_atingido: 'Sortimento atingido (por Rede)',
+  cobertura_atingida: 'Cobertura atingida (por Cliente/Loja)',
+  sortimento_atingido: 'Sortimento atingido (por Cliente/Loja)',
   produto_especifico: 'Produto específico (por RCA)',
 }
 
@@ -389,8 +389,8 @@ export default function FarolGamificacao() {
                 <Select value={formRegra.tipo} onValueChange={(v: GamifRegra['tipo']) => setFormRegra(f => ({ ...f, tipo: v, vinculo_id: '', vigencia_id: '' }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cobertura_atingida">Cobertura atingida (por Rede)</SelectItem>
-                    <SelectItem value="sortimento_atingido">Sortimento atingido (por Rede)</SelectItem>
+                    <SelectItem value="cobertura_atingida">Cobertura atingida (por Cliente/Loja)</SelectItem>
+                    <SelectItem value="sortimento_atingido">Sortimento atingido (por Cliente/Loja)</SelectItem>
                     <SelectItem value="produto_especifico">Produto específico (por RCA)</SelectItem>
                   </SelectContent>
                 </Select>

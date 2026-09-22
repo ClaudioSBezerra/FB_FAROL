@@ -19,9 +19,17 @@ package handlers
 //     ver GamifRankingHandler, modo "visão do RCA" (?cod_rca=).
 //   - Base de pontuação inicial: reaproveita Cobertura/Sortimento já
 //     calculados (obterOuCongelarRealizado) — sem motor novo pra isso.
+//   - Granularidade é CLIENTE (loja), não Rede: "cada RCA é responsável
+//     pelo cliente e pela Rede dele... esse acompanhamento tem que ser no
+//     último nível" — premiar pela média da Rede recompensaria/puniria o
+//     RCA por lojas que ele não visita naquele momento. Nada de visão
+//     agregada de fechamento de Redes da Indústria como um todo por
+//     enquanto.
 //
 // 3 tabelas novas (migration 240): gamif_campanhas, gamif_regras,
-// gamif_pontuacao — ver comentário da migration pro desenho completo.
+// gamif_pontuacao — ver comentário da migration pro desenho completo (o
+// comentário da migration ainda descreve a 1ª versão, por Rede — a
+// granularidade real por Cliente está aqui e em CalcularPontuacaoCampanha).
 
 import (
 	"database/sql"
@@ -40,7 +48,7 @@ import (
 type GamifRegraResponse struct {
 	ID          int      `json:"id"`
 	CampanhaID  int      `json:"campanha_id"`
-	Tipo        string   `json:"tipo"` // cobertura_atingida | sortimento_atingido | produto_especifico
+	Tipo        string   `json:"tipo"` // cobertura_atingida | sortimento_atingido (por CLIENTE/loja) | produto_especifico (por RCA)
 	Descricao   string   `json:"descricao"`
 	VinculoID   *int     `json:"vinculo_id,omitempty"`
 	VigenciaID  *int     `json:"vigencia_id,omitempty"`
@@ -527,7 +535,11 @@ type gamifAcumuladorRCA struct {
 //   - cobertura_atingida/sortimento_atingido: reaproveita
 //     obterOuCongelarRealizado (o Realizado já calculado/congelado do
 //     módulo de Objetivos por Indústria — sem calcular nada de novo) e
-//     premia cada Rede que bateu o limiar, somado por RCA dono da Rede.
+//     premia cada CLIENTE (loja) que bateu o próprio limiar — não a Rede
+//     como um todo (decisão do Claudio 22/09/2026: o RCA responde pelo
+//     cliente e pela Rede dele, não por uma média de várias lojas que ele
+//     não controla loja a loja). O dono de cada loja vem de
+//     lerClientesValidos (pode divergir do "dono aproximado" da Rede).
 //   - produto_especifico: soma quantidade vendida dos cod_prods, por
 //     cod_rca, dentro do período da CAMPANHA (não de uma vigência — direto
 //     em vendas_faturadas/vendas_transmitidas, que já carregam cod_rca e
@@ -591,9 +603,36 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 			if err != nil {
 				return fmt.Errorf("regra %d: %w", rg.ID, err)
 			}
+			// Premia por CLIENTE (loja), não por Rede — decisão do Claudio
+			// 22/09/2026: "cada RCA é responsável pelo cliente e pela Rede
+			// dele... esse acompanhamento tem que ser no último nível".
+			// RealizadoRede.Atingiu é a MÉDIA das lojas da Rede — premiar
+			// por aí recompensaria/puniria o RCA por algo que só uma loja
+			// "puxa" pra cima ou pra baixo, fora do controle dele numa
+			// visita específica. RealizadoRede.CodRCA também é só o "dono
+			// aproximado" da Rede inteira (redeRepresentante, primeiro
+			// CNPJ) — o dono REAL de cada loja vem de
+			// farol.metas_clientes_validos (lerClientesValidos), que pode
+			// divergir por CNPJ dentro da mesma Rede (~6 de 134 Redes reais
+			// têm isso, achado 2026-09-04).
+			clientesValidos, err := lerClientesValidos(db, empresaID, int(rg.VigenciaID.Int64))
+			if err != nil {
+				return fmt.Errorf("regra %d: %w", rg.ID, err)
+			}
+			donoPorCNPJ := make(map[string]clienteValido, len(clientesValidos))
+			for _, c := range clientesValidos {
+				donoPorCNPJ[c.CNPJ] = c
+			}
 			for _, rede := range realizado.Redes {
-				if rede.Atingiu {
-					somar(rede.CodRCA, rede.NomeRCA, rg)
+				for _, cliente := range rede.Clientes {
+					if !cliente.Atingiu {
+						continue
+					}
+					codRCA, nomeRCA := rede.CodRCA, rede.NomeRCA
+					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
+						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
+					}
+					somar(codRCA, nomeRCA, rg)
 				}
 			}
 		case "produto_especifico":
