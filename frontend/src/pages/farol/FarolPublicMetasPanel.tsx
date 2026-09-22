@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown } from 'lucide-react'
+import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -273,6 +273,86 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
   )
 }
 
+// ─── Gamificação — visão real do RCA em campo (pedido do Claudio
+// 22/09/2026: mesma URL pública que ele já usa, sem login, mesmo padrão
+// de segurança do resto da tela). Fica FORA do fluxo normal (Indústria →
+// Métrica → Período) porque uma campanha pode cruzar indústrias — não
+// faz sentido escondida atrás do seletor de Indústria. Só existe pra
+// scope='rca' (gamif_pontuacao é por cod_rca, não por Supervisor/GGV).
+
+interface GamifCampanhaMobile {
+  campanha_id: number
+  nome: string
+  industria_nome: string
+  data_inicio: string
+  data_fim: string
+  posicao: number
+  total_rcas: number
+  pontos_total: number
+  bonus_total: number
+  detalhe: { tipo: string; completo?: boolean; cobertos?: number; total?: number; faltam?: number }[]
+}
+
+const fmtBRLMobile = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRca: string; onVoltar: () => void }) {
+  const { data, isLoading } = useQuery<{ campanhas: GamifCampanhaMobile[] }>({
+    queryKey: ['public-gamif-minhas-campanhas', cnpj, codRca],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/public/gamif-minhas-campanhas?cnpj=${cnpj}&cod_rca=${encodeURIComponent(codRca)}`)
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+  })
+  const campanhas = data?.campanhas ?? []
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-md mx-auto">
+      <button type="button" onClick={onVoltar} className="flex items-center gap-1 text-sm text-muted-foreground active:opacity-70">
+        <ArrowLeft className="w-4 h-4" /> Objetivos
+      </button>
+      <div>
+        <h1 className="text-lg font-semibold flex items-center gap-2"><Trophy className="w-5 h-5 text-amber-500" /> Minhas Campanhas</h1>
+        <p className="text-xs text-muted-foreground">Sua posição não mostra quem está na frente ou atrás — só onde você está.</p>
+      </div>
+
+      {isLoading && <p className="text-center text-sm text-muted-foreground py-8">Carregando...</p>}
+      {!isLoading && campanhas.length === 0 && (
+        <div className="bg-white border rounded-xl p-6 text-center text-sm text-muted-foreground">
+          Nenhuma campanha ativa pra você no momento.
+        </div>
+      )}
+
+      {campanhas.map(c => {
+        const progresso = c.detalhe.find(d => d.tipo === 'rca_completo')
+        return (
+          <div key={c.campanha_id} className="bg-white border rounded-xl p-4 space-y-3">
+            <div>
+              <div className="font-semibold text-sm">{c.nome}</div>
+              <div className="text-xs text-muted-foreground">{c.industria_nome} · {c.data_inicio} – {c.data_fim}</div>
+            </div>
+            <div className="text-center py-2">
+              <div className="text-3xl font-bold text-primary">{c.posicao}º</div>
+              <div className="text-xs text-muted-foreground mb-2">de {c.total_rcas} RCAs</div>
+              <div className="flex justify-center gap-6 text-sm">
+                <span><strong>{fmt(c.pontos_total)}</strong> pontos</span>
+                <span className="text-emerald-700"><strong>{fmtBRLMobile(c.bonus_total)}</strong> em bônus</span>
+              </div>
+            </div>
+            {progresso && (
+              <div className={`rounded-lg border p-2 text-xs ${progresso.completo ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
+                {progresso.completo
+                  ? <>🏆 <strong>Objetivo completo!</strong> {progresso.total} de {progresso.total} Redes cobertas.</>
+                  : <>Faltam <strong>{progresso.faltam}</strong> loja{progresso.faltam === 1 ? '' : 's'} de {progresso.total} pra bater o objetivo completo.</>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Page — painel mobile público, mesmo padrão sem login de FarolPublicPanel ──
 
 export default function FarolPublicMetasPanel() {
@@ -291,6 +371,10 @@ export default function FarolPublicMetasPanel() {
   const scope: 'sup' | 'rca' | 'ggv' = isGgv ? 'ggv' : isRca ? 'rca' : 'sup'
   const scopeCod = isGgv ? (params.codGgv || '') : isRca ? (params.codRca || '') : (params.cod || '')
 
+  // modo — pedido do Claudio 22/09/2026: Gamificação como uma tela à
+  // parte, fora do fluxo Indústria/Métrica/Período (uma campanha pode
+  // cruzar indústrias — não faz sentido escondida atrás desse seletor).
+  const [modo, setModo] = useState<'objetivos' | 'gamificacao'>('objetivos')
   const [industriaID, setIndustriaID] = useState('')
   const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
   const [vigenciaID, setVigenciaID] = useState('')
@@ -486,11 +570,24 @@ export default function FarolPublicMetasPanel() {
     return <div className="p-6 text-center text-sm text-muted-foreground">Link inválido.</div>
   }
 
+  if (modo === 'gamificacao') {
+    return <GamificacaoMobileView cnpj={cnpj} codRca={scopeCod} onVoltar={() => setModo('objetivos')} />
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-md mx-auto">
-      <div>
-        <h1 className="text-lg font-semibold">Objetivos por Indústria</h1>
-        <p className="text-xs text-muted-foreground">{scope === 'ggv' ? 'Visão do GGV' : scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Objetivos por Indústria</h1>
+          <p className="text-xs text-muted-foreground">{scope === 'ggv' ? 'Visão do GGV' : scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
+        </div>
+        {/* Gamificação só existe por cod_rca (gamif_pontuacao não tem
+            noção de Supervisor/GGV) — pedido do Claudio 22/09/2026. */}
+        {scope === 'rca' && (
+          <button type="button" onClick={() => setModo('gamificacao')} className="flex items-center gap-1 text-xs font-medium text-amber-600 active:opacity-70 shrink-0 pl-2">
+            <Trophy className="w-4 h-4" /> Campanhas
+          </button>
+        )}
       </div>
 
       <div className="space-y-3">

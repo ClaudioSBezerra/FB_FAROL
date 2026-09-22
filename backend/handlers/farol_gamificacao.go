@@ -926,6 +926,51 @@ type GamifMinhaPosicaoResponse struct {
 	Detalhe         json.RawMessage `json:"detalhe"`
 }
 
+// resolverRankingCampanha roda a query de ranking (com desempate por
+// volume — curva ABC, ver comentário no SQL) e devolve tanto o ranking
+// GERAL (só quem tem pontos/bônus > 0 — achado do Claudio 22/09/2026, "o
+// ranking ficou estranho": regra rca_completo toca todo RCA do vínculo pra
+// rastrear progresso, inundando a lista de zerados) quanto a "minha
+// posição" de um cod_rca específico, se pedido — essa última SEMPRE acha o
+// RCA, mesmo zerado, porque é onde o progresso ("faltam N") precisa
+// aparecer. Extraído do handler admin pra ser reaproveitado pelo endpoint
+// público (visão do RCA de verdade, não só simulação).
+func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRCAFiltro string) (ranking []GamifRankingLinha, minhaPosicao *GamifMinhaPosicaoResponse, err error) {
+	rows, err := db.Query(`
+		SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe,
+		       RANK() OVER (ORDER BY pontos_total DESC, volume_desempate DESC) AS posicao,
+		       COUNT(*) OVER () AS total_rcas
+		FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
+		ORDER BY pontos_total DESC, volume_desempate DESC, cod_rca
+	`, campanhaID, empresaID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	ranking = []GamifRankingLinha{}
+	totalRCAsComProgresso := 0
+	for rows.Next() {
+		var linha GamifRankingLinha
+		if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
+			return nil, nil, err
+		}
+		if codRCAFiltro != "" {
+			if linha.CodRCA == codRCAFiltro {
+				minhaPosicao = &GamifMinhaPosicaoResponse{
+					CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
+					PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate, Detalhe: linha.Detalhe,
+				}
+			}
+			continue
+		}
+		if linha.PontosTotal > 0 || linha.BonusTotal > 0 {
+			ranking = append(ranking, linha)
+		}
+	}
+	return ranking, minhaPosicao, rows.Err()
+}
+
 func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		spCtx := GetSpContext(r)
@@ -945,63 +990,9 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Curva ABC (pedido do Claudio 22/09/2026): entre RCAs empatados em
-		// pontos_total (regras tipo produto_especifico/rca_completo pagam
-		// prêmio FIXO ao bater o mínimo — 10 garrafas ou 188 rendem o
-		// mesmo bônus), o desempate é volume_desempate — a grandeza real
-		// por trás (qtd vendida, lojas atingidas), não uma ordem
-		// arbitrária. Pontos/bônus continuam os mesmos; só a POSIÇÃO no
-		// ranking passa a refletir quem vendeu mais de verdade.
-		rows, err := db.Query(`
-			SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe,
-			       RANK() OVER (ORDER BY pontos_total DESC, volume_desempate DESC) AS posicao,
-			       COUNT(*) OVER () AS total_rcas
-			FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
-			ORDER BY pontos_total DESC, volume_desempate DESC, cod_rca
-		`, campanhaID, spCtx.EmpresaID)
-		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-
 		codRCAFiltro := strings.TrimSpace(r.URL.Query().Get("cod_rca"))
-		ranking := []GamifRankingLinha{}
-		var minhaPosicao *GamifMinhaPosicaoResponse
-		totalRCAsComProgresso := 0 // COUNT(*) OVER () — inclui quem está zerado (rca_completo toca todo mundo do vínculo pra mostrar progresso, ver CalcularPontuacaoCampanha)
-		for rows.Next() {
-			var linha GamifRankingLinha
-			if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
-				http.Error(w, "Database error", http.StatusInternalServerError)
-				return
-			}
-			if codRCAFiltro != "" {
-				if linha.CodRCA == codRCAFiltro {
-					// "Visão do RCA" continua funcionando pra quem está
-					// zerado — é exatamente quem precisa ver "faltam N
-					// lojas" (achado do Claudio 22/09/2026: com
-					// rca_completo ativo, a maioria do vínculo aparece
-					// zerada; a posição/total aqui refletem TODO MUNDO com
-					// progresso, não só quem já pontuou).
-					minhaPosicao = &GamifMinhaPosicaoResponse{
-						CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
-						PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate, Detalhe: linha.Detalhe,
-					}
-				}
-				continue
-			}
-			// Ranking GERAL só mostra quem tem algo a mostrar (pontos ou
-			// bônus > 0) — achado do Claudio 22/09/2026 ("o ranking ficou
-			// estranho"): sem isso, uma regra rca_completo (que toca TODO
-			// mundo do vínculo pra rastrear progresso) inunda a lista de
-			// dezenas de RCAs zerados, virando ruído. Quem está zerado
-			// ainda aparece via "Visão do RCA" (?cod_rca=), que é onde o
-			// progresso de fato importa mostrar.
-			if linha.PontosTotal > 0 || linha.BonusTotal > 0 {
-				ranking = append(ranking, linha)
-			}
-		}
-		if err := rows.Err(); err != nil {
+		ranking, minhaPosicao, err := resolverRankingCampanha(db, spCtx.EmpresaID, campanhaID, codRCAFiltro)
+		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
 			return
 		}
@@ -1017,8 +1008,97 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		// total_rcas aqui é a contagem de quem tem pontos/bônus > 0 (o
-		// "ranking" de verdade) — não totalRCAsComProgresso (que inclui
-		// zerados de regras tipo rca_completo).
+		// "ranking" de verdade) — não o total de linhas com progresso
+		// (que inclui zerados de regras tipo rca_completo).
 		json.NewEncoder(w).Encode(map[string]any{"ranking": ranking, "total_rcas": len(ranking)})
+	}
+}
+
+// ─── GamifPublicMinhasCampanhasHandler — GET /api/farol/public/gamif-minhas-campanhas ─
+
+// GamifCampanhaComPosicao — 1 campanha ativa + a posição/progresso do RCA
+// nela, pro celular do RCA em campo (mesma URL pública /m/.../metas-industria
+// que ele já usa, decisão do Claudio 22/09/2026: "mesmo padrão" de
+// segurança do resto da tela — sem login, só quem tem o link/CNPJ+cod
+// entra, igual Cobertura/Sortimento já são hoje).
+type GamifCampanhaComPosicao struct {
+	CampanhaID    int    `json:"campanha_id"`
+	Nome          string `json:"nome"`
+	IndustriaNome string `json:"industria_nome"`
+	DataInicio    string `json:"data_inicio"`
+	DataFim       string `json:"data_fim"`
+	GamifMinhaPosicaoResponse
+}
+
+func GamifPublicMinhasCampanhasHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query()
+		empresaID := resolveEmpresaCNPJ(db, q.Get("cnpj"))
+		if empresaID == "" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "empresa não encontrada para este CNPJ"})
+			return
+		}
+		codRCA := strings.TrimSpace(q.Get("cod_rca"))
+		if codRCA == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "cod_rca é obrigatório"})
+			return
+		}
+
+		// Só campanhas ATIVAS em que este RCA tem alguma linha de
+		// pontuação (pontuando ou só progresso) — nunca lista campanhas
+		// de outros RCAs nem detalhe de quem está na frente (mesma regra
+		// de resolverRankingCampanha).
+		rows, err := db.Query(`
+			SELECT c.id, c.nome, i.nome, c.data_inicio::text, c.data_fim::text
+			FROM farol.gamif_campanhas c
+			JOIN farol.industrias i ON i.id = c.industria_id
+			WHERE c.empresa_id = $1 AND c.status = 'ativa'
+			  AND EXISTS (SELECT 1 FROM farol.gamif_pontuacao p WHERE p.campanha_id = c.id AND p.cod_rca = $2)
+			ORDER BY c.created_at DESC
+		`, empresaID, codRCA)
+		if err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+		type campanhaBase struct {
+			id                               int
+			nome, industriaNome, inicio, fim string
+		}
+		var campanhas []campanhaBase
+		for rows.Next() {
+			var c campanhaBase
+			if err := rows.Scan(&c.id, &c.nome, &c.industriaNome, &c.inicio, &c.fim); err != nil {
+				rows.Close()
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			campanhas = append(campanhas, c)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+
+		out := make([]GamifCampanhaComPosicao, 0, len(campanhas))
+		for _, c := range campanhas {
+			_, minhaPosicao, err := resolverRankingCampanha(db, empresaID, c.id, codRCA)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			if minhaPosicao == nil {
+				continue // não deveria acontecer (o EXISTS acima já garantiu), defensivo
+			}
+			out = append(out, GamifCampanhaComPosicao{
+				CampanhaID: c.id, Nome: c.nome, IndustriaNome: c.industriaNome,
+				DataInicio: c.inicio, DataFim: c.fim,
+				GamifMinhaPosicaoResponse: *minhaPosicao,
+			})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"campanhas": out})
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -587,5 +588,81 @@ func TestGamifRankingHandler_DesempataPorVolumeCurvaABC(t *testing.T) {
 	}
 	if resp.Ranking[0].VolumeDesempate != 188 || resp.Ranking[1].VolumeDesempate != 10 {
 		t.Errorf("volume_desempate = top:%v min:%v, want 188/10", resp.Ranking[0].VolumeDesempate, resp.Ranking[1].VolumeDesempate)
+	}
+}
+
+// TestGamifPublicMinhasCampanhasHandler_AchaCampanhaSemLogin — pedido do
+// Claudio 22/09/2026: o RCA vê a Gamificação na mesma URL pública que já
+// usa em campo (/m/.../metas-industria), sem login — mesmo padrão de
+// segurança do resto da tela mobile. Prova que o endpoint público resolve
+// a campanha certa a partir de cnpj+cod_rca, sem vazar dado de outro RCA.
+func TestGamifPublicMinhasCampanhasHandler_AchaCampanhaSemLogin(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	var cnpjEmpresa string
+	if err := db.QueryRow(`SELECT regexp_replace(cnpj, '[^0-9]', '', 'g') FROM companies WHERE id = $1`, empresaID).Scan(&cnpjEmpresa); err != nil || cnpjEmpresa == "" {
+		t.Skip("empresa de teste sem CNPJ cadastrado — teste pulado")
+	}
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM Public", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjCliente := "80000000000801"
+	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-PUB'`, empresaID) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE PUB", cnpjCliente, "TGAM-RCA-PUB")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjCliente, "PRODPUB", "TGAM-RCA-PUB", "1", 150, 1, "2026-08-10")
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "cobertura_atingida", vinculoID, vigenciaID, nil, 0, 10, 300)
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	url := fmt.Sprintf("/api/farol/public/gamif-minhas-campanhas?cnpj=%s&cod_rca=TGAM-RCA-PUB", cnpjEmpresa)
+	w := httptest.NewRecorder()
+	GamifPublicMinhasCampanhasHandler(db)(w, httptest.NewRequest(http.MethodGet, url, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET público → status %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Campanhas []struct {
+			CampanhaID  int     `json:"campanha_id"`
+			Nome        string  `json:"nome"`
+			Posicao     int     `json:"posicao"`
+			PontosTotal float64 `json:"pontos_total"`
+			BonusTotal  float64 `json:"bonus_total"`
+		} `json:"campanhas"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v, body=%s", err, w.Body.String())
+	}
+	var achou bool
+	for _, c := range resp.Campanhas {
+		if c.CampanhaID == campanhaID {
+			achou = true
+			if c.PontosTotal != 10 || c.BonusTotal != 300 {
+				t.Errorf("campanha achada com pontos/bonus = %v/%v, want 10/300", c.PontosTotal, c.BonusTotal)
+			}
+		}
+	}
+	if !achou {
+		t.Errorf("campanha %d não apareceu na lista pública pro RCA TGAM-RCA-PUB: %+v", campanhaID, resp.Campanhas)
+	}
+
+	// cod_rca sem nenhuma pontuação não deveria trazer NENHUMA campanha
+	// (nem essa, nem vazamento de outro RCA).
+	urlOutro := fmt.Sprintf("/api/farol/public/gamif-minhas-campanhas?cnpj=%s&cod_rca=TGAM-RCA-INEXISTENTE", cnpjEmpresa)
+	wOutro := httptest.NewRecorder()
+	GamifPublicMinhasCampanhasHandler(db)(wOutro, httptest.NewRequest(http.MethodGet, urlOutro, nil))
+	var respOutro struct {
+		Campanhas []map[string]any `json:"campanhas"`
+	}
+	json.Unmarshal(wOutro.Body.Bytes(), &respOutro)
+	if len(respOutro.Campanhas) != 0 {
+		t.Errorf("RCA sem pontuação nenhuma deveria ver lista vazia, veio %+v", respOutro.Campanhas)
 	}
 }
