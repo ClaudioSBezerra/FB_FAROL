@@ -448,7 +448,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	// ver comentário de resolverDataUltimaCompraClientes, achado real
 	// 22/09/2026: RCA via 21/09 na tela de UNILEVER FOOD, mas essa venda
 	// era de UNILEVER HC; a última compra de FOOD tinha sido 25/08).
-	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, tiposVenda, codFornec)
+	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, dataInicio, dataFim, tiposVenda, codFornec)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +679,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	// Ver comentário equivalente em calcularCoberturaPorRede — data da
 	// última compra DESTA indústria, não "qualquer fornecedor" (esse é o
 	// papel do UF acima).
-	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, tiposVenda, codFornec)
+	dataUltimaCompraPorCliente, err := resolverDataUltimaCompraClientes(db, empresaID, cnpjs, dataInicio, dataFim, tiposVenda, codFornec)
 	if err != nil {
 		return nil, err
 	}

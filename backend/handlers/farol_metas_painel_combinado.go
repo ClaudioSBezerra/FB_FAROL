@@ -171,26 +171,32 @@ func resolverUFClientes(db *sql.DB, empresaID string, cnpjs []string) (map[strin
 }
 
 // resolverDataUltimaCompraClientes resolve a data da venda mais RECENTE de
-// cada CNPJ, restrita ao(s) cod_fornec (e, se houver, tipos_venda) do
-// VÍNCULO — mesmos filtros que somaPvendaClientes/qtdPorCodProdClientes já
-// aplicam pra calcular Cobertura/Sortimento (ver farol_metas_calculo.go).
-// "Dt.Ult.Cmp" no drill-down de Cliente precisa responder "quando esse
-// cliente comprou desta indústria", não "quando comprou de qualquer
-// fornecedor" (esse é o papel de resolverUFClientes, que fica como está —
-// UF não muda por indústria). Mesmo padrão LATERAL + LIMIT 1 por cnpj, um
-// índice por tabela — barato mesmo filtrando fornecedor/tipo de venda.
-func resolverDataUltimaCompraClientes(db *sql.DB, empresaID string, cnpjs, tiposVenda, codFornec []string) (map[string]time.Time, error) {
+// cada CNPJ DENTRO DE [dataInicio, dataFim], restrita ao(s) cod_fornec (e,
+// se houver, tipos_venda) do VÍNCULO — mesmos filtros e MESMO período que
+// somaPvendaClientes/qtdPorCodProdClientes já usam pra calcular
+// Cobertura/Sortimento (ver farol_metas_calculo.go). "Dt.Ult.Cmp" no
+// drill-down de Cliente precisa responder "quando esse cliente comprou
+// desta indústria NESTE PERÍODO que estou olhando" — não "quando comprou de
+// qualquer fornecedor, em qualquer época" (esse é o papel de
+// resolverUFClientes, que fica como está — UF não muda por indústria nem
+// por período). Achado real 22/09/2026: sem o filtro de período, a tela de
+// Agosto (mês fechado) mostrava uma data de Setembro — parecia bug bizarro
+// pro Claudio ("não faz sentido olhar Agosto e ver Setembro"), porque a
+// consulta original ignorava completamente o período calculado. Mesmo
+// padrão LATERAL + LIMIT 1 por cnpj, um índice por tabela — barato mesmo
+// filtrando fornecedor/tipo de venda/data.
+func resolverDataUltimaCompraClientes(db *sql.DB, empresaID string, cnpjs []string, dataInicio, dataFim string, tiposVenda, codFornec []string) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	if len(cnpjs) == 0 {
 		return out, nil
 	}
 	// Placeholders montados dinamicamente (mesmo padrão de
-	// somaPvendaClientes) — $3/$4 só entram na lista de args quando o
-	// filtro correspondente é usado. Passar um placeholder que não aparece
-	// em lugar nenhum do texto da query faz o Postgres rejeitar a consulta
-	// ("could not determine data type" ou "got N parameters but the
-	// statement requires M") — achado ao rodar os testes desta função.
-	args := []any{empresaID, pq.Array(cnpjs)}
+	// somaPvendaClientes) — um placeholder só entra na lista de args quando
+	// o filtro correspondente é usado. Passar um placeholder que não
+	// aparece em lugar nenhum do texto da query faz o Postgres rejeitar a
+	// consulta ("could not determine data type" ou "got N parameters but
+	// the statement requires M") — achado ao rodar os testes desta função.
+	args := []any{empresaID, pq.Array(cnpjs), dataInicio, dataFim}
 	placeholderTipoVenda, placeholderCodFornec := 0, 0
 	if len(tiposVenda) > 0 {
 		args = append(args, pq.Array(tiposVenda))
@@ -222,12 +228,12 @@ func resolverDataUltimaCompraClientes(db *sql.DB, empresaID string, cnpjs, tipos
 		FROM unnest($2::text[]) AS c(cnpj)
 		LEFT JOIN LATERAL (
 		  SELECT data_faturamento AS data FROM vendas_faturadas
-		  WHERE empresa_id = $1 AND cnpj = c.cnpj`+filtroVF+`
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj AND data_faturamento BETWEEN $3 AND $4`+filtroVF+`
 		  ORDER BY data_faturamento DESC LIMIT 1
 		) vf ON true
 		LEFT JOIN LATERAL (
 		  SELECT data_transmissao AS data FROM vendas_transmitidas
-		  WHERE empresa_id = $1 AND cnpj = c.cnpj`+filtroVT+`
+		  WHERE empresa_id = $1 AND cnpj = c.cnpj AND data_transmissao BETWEEN $3 AND $4`+filtroVT+`
 		  ORDER BY data_transmissao DESC LIMIT 1
 		) vt ON true
 		WHERE vf.data IS NOT NULL OR vt.data IS NOT NULL

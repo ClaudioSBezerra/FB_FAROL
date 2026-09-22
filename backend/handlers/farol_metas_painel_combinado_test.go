@@ -37,13 +37,19 @@ func TestResolverUFClientes_QualquerFornecedor(t *testing.T) {
 	}
 }
 
-// TestResolverDataUltimaCompraClientes_FiltraPorFornecedor — achado real
-// 22/09/2026: RCA 3691 via "Dt.Ult.Cmp" = 21/09 na tela de UNILEVER FOOD,
-// mas essa data era de uma venda de UNILEVER HC (cod_fornec 396); a última
-// compra REAL de FOOD (cod_fornec 131) desse cliente tinha sido quase um
-// mês antes. resolverDataUltimaCompraClientes precisa ignorar a venda mais
-// recente de outro fornecedor e enxergar só a da indústria do vínculo.
-func TestResolverDataUltimaCompraClientes_FiltraPorFornecedor(t *testing.T) {
+// TestResolverDataUltimaCompraClientes_FiltraPorFornecedorEPeriodo — 2
+// achados reais do Claudio no mesmo dia (22/09/2026):
+//  1. RCA 3691 via "Dt.Ult.Cmp" = 21/09 na tela de UNILEVER FOOD, mas essa
+//     data era de uma venda de UNILEVER HC (cod_fornec 396) — a última
+//     compra REAL de FOOD (cod_fornec 131) tinha sido bem antes.
+//  2. Olhando o PERÍODO de Agosto/2026 (mês fechado), a tela mostrava uma
+//     data de Setembro — "não faz sentido olhar Agosto e ver Setembro".
+//
+// resolverDataUltimaCompraClientes precisa filtrar por cod_fornec/tipos de
+// venda do vínculo E respeitar o período sendo calculado — as 3 vendas
+// abaixo (fornecedor errado, fora do período, e a certa) provam os 2 casos
+// de uma vez.
+func TestResolverDataUltimaCompraClientes_FiltraPorFornecedorEPeriodo(t *testing.T) {
 	db, empresaID := biTestDB(t)
 
 	cnpj := "22222222000102"
@@ -60,22 +66,35 @@ func TestResolverDataUltimaCompraClientes_FiltraPorFornecedor(t *testing.T) {
 		}
 	}
 	inserir("2026-09-21", "396") // UNILEVER HC — mais recente, mas de OUTRA indústria
-	inserir("2026-08-25", "131") // UNILEVER FOOD — a indústria do vínculo sob teste
+	inserir("2026-09-16", "131") // UNILEVER FOOD — fornecedor certo, mas FORA do período de Agosto
+	inserir("2026-08-25", "131") // UNILEVER FOOD dentro de Agosto — a resposta certa pra vigência de Agosto
 
-	out, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, nil, []string{"131"})
+	// Vigência de Agosto (o caso que expôs o bug): nem a venda de HC nem a
+	// de FOOD de Setembro podem vencer — só a de 25/08.
+	outAgosto, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, "2026-08-01", "2026-08-31", nil, []string{"131"})
 	if err != nil {
-		t.Fatalf("resolverDataUltimaCompraClientes: %v", err)
+		t.Fatalf("resolverDataUltimaCompraClientes (agosto): %v", err)
 	}
-	got := formatarDataUltimaCompra(out[cnpj])
-	if got != "2026-08-25" {
-		t.Errorf("DataUltimaCompra = %q, esperava 2026-08-25 (a venda de FOOD, não a de HC que é mais recente mas de outro fornecedor)", got)
+	if got := formatarDataUltimaCompra(outAgosto[cnpj]); got != "2026-08-25" {
+		t.Errorf("agosto: DataUltimaCompra = %q, esperava 2026-08-25 (única venda de FOOD dentro do período)", got)
 	}
 
-	// Sem filtro de cod_fornec (vínculo hipotético sem restrição de
-	// indústria) — aí sim a mais recente de qualquer fornecedor vence.
-	outSemFiltro, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, nil, nil)
+	// Vigência de Setembro, mesmo fornecedor: agora a de 16/09 é a certa —
+	// a de HC (396) continua fora por ser de outro fornecedor.
+	outSetembro, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, "2026-09-01", "2026-09-30", nil, []string{"131"})
 	if err != nil {
-		t.Fatalf("resolverDataUltimaCompraClientes sem filtro: %v", err)
+		t.Fatalf("resolverDataUltimaCompraClientes (setembro): %v", err)
+	}
+	if got := formatarDataUltimaCompra(outSetembro[cnpj]); got != "2026-09-16" {
+		t.Errorf("setembro: DataUltimaCompra = %q, esperava 2026-09-16 (venda de FOOD dentro do período, não a de HC)", got)
+	}
+
+	// Sem filtro de cod_fornec, mesmo período de Setembro — aí a de HC
+	// (21/09) vence, por ser a mais recente de qualquer fornecedor DENTRO
+	// do período.
+	outSemFiltro, err := resolverDataUltimaCompraClientes(db, empresaID, []string{cnpj}, "2026-09-01", "2026-09-30", nil, nil)
+	if err != nil {
+		t.Fatalf("resolverDataUltimaCompraClientes sem filtro de fornecedor: %v", err)
 	}
 	if got := formatarDataUltimaCompra(outSemFiltro[cnpj]); got != "2026-09-21" {
 		t.Errorf("sem filtro de cod_fornec: DataUltimaCompra = %q, esperava 2026-09-21", got)
