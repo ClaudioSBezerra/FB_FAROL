@@ -316,3 +316,53 @@ func TestGamifRegraItemHandler_PUT_EditaValoresExistentes(t *testing.T) {
 	}
 }
 
+// TestCalcularPontuacaoCampanha_RedeCompletaAtingida_SoQuando100PorCento —
+// pedido do Claudio 22/09/2026: 4º tipo de regra, pra separar "Loja
+// Individual" (paga por cada loja) de "Rede Completa" (só paga quando
+// TODAS as lojas da Rede batem). 2 Redes do mesmo RCA: uma 100% coberta
+// (2 de 2), outra parcial (1 de 2) — só a primeira deve gerar o bônus
+// desta regra, mesmo a parcial já pontuando na regra "por loja" (não
+// testada aqui, são regras independentes).
+func TestCalcularPontuacaoCampanha_RedeCompletaAtingida_SoQuando100PorCento(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM RedeCompleta", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjCompleta1, cnpjCompleta2 := "80000000000401", "80000000000402"
+	cnpjParcialBate, cnpjParcialZerada := "80000000000403", "80000000000404"
+	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-RC'`, empresaID) })
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE COMPLETA", cnpjCompleta1, "TGAM-RCA-RC")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE COMPLETA", cnpjCompleta2, "TGAM-RCA-RC")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE PARCIAL", cnpjParcialBate, "TGAM-RCA-RC")
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE PARCIAL", cnpjParcialZerada, "TGAM-RCA-RC")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjCompleta1, "PRODRC", "TGAM-RCA-RC", "1", 150, 1, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjCompleta2, "PRODRC", "TGAM-RCA-RC", "1", 150, 1, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjParcialBate, "PRODRC", "TGAM-RCA-RC", "1", 150, 1, "2026-08-10")
+	// cnpjParcialZerada não compra nada — REDE PARCIAL fica 1 de 2 (50%).
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "rede_completa_atingida", vinculoID, vigenciaID, nil, 0, 50, 1000)
+
+	if err := CalcularPontuacaoCampanha(db, empresaID, campanhaID); err != nil {
+		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
+	}
+
+	var pontos, bonus float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-RC'`, campanhaID).
+		Scan(&pontos, &bonus); err != nil {
+		t.Fatalf("ler pontuação: %v", err)
+	}
+	// Só 1 Rede (REDE COMPLETA) bateu 100% — 1 ocorrência, não 2 (não
+	// multiplica pela qtd de lojas da Rede completa, e REDE PARCIAL não
+	// conta nada aqui por não ser 100%).
+	if pontos != 50 || bonus != 1000 {
+		t.Errorf("pontos/bonus = %v/%v, want 50/1000 (só REDE COMPLETA bateu 100%%, 1 ocorrência — REDE PARCIAL não conta nesta regra)", pontos, bonus)
+	}
+}
+

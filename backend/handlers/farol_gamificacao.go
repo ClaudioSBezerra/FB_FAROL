@@ -48,7 +48,7 @@ import (
 type GamifRegraResponse struct {
 	ID          int      `json:"id"`
 	CampanhaID  int      `json:"campanha_id"`
-	Tipo        string   `json:"tipo"` // cobertura_atingida | sortimento_atingido (por CLIENTE/loja) | produto_especifico (por RCA)
+	Tipo        string   `json:"tipo"` // cobertura_atingida | sortimento_atingido (por CLIENTE/loja) | rede_completa_atingida (por Rede, 100% das lojas) | produto_especifico (por RCA)
 	Descricao   string   `json:"descricao"`
 	VinculoID   *int     `json:"vinculo_id,omitempty"`
 	VigenciaID  *int     `json:"vigencia_id,omitempty"`
@@ -402,6 +402,30 @@ func validarGamifRegra(db *sql.DB, empresaID string, req GamifRegraRequest) stri
 		if formulaCodigo != formulaEsperada {
 			return fmt.Sprintf("o vínculo escolhido é do tipo %q, mas a regra é %q", formulaCodigo, req.Tipo)
 		}
+	case "rede_completa_atingida":
+		// Bônus extra por Rede 100% coberta (todas as lojas bateram), não
+		// por loja isolada — pedido do Claudio 22/09/2026, pra separar
+		// "Loja Individual" de "Rede Completa" como campanhas distintas.
+		// Aceita vínculo de Cobertura OU Sortimento (formula-agnóstico —
+		// "100% da Rede" faz sentido pras duas métricas).
+		if req.VinculoID == 0 || req.VigenciaID == 0 {
+			return "vinculo_id e vigencia_id são obrigatórios pra este tipo de regra"
+		}
+		var formulaCodigo string
+		err := db.QueryRow(`
+			SELECT tm.formula_codigo FROM farol.metas_vinculos mv
+			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
+			JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id
+			WHERE mv.id = $1 AND v.id = $2 AND mv.empresa_id = $3
+		`, req.VinculoID, req.VigenciaID, empresaID).Scan(&formulaCodigo)
+		if err == sql.ErrNoRows {
+			return "vínculo/vigência não encontrado"
+		} else if err != nil {
+			return "erro ao validar vínculo/vigência"
+		}
+		if formulaCodigo != "cobertura_rede" && formulaCodigo != "sortimento_rede" {
+			return fmt.Sprintf("vínculo do tipo %q não serve pra Cobertura nem Sortimento", formulaCodigo)
+		}
 	case "produto_especifico":
 		if len(req.CodProds) == 0 {
 			return "cod_prods é obrigatório pra regra de produto específico"
@@ -410,7 +434,7 @@ func validarGamifRegra(db *sql.DB, empresaID string, req GamifRegraRequest) stri
 			return "qtd_minima precisa ser maior que zero"
 		}
 	default:
-		return "tipo inválido (use cobertura_atingida, sortimento_atingido ou produto_especifico)"
+		return "tipo inválido (use cobertura_atingida, sortimento_atingido, rede_completa_atingida ou produto_especifico)"
 	}
 	if req.Pontos <= 0 && req.ValorBonus <= 0 {
 		return "a regra precisa premiar algo — preencha pontos e/ou valor_bonus"
@@ -530,6 +554,23 @@ type gamifAcumuladorRCA struct {
 	Detalhe []map[string]any
 }
 
+// donoRealPorCNPJ resolve o dono (CodRCA/NomeRCA) REAL de cada CNPJ na
+// vigência, a partir de farol.metas_clientes_validos — não a aproximação
+// "1 dono pra Rede inteira" (redeRepresentante) que RealizadoRede.CodRCA
+// carrega. Usado por qualquer regra que precise atribuir crédito por
+// CLIENTE (loja), não por Rede.
+func donoRealPorCNPJ(db *sql.DB, empresaID string, vigenciaID int) (map[string]clienteValido, error) {
+	clientesValidos, err := lerClientesValidos(db, empresaID, vigenciaID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]clienteValido, len(clientesValidos))
+	for _, c := range clientesValidos {
+		out[c.CNPJ] = c
+	}
+	return out, nil
+}
+
 // CalcularPontuacaoCampanha recalcula (replace total) a pontuação de TODOS
 // os RCAs de uma campanha — soma o resultado de cada regra:
 //   - cobertura_atingida/sortimento_atingido: reaproveita
@@ -609,19 +650,13 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 			// RealizadoRede.Atingiu é a MÉDIA das lojas da Rede — premiar
 			// por aí recompensaria/puniria o RCA por algo que só uma loja
 			// "puxa" pra cima ou pra baixo, fora do controle dele numa
-			// visita específica. RealizadoRede.CodRCA também é só o "dono
-			// aproximado" da Rede inteira (redeRepresentante, primeiro
-			// CNPJ) — o dono REAL de cada loja vem de
-			// farol.metas_clientes_validos (lerClientesValidos), que pode
-			// divergir por CNPJ dentro da mesma Rede (~6 de 134 Redes reais
-			// têm isso, achado 2026-09-04).
-			clientesValidos, err := lerClientesValidos(db, empresaID, int(rg.VigenciaID.Int64))
+			// visita específica. O dono REAL de cada loja (donoPorCNPJ) vem
+			// de farol.metas_clientes_validos, que pode divergir do "dono
+			// aproximado" da Rede (redeRepresentante) — ~6 de 134 Redes
+			// reais têm isso, achado 2026-09-04.
+			donoPorCNPJ, err := donoRealPorCNPJ(db, empresaID, int(rg.VigenciaID.Int64))
 			if err != nil {
 				return fmt.Errorf("regra %d: %w", rg.ID, err)
-			}
-			donoPorCNPJ := make(map[string]clienteValido, len(clientesValidos))
-			for _, c := range clientesValidos {
-				donoPorCNPJ[c.CNPJ] = c
 			}
 			for _, rede := range realizado.Redes {
 				for _, cliente := range rede.Clientes {
@@ -632,6 +667,48 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
 						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
 					}
+					somar(codRCA, nomeRCA, rg)
+				}
+			}
+		case "rede_completa_atingida":
+			// Bônus EXTRA por Rede 100% coberta — diferente da regra acima
+			// (que já paga por CADA loja isolada): aqui só paga se TODAS as
+			// lojas daquela Rede bateram, uma vez por RCA envolvido (não
+			// multiplicado pela qtd de lojas — "a Rede inteira" é 1
+			// conquista, não N). Pedido do Claudio 22/09/2026 pra separar
+			// "Loja Individual" de "Rede Completa" como campanhas distintas.
+			if !rg.VinculoID.Valid || !rg.VigenciaID.Valid {
+				continue
+			}
+			realizado, err := obterOuCongelarRealizado(db, empresaID, int(rg.VinculoID.Int64), int(rg.VigenciaID.Int64), rg.Fluxo, "rede")
+			if err != nil {
+				return fmt.Errorf("regra %d: %w", rg.ID, err)
+			}
+			donoPorCNPJ, err := donoRealPorCNPJ(db, empresaID, int(rg.VigenciaID.Int64))
+			if err != nil {
+				return fmt.Errorf("regra %d: %w", rg.ID, err)
+			}
+			for _, rede := range realizado.Redes {
+				if len(rede.Clientes) == 0 {
+					continue
+				}
+				todasAtingiram := true
+				rcasEnvolvidos := map[string]string{} // codRCA -> nomeRCA
+				for _, cliente := range rede.Clientes {
+					if !cliente.Atingiu {
+						todasAtingiram = false
+						break
+					}
+					codRCA, nomeRCA := rede.CodRCA, rede.NomeRCA
+					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
+						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
+					}
+					rcasEnvolvidos[codRCA] = nomeRCA
+				}
+				if !todasAtingiram {
+					continue
+				}
+				for codRCA, nomeRCA := range rcasEnvolvidos {
 					somar(codRCA, nomeRCA, rg)
 				}
 			}

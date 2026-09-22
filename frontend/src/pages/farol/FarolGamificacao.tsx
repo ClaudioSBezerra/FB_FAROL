@@ -33,7 +33,7 @@ interface Vigencia { id: number; vinculo_id: number; data_inicio: string; data_f
 interface GamifRegra {
   id: number
   campanha_id: number
-  tipo: 'cobertura_atingida' | 'sortimento_atingido' | 'produto_especifico'
+  tipo: 'cobertura_atingida' | 'sortimento_atingido' | 'rede_completa_atingida' | 'produto_especifico'
   descricao: string
   vinculo_id?: number
   vigencia_id?: number
@@ -78,6 +78,7 @@ const fmt = (n: number) => (n ?? 0).toLocaleString('pt-BR', { maximumFractionDig
 const TIPO_LABEL: Record<string, string> = {
   cobertura_atingida: 'Cobertura atingida (por Cliente/Loja)',
   sortimento_atingido: 'Sortimento atingido (por Cliente/Loja)',
+  rede_completa_atingida: 'Rede completa atingida (100% das lojas)',
   produto_especifico: 'Produto específico (por RCA)',
 }
 
@@ -172,10 +173,13 @@ export default function FarolGamificacao() {
     descricao: '', vinculo_id: '', vigencia_id: '',
     cod_prods: '', qtd_minima: '', pontos: '', valor_bonus: '',
   })
-  const vinculosDaIndustria = (vinculos ?? []).filter(v =>
-    v.industria_id === campanhaDetalhe?.industria_id &&
-    v.formula_codigo === (formRegra.tipo === 'sortimento_atingido' ? 'sortimento_rede' : 'cobertura_rede')
-  )
+  // rede_completa_atingida aceita vínculo de Cobertura OU Sortimento (não
+  // filtra por formula_codigo — "100% da Rede" faz sentido pras duas).
+  const vinculosDaIndustria = (vinculos ?? []).filter(v => {
+    if (v.industria_id !== campanhaDetalhe?.industria_id) return false
+    if (formRegra.tipo === 'rede_completa_atingida') return v.formula_codigo === 'cobertura_rede' || v.formula_codigo === 'sortimento_rede'
+    return v.formula_codigo === (formRegra.tipo === 'sortimento_atingido' ? 'sortimento_rede' : 'cobertura_rede')
+  })
   const { data: vigenciasDoVinculo } = useQuery<Vigencia[]>({
     queryKey: ['metas-vigencias', formRegra.vinculo_id],
     queryFn: async () => (await fetch(`/api/farol/metas-vigencias?vinculo_id=${formRegra.vinculo_id}`, { headers })).json(),
@@ -391,6 +395,7 @@ export default function FarolGamificacao() {
                   <SelectContent>
                     <SelectItem value="cobertura_atingida">Cobertura atingida (por Cliente/Loja)</SelectItem>
                     <SelectItem value="sortimento_atingido">Sortimento atingido (por Cliente/Loja)</SelectItem>
+                    <SelectItem value="rede_completa_atingida">Rede completa atingida (100% das lojas)</SelectItem>
                     <SelectItem value="produto_especifico">Produto específico (por RCA)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -403,7 +408,7 @@ export default function FarolGamificacao() {
               {formRegra.tipo !== 'produto_especifico' ? (
                 <>
                   <div>
-                    <Label>Vínculo ({formRegra.tipo === 'sortimento_atingido' ? 'Sortimento' : 'Cobertura'} da indústria da campanha)</Label>
+                    <Label>Vínculo ({formRegra.tipo === 'rede_completa_atingida' ? 'Cobertura ou Sortimento' : formRegra.tipo === 'sortimento_atingido' ? 'Sortimento' : 'Cobertura'} da indústria da campanha)</Label>
                     <Select value={formRegra.vinculo_id} onValueChange={v => setFormRegra(f => ({ ...f, vinculo_id: v, vigencia_id: '' }))}>
                       <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                       <SelectContent>
