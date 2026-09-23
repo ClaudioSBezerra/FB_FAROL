@@ -630,47 +630,11 @@ export default function FarolGamificacao() {
           </Table>
         </div>
 
-        {/* Extrato de pagamento — pedido do Claudio 23/09/2026: rastreabilidade
-            pra RH/gestores/jurídico. Cada extrato é um snapshot congelado,
-            imutável mesmo que a campanha continue rodando depois. */}
-        <div className="border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b flex items-center justify-between bg-muted/30">
-            <div>
-              <span className="text-sm font-medium">Extrato de pagamento</span>
-              <p className="text-xs text-muted-foreground">Snapshot congelado pra mandar a gestores/RH — cada geração é um registro novo, o anterior não muda.</p>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => gerarExtrato.mutate()} disabled={gerarExtrato.isPending}>
-              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${gerarExtrato.isPending ? 'animate-spin' : ''}`} /> Gerar extrato
-            </Button>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Gerado em</TableHead>
-                <TableHead>Por</TableHead>
-                <TableHead className="text-right">RCAs</TableHead>
-                <TableHead className="w-32"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(extratos ?? []).length === 0 && (
-                <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">Nenhum extrato gerado ainda</TableCell></TableRow>
-              )}
-              {(extratos ?? []).map(e => (
-                <TableRow key={e.id}>
-                  <TableCell className="text-sm">{new Date(e.gerado_em).toLocaleString('pt-BR')}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground font-mono">{e.gerado_por}</TableCell>
-                  <TableCell className="text-right text-sm">{e.linhas.length}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm" onClick={() => baixarExcelExtrato(e.id, headers)}>Baixar Excel</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-
-        {/* Visão do RCA — pedido do Claudio 22/09/2026: mostra a posição, nunca quem está na frente */}
+        {/* Visão do RCA — pedido do Claudio 22/09/2026: mostra a posição,
+            nunca quem está na frente. Fica logo após o Ranking (não depois
+            do Extrato) — achado do Claudio 23/09/2026 ("ao clicar não
+            acontece nada"): a caixa abria, só que lá embaixo, longe do
+            botão que a disparou. */}
         {rcaSimulado && (
           <div className="border-2 border-dashed border-primary/40 rounded-lg p-4 bg-primary/5">
             <div className="flex items-center justify-between mb-2">
@@ -717,6 +681,46 @@ export default function FarolGamificacao() {
             )}
           </div>
         )}
+
+        {/* Extrato de pagamento — pedido do Claudio 23/09/2026: rastreabilidade
+            pra RH/gestores/jurídico. Cada extrato é um snapshot congelado,
+            imutável mesmo que a campanha continue rodando depois. */}
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-3 py-2 border-b flex items-center justify-between bg-muted/30">
+            <div>
+              <span className="text-sm font-medium">Extrato de pagamento</span>
+              <p className="text-xs text-muted-foreground">Snapshot congelado pra mandar a gestores/RH — cada geração é um registro novo, o anterior não muda.</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => gerarExtrato.mutate()} disabled={gerarExtrato.isPending}>
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${gerarExtrato.isPending ? 'animate-spin' : ''}`} /> Gerar extrato
+            </Button>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Gerado em</TableHead>
+                <TableHead>Por</TableHead>
+                <TableHead className="text-right">RCAs</TableHead>
+                <TableHead className="w-32"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(extratos ?? []).length === 0 && (
+                <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">Nenhum extrato gerado ainda</TableCell></TableRow>
+              )}
+              {(extratos ?? []).map(e => (
+                <TableRow key={e.id}>
+                  <TableCell className="text-sm">{new Date(e.gerado_em).toLocaleString('pt-BR')}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground font-mono">{e.gerado_por}</TableCell>
+                  <TableCell className="text-right text-sm">{e.linhas.length}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="sm" onClick={() => baixarExcelExtrato(e.id, headers)}>Baixar Excel</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Dialog: nova regra / editar regra */}
         <Dialog open={novaRegraOpen} onOpenChange={open => { if (!open) fecharDialogRegra() }}>
