@@ -189,13 +189,31 @@ const GAMIF_NIVEL_COR_TROFEU: Record<string, string> = {
   ouro: 'text-yellow-500',
   diamante: 'text-sky-400',
 }
+// Cor da PISTA (trilha de progresso) — pedido do Claudio 23/09/2026:
+// "faltou a pista de corrida na cor do andamento do objetivo atingido".
+// Mesma paleta do troféu, só que como preenchimento de barra (bg-) em vez
+// de cor de ícone (text-).
+const GAMIF_NIVEL_COR_PISTA: Record<string, string> = {
+  bronze: 'bg-amber-700',
+  prata: 'bg-slate-400',
+  ouro: 'bg-yellow-500',
+  diamante: 'bg-sky-400',
+}
 
 function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: number }) {
   const corTrofeu = nivel ? GAMIF_NIVEL_COR_TROFEU[nivel] : 'text-muted-foreground/30'
+  const corPista = nivel ? GAMIF_NIVEL_COR_PISTA[nivel] : 'bg-red-300'
   const legenda = nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`
+  // A pista enche até 100% mesmo pra quem passou disso (Diamante pode ser
+  // 1880%) — o que importa visualmente é "já chegou na régua", o número
+  // exato já está na legenda embaixo.
+  const preenchido = Math.max(0, Math.min(percentual, 100))
   return (
-    <span className="inline-flex flex-col items-center gap-0.5" title={`${Math.round(percentual)}% do objetivo`}>
+    <span className="inline-flex flex-col items-center gap-1" title={`${Math.round(percentual)}% do objetivo`}>
       <Trophy className={`w-5 h-5 ${corTrofeu}`} fill={nivel ? 'currentColor' : 'none'} strokeWidth={nivel ? 1.5 : 2} />
+      <span className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+        <span className={`block h-full rounded-full ${corPista}`} style={{ width: `${preenchido}%` }} />
+      </span>
       <span className="text-[10px] font-medium text-muted-foreground leading-none">{legenda}</span>
     </span>
   )
