@@ -66,6 +66,12 @@ interface GamifRankingLinha {
   // vendas"): critério de desempate quando pontos/bônus empatam (regras
   // de prêmio fixo tipo produto_especifico) — não afeta o prêmio em si.
   volume_desempate: number
+  // nivel_principal/percentual_principal — escala de pagamento (pedido do
+  // Claudio 23/09/2026): maior % de atingimento entre as regras da
+  // campanha pra este RCA, e o nível (bronze/prata/ouro/diamante) que esse
+  // % rendeu — pontos_total/bonus_total JÁ vêm ajustados por essa fração.
+  nivel_principal?: string
+  percentual_principal: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -82,8 +88,16 @@ interface GamifRegraAgregada {
   ocorrencias: number
   pontos: number
   bonus: number
-  // Só presente pra regras tipo rca_completo (progresso, não ocorrência).
+  // progresso — presente em qualquer regra que tenha um denominador
+  // (cobertos/total): cobertura_atingida, sortimento_atingido,
+  // rede_completa_atingida, rca_completo. produto_especifico usa qtd/
+  // qtd_minima em vez disso (ver campo produto abaixo).
   progresso?: { cobertos: number; total: number; faltam: number; completo: boolean }
+  produto?: { qtd: number; qtdMinima: number }
+  // percentual/nivel — escala de pagamento (23/09/2026): o % que gerou o
+  // pontos/bonus desta ocorrência, e o nível correspondente.
+  percentual?: number
+  nivel?: string
 }
 function agruparDetalhePorRegra(detalhe: GamifDetalheItem[] | undefined): GamifRegraAgregada[] {
   const porRegra = new Map<number, GamifRegraAgregada>()
@@ -93,10 +107,16 @@ function agruparDetalhePorRegra(detalhe: GamifDetalheItem[] | undefined): GamifR
       agg = { regra_id: d.regra_id, tipo: d.tipo, descricao: d.descricao, ocorrencias: 0, pontos: 0, bonus: 0 }
       porRegra.set(d.regra_id, agg)
     }
-    if (d.tipo === 'rca_completo') {
+    if (typeof d.total === 'number') {
       agg.progresso = { cobertos: d.cobertos ?? 0, total: d.total ?? 0, faltam: d.faltam ?? 0, completo: !!d.completo }
+    } else if (typeof d.qtd_minima === 'number') {
+      agg.produto = { qtd: d.qtd ?? 0, qtdMinima: d.qtd_minima }
     } else {
       agg.ocorrencias += 1
+    }
+    if (typeof d.percentual === 'number' && (agg.percentual === undefined || d.percentual > agg.percentual)) {
+      agg.percentual = d.percentual
+      agg.nivel = d.nivel
     }
     agg.pontos += d.pontos ?? 0
     agg.bonus += d.bonus ?? 0
@@ -118,6 +138,10 @@ interface GamifDetalheItem {
   total?: number
   faltam?: number
   completo?: boolean
+  qtd?: number
+  qtd_minima?: number
+  percentual?: number
+  nivel?: string
 }
 
 interface GamifMinhaPosicao {
@@ -127,7 +151,63 @@ interface GamifMinhaPosicao {
   pontos_total: number
   bonus_total: number
   volume_desempate: number
+  nivel_principal?: string
+  percentual_principal: number
   detalhe: GamifDetalheItem[]
+}
+
+interface GamifExtratoLinha {
+  cod_rca: string
+  nome_rca: string
+  pontos_total: number
+  bonus_total: number
+  volume_desempate: number
+  nivel_principal?: string
+  percentual_principal: number
+  detalhe: GamifDetalheItem[]
+}
+
+interface GamifExtrato {
+  id: number
+  campanha_id: number
+  gerado_em: string
+  gerado_por: string
+  linhas: GamifExtratoLinha[]
+}
+
+// Escala de pagamento (pedido do Claudio 23/09/2026): bronze (>=60%, 30% do
+// valor) / prata (>=75%, 50%) / ouro (>=100%, 100%) / diamante (>=120%,
+// 120%) — mesmos cortes de gamifNivelPagamento em farol_gamificacao.go.
+const GAMIF_NIVEL_NOME: Record<string, string> = { bronze: 'Bronze', prata: 'Prata', ouro: 'Ouro', diamante: 'Diamante' }
+const GAMIF_NIVEL_COR: Record<string, string> = {
+  bronze: 'bg-amber-100 text-amber-800 border-amber-300',
+  prata: 'bg-slate-200 text-slate-700 border-slate-300',
+  ouro: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  diamante: 'bg-sky-100 text-sky-800 border-sky-300',
+}
+
+function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: number }) {
+  const cor = nivel ? GAMIF_NIVEL_COR[nivel] : 'bg-red-100 text-red-700 border-red-300'
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${cor}`}>
+      {nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`}
+    </span>
+  )
+}
+
+function baixarCSVExtrato(extrato: GamifExtrato) {
+  const linhas = extrato.linhas.map(l => [
+    l.cod_rca, l.nome_rca, fmt(l.pontos_total), fmt(l.bonus_total),
+    l.nivel_principal ? GAMIF_NIVEL_NOME[l.nivel_principal] : 'sem nível', `${l.percentual_principal.toFixed(1)}%`,
+  ].join(';'))
+  const csv = ['RCA;Nome;Pontos;Bonus (R$);Nivel;Percentual', ...linhas].join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `extrato-campanha-${extrato.campanha_id}-${extrato.gerado_em.slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 const fmtBRL = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -156,7 +236,8 @@ function RegraBreakdownTable({ detalhe }: { detalhe: GamifDetalheItem[] }) {
         <TableRow>
           <TableHead className="text-xs">Regra</TableHead>
           <TableHead className="text-xs">Descrição</TableHead>
-          <TableHead className="text-right text-xs">Ocorrências</TableHead>
+          <TableHead className="text-right text-xs">Progresso</TableHead>
+          <TableHead className="text-right text-xs">Nível</TableHead>
           <TableHead className="text-right text-xs">Pontos</TableHead>
           <TableHead className="text-right text-xs">Bônus (R$)</TableHead>
         </TableRow>
@@ -169,7 +250,12 @@ function RegraBreakdownTable({ detalhe }: { detalhe: GamifDetalheItem[] }) {
             <TableCell className="text-right text-xs">
               {a.progresso
                 ? (a.progresso.completo ? `${a.progresso.total}/${a.progresso.total} ✓` : `${a.progresso.cobertos}/${a.progresso.total} (faltam ${a.progresso.faltam})`)
-                : a.ocorrencias}
+                : a.produto
+                  ? `${fmt(a.produto.qtd)}/${fmt(a.produto.qtdMinima)}`
+                  : a.ocorrencias}
+            </TableCell>
+            <TableCell className="text-right text-xs">
+              {typeof a.percentual === 'number' ? <GamifNivelBadge nivel={a.nivel} percentual={a.percentual} /> : '—'}
             </TableCell>
             <TableCell className="text-right text-xs">{fmt(a.pontos)}</TableCell>
             <TableCell className="text-right text-xs">{fmtBRL(a.bonus)}</TableCell>
@@ -362,6 +448,30 @@ export default function FarolGamificacao() {
     onError: (e: Error) => toast.error(e.message || 'Erro ao recalcular'),
   })
 
+  // ─── Extrato de pagamento — pedido do Claudio 23/09/2026: "cada campanha
+  // precisa ser rastreável e teremos que ter um extrato para enviar aos
+  // gestores e RH para o pagamento... para documentação no jurídico
+  // também". Cada "Gerar extrato" congela um snapshot em
+  // farol.gamif_extratos — nunca muda depois, mesmo recalculando de novo.
+  const { data: extratos } = useQuery<GamifExtrato[]>({
+    queryKey: ['gamif-extratos', campanhaSelecionada],
+    queryFn: async () => (await fetch(`/api/farol/gamif-extratos?campanha_id=${campanhaSelecionada}`, { headers })).json(),
+    enabled: !!campanhaSelecionada,
+  })
+  const gerarExtrato = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/farol/gamif-extratos?campanha_id=${campanhaSelecionada}`, { method: 'POST', headers })
+      if (!r.ok) throw new Error(await r.text())
+      return r.json() as Promise<GamifExtrato>
+    },
+    onSuccess: (extrato) => {
+      toast.success(`Extrato gerado (${extrato.linhas.length} RCA${extrato.linhas.length === 1 ? '' : 's'})`)
+      qc.invalidateQueries({ queryKey: ['gamif-extratos', campanhaSelecionada] })
+      qc.invalidateQueries({ queryKey: ['gamif-ranking', campanhaSelecionada] })
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao gerar extrato'),
+  })
+
   // ─── Tela: detalhe de uma campanha ──────────────────────────────────────
   if (campanhaSelecionada && campanhaDetalhe) {
     return (
@@ -434,6 +544,7 @@ export default function FarolGamificacao() {
                 <TableHead className="w-8"></TableHead>
                 <TableHead className="w-14">#</TableHead>
                 <TableHead>RCA</TableHead>
+                <TableHead className="text-right">Nível</TableHead>
                 <TableHead className="text-right">Pontos</TableHead>
                 <TableHead className="text-right">Bônus (R$)</TableHead>
                 <TableHead className="text-right">Volume</TableHead>
@@ -442,10 +553,10 @@ export default function FarolGamificacao() {
             </TableHeader>
             <TableBody>
               {carregandoRanking && (
-                <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center py-6 text-muted-foreground">Carregando...</TableCell></TableRow>
               )}
               {!carregandoRanking && (rankingResp?.ranking ?? []).length === 0 && (
-                <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center py-6 text-muted-foreground">Ninguém pontuou ainda — crie regras e clique em "Recalcular pontuação"</TableCell></TableRow>
               )}
               {(rankingResp?.ranking ?? []).map(l => {
                 const aberto = detalheExpandido === l.cod_rca
@@ -455,6 +566,7 @@ export default function FarolGamificacao() {
                     <TableCell>{aberto ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</TableCell>
                     <TableCell className="font-bold text-muted-foreground">{l.posicao}º</TableCell>
                     <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
+                    <TableCell className="text-right"><GamifNivelBadge nivel={l.nivel_principal} percentual={l.percentual_principal} /></TableCell>
                     <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
                     <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
                     {/* Volume — critério de desempate (curva ABC, pedido do
@@ -469,7 +581,7 @@ export default function FarolGamificacao() {
                   </TableRow>
                   {aberto && (
                     <TableRow>
-                      <TableCell colSpan={7} className="bg-muted/20 p-0">
+                      <TableCell colSpan={8} className="bg-muted/20 p-0">
                         <div className="px-4 py-2">
                           <RegraBreakdownTable detalhe={l.detalhe} />
                         </div>
@@ -479,6 +591,46 @@ export default function FarolGamificacao() {
                 </Fragment>
                 )
               })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Extrato de pagamento — pedido do Claudio 23/09/2026: rastreabilidade
+            pra RH/gestores/jurídico. Cada extrato é um snapshot congelado,
+            imutável mesmo que a campanha continue rodando depois. */}
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-3 py-2 border-b flex items-center justify-between bg-muted/30">
+            <div>
+              <span className="text-sm font-medium">Extrato de pagamento</span>
+              <p className="text-xs text-muted-foreground">Snapshot congelado pra mandar a gestores/RH — cada geração é um registro novo, o anterior não muda.</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => gerarExtrato.mutate()} disabled={gerarExtrato.isPending}>
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${gerarExtrato.isPending ? 'animate-spin' : ''}`} /> Gerar extrato
+            </Button>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Gerado em</TableHead>
+                <TableHead>Por</TableHead>
+                <TableHead className="text-right">RCAs</TableHead>
+                <TableHead className="w-32"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(extratos ?? []).length === 0 && (
+                <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">Nenhum extrato gerado ainda</TableCell></TableRow>
+              )}
+              {(extratos ?? []).map(e => (
+                <TableRow key={e.id}>
+                  <TableCell className="text-sm">{new Date(e.gerado_em).toLocaleString('pt-BR')}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground font-mono">{e.gerado_por}</TableCell>
+                  <TableCell className="text-right text-sm">{e.linhas.length}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="sm" onClick={() => baixarCSVExtrato(e)}>Baixar CSV</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
@@ -494,20 +646,26 @@ export default function FarolGamificacao() {
               <div className="text-center py-4">
                 <div className="text-4xl font-bold text-primary">{minhaPosicao.posicao}º</div>
                 <div className="text-sm text-muted-foreground mb-3">de {minhaPosicao.total_rcas} RCAs</div>
+                <div className="flex justify-center items-center gap-3 mb-2">
+                  <GamifNivelBadge nivel={minhaPosicao.nivel_principal} percentual={minhaPosicao.percentual_principal} />
+                  <span className="text-xs text-muted-foreground">{Math.round(minhaPosicao.percentual_principal)}% do objetivo</span>
+                </div>
                 <div className="flex justify-center gap-6 text-sm">
                   <span><strong>{fmt(minhaPosicao.pontos_total)}</strong> pontos</span>
                   <span className="text-emerald-700"><strong>{fmtBRL(minhaPosicao.bonus_total)}</strong> em bônus</span>
                 </div>
-                {/* Progresso de metas "completo" (rca_completo) — pedido do
-                    Claudio 22/09/2026: mostra "faltam N lojas" mesmo antes
-                    de bater 100%, pra servir de motivação no meio do
-                    caminho, não só um resultado binário no fim do mês. */}
-                {minhaPosicao.detalhe?.filter(d => d.tipo === 'rca_completo').map((d, i) => (
+                {/* Progresso — pedido do Claudio 22/09/2026: mostra "faltam
+                    N" mesmo antes de bater 100%, pra servir de motivação no
+                    meio do caminho, não só um resultado binário no fim do
+                    mês. Agora vale pra qualquer regra com denominador
+                    (cobertura/sortimento/rede completa/RCA completo), não
+                    só rca_completo. */}
+                {minhaPosicao.detalhe?.filter(d => typeof d.total === 'number').map((d, i) => (
                   <div key={i} className={`mt-3 mx-auto max-w-xs rounded-lg border p-2 text-xs ${d.completo ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
                     {d.completo ? (
-                      <>🏆 <strong>Objetivo completo!</strong> {d.total} de {d.total} Redes cobertas.</>
+                      <>🏆 <strong>Objetivo completo!</strong> {d.total} de {d.total} cobertos.</>
                     ) : (
-                      <>Faltam <strong>{d.faltam}</strong> loja{d.faltam === 1 ? '' : 's'} de {d.total} pra bater o objetivo completo ({d.cobertos} já cobertas).</>
+                      <>Faltam <strong>{d.faltam}</strong> de {d.total} pra bater 100% ({d.cobertos} já cobertos).</>
                     )}
                     {d.descricao && <div className="text-[10px] opacity-70 mt-0.5">{d.descricao}</div>}
                   </div>

@@ -550,18 +550,88 @@ type gamifRegraInterna struct {
 	Pontos, ValorBonus    float64
 }
 
+// gamifNivelPagamento classifica um % de atingimento num nível de pagamento
+// — pedido do Claudio 23/09/2026: em vez de tudo-ou-nada, o RCA ganha uma
+// FRAÇÃO do pontos/valor_bonus configurado na regra, crescente por faixa.
+// <60% não tem nível (paga 0, mas ainda aparece no progresso — ver
+// gamifAcumuladorRCA.aplicarNivel). As cores do mobile (vermelho/laranja/
+// verde) usam os MESMOS cortes, pra não ter faixa "sem cor" no meio.
+func gamifNivelPagamento(percentual float64) (nivel string, multiplicador float64) {
+	switch {
+	case percentual >= 120:
+		return "diamante", 1.20
+	case percentual >= 100:
+		return "ouro", 1.00
+	case percentual >= 75:
+		return "prata", 0.50
+	case percentual >= 60:
+		return "bronze", 0.30
+	default:
+		return "", 0
+	}
+}
+
 type gamifAcumuladorRCA struct {
 	NomeRCA string
 	Pontos  float64
 	Bonus   float64
 	// Volume — pedido do Claudio 22/09/2026 ("ranking estranho... curva
-	// ABC de vendas"): pontos/bônus de uma regra tipo produto_especifico
-	// são FIXOS ao bater o mínimo (quem vendeu 10 e quem vendeu 188
-	// empatavam em 1º) — Volume é a grandeza real por trás (qtd vendida,
-	// lojas/Redes atingidas) usada SÓ como critério de desempate no
-	// ranking, nunca como pontos/bônus em si.
-	Volume  float64
-	Detalhe []map[string]any
+	// ABC de vendas"): critério de desempate no ranking (curva ABC),
+	// nunca usado no cálculo de pontos/bônus em si.
+	Volume float64
+	// NivelPrincipal/PercentualPrincipal — pedido do Claudio 23/09/2026:
+	// o maior % entre as regras desta campanha pra este RCA, usado pro
+	// selo/cor ÚNICO mostrado no ranking e no mobile (uma campanha com
+	// várias regras mostra o melhor nível batido, não a soma/média).
+	NivelPrincipal      string
+	PercentualPrincipal float64
+	Detalhe             []map[string]any
+}
+
+// obterAcumulador acha ou cria o acumulador do RCA — usado por toda regra
+// que precisa registrar progresso, MESMO quando o RCA ainda não bateu nada
+// (percentual < 60%, sem nível): é o que permite a tarja vermelha/progresso
+// aparecer pro RCA na "visão dele" (mobile) antes de qualquer prêmio.
+func obterAcumulador(porRCA map[string]*gamifAcumuladorRCA, codRCA, nomeRCA string) *gamifAcumuladorRCA {
+	if codRCA == "" {
+		return nil
+	}
+	a, ok := porRCA[codRCA]
+	if !ok {
+		a = &gamifAcumuladorRCA{}
+		porRCA[codRCA] = a
+	}
+	if nomeRCA != "" {
+		a.NomeRCA = nomeRCA
+	}
+	return a
+}
+
+// aplicarNivel classifica percentual num nível de pagamento e credita
+// pontos/bônus JÁ ajustados pela fração do nível (ex.: bronze paga 30% do
+// rg.Pontos/rg.ValorBonus configurado) — rg.Pontos/rg.ValorBonus é sempre o
+// valor "cheio" (100% = Ouro). extra são campos específicos do tipo de
+// regra (ex.: cobertos/total, qtd/qtd_minima) anexados ao detalhe.
+func (a *gamifAcumuladorRCA) aplicarNivel(rg gamifRegraInterna, percentual, volume float64, extra map[string]any) {
+	nivel, mult := gamifNivelPagamento(percentual)
+	pontosPagos := rg.Pontos * mult
+	bonusPagos := rg.ValorBonus * mult
+	a.Pontos += pontosPagos
+	a.Bonus += bonusPagos
+	a.Volume += volume
+	if percentual > a.PercentualPrincipal {
+		a.PercentualPrincipal = percentual
+		a.NivelPrincipal = nivel
+	}
+	item := map[string]any{
+		"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
+		"percentual": percentual, "nivel": nivel, "completo": percentual >= 100,
+		"pontos": pontosPagos, "bonus": bonusPagos, "volume": volume,
+	}
+	for k, v := range extra {
+		item[k] = v
+	}
+	a.Detalhe = append(a.Detalhe, item)
 }
 
 // donoRealPorCNPJ resolve o dono (CodRCA/NomeRCA) REAL de cada CNPJ na
@@ -624,30 +694,18 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	}
 
 	porRCA := map[string]*gamifAcumuladorRCA{}
-	somar := func(codRCA, nomeRCA string, rg gamifRegraInterna, volume float64) {
-		if codRCA == "" {
-			return
-		}
-		a, ok := porRCA[codRCA]
-		if !ok {
-			a = &gamifAcumuladorRCA{}
-			porRCA[codRCA] = a
-		}
-		if nomeRCA != "" {
-			a.NomeRCA = nomeRCA
-		}
-		a.Pontos += rg.Pontos
-		a.Bonus += rg.ValorBonus
-		a.Volume += volume
-		a.Detalhe = append(a.Detalhe, map[string]any{
-			"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
-			"pontos": rg.Pontos, "bonus": rg.ValorBonus, "volume": volume,
-		})
-	}
 
 	for _, rg := range regras {
 		switch rg.Tipo {
 		case "cobertura_atingida", "sortimento_atingido":
+			// Escala de pagamento (pedido do Claudio 23/09/2026): virou
+			// percentual do PRÓPRIO portfólio do RCA (clientes dele que
+			// atingiram ÷ total de clientes dele no vínculo), não mais 1
+			// pontuação fixa por loja isolada — mesma ideia de rca_completo
+			// abaixo, só que a nível de CLIENTE em vez de REDE. A atribuição
+			// de dono continua por CNPJ (donoPorCNPJ), preservando a decisão
+			// de 22/09/2026 de não usar a média/aproximação da Rede — só o
+			// jeito de PAGAR mudou de "fixo por loja" pra "gradual por %".
 			if !rg.VinculoID.Valid || !rg.VigenciaID.Valid {
 				continue
 			}
@@ -655,41 +713,55 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 			if err != nil {
 				return fmt.Errorf("regra %d: %w", rg.ID, err)
 			}
-			// Premia por CLIENTE (loja), não por Rede — decisão do Claudio
-			// 22/09/2026: "cada RCA é responsável pelo cliente e pela Rede
-			// dele... esse acompanhamento tem que ser no último nível".
-			// RealizadoRede.Atingiu é a MÉDIA das lojas da Rede — premiar
-			// por aí recompensaria/puniria o RCA por algo que só uma loja
-			// "puxa" pra cima ou pra baixo, fora do controle dele numa
-			// visita específica. O dono REAL de cada loja (donoPorCNPJ) vem
-			// de farol.metas_clientes_validos, que pode divergir do "dono
-			// aproximado" da Rede (redeRepresentante) — ~6 de 134 Redes
-			// reais têm isso, achado 2026-09-04.
 			donoPorCNPJ, err := donoRealPorCNPJ(db, empresaID, int(rg.VigenciaID.Int64))
 			if err != nil {
 				return fmt.Errorf("regra %d: %w", rg.ID, err)
 			}
+			type progressoRCA struct {
+				NomeRCA          string
+				Total, Atingiram int
+			}
+			progressoPorRCA := map[string]*progressoRCA{}
 			for _, rede := range realizado.Redes {
 				for _, cliente := range rede.Clientes {
-					if !cliente.Atingiu {
-						continue
-					}
 					codRCA, nomeRCA := rede.CodRCA, rede.NomeRCA
 					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
 						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
 					}
-					// Volume = 1 por loja que bateu — desempata no ranking
-					// por QUANTAS lojas o RCA cobriu, não só que cobriu.
-					somar(codRCA, nomeRCA, rg, 1)
+					if codRCA == "" {
+						continue
+					}
+					p, ok := progressoPorRCA[codRCA]
+					if !ok {
+						p = &progressoRCA{}
+						progressoPorRCA[codRCA] = p
+					}
+					if nomeRCA != "" {
+						p.NomeRCA = nomeRCA
+					}
+					p.Total++
+					if cliente.Atingiu {
+						p.Atingiram++
+					}
 				}
 			}
+			for codRCA, p := range progressoPorRCA {
+				if p.Total == 0 {
+					continue
+				}
+				percentual := float64(p.Atingiram) / float64(p.Total) * 100
+				a := obterAcumulador(porRCA, codRCA, p.NomeRCA)
+				a.aplicarNivel(rg, percentual, float64(p.Atingiram), map[string]any{
+					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram,
+				})
+			}
 		case "rede_completa_atingida":
-			// Bônus EXTRA por Rede 100% coberta — diferente da regra acima
-			// (que já paga por CADA loja isolada): aqui só paga se TODAS as
-			// lojas daquela Rede bateram, uma vez por RCA envolvido (não
-			// multiplicado pela qtd de lojas — "a Rede inteira" é 1
-			// conquista, não N). Pedido do Claudio 22/09/2026 pra separar
-			// "Loja Individual" de "Rede Completa" como campanhas distintas.
+			// Escala de pagamento por Rede (pedido do Claudio 23/09/2026):
+			// cada Rede do vínculo paga pelo seu PRÓPRIO % de cobertura
+			// (lojas atingidas ÷ total de lojas daquela Rede), não mais só
+			// tudo-ou-nada — uma Rede 100% completa é Ouro, uma 70% é
+			// Bronze. RCA com várias Redes acumula uma avaliação POR Rede
+			// (a soma de todas), igual o desenho binário anterior.
 			if !rg.VinculoID.Valid || !rg.VigenciaID.Valid {
 				continue
 			}
@@ -705,26 +777,26 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				if len(rede.Clientes) == 0 {
 					continue
 				}
-				todasAtingiram := true
+				atingiram := 0
 				rcasEnvolvidos := map[string]string{} // codRCA -> nomeRCA
 				for _, cliente := range rede.Clientes {
-					if !cliente.Atingiu {
-						todasAtingiram = false
-						break
-					}
 					codRCA, nomeRCA := rede.CodRCA, rede.NomeRCA
 					if dono, ok := donoPorCNPJ[cliente.CNPJ]; ok && dono.CodRCA != "" {
 						codRCA, nomeRCA = dono.CodRCA, dono.NomeRCA
 					}
-					rcasEnvolvidos[codRCA] = nomeRCA
+					if codRCA != "" {
+						rcasEnvolvidos[codRCA] = nomeRCA
+					}
+					if cliente.Atingiu {
+						atingiram++
+					}
 				}
-				if !todasAtingiram {
-					continue
-				}
-				// Volume = tamanho da Rede completada — Rede maior 100%
-				// coberta desempata acima de uma Rede pequena 100% coberta.
+				percentual := float64(atingiram) / float64(len(rede.Clientes)) * 100
 				for codRCA, nomeRCA := range rcasEnvolvidos {
-					somar(codRCA, nomeRCA, rg, float64(len(rede.Clientes)))
+					a := obterAcumulador(porRCA, codRCA, nomeRCA)
+					a.aplicarNivel(rg, percentual, float64(atingiram), map[string]any{
+						"rede": rede.Fantasia, "cod_princ": rede.CodPrinc, "cobertos": atingiram, "total": len(rede.Clientes),
+					})
 				}
 			}
 		case "rca_completo":
@@ -783,32 +855,19 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				if p.Total == 0 {
 					continue
 				}
-				completo := p.Atingiram == p.Total
-				a, ok := porRCA[codRCA]
-				if !ok {
-					a = &gamifAcumuladorRCA{}
-					porRCA[codRCA] = a
-				}
-				if p.NomeRCA != "" {
-					a.NomeRCA = p.NomeRCA
-				}
-				// Volume = lojas cobertas até agora — serve de desempate
-				// até pra quem ainda NÃO completou (compara progresso).
-				a.Volume += float64(p.Atingiram)
-				item := map[string]any{
-					"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
-					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram, "completo": completo,
-					"volume": p.Atingiram,
-				}
-				if completo {
-					a.Pontos += rg.Pontos
-					a.Bonus += rg.ValorBonus
-					item["pontos"] = rg.Pontos
-					item["bonus"] = rg.ValorBonus
-				}
-				a.Detalhe = append(a.Detalhe, item)
+				percentual := float64(p.Atingiram) / float64(p.Total) * 100
+				a := obterAcumulador(porRCA, codRCA, p.NomeRCA)
+				a.aplicarNivel(rg, percentual, float64(p.Atingiram), map[string]any{
+					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram,
+				})
 			}
 		case "produto_especifico":
+			// Escala de pagamento (pedido do Claudio 23/09/2026): percentual
+			// = qtd vendida ÷ qtd_minima — pode passar de 100% (Diamante,
+			// >=120%), é o cenário mais natural pra essa fórmula (ex.: Black
+			// Label, mínimo 10 garrafas, quem vende 12+ já é Diamante).
+			// Continua tocando o RCA mesmo com qtd < mínimo (sem nível, mas
+			// com progresso visível — mesma lógica de rca_completo).
 			if len(rg.CodProds) == 0 || rg.QtdMinima <= 0 {
 				continue
 			}
@@ -832,13 +891,14 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 					rows2.Close()
 					return err
 				}
-				if qtd >= rg.QtdMinima {
-					// Volume = quantidade REAL vendida (não só "bateu") —
-					// é o caso que motivou o desempate: quem vendeu 188
-					// garrafas precisa ranquear acima de quem vendeu 10,
-					// mesmo os dois ganhando o mesmo prêmio fixo.
-					somar(codRCA, nomeRCA, rg, qtd)
+				if qtd <= 0 {
+					continue
 				}
+				percentual := qtd / rg.QtdMinima * 100
+				a := obterAcumulador(porRCA, codRCA, nomeRCA)
+				a.aplicarNivel(rg, percentual, qtd, map[string]any{
+					"qtd": qtd, "qtd_minima": rg.QtdMinima,
+				})
 			}
 			rows2.Close()
 			if err := rows2.Err(); err != nil {
@@ -857,10 +917,14 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	}
 	for codRCA, a := range porRCA {
 		detalheJSON, _ := json.Marshal(a.Detalhe)
+		var nivelPrincipal any
+		if a.NivelPrincipal != "" {
+			nivelPrincipal = a.NivelPrincipal
+		}
 		if _, err := tx.Exec(`
-			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, a.Volume, detalheJSON); err != nil {
+			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe, nivel_principal, percentual_principal)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, a.Volume, detalheJSON, nivelPrincipal, a.PercentualPrincipal); err != nil {
 			return err
 		}
 	}
@@ -907,23 +971,27 @@ func GamifCalcularHandler(db *sql.DB) http.HandlerFunc {
 // próprio RCA (decisão do Claudio 22/09/2026: mostra a posição, não quem
 // está na frente).
 type GamifRankingLinha struct {
-	Posicao         int             `json:"posicao"`
-	CodRCA          string          `json:"cod_rca"`
-	NomeRCA         string          `json:"nome_rca"`
-	PontosTotal     float64         `json:"pontos_total"`
-	BonusTotal      float64         `json:"bonus_total"`
-	VolumeDesempate float64         `json:"volume_desempate"`
-	Detalhe         json.RawMessage `json:"detalhe"`
+	Posicao             int             `json:"posicao"`
+	CodRCA              string          `json:"cod_rca"`
+	NomeRCA             string          `json:"nome_rca"`
+	PontosTotal         float64         `json:"pontos_total"`
+	BonusTotal          float64         `json:"bonus_total"`
+	VolumeDesempate     float64         `json:"volume_desempate"`
+	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
+	PercentualPrincipal float64         `json:"percentual_principal"`
+	Detalhe             json.RawMessage `json:"detalhe"`
 }
 
 type GamifMinhaPosicaoResponse struct {
-	CodRCA          string          `json:"cod_rca"`
-	Posicao         int             `json:"posicao"`
-	TotalRCAs       int             `json:"total_rcas"`
-	PontosTotal     float64         `json:"pontos_total"`
-	BonusTotal      float64         `json:"bonus_total"`
-	VolumeDesempate float64         `json:"volume_desempate"`
-	Detalhe         json.RawMessage `json:"detalhe"`
+	CodRCA              string          `json:"cod_rca"`
+	Posicao             int             `json:"posicao"`
+	TotalRCAs           int             `json:"total_rcas"`
+	PontosTotal         float64         `json:"pontos_total"`
+	BonusTotal          float64         `json:"bonus_total"`
+	VolumeDesempate     float64         `json:"volume_desempate"`
+	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
+	PercentualPrincipal float64         `json:"percentual_principal"`
+	Detalhe             json.RawMessage `json:"detalhe"`
 }
 
 // resolverRankingCampanha roda a query de ranking (com desempate por
@@ -937,7 +1005,8 @@ type GamifMinhaPosicaoResponse struct {
 // público (visão do RCA de verdade, não só simulação).
 func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRCAFiltro string) (ranking []GamifRankingLinha, minhaPosicao *GamifMinhaPosicaoResponse, err error) {
 	rows, err := db.Query(`
-		SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe,
+		SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate,
+		       COALESCE(nivel_principal, ''), percentual_principal, detalhe,
 		       RANK() OVER (ORDER BY pontos_total DESC, volume_desempate DESC) AS posicao,
 		       COUNT(*) OVER () AS total_rcas
 		FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
@@ -952,14 +1021,15 @@ func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRC
 	totalRCAsComProgresso := 0
 	for rows.Next() {
 		var linha GamifRankingLinha
-		if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
+		if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.NivelPrincipal, &linha.PercentualPrincipal, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
 			return nil, nil, err
 		}
 		if codRCAFiltro != "" {
 			if linha.CodRCA == codRCAFiltro {
 				minhaPosicao = &GamifMinhaPosicaoResponse{
 					CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
-					PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate, Detalhe: linha.Detalhe,
+					PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate,
+					NivelPrincipal: linha.NivelPrincipal, PercentualPrincipal: linha.PercentualPrincipal, Detalhe: linha.Detalhe,
 				}
 			}
 			continue
@@ -1011,6 +1081,140 @@ func GamifRankingHandler(db *sql.DB) http.HandlerFunc {
 		// "ranking" de verdade) — não o total de linhas com progresso
 		// (que inclui zerados de regras tipo rca_completo).
 		json.NewEncoder(w).Encode(map[string]any{"ranking": ranking, "total_rcas": len(ranking)})
+	}
+}
+
+// ─── GamifExtratosHandler — GET/POST /api/farol/gamif-extratos?campanha_id= ───
+
+// Extrato de pagamento — pedido do Claudio 23/09/2026: "cada campanha
+// precisa ser rastreável e teremos que ter um extrato para enviar aos
+// gestores e RH para o pagamento... para documentação no jurídico também".
+// GET lista os extratos JÁ GERADOS (histórico, cada um imutável desde a
+// criação). POST gera um NOVO — recalcula a campanha primeiro (pega o
+// estado mais atual das vendas) e SÓ ENTÃO congela uma cópia em
+// farol.gamif_extratos; gerar de novo no futuro não apaga nem altera os
+// extratos anteriores, criando um novo ao lado (histórico de pagamentos).
+type GamifExtratoLinha struct {
+	CodRCA              string          `json:"cod_rca"`
+	NomeRCA             string          `json:"nome_rca"`
+	PontosTotal         float64         `json:"pontos_total"`
+	BonusTotal          float64         `json:"bonus_total"`
+	VolumeDesempate     float64         `json:"volume_desempate"`
+	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
+	PercentualPrincipal float64         `json:"percentual_principal"`
+	Detalhe             json.RawMessage `json:"detalhe"`
+}
+
+type GamifExtratoResponse struct {
+	ID         int                 `json:"id"`
+	CampanhaID int                 `json:"campanha_id"`
+	GeradoEm   string              `json:"gerado_em"`
+	GeradoPor  string              `json:"gerado_por"`
+	Linhas     []GamifExtratoLinha `json:"linhas"`
+}
+
+func listarGamifExtratos(db *sql.DB, empresaID string, campanhaID int) ([]GamifExtratoResponse, error) {
+	rows, err := db.Query(`
+		SELECT id, campanha_id, gerado_em::text, gerado_por, linhas
+		FROM farol.gamif_extratos WHERE campanha_id = $1 AND empresa_id = $2
+		ORDER BY gerado_em DESC
+	`, campanhaID, empresaID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	extratos := []GamifExtratoResponse{}
+	for rows.Next() {
+		var e GamifExtratoResponse
+		var linhasJSON []byte
+		if err := rows.Scan(&e.ID, &e.CampanhaID, &e.GeradoEm, &e.GeradoPor, &linhasJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(linhasJSON, &e.Linhas); err != nil {
+			return nil, err
+		}
+		extratos = append(extratos, e)
+	}
+	return extratos, rows.Err()
+}
+
+func GamifExtratosHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		campanhaID, err := strconv.Atoi(r.URL.Query().Get("campanha_id"))
+		if err != nil {
+			http.Error(w, "campanha_id é obrigatório", http.StatusBadRequest)
+			return
+		}
+		var pertence bool
+		db.QueryRow(`SELECT EXISTS(SELECT 1 FROM farol.gamif_campanhas WHERE id=$1 AND empresa_id=$2)`, campanhaID, spCtx.EmpresaID).Scan(&pertence)
+		if !pertence {
+			http.Error(w, "Campanha não encontrada", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.Method {
+		case http.MethodGet:
+			extratos, err := listarGamifExtratos(db, spCtx.EmpresaID, campanhaID)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(extratos)
+
+		case http.MethodPost:
+			if err := CalcularPontuacaoCampanha(db, spCtx.EmpresaID, campanhaID); err != nil {
+				http.Error(w, "Erro ao recalcular: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			rows, err := db.Query(`
+				SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, COALESCE(nivel_principal,''), percentual_principal, detalhe
+				FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
+				ORDER BY pontos_total DESC, volume_desempate DESC, cod_rca
+			`, campanhaID, spCtx.EmpresaID)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			linhas := []GamifExtratoLinha{}
+			for rows.Next() {
+				var l GamifExtratoLinha
+				if err := rows.Scan(&l.CodRCA, &l.NomeRCA, &l.PontosTotal, &l.BonusTotal, &l.VolumeDesempate, &l.NivelPrincipal, &l.PercentualPrincipal, &l.Detalhe); err != nil {
+					rows.Close()
+					http.Error(w, "Database error", http.StatusInternalServerError)
+					return
+				}
+				linhas = append(linhas, l)
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			linhasJSON, _ := json.Marshal(linhas)
+			var id int
+			var geradoEm string
+			err = db.QueryRow(`
+				INSERT INTO farol.gamif_extratos (empresa_id, campanha_id, gerado_por, linhas)
+				VALUES ($1,$2,$3,$4) RETURNING id, gerado_em::text
+			`, spCtx.EmpresaID, campanhaID, spCtx.UserID, linhasJSON).Scan(&id, &geradoEm)
+			if err != nil {
+				http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_extratos", strconv.Itoa(id), "gerar", map[string]any{"campanha_id": campanhaID, "linhas": len(linhas)})
+			log.Printf("Gamificacao: extrato %d gerado campanha=%d (%d RCAs) empresa %s por %s", id, campanhaID, len(linhas), spCtx.EmpresaID, spCtx.UserID)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(GamifExtratoResponse{ID: id, CampanhaID: campanhaID, GeradoEm: geradoEm, GeradoPor: spCtx.UserID, Linhas: linhas})
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
 	}
 }
 

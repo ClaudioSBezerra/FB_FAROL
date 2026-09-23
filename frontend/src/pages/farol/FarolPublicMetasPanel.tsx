@@ -280,6 +280,18 @@ function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSort
 // faz sentido escondida atrás do seletor de Indústria. Só existe pra
 // scope='rca' (gamif_pontuacao é por cod_rca, não por Supervisor/GGV).
 
+interface GamifDetalheItemMobile {
+  tipo: string
+  completo?: boolean
+  cobertos?: number
+  total?: number
+  faltam?: number
+  qtd?: number
+  qtd_minima?: number
+  percentual?: number
+  nivel?: string
+}
+
 interface GamifCampanhaMobile {
   campanha_id: number
   nome: string
@@ -290,10 +302,25 @@ interface GamifCampanhaMobile {
   total_rcas: number
   pontos_total: number
   bonus_total: number
-  detalhe: { tipo: string; completo?: boolean; cobertos?: number; total?: number; faltam?: number }[]
+  nivel_principal?: string
+  percentual_principal: number
+  detalhe: GamifDetalheItemMobile[]
 }
 
 const fmtBRLMobile = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+// Escala de pagamento (pedido do Claudio 23/09/2026): bronze (>=60%, 30% do
+// valor) / prata (>=75%, 50%) / ouro (>=100%, 100%) / diamante (>=120%,
+// 120%) — as cores da tarja usam os MESMOS cortes do backend
+// (gamifNivelPagamento em farol_gamificacao.go), pra não ter faixa "sem
+// cor" no meio.
+const GAMIF_NIVEL_NOME: Record<string, string> = { bronze: 'Bronze', prata: 'Prata', ouro: 'Ouro', diamante: 'Diamante' }
+
+function gamifCorTarja(percentual: number) {
+  if (percentual >= 100) return 'border-emerald-300 bg-emerald-50 text-emerald-800'
+  if (percentual >= 60) return 'border-amber-300 bg-amber-50 text-amber-800'
+  return 'border-red-300 bg-red-50 text-red-800'
+}
 
 function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRca: string; onVoltar: () => void }) {
   const { data, isLoading } = useQuery<{ campanhas: GamifCampanhaMobile[] }>({
@@ -324,7 +351,9 @@ function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRc
       )}
 
       {campanhas.map(c => {
-        const progresso = c.detalhe.find(d => d.tipo === 'rca_completo')
+        const progresso = c.detalhe.find(d => typeof d.total === 'number')
+        const produto = c.detalhe.find(d => typeof d.qtd_minima === 'number')
+        const nivelNome = c.nivel_principal ? GAMIF_NIVEL_NOME[c.nivel_principal] : null
         return (
           <div key={c.campanha_id} className="bg-white border rounded-xl p-4 space-y-3">
             <div>
@@ -339,13 +368,22 @@ function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRc
                 <span className="text-emerald-700"><strong>{fmtBRLMobile(c.bonus_total)}</strong> em bônus</span>
               </div>
             </div>
-            {progresso && (
-              <div className={`rounded-lg border p-2 text-xs ${progresso.completo ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
-                {progresso.completo
-                  ? <>🏆 <strong>Objetivo completo!</strong> {progresso.total} de {progresso.total} Redes cobertas.</>
-                  : <>Faltam <strong>{progresso.faltam}</strong> loja{progresso.faltam === 1 ? '' : 's'} de {progresso.total} pra bater o objetivo completo.</>}
+            <div className={`rounded-lg border p-2 text-xs ${gamifCorTarja(c.percentual_principal)}`}>
+              <div className="flex items-center justify-between">
+                <span>{Math.round(c.percentual_principal)}% do objetivo</span>
+                {nivelNome && <span className="font-semibold uppercase tracking-wide">{nivelNome}</span>}
               </div>
-            )}
+              {progresso && (
+                <div className="mt-1">
+                  {progresso.completo
+                    ? <>🏆 <strong>Objetivo completo!</strong> {progresso.total} de {progresso.total} cobertos.</>
+                    : <>Faltam <strong>{progresso.faltam}</strong> de {progresso.total} pra bater 100%.</>}
+                </div>
+              )}
+              {!progresso && produto && (
+                <div className="mt-1">Vendeu <strong>{produto.qtd}</strong> de um mínimo de {produto.qtd_minima}.</div>
+              )}
+            </div>
           </div>
         )
       })}

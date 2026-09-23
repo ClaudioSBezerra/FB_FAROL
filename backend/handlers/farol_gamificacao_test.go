@@ -70,8 +70,9 @@ func criarGamifRegraFixture(t *testing.T, campanhaID int, tipo string, vinculoID
 
 // TestCalcularPontuacaoCampanha_CoberturaAtingida_SoQuemBateuOLimiar cobre o
 // caso base (reaproveita o Realizado já existente): 2 Redes do mesmo RCA,
-// só 1 bate o limiar de Cobertura — o RCA ganha pontos só daquela Rede, não
-// das duas.
+// só 1 bate o limiar de Cobertura — o percentual do RCA é 1 de 2 (50%), que
+// fica ABAIXO do corte de Bronze (60% — ver escala de pagamento, pedido do
+// Claudio 23/09/2026) e portanto não gera pontos/bônus ainda.
 func TestCalcularPontuacaoCampanha_CoberturaAtingida_SoQuemBateuOLimiar(t *testing.T) {
 	db, empresaID := biTestDB(t)
 
@@ -108,8 +109,8 @@ func TestCalcularPontuacaoCampanha_CoberturaAtingida_SoQuemBateuOLimiar(t *testi
 		Scan(&pontos, &bonus); err != nil {
 		t.Fatalf("ler pontuação: %v", err)
 	}
-	if pontos != 10 || bonus != 300 {
-		t.Errorf("pontos/bonus = %v/%v, want 10/300 (só 1 das 2 Redes bateu o limiar)", pontos, bonus)
+	if pontos != 0 || bonus != 0 {
+		t.Errorf("pontos/bonus = %v/%v, want 0/0 (1 de 2 clientes = 50%%, abaixo do corte de Bronze 60%%)", pontos, bonus)
 	}
 }
 
@@ -159,13 +160,24 @@ func TestCalcularPontuacaoCampanha_CoberturaAtingida_PremiaPorLojaNaoPelaMediaDa
 		t.Fatalf("premissa do teste furou: Rede.Atingiu deveria ser false (média 75 < 100), Redes=%+v", realizado.Redes)
 	}
 
+	// A escala de pagamento (23/09/2026) trocou "1 pontos fixo por loja"
+	// por "percentual do portfólio do RCA" — mas a atribuição por CLIENTE
+	// continua isolada da média da Rede: o detalhe precisa mostrar
+	// cobertos=1 (a loja que bateu), não 0 (que seria o caso se a regra
+	// ainda usasse Rede.Atingiu, que aqui é false).
 	var pontos, bonus float64
-	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, campanhaID).
-		Scan(&pontos, &bonus); err != nil {
-		t.Fatalf("ler pontuação (a Rede não atingiu, mas 1 loja sim — RCA deveria pontuar mesmo assim): %v", err)
+	var detalhe []byte
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total, detalhe FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-LOJA'`, campanhaID).
+		Scan(&pontos, &bonus, &detalhe); err != nil {
+		t.Fatalf("ler pontuação (a Rede não atingiu, mas 1 loja sim — RCA deveria ter progresso mesmo assim): %v", err)
 	}
-	if pontos != 10 || bonus != 300 {
-		t.Errorf("pontos/bonus = %v/%v, want 10/300 (premia a 1 loja que bateu, mesmo a Rede como um todo não batendo)", pontos, bonus)
+	if pontos != 0 || bonus != 0 {
+		t.Errorf("pontos/bonus = %v/%v, want 0/0 (1 de 2 clientes = 50%%, abaixo do corte de Bronze)", pontos, bonus)
+	}
+	var itens []map[string]any
+	json.Unmarshal(detalhe, &itens)
+	if len(itens) != 1 || itens[0]["cobertos"].(float64) != 1 || itens[0]["total"].(float64) != 2 {
+		t.Errorf("detalhe = %v, want cobertos=1 total=2 (a loja isolada contou, não a média 0/2 da Rede)", itens)
 	}
 }
 
@@ -207,19 +219,26 @@ func TestCalcularPontuacaoCampanha_ProdutoEspecifico_SoQuemBateuAQuantidade(t *t
 		t.Fatalf("CalcularPontuacaoCampanha: %v", err)
 	}
 
+	// RCA-P1 vendeu 15 de um mínimo 10 → 150% → Diamante (>=120%, paga 120%
+	// do valor cheio) — escala de pagamento, pedido do Claudio 23/09/2026.
 	var pontosP1, bonusP1 float64
 	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-P1'`, campanhaID).
 		Scan(&pontosP1, &bonusP1); err != nil {
 		t.Fatalf("ler pontuação RCA-P1: %v", err)
 	}
-	if pontosP1 != 50 || bonusP1 != 300 {
-		t.Errorf("RCA-P1: pontos/bonus = %v/%v, want 50/300 (vendeu 15 >= mínimo 10)", pontosP1, bonusP1)
+	if pontosP1 != 60 || bonusP1 != 360 {
+		t.Errorf("RCA-P1: pontos/bonus = %v/%v, want 60/360 (vendeu 15 = 150%% do mínimo 10 → Diamante, 120%% de 50/300)", pontosP1, bonusP1)
 	}
 
-	var countP2 int
-	db.QueryRow(`SELECT count(*) FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-P2'`, campanhaID).Scan(&countP2)
-	if countP2 != 0 {
-		t.Errorf("RCA-P2 não deveria pontuar (vendeu só 3, mínimo é 10) — achou %d linha(s)", countP2)
+	// RCA-P2 vendeu 3 (30% do mínimo) — abaixo de Bronze, pontos/bônus 0,
+	// mas AINDA precisa ter uma linha (progresso visível antes de bater).
+	var pontosP2, bonusP2 float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-P2'`, campanhaID).
+		Scan(&pontosP2, &bonusP2); err != nil {
+		t.Fatalf("RCA-P2 deveria ter linha de progresso mesmo sem bater Bronze: %v", err)
+	}
+	if pontosP2 != 0 || bonusP2 != 0 {
+		t.Errorf("RCA-P2: pontos/bonus = %v/%v, want 0/0 (vendeu só 3, 30%% do mínimo 10)", pontosP2, bonusP2)
 	}
 }
 
@@ -524,11 +543,11 @@ func TestGamifRankingHandler_RankingGeralSoMostraQuemPontuou(t *testing.T) {
 
 // TestGamifRankingHandler_DesempataPorVolumeCurvaABC — pedido do Claudio
 // 22/09/2026: "o critério de primeiro para segundo é a quantidade
-// vendida... tipo curva ABC de vendas". Regra produto_especifico paga
-// prêmio FIXO ao bater o mínimo (10 garrafas ou 188 rendem o mesmo bônus)
-// — sem desempate, todo mundo que bate empataria em 1º. Com
-// volume_desempate, quem vendeu mais rankeia acima mesmo com pontos/bônus
-// idênticos.
+// vendida... tipo curva ABC de vendas". A escala de pagamento (23/09/2026)
+// já diferencia a maioria dos casos por si só (percentuais diferentes viram
+// pontos diferentes) — mas Diamante (>=120% do mínimo) NÃO tem teto, então
+// 2 RCAs bem acima do mínimo ainda empatam em pontos/bônus. Com
+// volume_desempate, quem vendeu mais rankeia acima mesmo empatados.
 func TestGamifRankingHandler_DesempataPorVolumeCurvaABC(t *testing.T) {
 	db, empresaID := biTestDB(t)
 
@@ -539,13 +558,16 @@ func TestGamifRankingHandler_DesempataPorVolumeCurvaABC(t *testing.T) {
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
 
 	cnpjTop, cnpjMinimo := "80000000000701", "80000000000702"
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-TOP', 'TGAM-RCA-MIN')`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca IN ('TGAM-RCA-TOP', 'TGAM-RCA-MIN')`, empresaID)
+	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE TOP", cnpjTop, "TGAM-RCA-TOP")
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE MIN", cnpjMinimo, "TGAM-RCA-MIN")
-	// RCA-TOP vende MUITO mais (188), RCA-MIN só bate o mínimo (10) — os
-	// dois "bateram" a mesma regra e ganham o MESMO prêmio fixo.
+	// Mínimo é 10: RCA-TOP vende 188 (1880%) e RCA-MIN vende 12 (120%,
+	// exatamente o corte de Diamante) — os dois caem no MESMO nível
+	// (Diamante, sem teto), empatando em pontos/bônus.
 	inserirVendaFaturadaFixture(t, empresaID, cnpjTop, "PRODABC", "TGAM-RCA-TOP", "1", 1880, 188, "2026-08-10")
-	inserirVendaFaturadaFixture(t, empresaID, cnpjMinimo, "PRODABC", "TGAM-RCA-MIN", "1", 100, 10, "2026-08-10")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjMinimo, "PRODABC", "TGAM-RCA-MIN", "1", 120, 12, "2026-08-10")
 
 	var industriaID int
 	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
@@ -573,21 +595,21 @@ func TestGamifRankingHandler_DesempataPorVolumeCurvaABC(t *testing.T) {
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if len(resp.Ranking) != 2 {
-		t.Fatalf("ranking = %+v, want 2 RCAs (os dois bateram o mínimo)", resp.Ranking)
+		t.Fatalf("ranking = %+v, want 2 RCAs (os dois bateram Diamante)", resp.Ranking)
 	}
-	// Mesmo prêmio (empate em pontos), mas RCA-TOP (188) precisa vir ANTES
-	// de RCA-MIN (10) — desempate por volume, não ordem arbitrária/empate.
+	// Mesmo nível (Diamante, sem teto), mas RCA-TOP (188) precisa vir ANTES
+	// de RCA-MIN (12) — desempate por volume, não ordem arbitrária/empate.
 	if resp.Ranking[0].CodRCA != "TGAM-RCA-TOP" || resp.Ranking[0].Posicao != 1 {
-		t.Errorf("1º colocado = %+v, want TGAM-RCA-TOP na posição 1 (vendeu 188 vs 10)", resp.Ranking[0])
+		t.Errorf("1º colocado = %+v, want TGAM-RCA-TOP na posição 1 (vendeu 188 vs 12)", resp.Ranking[0])
 	}
 	if resp.Ranking[1].CodRCA != "TGAM-RCA-MIN" || resp.Ranking[1].Posicao != 2 {
 		t.Errorf("2º colocado = %+v, want TGAM-RCA-MIN na posição 2, NÃO empatado em 1º", resp.Ranking[1])
 	}
-	if resp.Ranking[0].PontosTotal != resp.Ranking[1].PontosTotal {
-		t.Errorf("pontos deveriam ser IGUAIS (prêmio fixo) — top=%v min=%v", resp.Ranking[0].PontosTotal, resp.Ranking[1].PontosTotal)
+	if resp.Ranking[0].PontosTotal != 12 || resp.Ranking[1].PontosTotal != 12 {
+		t.Errorf("pontos deveriam ser 12 pros dois (Diamante = 120%% de 10) — top=%v min=%v", resp.Ranking[0].PontosTotal, resp.Ranking[1].PontosTotal)
 	}
-	if resp.Ranking[0].VolumeDesempate != 188 || resp.Ranking[1].VolumeDesempate != 10 {
-		t.Errorf("volume_desempate = top:%v min:%v, want 188/10", resp.Ranking[0].VolumeDesempate, resp.Ranking[1].VolumeDesempate)
+	if resp.Ranking[0].VolumeDesempate != 188 || resp.Ranking[1].VolumeDesempate != 12 {
+		t.Errorf("volume_desempate = top:%v min:%v, want 188/12", resp.Ranking[0].VolumeDesempate, resp.Ranking[1].VolumeDesempate)
 	}
 }
 
@@ -610,7 +632,9 @@ func TestGamifPublicMinhasCampanhasHandler_AchaCampanhaSemLogin(t *testing.T) {
 	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
 
 	cnpjCliente := "80000000000801"
-	t.Cleanup(func() { db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-PUB'`, empresaID) })
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-PUB'`, empresaID)
+	})
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE PUB", cnpjCliente, "TGAM-RCA-PUB")
 	inserirVendaFaturadaFixture(t, empresaID, cnpjCliente, "PRODPUB", "TGAM-RCA-PUB", "1", 150, 1, "2026-08-10")
 
@@ -664,5 +688,123 @@ func TestGamifPublicMinhasCampanhasHandler_AchaCampanhaSemLogin(t *testing.T) {
 	json.Unmarshal(wOutro.Body.Bytes(), &respOutro)
 	if len(respOutro.Campanhas) != 0 {
 		t.Errorf("RCA sem pontuação nenhuma deveria ver lista vazia, veio %+v", respOutro.Campanhas)
+	}
+}
+
+// TestGamifNivelPagamento_CortesDaEscala — pedido do Claudio 23/09/2026:
+// bronze (60%, 30% do valor) / prata (75%, 50%) / ouro (100%, 100%) /
+// diamante (>=120%, 120%) — cobre os limites exatos (cada corte é
+// INCLUSIVO no piso) e os "buracos" entre eles.
+func TestGamifNivelPagamento_CortesDaEscala(t *testing.T) {
+	casos := []struct {
+		percentual        float64
+		nivel             string
+		multiplicadorWant float64
+	}{
+		{0, "", 0},
+		{59.99, "", 0},
+		{60, "bronze", 0.30},
+		{74.99, "bronze", 0.30},
+		{75, "prata", 0.50},
+		{99.99, "prata", 0.50},
+		{100, "ouro", 1.00},
+		{119.99, "ouro", 1.00},
+		{120, "diamante", 1.20},
+		{300, "diamante", 1.20},
+	}
+	for _, c := range casos {
+		nivel, mult := gamifNivelPagamento(c.percentual)
+		if nivel != c.nivel || mult != c.multiplicadorWant {
+			t.Errorf("gamifNivelPagamento(%v) = (%q, %v), want (%q, %v)", c.percentual, nivel, mult, c.nivel, c.multiplicadorWant)
+		}
+	}
+}
+
+// TestGamifExtratosHandler_GeraSnapshotImutavelERecemGerar — pedido do
+// Claudio 23/09/2026: "cada campanha precisa ser rastreável e teremos que
+// ter um extrato para enviar aos gestores e RH para o pagamento... para
+// documentação no jurídico também". POST gera um snapshot; o snapshot NÃO
+// muda mesmo que a campanha continue rodando e gamif_pontuacao mude depois
+// (prova: gera 2 extratos em momentos diferentes, o 1º continua com o
+// valor antigo).
+func TestGamifExtratosHandler_GeraSnapshotImutavelERecemGerar(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM Extrato", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjUnico := "80000000000901"
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-EXT'`, empresaID)
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE EXT", cnpjUnico, "TGAM-RCA-EXT")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjUnico, "PRODEXT", "TGAM-RCA-EXT", "1", 150, 1, "2026-08-10")
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaID, "cobertura_atingida", vinculoID, vigenciaID, nil, 0, 10, 300)
+	t.Cleanup(func() { db.Exec(`DELETE FROM farol.gamif_extratos WHERE campanha_id = $1`, campanhaID) })
+
+	handler := GamifExtratosHandler(db)
+
+	// 1º extrato: só o cliente que já vendeu — 1 de 1 (100%, Ouro).
+	req1 := gamifReq(http.MethodPost, "/api/farol/gamif-extratos?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", nil)
+	w1 := httptest.NewRecorder()
+	handler(w1, req1)
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("POST extrato 1: status = %d, body = %s", w1.Code, w1.Body.String())
+	}
+	var extrato1 GamifExtratoResponse
+	if err := json.Unmarshal(w1.Body.Bytes(), &extrato1); err != nil {
+		t.Fatalf("decode extrato 1: %v", err)
+	}
+	if len(extrato1.Linhas) != 1 || extrato1.Linhas[0].CodRCA != "TGAM-RCA-EXT" || extrato1.Linhas[0].PontosTotal != 10 {
+		t.Fatalf("extrato 1 = %+v, want 1 linha TGAM-RCA-EXT com 10 pontos", extrato1)
+	}
+
+	// Novo cliente entra e bate também — RCA passaria a ter mais pontos se
+	// recalculássemos, mas o extrato 1 (já gerado) tem que continuar como
+	// estava.
+	cnpjNovo := "80000000000902"
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE EXT2", cnpjNovo, "TGAM-RCA-EXT")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjNovo, "PRODEXT", "TGAM-RCA-EXT", "1", 150, 1, "2026-08-11")
+
+	req2 := gamifReq(http.MethodPost, "/api/farol/gamif-extratos?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", nil)
+	w2 := httptest.NewRecorder()
+	handler(w2, req2)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("POST extrato 2: status = %d, body = %s", w2.Code, w2.Body.String())
+	}
+	var extrato2 GamifExtratoResponse
+	json.Unmarshal(w2.Body.Bytes(), &extrato2)
+	if extrato2.ID == extrato1.ID {
+		t.Fatalf("extrato 2 deveria ser um registro NOVO, veio o mesmo id %d", extrato2.ID)
+	}
+
+	// Relê o extrato 1 via listagem — tem que continuar com o valor de
+	// quando foi gerado (imutável), mesmo a campanha tendo mudado depois.
+	reqList := gamifReq(http.MethodGet, "/api/farol/gamif-extratos?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", nil)
+	wList := httptest.NewRecorder()
+	handler(wList, reqList)
+	var lista []GamifExtratoResponse
+	json.Unmarshal(wList.Body.Bytes(), &lista)
+	if len(lista) != 2 {
+		t.Fatalf("listagem de extratos = %d, want 2 (histórico preservado)", len(lista))
+	}
+	var extrato1Relido *GamifExtratoResponse
+	for i := range lista {
+		if lista[i].ID == extrato1.ID {
+			extrato1Relido = &lista[i]
+		}
+	}
+	if extrato1Relido == nil {
+		t.Fatalf("extrato 1 (id=%d) sumiu da listagem: %+v", extrato1.ID, lista)
+	}
+	if len(extrato1Relido.Linhas) != 1 {
+		t.Errorf("extrato 1 relido = %+v, want continuar com 1 linha (imutável, não pega o cliente novo)", extrato1Relido.Linhas)
 	}
 }

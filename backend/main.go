@@ -665,6 +665,7 @@ func main() {
 	http.HandleFunc("/api/farol/gamif-regras", withSP(handlers.GamifRegrasHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-regras/", withSP(handlers.GamifRegraItemHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-ranking", withSP(handlers.GamifRankingHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-extratos", withSP(handlers.GamifExtratosHandler, "admin_fbtax"))
 
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
 	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
