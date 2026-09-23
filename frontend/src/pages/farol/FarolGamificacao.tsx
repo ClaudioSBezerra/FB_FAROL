@@ -200,7 +200,12 @@ const GAMIF_NIVEL_COR_PISTA: Record<string, string> = {
   diamante: 'bg-sky-400',
 }
 
-function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: number }) {
+// compact — pedido do Claudio 23/09/2026 ("expandir o tamanho... aumentar
+// a barra"): o troféu/pista GRANDE é pro ranking principal e pra "Visão do
+// RCA" (o momento "de corrida"); a tabela de detalhamento por regra (dentro
+// do accordion) é densa/auditoria — usa a versão pequena de antes, senão
+// fica desproporcional numa linha de texto text-xs.
+function GamifNivelBadge({ nivel, percentual, compact = false }: { nivel?: string; percentual: number; compact?: boolean }) {
   const corTrofeu = nivel ? GAMIF_NIVEL_COR_TROFEU[nivel] : 'text-muted-foreground/30'
   const corPista = nivel ? GAMIF_NIVEL_COR_PISTA[nivel] : 'bg-red-300'
   const legenda = nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`
@@ -209,12 +214,12 @@ function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: nu
   // exato já está na legenda embaixo.
   const preenchido = Math.max(0, Math.min(percentual, 100))
   return (
-    <span className="inline-flex flex-col items-center gap-1" title={`${Math.round(percentual)}% do objetivo`}>
-      <Trophy className={`w-5 h-5 ${corTrofeu}`} fill={nivel ? 'currentColor' : 'none'} strokeWidth={nivel ? 1.5 : 2} />
-      <span className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-        <span className={`block h-full rounded-full ${corPista}`} style={{ width: `${preenchido}%` }} />
+    <span className={`inline-flex flex-col items-center ${compact ? 'gap-0.5' : 'gap-1.5'}`} title={`${Math.round(percentual)}% do objetivo`}>
+      <Trophy className={`${compact ? 'w-5 h-5' : 'w-7 h-7'} ${corTrofeu}`} fill={nivel ? 'currentColor' : 'none'} strokeWidth={nivel ? 1.5 : 2} />
+      <span className={`${compact ? 'w-16 h-1.5' : 'w-28 h-2.5'} rounded-full bg-muted overflow-hidden`}>
+        <span className={`block h-full rounded-full ${corPista} transition-all`} style={{ width: `${preenchido}%` }} />
       </span>
-      <span className="text-[10px] font-medium text-muted-foreground leading-none">{legenda}</span>
+      <span className={`${compact ? 'text-[10px]' : 'text-xs'} font-medium text-muted-foreground leading-none`}>{legenda}</span>
     </span>
   )
 }
@@ -285,7 +290,7 @@ function RegraBreakdownTable({ detalhe }: { detalhe: GamifDetalheItem[] }) {
                   : a.ocorrencias}
             </TableCell>
             <TableCell className="text-right text-xs">
-              {typeof a.percentual === 'number' ? <GamifNivelBadge nivel={a.nivel} percentual={a.percentual} /> : '—'}
+              {typeof a.percentual === 'number' ? <GamifNivelBadge nivel={a.nivel} percentual={a.percentual} compact /> : '—'}
             </TableCell>
             <TableCell className="text-right text-xs">{fmt(a.pontos)}</TableCell>
             <TableCell className="text-right text-xs">{fmtBRL(a.bonus)}</TableCell>
@@ -505,7 +510,7 @@ export default function FarolGamificacao() {
   // ─── Tela: detalhe de uma campanha ──────────────────────────────────────
   if (campanhaSelecionada && campanhaDetalhe) {
     return (
-      <div className="p-6 max-w-5xl mx-auto space-y-4">
+      <div className="p-6 max-w-7xl mx-auto space-y-4">
         <Button variant="ghost" size="sm" onClick={() => { setCampanhaSelecionada(null); setRcaSimulado('') }}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Campanhas
         </Button>
@@ -574,7 +579,7 @@ export default function FarolGamificacao() {
                 <TableHead className="w-8"></TableHead>
                 <TableHead className="w-14">#</TableHead>
                 <TableHead>RCA</TableHead>
-                <TableHead className="text-right">Nível</TableHead>
+                <TableHead className="text-center w-36">Nível</TableHead>
                 <TableHead className="text-right">Pontos</TableHead>
                 <TableHead className="text-right">Bônus (R$)</TableHead>
                 <TableHead className="text-right">Volume</TableHead>
@@ -596,7 +601,7 @@ export default function FarolGamificacao() {
                     <TableCell>{aberto ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</TableCell>
                     <TableCell className="font-bold text-muted-foreground">{l.posicao}º</TableCell>
                     <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
-                    <TableCell className="text-right"><GamifNivelBadge nivel={l.nivel_principal} percentual={l.percentual_principal} /></TableCell>
+                    <TableCell className="text-center py-2"><GamifNivelBadge nivel={l.nivel_principal} percentual={l.percentual_principal} /></TableCell>
                     <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
                     <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
                     {/* Volume — critério de desempate (curva ABC, pedido do
