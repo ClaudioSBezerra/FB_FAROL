@@ -40,6 +40,19 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Painel BI',
     tabs: [],
   },
+  // ── Gamificação — MVP restrito a admin_fbtax (22/09/2026) ────────────────
+  // Sem isto, /farol/gamificacao caía no fallback genérico de getActiveModule
+  // (qualquer path começando com /farol → módulo 'farol') e herdava as abas
+  // de Painel Vendas (Comparativo Fechamento, Envio do Resumo) — que não têm
+  // nada a ver com Gamificação. Achado do Claudio 23/09/2026 ("menu está
+  // estranho"). tabs: [] some com a barra de abas (ModuleTabs não renderiza
+  // nada quando vazio) — a própria tela já tem sua navegação interna
+  // (lista de campanhas → detalhe).
+  gamificacao: {
+    label: 'Gamificação',
+    adminOnly: true,
+    tabs: [],
+  },
   // ── Objetivos por Indústria — visão de campo pra GGV/Supervisor (Épico 5) ─
   metas_industria: {
     label: 'Objetivos Indústria',
@@ -94,6 +107,7 @@ export const modules: Record<string, ModuleConfig> = {
 export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/importar'))        return 'importar'
   if (pathname.startsWith('/farol/bi'))              return 'bi'
+  if (pathname.startsWith('/farol/gamificacao'))     return 'gamificacao'
   if (pathname.startsWith('/farol/metas-industria')) return 'metas_industria'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
