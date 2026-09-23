@@ -230,10 +230,16 @@ func TestCalcularPontuacaoCampanha_ProdutoEspecifico_SoQuemBateuAQuantidade(t *t
 
 	// RCA-P1 vendeu 15 de um mínimo 10 → 150% → Diamante (>=120%, paga 120%
 	// do valor cheio) — escala de pagamento, pedido do Claudio 23/09/2026.
-	var pontosP1, bonusP1 float64
-	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-P1'`, campanhaID).
-		Scan(&pontosP1, &bonusP1); err != nil {
+	var pontosP1, bonusP1, realizadoP1, metaP1 float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total, realizado_principal, meta_principal FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-P1'`, campanhaID).
+		Scan(&pontosP1, &bonusP1, &realizadoP1, &metaP1); err != nil {
 		t.Fatalf("ler pontuação RCA-P1: %v", err)
+	}
+	// realizado_principal/meta_principal — pedido do Claudio 23/09/2026:
+	// "no extrato do RCA colocar a quantidade objetivo e o que o RCA
+	// vendeu". Pra produto_especifico é literal: vendeu 15, mínimo era 10.
+	if realizadoP1 != 15 || metaP1 != 10 {
+		t.Errorf("RCA-P1: realizado/meta = %v/%v, want 15/10 (vendeu 15 de um mínimo 10)", realizadoP1, metaP1)
 	}
 	if pontosP1 != 60 || bonusP1 != 360 {
 		t.Errorf("RCA-P1: pontos/bonus = %v/%v, want 60/360 (vendeu 15 = 150%% do mínimo 10 → Diamante, 120%% de 50/300)", pontosP1, bonusP1)

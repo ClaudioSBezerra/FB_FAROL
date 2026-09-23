@@ -27,8 +27,8 @@ var pngMinusculoFixture = []byte{
 
 func TestMontarExtratoExcel_ComLogoEDadosCorretos(t *testing.T) {
 	linhas := []GamifExtratoLinha{
-		{CodRCA: "1001", NomeRCA: "Fulano de Tal", PontosTotal: 10, BonusTotal: 300, VolumeDesempate: 15, NivelPrincipal: "Ouro", PercentualPrincipal: 100},
-		{CodRCA: "1002", NomeRCA: "Beltrano da Silva", PontosTotal: 3, BonusTotal: 90, VolumeDesempate: 7, NivelPrincipal: "Bronze", PercentualPrincipal: 66.67},
+		{CodRCA: "1001", NomeRCA: "Fulano de Tal", PontosTotal: 10, BonusTotal: 300, VolumeDesempate: 15, NivelPrincipal: "Ouro", PercentualPrincipal: 100, RealizadoPrincipal: 18, MetaPrincipal: 18},
+		{CodRCA: "1002", NomeRCA: "Beltrano da Silva", PontosTotal: 3, BonusTotal: 90, VolumeDesempate: 7, NivelPrincipal: "Bronze", PercentualPrincipal: 66.67, RealizadoPrincipal: 12, MetaPrincipal: 18},
 	}
 	geradoEm := time.Date(2026, 9, 23, 14, 30, 0, 0, time.UTC)
 
@@ -55,9 +55,17 @@ func TestMontarExtratoExcel_ComLogoEDadosCorretos(t *testing.T) {
 	if nivelCell != "Ouro" {
 		t.Errorf("C7 (nível) = %q, want Ouro", nivelCell)
 	}
-	bonusCell, _ := f.GetCellValue(sheet, "F8")
+	metaCell, _ := f.GetCellValue(sheet, "E7")
+	if metaCell != "18" {
+		t.Errorf("E7 (meta/objetivo da 1ª linha) = %q, want 18", metaCell)
+	}
+	realizadoCell, _ := f.GetCellValue(sheet, "F8")
+	if realizadoCell != "12" {
+		t.Errorf("F8 (realizado da 2ª linha) = %q, want 12", realizadoCell)
+	}
+	bonusCell, _ := f.GetCellValue(sheet, "H8")
 	if bonusCell != "R$ 90.00" {
-		t.Errorf("F8 (bônus da 2ª linha, formatado como moeda) = %q, want R$ 90.00", bonusCell)
+		t.Errorf("H8 (bônus da 2ª linha, formatado como moeda) = %q, want R$ 90.00", bonusCell)
 	}
 
 	pics, err := f.GetPictures(sheet, "A1")

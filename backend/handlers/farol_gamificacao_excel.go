@@ -71,7 +71,11 @@ func montarExtratoExcel(campanhaNome, industriaNome, dataInicio, dataFim string,
 	}
 
 	headerRow := 6
-	headers := []string{"RCA", "Nome", "Nível", "% do objetivo", "Pontos", "Bônus (R$)", "Volume (desempate)"}
+	// Meta/Realizado — pedido do Claudio 23/09/2026: "no extrato do RCA
+	// colocar a quantidade objetivo e o que o RCA vendeu". Genérico pra
+	// qualquer tipo de regra: lojas cobertas/total, redes cobertas/total,
+	// ou qtd vendida/qtd mínima — vem da regra que gerou o % principal.
+	headers := []string{"RCA", "Nome", "Nível", "% do objetivo", "Meta (objetivo)", "Realizado", "Pontos", "Bônus (R$)", "Volume (desempate)"}
 	headerStyle, _ := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Color: "FFFFFF", Size: 11},
 		Fill:      excelize.Fill{Type: "pattern", Color: []string{"1e293b"}, Pattern: 1},
@@ -99,7 +103,7 @@ func montarExtratoExcel(campanhaNome, industriaNome, dataInicio, dataFim string,
 		if nivel == "" {
 			nivel = "—"
 		}
-		valores := []any{l.CodRCA, l.NomeRCA, nivel, l.PercentualPrincipal / 100, l.PontosTotal, l.BonusTotal, l.VolumeDesempate}
+		valores := []any{l.CodRCA, l.NomeRCA, nivel, l.PercentualPrincipal / 100, l.MetaPrincipal, l.RealizadoPrincipal, l.PontosTotal, l.BonusTotal, l.VolumeDesempate}
 		for j, v := range valores {
 			cell, _ := excelize.CoordinatesToCellName(j+1, row)
 			f.SetCellValue(sheet, cell, v)
@@ -110,11 +114,11 @@ func montarExtratoExcel(campanhaNome, industriaNome, dataInicio, dataFim string,
 		cellPct, _ := excelize.CoordinatesToCellName(4, row)
 		pctStyle, _ := f.NewStyle(&excelize.Style{NumFmt: 10}) // 0.00%
 		f.SetCellStyle(sheet, cellPct, cellPct, pctStyle)
-		cellBonus, _ := excelize.CoordinatesToCellName(6, row)
+		cellBonus, _ := excelize.CoordinatesToCellName(8, row)
 		f.SetCellStyle(sheet, cellBonus, cellBonus, bonusStyle)
 	}
 
-	widths := map[string]float64{"A": 14, "B": 34, "C": 12, "D": 14, "E": 10, "F": 14, "G": 16}
+	widths := map[string]float64{"A": 14, "B": 34, "C": 12, "D": 14, "E": 14, "F": 12, "G": 10, "H": 14, "I": 16}
 	for col, w := range widths {
 		f.SetColWidth(sheet, col, col, w)
 	}
