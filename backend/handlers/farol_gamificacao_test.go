@@ -42,6 +42,15 @@ func criarGamifCampanhaFixture(t *testing.T, empresaID string, industriaID int, 
 		t.Fatalf("criar fixture de campanha: %v", err)
 	}
 	t.Cleanup(func() { db.Exec(`DELETE FROM farol.gamif_campanhas WHERE id = $1`, id) })
+	// A escala de pagamento virou editável por campanha (migration 246) —
+	// sem nenhum nível cadastrado, CalcularPontuacaoCampanha não paga
+	// NADA (classificarNivel não acha nível nenhum). criarNiveisPadrao é a
+	// mesma escala que era fixa no código (Bronze 60%/Prata 75%/Ouro 100%/
+	// Diamante 120%), reaproveitada aqui pra não reescrever os testes que
+	// já dependem desses cortes.
+	if err := criarNiveisPadrao(db, id); err != nil {
+		t.Fatalf("criar níveis padrão da fixture: %v", err)
+	}
 	return id
 }
 
@@ -691,32 +700,81 @@ func TestGamifPublicMinhasCampanhasHandler_AchaCampanhaSemLogin(t *testing.T) {
 	}
 }
 
-// TestGamifNivelPagamento_CortesDaEscala — pedido do Claudio 23/09/2026:
+// TestClassificarNivel_CortesDaEscalaPadrao — pedido do Claudio 23/09/2026:
 // bronze (60%, 30% do valor) / prata (75%, 50%) / ouro (100%, 100%) /
 // diamante (>=120%, 120%) — cobre os limites exatos (cada corte é
-// INCLUSIVO no piso) e os "buracos" entre eles.
-func TestGamifNivelPagamento_CortesDaEscala(t *testing.T) {
+// INCLUSIVO no piso) e os "buracos" entre eles, usando a escala padrão
+// (niveisPadraoGamif) que toda campanha nova recebe.
+func TestClassificarNivel_CortesDaEscalaPadrao(t *testing.T) {
+	niveis := []gamifNivelConfig{
+		{Nome: "Diamante", PercentualMinimo: 120, Multiplicador: 1.20, Ordem: 4},
+		{Nome: "Ouro", PercentualMinimo: 100, Multiplicador: 1.00, Ordem: 3},
+		{Nome: "Prata", PercentualMinimo: 75, Multiplicador: 0.50, Ordem: 2},
+		{Nome: "Bronze", PercentualMinimo: 60, Multiplicador: 0.30, Ordem: 1},
+	}
 	casos := []struct {
 		percentual        float64
 		nivel             string
 		multiplicadorWant float64
+		ordemWant         int
 	}{
-		{0, "", 0},
-		{59.99, "", 0},
-		{60, "bronze", 0.30},
-		{74.99, "bronze", 0.30},
-		{75, "prata", 0.50},
-		{99.99, "prata", 0.50},
-		{100, "ouro", 1.00},
-		{119.99, "ouro", 1.00},
-		{120, "diamante", 1.20},
-		{300, "diamante", 1.20},
+		{0, "", 0, 0},
+		{59.99, "", 0, 0},
+		{60, "Bronze", 0.30, 1},
+		{74.99, "Bronze", 0.30, 1},
+		{75, "Prata", 0.50, 2},
+		{99.99, "Prata", 0.50, 2},
+		{100, "Ouro", 1.00, 3},
+		{119.99, "Ouro", 1.00, 3},
+		{120, "Diamante", 1.20, 4},
+		{300, "Diamante", 1.20, 4},
 	}
 	for _, c := range casos {
-		nivel, mult := gamifNivelPagamento(c.percentual)
-		if nivel != c.nivel || mult != c.multiplicadorWant {
-			t.Errorf("gamifNivelPagamento(%v) = (%q, %v), want (%q, %v)", c.percentual, nivel, mult, c.nivel, c.multiplicadorWant)
+		nivel, mult, ordem := classificarNivel(niveis, c.percentual)
+		if nivel != c.nivel || mult != c.multiplicadorWant || ordem != c.ordemWant {
+			t.Errorf("classificarNivel(%v) = (%q, %v, %d), want (%q, %v, %d)", c.percentual, nivel, mult, ordem, c.nivel, c.multiplicadorWant, c.ordemWant)
 		}
+	}
+}
+
+// TestGamifNiveisHandler_PUT_SubstituiEscalaDaCampanha — pedido do Claudio
+// 23/09/2026: "podemos precisar editar a configuração da premiação... você
+// colocou via UPDATE e não está acessível na tela". Cobre o caso real que
+// motivou a mudança: número VARIÁVEL de níveis (aqui, 2 em vez dos 4
+// padrão) e nomes livres — e confirma que editar a escala sozinho NÃO
+// recalcula pontuação (só no próximo "Recalcular" explícito).
+func TestGamifNiveisHandler_PUT_SubstituiEscalaDaCampanha(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	var industriaID int
+	db.QueryRow(`SELECT id FROM farol.industrias WHERE empresa_id = $1 LIMIT 1`, empresaID).Scan(&industriaID)
+	campanhaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+
+	handler := GamifNiveisHandler(db)
+	body := map[string]any{
+		"niveis": []map[string]any{
+			{"nome": "Participou", "percentual_minimo": 1, "multiplicador": 0.10},
+			{"nome": "Campeão", "percentual_minimo": 150, "multiplicador": 2.00},
+		},
+	}
+	req := gamifReq(http.MethodPut, "/api/farol/gamif-niveis?campanha_id="+strconv.Itoa(campanhaID), empresaID, "teste", body)
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT níveis: status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	niveis, err := listarGamifNiveis(db, campanhaID)
+	if err != nil {
+		t.Fatalf("listarGamifNiveis: %v", err)
+	}
+	if len(niveis) != 2 {
+		t.Fatalf("níveis salvos = %d, want 2 (substituiu os 4 padrão)", len(niveis))
+	}
+	if niveis[0].Nome != "Participou" || niveis[0].Ordem != 1 {
+		t.Errorf("nível[0] = %+v, want Participou/ordem=1", niveis[0])
+	}
+	if niveis[1].Nome != "Campeão" || niveis[1].Ordem != 2 || niveis[1].PercentualMinimo != 150 {
+		t.Errorf("nível[1] = %+v, want Campeão/ordem=2/percentual_minimo=150", niveis[1])
 	}
 }
 

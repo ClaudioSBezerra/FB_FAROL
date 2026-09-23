@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -82,6 +83,10 @@ type GamifCampanhaResponse struct {
 	Status        string               `json:"status"`
 	CreatedAt     string               `json:"created_at"`
 	Regras        []GamifRegraResponse `json:"regras,omitempty"`
+	// Niveis — a escala de pagamento desta campanha (editável, ver
+	// GamifNiveisHandler e migration 246). Vem junto no GET da campanha
+	// pra frontend montar a tela de edição sem precisar de outra chamada.
+	Niveis []GamifNivelResponse `json:"niveis,omitempty"`
 }
 
 type GamifCampanhaRequest struct {
@@ -90,6 +95,24 @@ type GamifCampanhaRequest struct {
 	DataInicio  string `json:"data_inicio"`
 	DataFim     string `json:"data_fim"`
 	Status      string `json:"status"`
+}
+
+// GamifNivelResponse/Request — 1 nível da escala de pagamento (ver
+// gamifNivelConfig no motor de cálculo e migration 246). Ordem não vem no
+// request: é sempre recalculada como a posição no array enviado, ordenado
+// por percentual_minimo (ver GamifNiveisHandler).
+type GamifNivelResponse struct {
+	ID               int     `json:"id"`
+	Nome             string  `json:"nome"`
+	PercentualMinimo float64 `json:"percentual_minimo"`
+	Multiplicador    float64 `json:"multiplicador"`
+	Ordem            int     `json:"ordem"`
+}
+
+type GamifNivelRequest struct {
+	Nome             string  `json:"nome"`
+	PercentualMinimo float64 `json:"percentual_minimo"`
+	Multiplicador    float64 `json:"multiplicador"`
 }
 
 // ─── GamifCampanhasHandler — GET/POST /api/farol/gamif-campanhas ──────────────
@@ -152,6 +175,12 @@ func GamifCampanhasHandler(db *sql.DB) http.HandlerFunc {
 				http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+			// Escala de pagamento padrão — sem isso, a campanha nasceria sem
+			// NENHUM nível configurado (ninguém pontuaria); o admin edita ou
+			// substitui depois em "Editar escala de pagamento".
+			if err := criarNiveisPadrao(db, id); err != nil {
+				log.Printf("Gamificacao: erro ao criar níveis padrão da campanha %d: %v", id, err)
+			}
 			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_campanhas", strconv.Itoa(id), "criar", map[string]any{
 				"industria_id": req.IndustriaID, "nome": req.Nome, "data_inicio": req.DataInicio, "data_fim": req.DataFim,
 			})
@@ -197,6 +226,11 @@ func GamifCampanhaItemHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			c.Regras, err = listarGamifRegras(db, id)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			c.Niveis, err = listarGamifNiveis(db, id)
 			if err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
@@ -282,6 +316,130 @@ func listarGamifRegras(db *sql.DB, campanhaID int) ([]GamifRegraResponse, error)
 		regras = append(regras, r)
 	}
 	return regras, rows.Err()
+}
+
+func listarGamifNiveis(db *sql.DB, campanhaID int) ([]GamifNivelResponse, error) {
+	rows, err := db.Query(`
+		SELECT id, nome, percentual_minimo, multiplicador, ordem
+		FROM farol.gamif_niveis WHERE campanha_id = $1 ORDER BY percentual_minimo ASC
+	`, campanhaID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	niveis := []GamifNivelResponse{}
+	for rows.Next() {
+		var n GamifNivelResponse
+		if err := rows.Scan(&n.ID, &n.Nome, &n.PercentualMinimo, &n.Multiplicador, &n.Ordem); err != nil {
+			return nil, err
+		}
+		niveis = append(niveis, n)
+	}
+	return niveis, rows.Err()
+}
+
+// ─── GamifNiveisHandler — GET/PUT /api/farol/gamif-niveis?campanha_id= ────────
+
+// Escala de pagamento EDITÁVEL por campanha (pedido do Claudio 23/09/2026).
+// PUT substitui a lista INTEIRA (DELETE + INSERT, mesmo padrão de
+// CalcularPontuacaoCampanha) — mais simples que CRUD item a item pra uma
+// lista pequena e reordenável; a ordem enviada no array define a "ordem"
+// gravada (1, 2, 3...), usada só pra escolher a cor do troféu no frontend.
+// NÃO recalcula pontuação sozinho — decisão do Claudio 23/09/2026: só
+// aplica no próximo "Recalcular pontuação" clicado explicitamente.
+func GamifNiveisHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		campanhaID, err := strconv.Atoi(r.URL.Query().Get("campanha_id"))
+		if err != nil {
+			http.Error(w, "campanha_id é obrigatório", http.StatusBadRequest)
+			return
+		}
+		var pertence bool
+		db.QueryRow(`SELECT EXISTS(SELECT 1 FROM farol.gamif_campanhas WHERE id=$1 AND empresa_id=$2)`, campanhaID, spCtx.EmpresaID).Scan(&pertence)
+		if !pertence {
+			http.Error(w, "Campanha não encontrada", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.Method {
+		case http.MethodGet:
+			niveis, err := listarGamifNiveis(db, campanhaID)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(niveis)
+
+		case http.MethodPut:
+			var req struct {
+				Niveis []GamifNivelRequest `json:"niveis"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "corpo da requisição inválido", http.StatusBadRequest)
+				return
+			}
+			if len(req.Niveis) == 0 {
+				http.Error(w, "a escala precisa ter pelo menos 1 nível", http.StatusBadRequest)
+				return
+			}
+			for _, n := range req.Niveis {
+				if strings.TrimSpace(n.Nome) == "" {
+					http.Error(w, "todo nível precisa de um nome", http.StatusBadRequest)
+					return
+				}
+				if n.PercentualMinimo < 0 {
+					http.Error(w, "percentual_minimo não pode ser negativo", http.StatusBadRequest)
+					return
+				}
+				if n.Multiplicador <= 0 {
+					http.Error(w, "multiplicador precisa ser maior que zero", http.StatusBadRequest)
+					return
+				}
+			}
+			sort.Slice(req.Niveis, func(i, j int) bool { return req.Niveis[i].PercentualMinimo < req.Niveis[j].PercentualMinimo })
+
+			tx, err := db.Begin()
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec(`DELETE FROM farol.gamif_niveis WHERE campanha_id = $1`, campanhaID); err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			for i, n := range req.Niveis {
+				if _, err := tx.Exec(`
+					INSERT INTO farol.gamif_niveis (campanha_id, nome, percentual_minimo, multiplicador, ordem)
+					VALUES ($1,$2,$3,$4,$5)
+				`, campanhaID, n.Nome, n.PercentualMinimo, n.Multiplicador, i+1); err != nil {
+					http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "gamif_niveis", strconv.Itoa(campanhaID), "editar", req.Niveis)
+			log.Printf("Gamificacao: escala de pagamento da campanha %d atualizada (%d níveis) por %s", campanhaID, len(req.Niveis), spCtx.UserID)
+			niveis, err := listarGamifNiveis(db, campanhaID)
+			if err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(niveis)
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
 }
 
 // ─── GamifRegrasHandler — GET/POST /api/farol/gamif-regras?campanha_id= ───────
@@ -550,25 +708,74 @@ type gamifRegraInterna struct {
 	Pontos, ValorBonus    float64
 }
 
-// gamifNivelPagamento classifica um % de atingimento num nível de pagamento
-// — pedido do Claudio 23/09/2026: em vez de tudo-ou-nada, o RCA ganha uma
-// FRAÇÃO do pontos/valor_bonus configurado na regra, crescente por faixa.
-// <60% não tem nível (paga 0, mas ainda aparece no progresso — ver
-// gamifAcumuladorRCA.aplicarNivel). As cores do mobile (vermelho/laranja/
-// verde) usam os MESMOS cortes, pra não ter faixa "sem cor" no meio.
-func gamifNivelPagamento(percentual float64) (nivel string, multiplicador float64) {
-	switch {
-	case percentual >= 120:
-		return "diamante", 1.20
-	case percentual >= 100:
-		return "ouro", 1.00
-	case percentual >= 75:
-		return "prata", 0.50
-	case percentual >= 60:
-		return "bronze", 0.30
-	default:
-		return "", 0
+// gamifNivelConfig — 1 nível da escala de pagamento de UMA campanha (ver
+// migration 246). Substituiu a função fixa gamifNivelPagamento (pedido do
+// Claudio 23/09/2026: "podemos precisar editar a configuração da
+// premiação... não está acessível na tela") — agora vem do banco,
+// editável por campanha, com número variável de níveis.
+type gamifNivelConfig struct {
+	Nome             string
+	PercentualMinimo float64
+	Multiplicador    float64
+	Ordem            int
+}
+
+// carregarNiveisCampanha lê a escala de pagamento de uma campanha, do MAIOR
+// corte pro menor — classificarNivel percorre nessa ordem e para no
+// primeiro que o percentual alcança.
+func carregarNiveisCampanha(db *sql.DB, campanhaID int) ([]gamifNivelConfig, error) {
+	rows, err := db.Query(`
+		SELECT nome, percentual_minimo, multiplicador, ordem
+		FROM farol.gamif_niveis WHERE campanha_id = $1 ORDER BY percentual_minimo DESC
+	`, campanhaID)
+	if err != nil {
+		return nil, err
 	}
+	defer rows.Close()
+	var niveis []gamifNivelConfig
+	for rows.Next() {
+		var n gamifNivelConfig
+		if err := rows.Scan(&n.Nome, &n.PercentualMinimo, &n.Multiplicador, &n.Ordem); err != nil {
+			return nil, err
+		}
+		niveis = append(niveis, n)
+	}
+	return niveis, rows.Err()
+}
+
+// classificarNivel acha o nível mais alto que percentual alcança (niveis já
+// vem ordenado do maior corte pro menor — ver carregarNiveisCampanha).
+// ordem=0 quando não bateu nenhum nível (abaixo do menor corte configurado).
+func classificarNivel(niveis []gamifNivelConfig, percentual float64) (nome string, multiplicador float64, ordem int) {
+	for _, n := range niveis {
+		if percentual >= n.PercentualMinimo {
+			return n.Nome, n.Multiplicador, n.Ordem
+		}
+	}
+	return "", 0, 0
+}
+
+// niveisPadraoGamif — escala aplicada por padrão a toda campanha NOVA (o
+// mesmo que era fixo no código antes de virar editável) — o admin edita ou
+// substitui depois via GamifNiveisHandler; sem isso, uma campanha recém
+// criada nasceria sem nenhum nível e ninguém pontuaria.
+var niveisPadraoGamif = []gamifNivelConfig{
+	{Nome: "Bronze", PercentualMinimo: 60, Multiplicador: 0.30, Ordem: 1},
+	{Nome: "Prata", PercentualMinimo: 75, Multiplicador: 0.50, Ordem: 2},
+	{Nome: "Ouro", PercentualMinimo: 100, Multiplicador: 1.00, Ordem: 3},
+	{Nome: "Diamante", PercentualMinimo: 120, Multiplicador: 1.20, Ordem: 4},
+}
+
+func criarNiveisPadrao(db *sql.DB, campanhaID int) error {
+	for _, n := range niveisPadraoGamif {
+		if _, err := db.Exec(`
+			INSERT INTO farol.gamif_niveis (campanha_id, nome, percentual_minimo, multiplicador, ordem)
+			VALUES ($1,$2,$3,$4,$5)
+		`, campanhaID, n.Nome, n.PercentualMinimo, n.Multiplicador, n.Ordem); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type gamifAcumuladorRCA struct {
@@ -579,12 +786,16 @@ type gamifAcumuladorRCA struct {
 	// ABC de vendas"): critério de desempate no ranking (curva ABC),
 	// nunca usado no cálculo de pontos/bônus em si.
 	Volume float64
-	// NivelPrincipal/PercentualPrincipal — pedido do Claudio 23/09/2026:
-	// o maior % entre as regras desta campanha pra este RCA, usado pro
-	// selo/cor ÚNICO mostrado no ranking e no mobile (uma campanha com
-	// várias regras mostra o melhor nível batido, não a soma/média).
+	// NivelPrincipal/PercentualPrincipal/NivelOrdem — pedido do Claudio
+	// 23/09/2026: o maior % entre as regras desta campanha pra este RCA,
+	// usado pro selo/cor ÚNICO mostrado no ranking e no mobile (uma
+	// campanha com várias regras mostra o melhor nível batido, não a
+	// soma/média). NivelOrdem é a posição do nível na escala DESSA
+	// campanha — como o nome agora é livre ("Platina" etc.), a cor do
+	// troféu no frontend é escolhida pela ordem, não mais pelo nome.
 	NivelPrincipal      string
 	PercentualPrincipal float64
+	NivelOrdem          int
 	Detalhe             []map[string]any
 }
 
@@ -607,13 +818,14 @@ func obterAcumulador(porRCA map[string]*gamifAcumuladorRCA, codRCA, nomeRCA stri
 	return a
 }
 
-// aplicarNivel classifica percentual num nível de pagamento e credita
-// pontos/bônus JÁ ajustados pela fração do nível (ex.: bronze paga 30% do
-// rg.Pontos/rg.ValorBonus configurado) — rg.Pontos/rg.ValorBonus é sempre o
-// valor "cheio" (100% = Ouro). extra são campos específicos do tipo de
-// regra (ex.: cobertos/total, qtd/qtd_minima) anexados ao detalhe.
-func (a *gamifAcumuladorRCA) aplicarNivel(rg gamifRegraInterna, percentual, volume float64, extra map[string]any) {
-	nivel, mult := gamifNivelPagamento(percentual)
+// aplicarNivel classifica percentual na escala de pagamento DESSA campanha
+// (niveis) e credita pontos/bônus JÁ ajustados pela fração do nível (ex.:
+// Bronze paga 30% do rg.Pontos/rg.ValorBonus configurado) — rg.Pontos/
+// rg.ValorBonus é sempre o valor "cheio" (100% do nível mais alto = tudo).
+// extra são campos específicos do tipo de regra (ex.: cobertos/total,
+// qtd/qtd_minima) anexados ao detalhe.
+func (a *gamifAcumuladorRCA) aplicarNivel(niveis []gamifNivelConfig, rg gamifRegraInterna, percentual, volume float64, extra map[string]any) {
+	nivel, mult, ordem := classificarNivel(niveis, percentual)
 	pontosPagos := rg.Pontos * mult
 	bonusPagos := rg.ValorBonus * mult
 	a.Pontos += pontosPagos
@@ -622,10 +834,11 @@ func (a *gamifAcumuladorRCA) aplicarNivel(rg gamifRegraInterna, percentual, volu
 	if percentual > a.PercentualPrincipal {
 		a.PercentualPrincipal = percentual
 		a.NivelPrincipal = nivel
+		a.NivelOrdem = ordem
 	}
 	item := map[string]any{
 		"regra_id": rg.ID, "tipo": rg.Tipo, "descricao": rg.Descricao,
-		"percentual": percentual, "nivel": nivel, "completo": percentual >= 100,
+		"percentual": percentual, "nivel": nivel, "nivel_ordem": ordem, "completo": percentual >= 100,
 		"pontos": pontosPagos, "bonus": bonusPagos, "volume": volume,
 	}
 	for k, v := range extra {
@@ -693,6 +906,11 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 		return err
 	}
 
+	niveis, err := carregarNiveisCampanha(db, campanhaID)
+	if err != nil {
+		return fmt.Errorf("carregar escala de pagamento: %w", err)
+	}
+
 	porRCA := map[string]*gamifAcumuladorRCA{}
 
 	for _, rg := range regras {
@@ -751,7 +969,7 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				}
 				percentual := float64(p.Atingiram) / float64(p.Total) * 100
 				a := obterAcumulador(porRCA, codRCA, p.NomeRCA)
-				a.aplicarNivel(rg, percentual, float64(p.Atingiram), map[string]any{
+				a.aplicarNivel(niveis, rg, percentual, float64(p.Atingiram), map[string]any{
 					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram,
 				})
 			}
@@ -794,7 +1012,7 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				percentual := float64(atingiram) / float64(len(rede.Clientes)) * 100
 				for codRCA, nomeRCA := range rcasEnvolvidos {
 					a := obterAcumulador(porRCA, codRCA, nomeRCA)
-					a.aplicarNivel(rg, percentual, float64(atingiram), map[string]any{
+					a.aplicarNivel(niveis, rg, percentual, float64(atingiram), map[string]any{
 						"rede": rede.Fantasia, "cod_princ": rede.CodPrinc, "cobertos": atingiram, "total": len(rede.Clientes),
 					})
 				}
@@ -857,7 +1075,7 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				}
 				percentual := float64(p.Atingiram) / float64(p.Total) * 100
 				a := obterAcumulador(porRCA, codRCA, p.NomeRCA)
-				a.aplicarNivel(rg, percentual, float64(p.Atingiram), map[string]any{
+				a.aplicarNivel(niveis, rg, percentual, float64(p.Atingiram), map[string]any{
 					"cobertos": p.Atingiram, "total": p.Total, "faltam": p.Total - p.Atingiram,
 				})
 			}
@@ -896,7 +1114,7 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 				}
 				percentual := qtd / rg.QtdMinima * 100
 				a := obterAcumulador(porRCA, codRCA, nomeRCA)
-				a.aplicarNivel(rg, percentual, qtd, map[string]any{
+				a.aplicarNivel(niveis, rg, percentual, qtd, map[string]any{
 					"qtd": qtd, "qtd_minima": rg.QtdMinima,
 				})
 			}
@@ -918,13 +1136,15 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	for codRCA, a := range porRCA {
 		detalheJSON, _ := json.Marshal(a.Detalhe)
 		var nivelPrincipal any
+		var nivelOrdem any
 		if a.NivelPrincipal != "" {
 			nivelPrincipal = a.NivelPrincipal
+			nivelOrdem = a.NivelOrdem
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe, nivel_principal, percentual_principal)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, a.Volume, detalheJSON, nivelPrincipal, a.PercentualPrincipal); err != nil {
+			INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, detalhe, nivel_principal, percentual_principal, nivel_ordem)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		`, empresaID, campanhaID, codRCA, a.NomeRCA, a.Pontos, a.Bonus, a.Volume, detalheJSON, nivelPrincipal, a.PercentualPrincipal, nivelOrdem); err != nil {
 			return err
 		}
 	}
@@ -971,15 +1191,21 @@ func GamifCalcularHandler(db *sql.DB) http.HandlerFunc {
 // próprio RCA (decisão do Claudio 22/09/2026: mostra a posição, não quem
 // está na frente).
 type GamifRankingLinha struct {
-	Posicao             int             `json:"posicao"`
-	CodRCA              string          `json:"cod_rca"`
-	NomeRCA             string          `json:"nome_rca"`
-	PontosTotal         float64         `json:"pontos_total"`
-	BonusTotal          float64         `json:"bonus_total"`
-	VolumeDesempate     float64         `json:"volume_desempate"`
-	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
-	PercentualPrincipal float64         `json:"percentual_principal"`
-	Detalhe             json.RawMessage `json:"detalhe"`
+	Posicao             int     `json:"posicao"`
+	CodRCA              string  `json:"cod_rca"`
+	NomeRCA             string  `json:"nome_rca"`
+	PontosTotal         float64 `json:"pontos_total"`
+	BonusTotal          float64 `json:"bonus_total"`
+	VolumeDesempate     float64 `json:"volume_desempate"`
+	NivelPrincipal      string  `json:"nivel_principal,omitempty"`
+	PercentualPrincipal float64 `json:"percentual_principal"`
+	// NivelOrdem — posição (1,2,3...) do NivelPrincipal na escala DESSA
+	// campanha (farol.gamif_niveis), pra frontend/mobile escolherem a cor
+	// do troféu sem precisar de mais uma consulta (nomes de nível agora
+	// são livres, editáveis por campanha — não dá mais pra colorir só
+	// pelo texto "bronze"/"prata"). 0 quando não bateu nenhum nível.
+	NivelOrdem int             `json:"nivel_ordem"`
+	Detalhe    json.RawMessage `json:"detalhe"`
 }
 
 type GamifMinhaPosicaoResponse struct {
@@ -991,6 +1217,7 @@ type GamifMinhaPosicaoResponse struct {
 	VolumeDesempate     float64         `json:"volume_desempate"`
 	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
 	PercentualPrincipal float64         `json:"percentual_principal"`
+	NivelOrdem          int             `json:"nivel_ordem"`
 	Detalhe             json.RawMessage `json:"detalhe"`
 }
 
@@ -1006,7 +1233,7 @@ type GamifMinhaPosicaoResponse struct {
 func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRCAFiltro string) (ranking []GamifRankingLinha, minhaPosicao *GamifMinhaPosicaoResponse, err error) {
 	rows, err := db.Query(`
 		SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate,
-		       COALESCE(nivel_principal, ''), percentual_principal, detalhe,
+		       COALESCE(nivel_principal, ''), percentual_principal, COALESCE(nivel_ordem, 0), detalhe,
 		       RANK() OVER (ORDER BY pontos_total DESC, volume_desempate DESC) AS posicao,
 		       COUNT(*) OVER () AS total_rcas
 		FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
@@ -1021,7 +1248,7 @@ func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRC
 	totalRCAsComProgresso := 0
 	for rows.Next() {
 		var linha GamifRankingLinha
-		if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.NivelPrincipal, &linha.PercentualPrincipal, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
+		if err := rows.Scan(&linha.CodRCA, &linha.NomeRCA, &linha.PontosTotal, &linha.BonusTotal, &linha.VolumeDesempate, &linha.NivelPrincipal, &linha.PercentualPrincipal, &linha.NivelOrdem, &linha.Detalhe, &linha.Posicao, &totalRCAsComProgresso); err != nil {
 			return nil, nil, err
 		}
 		if codRCAFiltro != "" {
@@ -1029,7 +1256,7 @@ func resolverRankingCampanha(db *sql.DB, empresaID string, campanhaID int, codRC
 				minhaPosicao = &GamifMinhaPosicaoResponse{
 					CodRCA: linha.CodRCA, Posicao: linha.Posicao, TotalRCAs: totalRCAsComProgresso,
 					PontosTotal: linha.PontosTotal, BonusTotal: linha.BonusTotal, VolumeDesempate: linha.VolumeDesempate,
-					NivelPrincipal: linha.NivelPrincipal, PercentualPrincipal: linha.PercentualPrincipal, Detalhe: linha.Detalhe,
+					NivelPrincipal: linha.NivelPrincipal, PercentualPrincipal: linha.PercentualPrincipal, NivelOrdem: linha.NivelOrdem, Detalhe: linha.Detalhe,
 				}
 			}
 			continue
@@ -1102,6 +1329,7 @@ type GamifExtratoLinha struct {
 	VolumeDesempate     float64         `json:"volume_desempate"`
 	NivelPrincipal      string          `json:"nivel_principal,omitempty"`
 	PercentualPrincipal float64         `json:"percentual_principal"`
+	NivelOrdem          int             `json:"nivel_ordem"`
 	Detalhe             json.RawMessage `json:"detalhe"`
 }
 
@@ -1173,7 +1401,7 @@ func GamifExtratosHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			rows, err := db.Query(`
-				SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, COALESCE(nivel_principal,''), percentual_principal, detalhe
+				SELECT cod_rca, nome_rca, pontos_total, bonus_total, volume_desempate, COALESCE(nivel_principal,''), percentual_principal, COALESCE(nivel_ordem,0), detalhe
 				FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND empresa_id = $2
 				ORDER BY pontos_total DESC, volume_desempate DESC, cod_rca
 			`, campanhaID, spCtx.EmpresaID)
@@ -1184,7 +1412,7 @@ func GamifExtratosHandler(db *sql.DB) http.HandlerFunc {
 			linhas := []GamifExtratoLinha{}
 			for rows.Next() {
 				var l GamifExtratoLinha
-				if err := rows.Scan(&l.CodRCA, &l.NomeRCA, &l.PontosTotal, &l.BonusTotal, &l.VolumeDesempate, &l.NivelPrincipal, &l.PercentualPrincipal, &l.Detalhe); err != nil {
+				if err := rows.Scan(&l.CodRCA, &l.NomeRCA, &l.PontosTotal, &l.BonusTotal, &l.VolumeDesempate, &l.NivelPrincipal, &l.PercentualPrincipal, &l.NivelOrdem, &l.Detalhe); err != nil {
 					rows.Close()
 					http.Error(w, "Database error", http.StatusInternalServerError)
 					return

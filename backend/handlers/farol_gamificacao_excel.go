@@ -89,10 +89,13 @@ func montarExtratoExcel(campanhaNome, industriaNome, dataInicio, dataFim string,
 	// sempre R$, igual o resto do app (ver fmtBRL no frontend).
 	bonusFmt := `"R$" #,##0.00`
 	bonusStyle, _ := f.NewStyle(&excelize.Style{CustomNumFmt: &bonusFmt})
-	nivelNome := map[string]string{"bronze": "Bronze", "prata": "Prata", "ouro": "Ouro", "diamante": "Diamante"}
+	// NivelPrincipal já vem com o NOME de verdade configurado pelo admin
+	// pra essa campanha (ex.: "Bronze", ou algo livre tipo "Platina") —
+	// desde que a escala virou editável (migration 246), não existe mais
+	// um conjunto fixo de nomes pra remapear aqui.
 	for i, l := range linhas {
 		row := headerRow + 1 + i
-		nivel := nivelNome[l.NivelPrincipal]
+		nivel := l.NivelPrincipal
 		if nivel == "" {
 			nivel = "—"
 		}

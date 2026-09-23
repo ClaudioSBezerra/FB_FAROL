@@ -662,6 +662,7 @@ func main() {
 	http.HandleFunc("/api/farol/gamif-campanhas", withSP(handlers.GamifCampanhasHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-campanhas/", withSP(handlers.GamifCampanhaItemHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-campanhas-calcular", withSP(handlers.GamifCalcularHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/gamif-niveis", withSP(handlers.GamifNiveisHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-regras", withSP(handlers.GamifRegrasHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-regras/", withSP(handlers.GamifRegraItemHandler, "admin_fbtax"))
 	http.HandleFunc("/api/farol/gamif-ranking", withSP(handlers.GamifRankingHandler, "admin_fbtax"))

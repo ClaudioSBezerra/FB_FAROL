@@ -27,8 +27,8 @@ var pngMinusculoFixture = []byte{
 
 func TestMontarExtratoExcel_ComLogoEDadosCorretos(t *testing.T) {
 	linhas := []GamifExtratoLinha{
-		{CodRCA: "1001", NomeRCA: "Fulano de Tal", PontosTotal: 10, BonusTotal: 300, VolumeDesempate: 15, NivelPrincipal: "ouro", PercentualPrincipal: 100},
-		{CodRCA: "1002", NomeRCA: "Beltrano da Silva", PontosTotal: 3, BonusTotal: 90, VolumeDesempate: 7, NivelPrincipal: "bronze", PercentualPrincipal: 66.67},
+		{CodRCA: "1001", NomeRCA: "Fulano de Tal", PontosTotal: 10, BonusTotal: 300, VolumeDesempate: 15, NivelPrincipal: "Ouro", PercentualPrincipal: 100},
+		{CodRCA: "1002", NomeRCA: "Beltrano da Silva", PontosTotal: 3, BonusTotal: 90, VolumeDesempate: 7, NivelPrincipal: "Bronze", PercentualPrincipal: 66.67},
 	}
 	geradoEm := time.Date(2026, 9, 23, 14, 30, 0, 0, time.UTC)
 

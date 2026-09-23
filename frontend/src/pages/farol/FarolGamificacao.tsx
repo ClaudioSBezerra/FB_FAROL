@@ -44,6 +44,19 @@ interface GamifRegra {
   valor_bonus: number
 }
 
+// GamifNivel — 1 degrau da escala de pagamento, editável por campanha
+// (pedido do Claudio 23/09/2026: "podemos precisar editar a configuração
+// da premiação... você colocou via UPDATE e não está acessível na tela").
+// Número variável de níveis, nome livre (ex.: "Platina") — a cor do troféu
+// é escolhida pela ORDEM (posição na escala), não mais pelo nome.
+interface GamifNivel {
+  id: number
+  nome: string
+  percentual_minimo: number
+  multiplicador: number
+  ordem: number
+}
+
 interface GamifCampanha {
   id: number
   industria_id: number
@@ -54,6 +67,7 @@ interface GamifCampanha {
   status: 'ativa' | 'encerrada'
   created_at: string
   regras?: GamifRegra[]
+  niveis?: GamifNivel[]
 }
 
 interface GamifRankingLinha {
@@ -72,6 +86,10 @@ interface GamifRankingLinha {
   // % rendeu — pontos_total/bonus_total JÁ vêm ajustados por essa fração.
   nivel_principal?: string
   percentual_principal: number
+  // nivel_ordem — posição do nível na escala DESSA campanha (1=mais
+  // baixo); como o nome agora é livre (editável por campanha), a cor do
+  // troféu é escolhida por ordem, não mais por texto fixo "bronze"/"ouro".
+  nivel_ordem: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -94,10 +112,12 @@ interface GamifRegraAgregada {
   // qtd_minima em vez disso (ver campo produto abaixo).
   progresso?: { cobertos: number; total: number; faltam: number; completo: boolean }
   produto?: { qtd: number; qtdMinima: number }
-  // percentual/nivel — escala de pagamento (23/09/2026): o % que gerou o
-  // pontos/bonus desta ocorrência, e o nível correspondente.
+  // percentual/nivel/ordem — escala de pagamento (23/09/2026): o % que
+  // gerou o pontos/bonus desta ocorrência, o nível correspondente e sua
+  // posição na escala (pra colorir o troféu).
   percentual?: number
   nivel?: string
+  ordem?: number
 }
 function agruparDetalhePorRegra(detalhe: GamifDetalheItem[] | undefined): GamifRegraAgregada[] {
   const porRegra = new Map<number, GamifRegraAgregada>()
@@ -117,6 +137,7 @@ function agruparDetalhePorRegra(detalhe: GamifDetalheItem[] | undefined): GamifR
     if (typeof d.percentual === 'number' && (agg.percentual === undefined || d.percentual > agg.percentual)) {
       agg.percentual = d.percentual
       agg.nivel = d.nivel
+      agg.ordem = d.nivel_ordem
     }
     agg.pontos += d.pontos ?? 0
     agg.bonus += d.bonus ?? 0
@@ -142,6 +163,7 @@ interface GamifDetalheItem {
   qtd_minima?: number
   percentual?: number
   nivel?: string
+  nivel_ordem?: number
 }
 
 interface GamifMinhaPosicao {
@@ -153,6 +175,10 @@ interface GamifMinhaPosicao {
   volume_desempate: number
   nivel_principal?: string
   percentual_principal: number
+  // nivel_ordem — posição do nível na escala DESSA campanha (1=mais
+  // baixo); como o nome agora é livre (editável por campanha), a cor do
+  // troféu é escolhida por ordem, não mais por texto fixo "bronze"/"ouro".
+  nivel_ordem: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -164,6 +190,10 @@ interface GamifExtratoLinha {
   volume_desempate: number
   nivel_principal?: string
   percentual_principal: number
+  // nivel_ordem — posição do nível na escala DESSA campanha (1=mais
+  // baixo); como o nome agora é livre (editável por campanha), a cor do
+  // troféu é escolhida por ordem, não mais por texto fixo "bronze"/"ouro".
+  nivel_ordem: number
   detalhe: GamifDetalheItem[]
 }
 
@@ -175,47 +205,33 @@ interface GamifExtrato {
   linhas: GamifExtratoLinha[]
 }
 
-// Escala de pagamento (pedido do Claudio 23/09/2026): bronze (>=60%, 30% do
-// valor) / prata (>=75%, 50%) / ouro (>=100%, 100%) / diamante (>=120%,
-// 120%) — mesmos cortes de gamifNivelPagamento em farol_gamificacao.go.
-const GAMIF_NIVEL_NOME: Record<string, string> = { bronze: 'Bronze', prata: 'Prata', ouro: 'Ouro', diamante: 'Diamante' }
-// Cor do TROFÉU em si (ícone preenchido), não mais uma pílula de texto —
-// pedido do Claudio 23/09/2026: "visual de corrida, mostrando o troféu na
-// cor que o RCA está durante a campanha". Cores inspiradas nos metais
-// reais da medalha (bronze/prata/ouro) + diamante em azul-gelo.
-const GAMIF_NIVEL_COR_TROFEU: Record<string, string> = {
-  bronze: 'text-amber-700',
-  prata: 'text-slate-400',
-  ouro: 'text-yellow-500',
-  diamante: 'text-sky-400',
-}
-// Cor da PISTA (trilha de progresso) — pedido do Claudio 23/09/2026:
-// "faltou a pista de corrida na cor do andamento do objetivo atingido".
-// Mesma paleta do troféu, só que como preenchimento de barra (bg-) em vez
-// de cor de ícone (text-).
-const GAMIF_NIVEL_COR_PISTA: Record<string, string> = {
-  bronze: 'bg-amber-700',
-  prata: 'bg-slate-400',
-  ouro: 'bg-yellow-500',
-  diamante: 'bg-sky-400',
-}
+// Paleta de cores por ORDEM (posição na escala da campanha, 1=mais baixo)
+// — pedido do Claudio 23/09/2026: a escala virou editável por campanha
+// (número variável de níveis, nomes livres tipo "Platina"), então não dá
+// mais pra colorir pelo texto "bronze"/"ouro" — a cor segue a POSIÇÃO.
+// As 4 primeiras cores mantêm a leitura de medalha (bronze/prata/ouro/
+// diamante) pra quem usa a escala padrão; cicla pra campanhas com mais
+// níveis.
+const GAMIF_PALETA_TROFEU = ['text-amber-700', 'text-slate-400', 'text-yellow-500', 'text-sky-400', 'text-violet-500', 'text-rose-500']
+const GAMIF_PALETA_PISTA = ['bg-amber-700', 'bg-slate-400', 'bg-yellow-500', 'bg-sky-400', 'bg-violet-500', 'bg-rose-500']
 
 // compact — pedido do Claudio 23/09/2026 ("expandir o tamanho... aumentar
 // a barra"): o troféu/pista GRANDE é pro ranking principal e pra "Visão do
 // RCA" (o momento "de corrida"); a tabela de detalhamento por regra (dentro
 // do accordion) é densa/auditoria — usa a versão pequena de antes, senão
 // fica desproporcional numa linha de texto text-xs.
-function GamifNivelBadge({ nivel, percentual, compact = false }: { nivel?: string; percentual: number; compact?: boolean }) {
-  const corTrofeu = nivel ? GAMIF_NIVEL_COR_TROFEU[nivel] : 'text-muted-foreground/30'
-  const corPista = nivel ? GAMIF_NIVEL_COR_PISTA[nivel] : 'bg-red-300'
-  const legenda = nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`
+function GamifNivelBadge({ nivel, ordem, percentual, compact = false }: { nivel?: string; ordem?: number; percentual: number; compact?: boolean }) {
+  const idx = ordem ? (ordem - 1) % GAMIF_PALETA_TROFEU.length : -1
+  const corTrofeu = idx >= 0 ? GAMIF_PALETA_TROFEU[idx] : 'text-muted-foreground/30'
+  const corPista = idx >= 0 ? GAMIF_PALETA_PISTA[idx] : 'bg-red-300'
+  const legenda = nivel || `${Math.round(percentual)}%`
   // A pista enche até 100% mesmo pra quem passou disso (Diamante pode ser
   // 1880%) — o que importa visualmente é "já chegou na régua", o número
   // exato já está na legenda embaixo.
   const preenchido = Math.max(0, Math.min(percentual, 100))
   return (
     <span className={`inline-flex flex-col items-center ${compact ? 'gap-0.5' : 'gap-1.5'}`} title={`${Math.round(percentual)}% do objetivo`}>
-      <Trophy className={`${compact ? 'w-5 h-5' : 'w-7 h-7'} ${corTrofeu}`} fill={nivel ? 'currentColor' : 'none'} strokeWidth={nivel ? 1.5 : 2} />
+      <Trophy className={`${compact ? 'w-5 h-5' : 'w-7 h-7'} ${corTrofeu}`} fill={idx >= 0 ? 'currentColor' : 'none'} strokeWidth={idx >= 0 ? 1.5 : 2} />
       <span className={`${compact ? 'w-16 h-1.5' : 'w-28 h-2.5'} rounded-full bg-muted overflow-hidden`}>
         <span className={`block h-full rounded-full ${corPista} transition-all`} style={{ width: `${preenchido}%` }} />
       </span>
@@ -290,7 +306,7 @@ function RegraBreakdownTable({ detalhe }: { detalhe: GamifDetalheItem[] }) {
                   : a.ocorrencias}
             </TableCell>
             <TableCell className="text-right text-xs">
-              {typeof a.percentual === 'number' ? <GamifNivelBadge nivel={a.nivel} percentual={a.percentual} compact /> : '—'}
+              {typeof a.percentual === 'number' ? <GamifNivelBadge nivel={a.nivel} ordem={a.ordem} percentual={a.percentual} compact /> : '—'}
             </TableCell>
             <TableCell className="text-right text-xs">{fmt(a.pontos)}</TableCell>
             <TableCell className="text-right text-xs">{fmtBRL(a.bonus)}</TableCell>
@@ -318,6 +334,11 @@ export default function FarolGamificacao() {
   // visualizar?"): admin vê a composição por regra sem precisar entrar
   // no modo "Visão do RCA" (que é uma simulação de outra pessoa).
   const [detalheExpandido, setDetalheExpandido] = useState<string | null>(null)
+  // Escala de pagamento editável (pedido do Claudio 23/09/2026) — form em
+  // string (não number) pra não brigar com o usuário digitando/apagando;
+  // multiplicador aqui é sempre em %, convertido pra fração só ao salvar.
+  const [niveisDialogOpen, setNiveisDialogOpen] = useState(false)
+  const [niveisForm, setNiveisForm] = useState<{ nome: string; percentual_minimo: string; multiplicador: string }[]>([])
 
   const { data: campanhas } = useQuery<GamifCampanha[]>({
     queryKey: ['gamif-campanhas'],
@@ -507,6 +528,34 @@ export default function FarolGamificacao() {
     onError: (e: Error) => toast.error(e.message || 'Erro ao gerar extrato'),
   })
 
+  const abrirEdicaoNiveis = () => {
+    setNiveisForm((campanhaDetalhe?.niveis ?? []).map(n => ({
+      nome: n.nome, percentual_minimo: String(n.percentual_minimo), multiplicador: String(n.multiplicador * 100),
+    })))
+    setNiveisDialogOpen(true)
+  }
+
+  const salvarNiveis = useMutation({
+    mutationFn: async () => {
+      const body = {
+        niveis: niveisForm.map(n => ({
+          nome: n.nome,
+          percentual_minimo: Number(n.percentual_minimo) || 0,
+          multiplicador: (Number(n.multiplicador) || 0) / 100,
+        })),
+      }
+      const r = await fetch(`/api/farol/gamif-niveis?campanha_id=${campanhaSelecionada}`, { method: 'PUT', headers, body: JSON.stringify(body) })
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    onSuccess: () => {
+      toast.success('Escala de pagamento atualizada — clique em "Recalcular pontuação" pra aplicar')
+      qc.invalidateQueries({ queryKey: ['gamif-campanha', campanhaSelecionada] })
+      setNiveisDialogOpen(false)
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao salvar escala'),
+  })
+
   // ─── Tela: detalhe de uma campanha ──────────────────────────────────────
   if (campanhaSelecionada && campanhaDetalhe) {
     return (
@@ -568,6 +617,42 @@ export default function FarolGamificacao() {
           </Table>
         </div>
 
+        {/* Escala de pagamento — pedido do Claudio 23/09/2026: "podemos
+            precisar editar a configuração da premiação... você colocou via
+            UPDATE e não está acessível na tela". Editável por campanha,
+            número variável de níveis (nome livre, ex.: "Platina"). Editar
+            aqui NÃO recalcula sozinho — só no próximo "Recalcular
+            pontuação" clicado explicitamente. */}
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-3 py-2 border-b flex items-center justify-between bg-muted/30">
+            <span className="text-sm font-medium">Escala de pagamento</span>
+            <Button size="sm" variant="outline" onClick={abrirEdicaoNiveis}><Pencil className="w-3.5 h-3.5 mr-1" /> Editar escala</Button>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nível</TableHead>
+                <TableHead className="text-right">% mínimo do objetivo</TableHead>
+                <TableHead className="text-right">% do valor pago</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(campanhaDetalhe.niveis ?? []).length === 0 && (
+                <TableRow><TableCell colSpan={3} className="text-center py-6 text-muted-foreground">Nenhum nível configurado — ninguém vai pontuar até editar a escala</TableCell></TableRow>
+              )}
+              {(campanhaDetalhe.niveis ?? []).map(n => (
+                <TableRow key={n.id}>
+                  <TableCell className="text-sm flex items-center gap-2">
+                    <GamifNivelBadge nivel={n.nome} ordem={n.ordem} percentual={n.percentual_minimo} compact /> {n.nome}
+                  </TableCell>
+                  <TableCell className="text-right">{fmt(n.percentual_minimo)}%</TableCell>
+                  <TableCell className="text-right">{fmt(n.multiplicador * 100)}%</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+
         {/* Ranking */}
         <div className="border rounded-lg overflow-hidden">
           <div className="px-3 py-2 border-b bg-muted/30 text-sm font-medium">
@@ -601,7 +686,7 @@ export default function FarolGamificacao() {
                     <TableCell>{aberto ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</TableCell>
                     <TableCell className="font-bold text-muted-foreground">{l.posicao}º</TableCell>
                     <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
-                    <TableCell className="text-center py-2"><GamifNivelBadge nivel={l.nivel_principal} percentual={l.percentual_principal} /></TableCell>
+                    <TableCell className="text-center py-2"><GamifNivelBadge nivel={l.nivel_principal} ordem={l.nivel_ordem} percentual={l.percentual_principal} /></TableCell>
                     <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
                     <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
                     {/* Volume — critério de desempate (curva ABC, pedido do
@@ -646,7 +731,7 @@ export default function FarolGamificacao() {
                 <div className="text-4xl font-bold text-primary">{minhaPosicao.posicao}º</div>
                 <div className="text-sm text-muted-foreground mb-3">de {minhaPosicao.total_rcas} RCAs</div>
                 <div className="flex justify-center items-center gap-3 mb-2">
-                  <GamifNivelBadge nivel={minhaPosicao.nivel_principal} percentual={minhaPosicao.percentual_principal} />
+                  <GamifNivelBadge nivel={minhaPosicao.nivel_principal} ordem={minhaPosicao.nivel_ordem} percentual={minhaPosicao.percentual_principal} />
                   <span className="text-xs text-muted-foreground">{Math.round(minhaPosicao.percentual_principal)}% do objetivo</span>
                 </div>
                 <div className="flex justify-center gap-6 text-sm">
@@ -794,6 +879,44 @@ export default function FarolGamificacao() {
             <DialogFooter>
               <Button variant="ghost" onClick={fecharDialogRegra}>Cancelar</Button>
               <Button onClick={() => salvarRegra.mutate()} disabled={salvarRegra.isPending}>{regraEditando ? 'Salvar alterações' : 'Criar regra'}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog: editar escala de pagamento — pedido do Claudio
+            23/09/2026: número variável de níveis, nome livre. */}
+        <Dialog open={niveisDialogOpen} onOpenChange={setNiveisDialogOpen}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader><DialogTitle>Editar escala de pagamento</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Cada nível define o % mínimo do objetivo pra entrar nele, e a fração do pontos/bônus da regra que ele paga.
+                Editar aqui não recalcula sozinho — clique em "Recalcular pontuação" depois de salvar.
+              </p>
+              {niveisForm.map((n, i) => (
+                <div key={i} className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Label className="text-xs">Nome</Label>
+                    <Input value={n.nome} onChange={e => setNiveisForm(f => f.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} placeholder="Ex: Bronze" />
+                  </div>
+                  <div className="w-28">
+                    <Label className="text-xs">% mínimo</Label>
+                    <Input type="number" value={n.percentual_minimo} onChange={e => setNiveisForm(f => f.map((x, j) => j === i ? { ...x, percentual_minimo: e.target.value } : x))} />
+                  </div>
+                  <div className="w-28">
+                    <Label className="text-xs">% do valor</Label>
+                    <Input type="number" value={n.multiplicador} onChange={e => setNiveisForm(f => f.map((x, j) => j === i ? { ...x, multiplicador: e.target.value } : x))} />
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setNiveisForm(f => f.filter((_, j) => j !== i))}><Trash2 className="w-3.5 h-3.5 text-red-500" /></Button>
+                </div>
+              ))}
+              <Button variant="outline" size="sm" onClick={() => setNiveisForm(f => [...f, { nome: '', percentual_minimo: '', multiplicador: '' }])}>
+                <Plus className="w-3.5 h-3.5 mr-1" /> Adicionar nível
+              </Button>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setNiveisDialogOpen(false)}>Cancelar</Button>
+              <Button onClick={() => salvarNiveis.mutate()} disabled={salvarNiveis.isPending}>Salvar escala</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
