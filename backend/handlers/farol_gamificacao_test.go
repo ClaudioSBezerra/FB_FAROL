@@ -872,3 +872,61 @@ func TestGamifExtratosHandler_GeraSnapshotImutavelERecemGerar(t *testing.T) {
 		t.Errorf("extrato 1 relido = %+v, want continuar com 1 linha (imutável, não pega o cliente novo)", extrato1Relido.Linhas)
 	}
 }
+
+// TestRecalcularGamificacaoAtivas_SoRecalculaCampanhaAtiva — pedido do
+// Claudio 23/09/2026: "todo dia o sistema atualiza o Farol sozinho... como
+// fica a Gamificação?" — até aqui só recalculava no clique manual. Prova
+// que o recálculo diário (chamado de dentro do prewarm, junto com o resto
+// do Farol) só toca campanhas com status='ativa' — uma campanha encerrada
+// não deveria ter seu snapshot alterado.
+func TestRecalcularGamificacaoAtivas_SoRecalculaCampanhaAtiva(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TGAM RecalcDiario", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-08-01", "2026-08-31")
+
+	cnpjAtiva := "80000000001101"
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_rca = 'TGAM-RCA-ATIVA'`, empresaID)
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE ATIVA", cnpjAtiva, "TGAM-RCA-ATIVA")
+	inserirVendaFaturadaFixture(t, empresaID, cnpjAtiva, "PRODRECALC", "TGAM-RCA-ATIVA", "1", 150, 1, "2026-08-10")
+
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+
+	campanhaAtivaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-08-01", "2026-08-31")
+	criarGamifRegraFixture(t, campanhaAtivaID, "cobertura_atingida", vinculoID, vigenciaID, nil, 0, 10, 300)
+
+	campanhaEncerradaID := criarGamifCampanhaFixture(t, empresaID, industriaID, "2026-07-01", "2026-07-31")
+	db.Exec(`UPDATE farol.gamif_campanhas SET status = 'encerrada' WHERE id = $1`, campanhaEncerradaID)
+	// Snapshot congelado manualmente — representa um valor que já foi
+	// calculado no passado e não deveria mais mudar sozinho.
+	db.Exec(`
+		INSERT INTO farol.gamif_pontuacao (empresa_id, campanha_id, cod_rca, nome_rca, pontos_total, bonus_total, detalhe)
+		VALUES ($1, $2, 'TGAM-RCA-CONGELADO', 'Congelado', 999, 9999, '[]')
+	`, empresaID, campanhaEncerradaID)
+
+	RecalcularGamificacaoAtivas(db, empresaID)
+
+	var pontosAtiva, bonusAtiva float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-ATIVA'`, campanhaAtivaID).
+		Scan(&pontosAtiva, &bonusAtiva); err != nil {
+		t.Fatalf("campanha ativa deveria ter sido recalculada (RCA bateu 100%%): %v", err)
+	}
+	if pontosAtiva != 10 || bonusAtiva != 300 {
+		t.Errorf("campanha ativa: pontos/bonus = %v/%v, want 10/300", pontosAtiva, bonusAtiva)
+	}
+
+	var pontosCongelado, bonusCongelado float64
+	if err := db.QueryRow(`SELECT pontos_total, bonus_total FROM farol.gamif_pontuacao WHERE campanha_id = $1 AND cod_rca = 'TGAM-RCA-CONGELADO'`, campanhaEncerradaID).
+		Scan(&pontosCongelado, &bonusCongelado); err != nil {
+		t.Fatalf("linha congelada da campanha encerrada não deveria sumir: %v", err)
+	}
+	if pontosCongelado != 999 || bonusCongelado != 9999 {
+		t.Errorf("campanha ENCERRADA foi recalculada por engano: pontos/bonus = %v/%v, want continuar 999/9999 (congelado)", pontosCongelado, bonusCongelado)
+	}
+}

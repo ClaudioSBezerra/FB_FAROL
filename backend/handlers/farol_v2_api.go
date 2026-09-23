@@ -3017,7 +3017,7 @@ var (
 // anulava o prewarm: meia hora após o boot o cache já expirava e o próximo
 // usuário pagava tudo de novo (login das 14:19 com restart às 11:13).
 //
-// 20h porque o aquecimento é DIÁRIO (StartDailyPrewarm, 07:30): o que foi
+// 20h porque o aquecimento é DIÁRIO (StartDailyPrewarm, 07:00): o que foi
 // aquecido de manhã precisa sobreviver ao expediente inteiro, senão a partir
 // do meio da tarde os usuários voltam a pagar o recálculo. Não é risco de dado
 // velho — invalidateBaseCache* roda nos pontos onde o dado muda; o TTL é teto
@@ -3758,7 +3758,7 @@ func RefreshViewsHandler(db *sql.DB) http.HandlerFunc {
 // deploy de 27/07/2026 (fetchCards de usuários reais subiu a 8-17s enquanto
 // o prewarm rodava). FOI ESSA fase que causou a regressão, não a de períodos.
 // Ela continua rodando só depois de um import (via prewarmAggMes, chamado por
-// RefreshViewsHandler) e no aquecimento diário das 07:30 (PrewarmDiario).
+// RefreshViewsHandler) e no aquecimento diário das 07:00 (PrewarmDiario).
 // prewarmPosView — uma combinação (view, groupCol[, filtro extra]) que os
 // prewarms de positivação (baseCache) precisam aquecer.
 type prewarmPosView struct {
@@ -4330,7 +4330,7 @@ func prewarmFilialCache(db *sql.DB, empresaID string) {
 // da manhã (StartDailyPrewarm), quando não há usuários. Diferente do
 // PrewarmStartup, que é deliberadamente enxuto para não competir com tráfego
 // real no boot, aqui vale pagar o custo inteiro: base + períodos + presets
-// diários. Com o TTL de 20h, o que é aquecido às 07:30 cobre o expediente todo.
+// diários. Com o TTL de 20h, o que é aquecido às 07:00 cobre o expediente todo.
 func PrewarmDiario(db *sql.DB, empresaID string) {
 	t0 := time.Now()
 	prewarmAggMesCore(db, empresaID)
@@ -4340,14 +4340,18 @@ func PrewarmDiario(db *sql.DB, empresaID string) {
 	prewarmEscopoPessoaCache(db, empresaID)
 	prewarmDailyRanges(db, empresaID)
 	PrewarmMetasRealizados(db, empresaID)
+	// Gamificação — pedido do Claudio 23/09/2026: até aqui só recalculava
+	// no clique manual de "Recalcular pontuação"; agora acompanha o resto
+	// do Farol e atualiza sozinha todo dia.
+	RecalcularGamificacaoAtivas(db, empresaID)
 	log.Printf("[farol:view] PrewarmDiario empresa=%s COMPLETO em %v", empresaID, time.Since(t0))
 }
 
-// prewarmHoraDiaria devolve a hora/minuto do aquecimento diário. Default 07:30
+// prewarmHoraDiaria devolve a hora/minuto do aquecimento diário. Default 07:00
 // (antes do expediente e depois da janela de carga automática, 00:01-06:00).
 // Ajustável por FAROL_PREWARM_HORA no formato "HH:MM".
 func prewarmHoraDiaria() (hora, minuto int) {
-	hora, minuto = 7, 30
+	hora, minuto = 7, 0
 	v := strings.TrimSpace(os.Getenv("FAROL_PREWARM_HORA"))
 	if v == "" {
 		return hora, minuto

@@ -1167,6 +1167,46 @@ func CalcularPontuacaoCampanha(db *sql.DB, empresaID string, campanhaID int) err
 	return nil
 }
 
+// RecalcularGamificacaoAtivas recalcula TODAS as campanhas ativas de uma
+// empresa — pedido do Claudio 23/09/2026: até aqui a Gamificação só
+// recalculava quando alguém clicava em "Recalcular pontuação" (ou gerava
+// um extrato), diferente do resto do Farol (Cobertura/Sortimento), que já
+// atualiza sozinho todo dia. Chamada de dentro do mesmo aquecimento diário
+// (PrewarmDiario, ver farol_v2_api.go) — assim o ranking que o RCA vê no
+// celular reflete a venda de ontem sem precisar de ninguém clicar em nada.
+// Erro em 1 campanha não impede as outras (loga e segue).
+func RecalcularGamificacaoAtivas(db *sql.DB, empresaID string) {
+	rows, err := db.Query(`SELECT id FROM farol.gamif_campanhas WHERE empresa_id = $1 AND status = 'ativa'`, empresaID)
+	if err != nil {
+		log.Printf("[farol:gamif] recalculo diário: falha ao listar campanhas ativas empresa=%s: %v", empresaID, err)
+		return
+	}
+	var campanhaIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			log.Printf("[farol:gamif] recalculo diário: falha ao ler campanha empresa=%s: %v", empresaID, err)
+			return
+		}
+		campanhaIDs = append(campanhaIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("[farol:gamif] recalculo diário: erro ao percorrer campanhas empresa=%s: %v", empresaID, err)
+		return
+	}
+	for _, id := range campanhaIDs {
+		if err := CalcularPontuacaoCampanha(db, empresaID, id); err != nil {
+			log.Printf("[farol:gamif] recalculo diário: falha campanha=%d empresa=%s: %v", id, empresaID, err)
+			continue
+		}
+	}
+	if len(campanhaIDs) > 0 {
+		log.Printf("[farol:gamif] recalculo diário: %d campanha(s) ativa(s) recalculada(s) empresa=%s", len(campanhaIDs), empresaID)
+	}
+}
+
 // ─── GamifCalcularHandler — POST /api/farol/gamif-campanhas-calcular?campanha_id= ─
 
 func GamifCalcularHandler(db *sql.DB) http.HandlerFunc {
