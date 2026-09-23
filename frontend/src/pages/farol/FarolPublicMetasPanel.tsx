@@ -3,11 +3,11 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft } from 'lucide-react'
 
-// Escondido a pedido do Claudio 23/09/2026: "o Heverton pode acessar e
-// acabar a surpresa que o Zé Costa quer mostrar" — a aba/link de
-// Campanhas fica fora do ar (botão some, ?aba=campanhas é ignorado) até
-// virar `true` de novo. Nada foi apagado, é só esse interruptor.
-const GAMIF_MOBILE_HABILITADO = false
+// Religado a pedido do Claudio 23/09/2026 (a surpresa do José Costa já
+// pode ser revelada). Ficou escondido brevemente (23/09/2026) porque o
+// Heverton tinha acesso ao link mobile antes da hora — ver histórico do
+// git se precisar esconder de novo (é só voltar pra `false`).
+const GAMIF_MOBILE_HABILITADO = true
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
