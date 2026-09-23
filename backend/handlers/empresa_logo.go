@@ -27,6 +27,45 @@ func logoCompanyID(db *sql.DB, r *http.Request) (string, error) {
 	return GetEffectiveCompanyID(db, userID, requested)
 }
 
+// buscarLogoEmpresa resolve o logotipo de uma empresa (com fallback de
+// grupo — ver comentário abaixo), pra qualquer chamador que precise dos
+// bytes crus (ex.: embutir num Excel gerado), não só servir como resposta
+// HTTP. Devolve (nil, "", nil) quando não há logo (não é erro).
+func buscarLogoEmpresa(db *sql.DB, companyID string) ([]byte, string, error) {
+	var logoData []byte
+	var logoMime string
+	err := db.QueryRow(`
+		SELECT logo_data, logo_mime
+		FROM companies
+		WHERE id = $1::uuid AND logo_data IS NOT NULL
+	`, companyID).Scan(&logoData, &logoMime)
+
+	// Fallback de grupo: a empresa do usuário pode não ter logo próprio
+	// (ex: membro cuja sessão resolve p/ outra empresa do mesmo grupo onde
+	// o admin subiu o logo). Um grupo normalmente compartilha uma marca,
+	// então buscamos o logo mais recente de uma empresa-irmã do mesmo grupo.
+	if err == sql.ErrNoRows {
+		err = db.QueryRow(`
+			SELECT s.logo_data, s.logo_mime
+			FROM companies c
+			JOIN companies s ON s.group_id = c.group_id
+			WHERE c.id = $1::uuid
+			  AND c.group_id IS NOT NULL
+			  AND s.logo_data IS NOT NULL
+			ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC
+			LIMIT 1
+		`, companyID).Scan(&logoData, &logoMime)
+	}
+
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return logoData, logoMime, nil
+}
+
 // ServeEmpresaLogoHandler serve o logotipo da empresa como imagem binária.
 // GET /api/config/empresa/logo
 func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
@@ -42,38 +81,14 @@ func ServeEmpresaLogoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var logoData []byte
-		var logoMime string
-		err = db.QueryRow(`
-			SELECT logo_data, logo_mime
-			FROM companies
-			WHERE id = $1::uuid AND logo_data IS NOT NULL
-		`, companyID).Scan(&logoData, &logoMime)
-
-		// Fallback de grupo: a empresa do usuário pode não ter logo próprio
-		// (ex: membro cuja sessão resolve p/ outra empresa do mesmo grupo onde
-		// o admin subiu o logo). Um grupo normalmente compartilha uma marca,
-		// então buscamos o logo mais recente de uma empresa-irmã do mesmo grupo.
-		if err == sql.ErrNoRows {
-			err = db.QueryRow(`
-				SELECT s.logo_data, s.logo_mime
-				FROM companies c
-				JOIN companies s ON s.group_id = c.group_id
-				WHERE c.id = $1::uuid
-				  AND c.group_id IS NOT NULL
-				  AND s.logo_data IS NOT NULL
-				ORDER BY s.updated_at DESC NULLS LAST, s.created_at DESC
-				LIMIT 1
-			`, companyID).Scan(&logoData, &logoMime)
-		}
-
-		if err == sql.ErrNoRows {
-			http.NotFound(w, r)
-			return
-		}
+		logoData, logoMime, err := buscarLogoEmpresa(db, companyID)
 		if err != nil {
 			log.Printf("ServeEmpresaLogo: companyID=%s erro DB: %v", companyID, err)
 			http.Error(w, "Erro no banco de dados", http.StatusInternalServerError)
+			return
+		}
+		if logoData == nil {
+			http.NotFound(w, r)
 			return
 		}
 

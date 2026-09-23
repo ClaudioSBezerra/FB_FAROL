@@ -195,17 +195,23 @@ function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: nu
   )
 }
 
-function baixarCSVExtrato(extrato: GamifExtrato) {
-  const linhas = extrato.linhas.map(l => [
-    l.cod_rca, l.nome_rca, fmt(l.pontos_total), fmt(l.bonus_total),
-    l.nivel_principal ? GAMIF_NIVEL_NOME[l.nivel_principal] : 'sem nível', `${l.percentual_principal.toFixed(1)}%`,
-  ].join(';'))
-  const csv = ['RCA;Nome;Pontos;Bonus (R$);Nivel;Percentual', ...linhas].join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+// baixarExcelExtrato — pedido do Claudio 23/09/2026: "exportável para Excel
+// com a logo da empresa". O arquivo é gerado no backend (excelize, já com a
+// logo embutida via companies.logo_data) — aqui só baixa o blob autenticado
+// e dispara o download, lendo o nome do arquivo do próprio header da resposta.
+async function baixarExcelExtrato(extratoID: number, headers: Record<string, string>) {
+  const r = await fetch(`/api/farol/gamif-extratos-excel?id=${extratoID}`, { headers })
+  if (!r.ok) {
+    toast.error('Erro ao gerar Excel do extrato')
+    return
+  }
+  const blob = await r.blob()
+  const disposition = r.headers.get('Content-Disposition') ?? ''
+  const match = disposition.match(/filename="([^"]+)"/)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `extrato-campanha-${extrato.campanha_id}-${extrato.gerado_em.slice(0, 10)}.csv`
+  a.download = match?.[1] ?? `extrato-${extratoID}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -627,7 +633,7 @@ export default function FarolGamificacao() {
                   <TableCell className="text-xs text-muted-foreground font-mono">{e.gerado_por}</TableCell>
                   <TableCell className="text-right text-sm">{e.linhas.length}</TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="sm" onClick={() => baixarCSVExtrato(e)}>Baixar CSV</Button>
+                    <Button variant="ghost" size="sm" onClick={() => baixarExcelExtrato(e.id, headers)}>Baixar Excel</Button>
                   </TableCell>
                 </TableRow>
               ))}
