@@ -3,6 +3,12 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft } from 'lucide-react'
 
+// Escondido a pedido do Claudio 23/09/2026: "o Heverton pode acessar e
+// acabar a surpresa que o Zé Costa quer mostrar" — a aba/link de
+// Campanhas fica fora do ar (botão some, ?aba=campanhas é ignorado) até
+// virar `true` de novo. Nada foi apagado, é só esse interruptor.
+const GAMIF_MOBILE_HABILITADO = false
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MetaVinculo {
@@ -415,7 +421,7 @@ export default function FarolPublicMetasPanel() {
   // WhatsApp: um cai em Objetivos, outro já abre direto em Campanhas.
   const [searchParams] = useSearchParams()
   const [modo, setModo] = useState<'objetivos' | 'gamificacao'>(
-    searchParams.get('aba') === 'campanhas' ? 'gamificacao' : 'objetivos'
+    GAMIF_MOBILE_HABILITADO && searchParams.get('aba') === 'campanhas' ? 'gamificacao' : 'objetivos'
   )
   const [industriaID, setIndustriaID] = useState('')
   const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
@@ -612,7 +618,7 @@ export default function FarolPublicMetasPanel() {
     return <div className="p-6 text-center text-sm text-muted-foreground">Link inválido.</div>
   }
 
-  if (modo === 'gamificacao') {
+  if (GAMIF_MOBILE_HABILITADO && modo === 'gamificacao') {
     return <GamificacaoMobileView cnpj={cnpj} codRca={scopeCod} onVoltar={() => setModo('objetivos')} />
   }
 
@@ -624,8 +630,11 @@ export default function FarolPublicMetasPanel() {
           <p className="text-xs text-muted-foreground">{scope === 'ggv' ? 'Visão do GGV' : scope === 'sup' ? 'Visão do Supervisor' : 'Visão do RCA'}</p>
         </div>
         {/* Gamificação só existe por cod_rca (gamif_pontuacao não tem
-            noção de Supervisor/GGV) — pedido do Claudio 22/09/2026. */}
-        {scope === 'rca' && (
+            noção de Supervisor/GGV) — pedido do Claudio 22/09/2026.
+            Escondida por enquanto (GAMIF_MOBILE_HABILITADO, 23/09/2026):
+            surpresa que o José Costa quer mostrar, e o Heverton tem
+            acesso a esse link mobile. */}
+        {GAMIF_MOBILE_HABILITADO && scope === 'rca' && (
           <button type="button" onClick={() => setModo('gamificacao')} className="flex items-center gap-1 text-xs font-medium text-amber-600 active:opacity-70 shrink-0 pl-2">
             <Trophy className="w-4 h-4" /> Campanhas
           </button>
