@@ -179,18 +179,24 @@ interface GamifExtrato {
 // valor) / prata (>=75%, 50%) / ouro (>=100%, 100%) / diamante (>=120%,
 // 120%) — mesmos cortes de gamifNivelPagamento em farol_gamificacao.go.
 const GAMIF_NIVEL_NOME: Record<string, string> = { bronze: 'Bronze', prata: 'Prata', ouro: 'Ouro', diamante: 'Diamante' }
-const GAMIF_NIVEL_COR: Record<string, string> = {
-  bronze: 'bg-amber-100 text-amber-800 border-amber-300',
-  prata: 'bg-slate-200 text-slate-700 border-slate-300',
-  ouro: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-  diamante: 'bg-sky-100 text-sky-800 border-sky-300',
+// Cor do TROFÉU em si (ícone preenchido), não mais uma pílula de texto —
+// pedido do Claudio 23/09/2026: "visual de corrida, mostrando o troféu na
+// cor que o RCA está durante a campanha". Cores inspiradas nos metais
+// reais da medalha (bronze/prata/ouro) + diamante em azul-gelo.
+const GAMIF_NIVEL_COR_TROFEU: Record<string, string> = {
+  bronze: 'text-amber-700',
+  prata: 'text-slate-400',
+  ouro: 'text-yellow-500',
+  diamante: 'text-sky-400',
 }
 
 function GamifNivelBadge({ nivel, percentual }: { nivel?: string; percentual: number }) {
-  const cor = nivel ? GAMIF_NIVEL_COR[nivel] : 'bg-red-100 text-red-700 border-red-300'
+  const corTrofeu = nivel ? GAMIF_NIVEL_COR_TROFEU[nivel] : 'text-muted-foreground/30'
+  const legenda = nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${cor}`}>
-      {nivel ? GAMIF_NIVEL_NOME[nivel] : `${Math.round(percentual)}%`}
+    <span className="inline-flex flex-col items-center gap-0.5" title={`${Math.round(percentual)}% do objetivo`}>
+      <Trophy className={`w-5 h-5 ${corTrofeu}`} fill={nivel ? 'currentColor' : 'none'} strokeWidth={nivel ? 1.5 : 2} />
+      <span className="text-[10px] font-medium text-muted-foreground leading-none">{legenda}</span>
     </span>
   )
 }
