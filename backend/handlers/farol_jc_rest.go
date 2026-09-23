@@ -91,8 +91,9 @@ func NewFarolJCRestHandler(getDB func() *sql.DB) (h http.Handler, ok bool) {
 	})
 
 	registrarRotaEmailObjetivosIndustria(mux, getDB, empresaID)
+	registrarRotasGamificacaoJC(mux, getDB, empresaID)
 
-	log.Printf("[farol:mcp] rotas REST /api/farol-jc/{objetivos-industria,comparativo-fechamento,objetivos-industria-email} habilitadas")
+	log.Printf("[farol:mcp] rotas REST /api/farol-jc/{objetivos-industria,comparativo-fechamento,objetivos-industria-email,gamif-ranking,gamif-resumo-email} habilitadas")
 	return authMiddleware(tokens, mux), true
 }
 
