@@ -18,24 +18,27 @@ export interface ModuleConfig {
 // ─── Farol — Módulos e abas ───────────────────────────────────────────────
 export const modules: Record<string, ModuleConfig> = {
   // ── Farol V2 — sistema principal de vendas ───────────────────────────────
+  // Sem abas — pedido do Claudio 24/09/2026: "Comparativo Fechamento
+  // Comercial" e "Envio do Resumo" apareciam aqui duplicados (a mesma
+  // barra de abas vazava pra dentro de Relatórios também, por falta de um
+  // módulo próprio — ver 'relatorios' abaixo, mesmo bug já corrigido pra
+  // Gamificação em 23/09/2026). As duas rotas continuam funcionando por
+  // URL direta; só saíram do menu.
   farol: {
     label: 'Painel Vendas',
-    tabs: [
-      { label: 'Painel Vendas',  path: '/farol/v2' },
-      // Comparativo Fechamento Comercial — pedido do Claudio 14/09/2026:
-      // compara o fechamento que o fornecedor manda por fora com a apuração
-      // oficial do Farol. Import fica atrás de gestor_geral no backend (a
-      // própria tela já depende de GET /api/farol/metas-vinculos, que é
-      // gestor_geral — não vale esconder só aqui e deixar a rota exposta).
-      { label: 'Comparativo Fechamento Comercial', path: '/farol/comparativo-fechamento' },
-      // Envio do resumo semanal — só admin e admin_fbtax. A tela expõe os
-      // tokens de todos os destinatários, e token abre o quadro sem senha:
-      // é credencial, não configuração. O backend faz a mesma checagem, então
-      // esconder aqui é conveniência, não a proteção.
-      { label: 'Envio do Resumo', path: '/farol/resumo/envio', adminOnly: true },
-    ],
+    tabs: [],
   },
-  // ── Painel BI — War Room para CEO/Diretoria ───────────────────────────────
+  // Relatórios — pedido do Claudio 24/09/2026: antes não existia módulo
+  // próprio, então /farol/relatorios caía no fallback genérico
+  // (getActiveModule) e herdava o cabeçalho/abas de "Painel Vendas" —
+  // achado do Claudio: "dentro dele está como Painel de Vendas".
+  relatorios: {
+    label: 'Relatórios',
+    tabs: [],
+  },
+  // ── Painel BI — desabilitado no rail (pedido do Claudio 24/09/2026: "o
+  // CEO não usa computador") — ver AppRail.tsx, item comentado, não
+  // apagado. A tela em si continua existindo, só não aparece mais no menu.
   bi: {
     label: 'Painel BI',
     tabs: [],
@@ -68,22 +71,6 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Vendas (CSV)', path: '/farol/importar' },
     ],
   },
-  // ── Objetivo RCA (em desenvolvimento) ────────────────────────────────────
-  obj_rca: {
-    label: 'Objetivo RCA',
-    dev: true,
-    tabs: [
-      { label: 'Painel', path: '/objetivos/rca', disabled: true },
-    ],
-  },
-  // ── Objetivo Supervisor (em desenvolvimento) ─────────────────────────────
-  obj_supervisor: {
-    label: 'Objetivo Supervisor',
-    dev: true,
-    tabs: [
-      { label: 'Painel', path: '/objetivos/supervisor', disabled: true },
-    ],
-  },
   // ── Configurações (admin only) ────────────────────────────────────────────
   config: {
     label: 'Configurações',
@@ -109,11 +96,10 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/bi'))              return 'bi'
   if (pathname.startsWith('/farol/gamificacao'))     return 'gamificacao'
   if (pathname.startsWith('/farol/metas-industria')) return 'metas_industria'
+  if (pathname.startsWith('/farol/relatorios'))      return 'relatorios'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
   if (pathname.startsWith('/farol'))                 return 'farol'
-  if (pathname.startsWith('/objetivos/rca'))         return 'obj_rca'
-  if (pathname.startsWith('/objetivos/supervisor'))  return 'obj_supervisor'
   if (pathname.startsWith('/objetivos/manutencao'))  return 'config'
   if (pathname.startsWith('/objetivos/importar'))    return 'importar'
   if (pathname.startsWith('/gestao'))                return 'config'

@@ -1,4 +1,4 @@
-import { Target, BarChart3, Settings, LogOut, KeyRound, Lightbulb, UploadCloud, PieChart, FileText, Factory, Trophy } from 'lucide-react'
+import { Settings, LogOut, KeyRound, Lightbulb, UploadCloud, FileText, Factory, Trophy } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -49,7 +49,10 @@ interface RailItem {
 
 const mainItems: RailItem[] = [
   { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
-  { id: 'bi',             icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
+  // Painel BI — desabilitado no rail (pedido do Claudio 24/09/2026: "o CEO
+  // não usa computador"). Não apagado: a tela e o módulo continuam
+  // existindo, só reordene esta linha de volta pra reativar no menu.
+  // { id: 'bi',          icon: PieChart,    label: 'Painel BI',           path: '/farol/bi',             dev: false, requiredModulo: 'bi' },
   // Objetivos Indústria — logo abaixo de Painel BI no rail (pedido do Claudio,
   // 04/09/2026). Rota/módulo (navigation.ts) já existiam desde o Épico 5;
   // faltava só o ícone aqui — sem ele, só quem soubesse a URL direta
@@ -63,8 +66,9 @@ const mainItems: RailItem[] = [
   // aplica às outras duas abas (Extrato de Produtos por Cliente, CNPJ
   // irregular), escondidas dentro de FarolRelatorios.tsx pra quem não é.
   { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false },
-  { id: 'obj_rca',        icon: Target,      label: 'Objetivo RCA',        path: '/objetivos/rca',        dev: true  },
-  { id: 'obj_supervisor', icon: BarChart3,   label: 'Objetivo Supervisor', path: '/objetivos/supervisor', dev: true  },
+  // Objetivo RCA/Objetivo Supervisor (placeholders "(DEV)") removidos do
+  // rail — pedido do Claudio 24/09/2026: "estão sem funcionalidades" (nunca
+  // tiveram rota/página de verdade, só o ícone com badge DEV).
   // Gamificação — MVP restrito ao Claudio (22/09/2026, pedido do José
   // Costa/CEO da JC): pontos/ranking/bônus por RCA. fbtaxOnly (não
   // adminOrTI) de propósito — bônus em R$ visível não deve aparecer nem
