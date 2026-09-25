@@ -1364,7 +1364,7 @@ export default function FarolPainelMetas() {
           (aba "Resumo Rede×Cliente") mostra só os itens daquele CNPJ.
           Vendeu/não vendeu, Qtd e Valor — pedido do Claudio 10/09/2026. */}
       <Dialog open={!!itensAlvo} onOpenChange={open => { if (!open) setItensAlvo(null) }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
+        <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
           <DialogHeader>
             <DialogTitle>Itens — {itensAlvo?.titulo}</DialogTitle>
           </DialogHeader>
@@ -1413,26 +1413,19 @@ export default function FarolPainelMetas() {
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right">Objetivo</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
                   {[...itensLista].sort((x, y) => (x.nome || x.ean).localeCompare(y.nome || y.ean, 'pt-BR')).map((it, i) => (
                     <TableRow key={i}>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</TableCell>
+                      <TableCell className="font-mono text-xs break-words min-w-[9rem]">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</TableCell>
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
                       <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
-                      <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
-                      <TableCell className="text-right">{fmtBRL(it.valor)}</TableCell>
-                      {/* Objetivo é da REDE inteira (qtd de EANs distintos a
-                          bater no mês), não do produto — repetido em toda
-                          linha só pra ficar visível rolando a lista, mesmo
-                          padrão de "Obj. EANs" na tabela Resumo Redes. */}
-                      <TableCell className="text-right text-muted-foreground">{itensAlvo && fmt(itensAlvo.objetivo)}</TableCell>
+                      <TableCell className="text-right">{it.qtd ? fmt(it.qtd) : '—'}</TableCell>
+                      <TableCell className="text-right">{it.valor ? fmtBRL(it.valor) : '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
