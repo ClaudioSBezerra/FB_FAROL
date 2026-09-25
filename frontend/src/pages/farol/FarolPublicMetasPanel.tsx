@@ -562,7 +562,7 @@ export default function FarolPublicMetasPanel() {
       if (!r.ok) throw new Error()
       return r.json()
     },
-    enabled: !!cnpj && metrica === 'combinado' && !!industriaSelecionada?.sortimento,
+    enabled: !!cnpj && (metrica === 'combinado' || metrica === 'cobertura') && !!industriaSelecionada?.sortimento,
   })
 
   const periodosCombinados = useMemo(() => {
@@ -601,15 +601,22 @@ export default function FarolPublicMetasPanel() {
   })
 
   // ─── Drill-down "Produtos" (nível 6) — só quando Sortimento está
-  // resolvido pro período atual: sempre no modo Combinado; no modo
-  // individual só quando a métrica escolhida É Sortimento (no modo
-  // Cobertura isolada não há vigência de Sortimento selecionada pra
-  // cruzar o período).
+  // resolvido pro período atual: Combinado, Sortimento, e Cobertura isolada
+  // (cruzando o período — ver abaixo).
+  // Cobertura por Rede (individual) também mostra Produtos (pedido do Heverton
+  // 25/09/2026): usa o vínculo de Sortimento da MESMA indústria e a vigência
+  // dele com o mesmo período da vigência de Cobertura selecionada.
+  const periodoCobertura = vigencias.find(v => String(v.id) === vigenciaID)
+  const vigenciaSortimentoDoPeriodo = periodoCobertura
+    ? vigenciasSortimento.find(v => v.data_inicio === periodoCobertura.data_inicio && v.data_fim === periodoCobertura.data_fim)
+    : undefined
   const sortimentoVinculoID = metrica === 'combinado' ? industriaSelecionada?.sortimento?.id
     : metrica === 'sortimento' ? vinculoAtivo?.id
+    : metrica === 'cobertura' && vigenciaSortimentoDoPeriodo ? industriaSelecionada?.sortimento?.id
     : undefined
   const sortimentoVigenciaID = metrica === 'combinado' ? periodoSelecionado?.sortimento.id
     : metrica === 'sortimento' ? (vigenciaID ? Number(vigenciaID) : undefined)
+    : metrica === 'cobertura' ? vigenciaSortimentoDoPeriodo?.id
     : undefined
 
   const { data: itensResp, isLoading: isLoadingItens } = useQuery<{ itens: PainelItemLinha[] }>({
