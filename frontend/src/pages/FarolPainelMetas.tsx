@@ -696,7 +696,9 @@ export default function FarolPainelMetas() {
       (!fRCA || r.cod_rca === fRCA) &&
       (!fRede || r.cod_princ === fRede) &&
       (!fUF || r.uf === fUF) &&
-      (!fCliente || (r.clientes ?? []).some(c => c.cnpj === fCliente))),
+      (!fCliente || (r.clientes ?? []).some(c => c.cnpj === fCliente)))
+      // Redes por maior venda realizada (Valor Venda) — pedido do Heverton 25/09/2026.
+      .sort((a, b) => b.cobertura_valor_total - a.cobertura_valor_total || a.cod_princ.localeCompare(b.cod_princ)),
     [redesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
@@ -721,18 +723,23 @@ export default function FarolPainelMetas() {
   const [abaCombinado, setAbaCombinado] = useState<AbaCombinado>('rede')
 
   const clientesCombinado = painelCombinado?.clientes ?? []
-  // Clientes com maior venda realizada (Cobertura, R$) primeiro — pedido do
-  // Heverton 25/09/2026 (mesmo critério do mobile).
-  const clientesVisiveis = useMemo(
-    () => clientesCombinado.filter(c =>
+  // Ordem por REDE (maior venda primeiro) e, dentro da Rede, por LOJA (maior
+  // venda primeiro) — pedido do Heverton 25/09/2026, mesmo critério do mobile.
+  const clientesVisiveis = useMemo(() => {
+    const filtrados = clientesCombinado.filter(c =>
       (!fGGV || c.cod_ggv === fGGV) &&
       (!fCRV || c.cod_crv === fCRV) &&
       (!fRCA || c.cod_rca === fRCA) &&
       (!fRede || c.cod_princ === fRede) &&
       (!fUF || c.uf === fUF) &&
       (!fCliente || c.cnpj === fCliente))
-      .sort((a, b) => b.cobertura_valor - a.cobertura_valor),
-    [clientesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
+    const totalPorRede = new Map<string, number>()
+    for (const c of filtrados) totalPorRede.set(c.cod_princ, (totalPorRede.get(c.cod_princ) ?? 0) + c.cobertura_valor)
+    return filtrados.sort((a, b) =>
+      (totalPorRede.get(b.cod_princ)! - totalPorRede.get(a.cod_princ)!) ||
+      a.cod_princ.localeCompare(b.cod_princ) ||
+      b.cobertura_valor - a.cobertura_valor)
+  }, [clientesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
   const gruposGGVCRV = useMemo(() => agruparCombinado(redesVisiveis, false), [redesVisiveis])
@@ -791,7 +798,7 @@ export default function FarolPainelMetas() {
         nome: c.fantasia || c.razao || c.cnpj, sub: c.cnpj, valor: c.valor, marcador: undefined as boolean | undefined, drill: undefined as (() => void) | undefined,
       }))
     : nivel === 'rede'
-    ? (painel?.realizado.redes ?? []).map(r => ({
+    ? [...(painel?.realizado.redes ?? [])].sort((x, y) => ((y as { valor_total?: number }).valor_total ?? y.valor) - ((x as { valor_total?: number }).valor_total ?? x.valor)).map(r => ({
         // Qt de lojas AO LADO do nome da Rede (pedido do Claudio em
         // 10/09/2026) — RCA fica isolado no "sub", sem misturar os dois.
         nome: `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,

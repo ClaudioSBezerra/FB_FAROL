@@ -50,6 +50,7 @@ interface RealizadoRede {
   razao: string
   fantasia: string
   valor: number
+  valor_total?: number
   objetivo?: number
   atingiu: boolean
   clientes?: RealizadoCliente[]
@@ -110,6 +111,7 @@ interface PainelCombinadoRede {
   razao: string
   fantasia: string
   cod_rca: string
+  cobertura_valor_total?: number
   cobertura_valor: number
   cobertura_objetivo: number
   cobertura_falta: number
@@ -765,7 +767,7 @@ export default function FarolPublicMetasPanel() {
               {painelCombinado.redes.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
               )}
-              {painelCombinado.redes.map((r, i) => {
+              {[...painelCombinado.redes].sort((a, b) => (b.cobertura_valor_total ?? b.cobertura_valor) - (a.cobertura_valor_total ?? a.cobertura_valor)).map((r, i) => {
                 const aberta = redeAberta === r.cod_princ
                 // Clientes com maior venda realizada (Cobertura, R$) primeiro
                 // — pedido do Heverton 25/09/2026.
@@ -878,7 +880,7 @@ export default function FarolPublicMetasPanel() {
                 {painel.realizado.redes.length === 0 && (
                   <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
                 )}
-                {painel.realizado.redes.map((r, i) => {
+                {[...painel.realizado.redes].sort((a, b) => (b.valor_total ?? b.valor) - (a.valor_total ?? a.valor)).map((r, i) => {
                   const aberta = redeAberta === r.cod_princ
                   // Clientes com maior venda realizada primeiro — pedido do
                   // Heverton 25/09/2026, mesmo critério do modo Combinado.
