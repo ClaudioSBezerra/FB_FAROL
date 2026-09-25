@@ -1027,10 +1027,10 @@ export default function FarolPainelMetas() {
                       <TableHead>CRV</TableHead>
                       {abaCombinado === 'ggv_crv_rca' && <TableHead>RCA</TableHead>}
                       <TableHead className="text-right">Qt Redes</TableHead>
-                      <TableHead className="text-right">Atingindo Cobertura</TableHead>
-                      <TableHead className="text-right">Falta Atingir Cobertura</TableHead>
-                      <TableHead className="text-right">Atingindo EAN</TableHead>
-                      <TableHead className="text-right">Falta Atingir EAN</TableHead>
+                      <TableHead className="text-right">Redes atingindo Cobertura</TableHead>
+                      <TableHead className="text-right">Redes abaixo da Cobertura</TableHead>
+                      <TableHead className="text-right">Redes atingindo Sortimento</TableHead>
+                      <TableHead className="text-right">Redes abaixo do Sortimento</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
