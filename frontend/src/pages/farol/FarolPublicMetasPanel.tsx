@@ -709,9 +709,14 @@ export default function FarolPublicMetasPanel() {
                     Cobertura: redes cobertas / redes do escopo + objetivo em
                     R$ por Rede. Sortimento: média / objetivo por Rede (o
                     mesmo em todas as Redes). */}
-                <div className="text-2xl font-bold">
-                  {fmt(painelCombinado.cobertura.realizado_total)}
-                  <span className="text-base font-medium text-muted-foreground"> / {painelCombinado.redes.length}</span>
+                <div className="text-2xl font-bold flex items-center gap-2">
+                  <span>
+                    {fmt(painelCombinado.cobertura.realizado_total)}
+                    <span className="text-base font-medium text-muted-foreground"> / {painelCombinado.redes.length}</span>
+                  </span>
+                  {painelCombinado.redes.length > 0 && (
+                    <StatusIcon atingiu={painelCombinado.cobertura.realizado_total >= painelCombinado.redes.length} />
+                  )}
                 </div>
                 {painelCombinado.redes.length > 0 && (
                   <div className="text-xs text-muted-foreground mt-0.5">
@@ -723,10 +728,15 @@ export default function FarolPublicMetasPanel() {
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Sortimento — média de Itens (EANs)
                 </div>
-                <div className="text-2xl font-bold">
-                  {fmt(painelCombinado.sortimento.realizado_total)}
+                <div className="text-2xl font-bold flex items-center gap-2">
+                  <span>
+                    {fmt(painelCombinado.sortimento.realizado_total)}
+                    {painelCombinado.redes.length > 0 && (
+                      <span className="text-base font-medium text-muted-foreground"> / {fmt(painelCombinado.redes[0].sortimento_objetivo)}</span>
+                    )}
+                  </span>
                   {painelCombinado.redes.length > 0 && (
-                    <span className="text-base font-medium text-muted-foreground"> / {fmt(painelCombinado.redes[0].sortimento_objetivo)}</span>
+                    <StatusIcon atingiu={painelCombinado.sortimento.realizado_total >= painelCombinado.redes[0].sortimento_objetivo} />
                   )}
                 </div>
               </div>
