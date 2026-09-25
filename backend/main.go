@@ -365,6 +365,14 @@ func main() {
 
 	handlers.ValidateJWTSecret()
 	initDBAsync()
+	// Modos de manutenção *_ONCE (ver onDBConnected): rodam num `docker exec`
+	// dentro do container JÁ no ar, então NÃO podem subir HTTP (porta 8087
+	// ocupada → o processo morria no bind antes do prewarm rodar) nem os
+	// workers (um 2º CSVWorker/Resumo competiria com o do servidor real). O
+	// job em onDBConnected termina com os.Exit — aqui só esperamos.
+	if os.Getenv("FAROL_PREWARM_METAS_ONCE") == "1" || os.Getenv("FAROL_PREWARM_GERAL_ONCE") == "1" {
+		select {}
+	}
 	go services.StartCSVWorker(getDB)
 	services.StartResumoWorker(getDB)
 	services.StartResumoSemanalFarol(getDB)
