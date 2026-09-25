@@ -721,6 +721,8 @@ export default function FarolPainelMetas() {
   const [abaCombinado, setAbaCombinado] = useState<AbaCombinado>('rede')
 
   const clientesCombinado = painelCombinado?.clientes ?? []
+  // Clientes com maior venda realizada (Cobertura, R$) primeiro — pedido do
+  // Heverton 25/09/2026 (mesmo critério do mobile).
   const clientesVisiveis = useMemo(
     () => clientesCombinado.filter(c =>
       (!fGGV || c.cod_ggv === fGGV) &&
@@ -728,7 +730,8 @@ export default function FarolPainelMetas() {
       (!fRCA || c.cod_rca === fRCA) &&
       (!fRede || c.cod_princ === fRede) &&
       (!fUF || c.uf === fUF) &&
-      (!fCliente || c.cnpj === fCliente)),
+      (!fCliente || c.cnpj === fCliente))
+      .sort((a, b) => b.cobertura_valor - a.cobertura_valor),
     [clientesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
@@ -782,7 +785,7 @@ export default function FarolPainelMetas() {
   // 10/09/2026, "colocar o R$ ao lado do Valor").
   const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede'
   const linhas = redeAberta
-    ? (redeAberta.clientes ?? []).map(c => ({
+    ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
         // aqui "nome" já é a loja, sem contagem de lojas ao lado.
         nome: c.fantasia || c.razao || c.cnpj, sub: c.cnpj, valor: c.valor, marcador: undefined as boolean | undefined, drill: undefined as (() => void) | undefined,
