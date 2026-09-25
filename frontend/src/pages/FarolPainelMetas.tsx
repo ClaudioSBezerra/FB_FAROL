@@ -10,7 +10,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon } from 'lucide-react'
 import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 
@@ -131,6 +131,7 @@ interface PainelCombinadoRede {
 
 interface PainelCombinadoCliente {
   cod_princ: string
+  cod_cli?: string
   cnpj: string
   razao: string
   fantasia: string
@@ -171,6 +172,7 @@ interface PainelItemLinha {
   // data_ultima_venda — pedido do Claudio 22/09/2026: fato do PRODUTO
   // (diferente de Dt.Ult.Cmp, fato do Cliente) — quando ESTE item foi
   // vendido pela última vez, mesmo que não tenha vendido NESTA vigência.
+  cod_prods?: string[]
   data_ultima_venda?: string
 }
 
@@ -274,23 +276,19 @@ const FLUXOS = [
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
-// StatusBadge — "Coberta"/"Não coberta": VERDE pra atingido, VERMELHO pra
-// não atingido (padrão de cor do Farol inteiro — o Badge variant="default"
-// do shadcn usa a cor PRIMÁRIA do tema, não verde/vermelho, então precisa
-// de classes explícitas aqui).
-function StatusBadge({ atingiu, labelSim = 'Coberta', labelNao = 'Não coberta' }: {
+// StatusBadge — ✓ verde (atingido) / ✗ vermelho (não atingido). Pedido do
+// Heverton 25/09/2026 (mesmo padrão do painel mobile): símbolo no lugar do
+// descritivo "Coberta"/"Não coberta". Os rótulos ficam como texto de
+// acessibilidade/tooltip.
+function StatusBadge({ atingiu, labelSim = 'Coberta', labelNao = 'Não coberta', size = 'w-5 h-5' }: {
   atingiu: boolean
   labelSim?: string
   labelNao?: string
+  size?: string
 }) {
-  return (
-    <Badge className={atingiu
-      ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-      : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-100'}
-    >
-      {atingiu ? labelSim : labelNao}
-    </Badge>
-  )
+  return atingiu
+    ? <Check className={`${size} inline-block shrink-0 text-emerald-600`} strokeWidth={3} aria-label={labelSim}><title>{labelSim}</title></Check>
+    : <XIcon className={`${size} inline-block shrink-0 text-red-600`} strokeWidth={3} aria-label={labelNao}><title>{labelNao}</title></XIcon>
 }
 
 // primeiroEUltimoDiaDoMes — default do filtro "Período: de/até" (pedido do
@@ -985,7 +983,8 @@ export default function FarolPainelMetas() {
                     </Tooltip>
                   </div>
                   <div className="text-2xl font-semibold">
-                    {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
+                    {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
+                    {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.cob >= redesVisiveis.length} />}
                   </div>
                 </div>
                 <div className="border rounded-lg p-4">
@@ -1001,7 +1000,8 @@ export default function FarolPainelMetas() {
                     </Tooltip>
                   </div>
                   <div className="text-2xl font-semibold">
-                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>
+                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
+                    {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.sort >= redesVisiveis.length} />}
                   </div>
                 </div>
               </div>
@@ -1092,7 +1092,7 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: r.fantasia || r.razao || r.cod_princ, objetivo: r.sortimento_objetivo })}
+                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: `${r.cod_princ} - ${r.fantasia || r.razao || r.cod_princ}`, objetivo: r.sortimento_objetivo })}
                         >
                           <TableCell className="font-mono text-xs">{r.cod_princ}</TableCell>
                           <TableCell className="text-sm">{r.razao}</TableCell>
@@ -1114,7 +1114,7 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={r.cobertura_atingiu} /></TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)}</TableCell>
+                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
@@ -1147,6 +1147,7 @@ export default function FarolPainelMetas() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Cód. Princ.</TableHead>
+                      <TableHead>Cód. Cliente</TableHead>
                       <TableHead>CNPJ</TableHead>
                       <TableHead>Razão</TableHead>
                       <TableHead>Fantasia</TableHead>
@@ -1165,7 +1166,7 @@ export default function FarolPainelMetas() {
                   </TableHeader>
                   <TableBody>
                     {clientesVisiveis.length === 0 && (
-                      <TableRow><TableCell colSpan={15} className="text-center py-8 text-muted-foreground">Sem Clientes pra este recorte/filtros</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={16} className="text-center py-8 text-muted-foreground">Sem Clientes pra este recorte/filtros</TableCell></TableRow>
                     )}
                     {clientesVisiveis.map((c, i) => {
                       const faltaCob = c.cobertura_valor - c.cobertura_objetivo
@@ -1174,9 +1175,10 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.fantasia || c.razao || c.cnpj} (${c.cnpj})`, objetivo: c.sortimento_objetivo, dataUltimaCompra: c.data_ultima_compra })}
+                          onClick={() => setItensAlvo({ cnpj: c.cnpj, titulo: `${c.cod_cli || c.cnpj} - ${c.fantasia || c.razao || c.cnpj}`, objetivo: c.sortimento_objetivo, dataUltimaCompra: c.data_ultima_compra })}
                         >
                           <TableCell className="font-mono text-xs">{c.cod_princ}</TableCell>
+                          <TableCell className="font-mono text-xs font-semibold">{c.cod_cli || '—'}</TableCell>
                           <TableCell className="font-mono text-xs">{c.cnpj}</TableCell>
                           <TableCell className="text-sm">{c.razao}</TableCell>
                           <TableCell className="text-sm font-medium">
@@ -1195,7 +1197,7 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={faltaCob >= 0} /></TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)}</TableCell>
+                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
@@ -1380,17 +1382,6 @@ export default function FarolPainelMetas() {
                   <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
                   <span><strong>{itensLista.length}</strong> itens no catálogo</span>
                   <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
-                  {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026. Ajustada no
-                      mesmo dia: 1 fato do CLIENTE (não do produto), mostrado
-                      1x aqui — repetir a mesma data em toda linha da tabela
-                      (inclusive nos "Não coberto") parecia sugerir que cada
-                      item tinha sido comprado naquela data, o que é falso pra
-                      quase todos eles. Só existe pra 1 loja (cnpj); em
-                      rollup (GGV/CRV/RCA/Redes somadas) não há "última
-                      compra" agregada com sentido único. */}
-                  {itensAlvo.cnpj && (
-                    <span>Dt.Ult.Cmp: <strong>{itensAlvo.dataUltimaCompra ? new Date(itensAlvo.dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong></span>
-                  )}
                 </div>
               )}
               {/* Nota só aparece vindo de uma linha de rollup (GGVxCRV/
@@ -1417,15 +1408,9 @@ export default function FarolPainelMetas() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>EAN</TableHead>
+                    <TableHead>Cód. Prod. / EAN</TableHead>
                     <TableHead>Produto</TableHead>
-                    {/* Dt.Ult.Venda — pedido do Claudio 22/09/2026: fato do
-                        PRODUTO (diferente de Dt.Ult.Cmp acima, que é fato
-                        do Cliente) — quando ESTE item foi vendido pela
-                        última vez, mesmo que não tenha vendido NESTA
-                        vigência (útil sobretudo nos "Não vendeu": mostra
-                        se já foi comprado antes ou nunca). */}
-                    <TableHead>Dt.Ult.Venda</TableHead>
+                    <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead className="text-right">Objetivo</TableHead>
@@ -1434,15 +1419,13 @@ export default function FarolPainelMetas() {
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
-                  {itensLista.map((it, i) => (
+                  {[...itensLista].sort((x, y) => (x.nome || x.ean).localeCompare(y.nome || y.ean, 'pt-BR')).map((it, i) => (
                     <TableRow key={i}>
-                      <TableCell className="font-mono text-xs">{it.ean}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</TableCell>
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">
-                        {it.data_ultima_venda ? new Date(it.data_ultima_venda + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
-                      </TableCell>
+                      <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
                       <TableCell className="text-right">{fmt(it.qtd)}</TableCell>
                       <TableCell className="text-right">{fmtBRL(it.valor)}</TableCell>
                       {/* Objetivo é da REDE inteira (qtd de EANs distintos a
@@ -1450,7 +1433,6 @@ export default function FarolPainelMetas() {
                           linha só pra ficar visível rolando a lista, mesmo
                           padrão de "Obj. EANs" na tabela Resumo Redes. */}
                       <TableCell className="text-right text-muted-foreground">{itensAlvo && fmt(itensAlvo.objetivo)}</TableCell>
-                      <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
