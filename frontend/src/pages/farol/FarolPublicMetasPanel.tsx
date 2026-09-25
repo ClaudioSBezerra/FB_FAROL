@@ -42,6 +42,7 @@ interface RealizadoCliente {
   // do cod_princ da Rede), pedido do Heverton 25/09/2026. Ver
   // resolverCodCliClientes no backend.
   cod_cli?: string
+  objetivo?: number
 }
 
 interface RealizadoRede {
@@ -49,6 +50,7 @@ interface RealizadoRede {
   razao: string
   fantasia: string
   valor: number
+  objetivo?: number
   atingiu: boolean
   clientes?: RealizadoCliente[]
 }
@@ -209,10 +211,10 @@ const nomeOuCodigo = (fantasia: string, razao: string, codigo: string) => fantas
 // StatusIcon — pedido do Heverton 25/09/2026: no lugar do descritivo
 // "Coberta"/"Não coberta", um símbolo (ticado verde / X vermelho) — mais
 // rápido de ler numa lista longa de Redes/Clientes/Itens no celular.
-function StatusIcon({ atingiu }: { atingiu: boolean }) {
+function StatusIcon({ atingiu, size = 'w-4 h-4' }: { atingiu: boolean; size?: string }) {
   return atingiu
-    ? <Check className="w-4 h-4 shrink-0 text-emerald-600" strokeWidth={3} aria-label="Atingiu" />
-    : <XIcon className="w-4 h-4 shrink-0 text-red-600" strokeWidth={3} aria-label="Não atingiu" />
+    ? <Check className={`${size} shrink-0 text-emerald-600`} strokeWidth={3} aria-label="Atingiu" />
+    : <XIcon className={`${size} shrink-0 text-red-600`} strokeWidth={3} aria-label="Não atingiu" />
 }
 
 // ClienteDrillDown — 1 linha de Cliente dentro de uma Rede aberta, com o
@@ -276,9 +278,8 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
           ) : (
             itensOrdenados.map(it => (
               <div key={it.ean} className="flex items-center gap-2 text-[11px] py-0.5">
+                <span className="truncate min-w-0"><span className="font-mono font-semibold">{it.ean}</span> - {it.nome}</span>
                 <StatusIcon atingiu={it.vendeu} />
-                <span className="shrink-0 font-mono text-muted-foreground">{it.ean}</span>
-                <span className="truncate min-w-0">{it.nome || it.ean}</span>
               </div>
             ))
           )}
@@ -504,6 +505,11 @@ export default function FarolPublicMetasPanel() {
     : metrica === 'sortimento' ? industriaSelecionada?.sortimento
     : undefined
 
+  // Rótulo/formatação do modo individual: Cobertura é R$, Sortimento é
+  // contagem de itens (EANs).
+  const rotuloMetrica = metrica === 'sortimento' ? 'Sortimento' : 'Cobertura'
+  const fmtMetrica = (n: number) => (metrica === 'sortimento' ? fmt(n) : fmtBRLMobile(n))
+
   // ─── Modo individual ──────────────────────────────────────────────────────
 
   const { data: vigencias = [] } = useQuery<Vigencia[]>({
@@ -715,7 +721,7 @@ export default function FarolPublicMetasPanel() {
                     <span className="text-base font-medium text-muted-foreground"> / {painelCombinado.redes.length}</span>
                   </span>
                   {painelCombinado.redes.length > 0 && (
-                    <StatusIcon atingiu={painelCombinado.cobertura.realizado_total >= painelCombinado.redes.length} />
+                    <StatusIcon size="w-7 h-7" atingiu={painelCombinado.cobertura.realizado_total >= painelCombinado.redes.length} />
                   )}
                 </div>
                 {painelCombinado.redes.length > 0 && (
@@ -736,7 +742,7 @@ export default function FarolPublicMetasPanel() {
                     )}
                   </span>
                   {painelCombinado.redes.length > 0 && (
-                    <StatusIcon atingiu={painelCombinado.sortimento.realizado_total >= painelCombinado.redes[0].sortimento_objetivo} />
+                    <StatusIcon size="w-7 h-7" atingiu={painelCombinado.sortimento.realizado_total >= painelCombinado.redes[0].sortimento_objetivo} />
                   )}
                 </div>
               </div>
@@ -830,7 +836,18 @@ export default function FarolPublicMetasPanel() {
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Realizado
                 </div>
-                <div className="text-3xl font-bold">{fmt(painel.realizado.realizado_total)}</div>
+                {/* Objetivo no card — pedido do Heverton 25/09/2026 (mesmo
+                    padrão do modo Combinado): realizado / próximo objetivo
+                    (ou o último, se já bateu todas) + ✓/✗. */}
+                <div className="text-3xl font-bold flex items-center gap-2">
+                  <span>
+                    {fmt(painel.realizado.realizado_total)}
+                    {(painel.proxima_faixa ?? painel.faixa_atual) && (
+                      <span className="text-lg font-medium text-muted-foreground"> / {fmt((painel.proxima_faixa ?? painel.faixa_atual)!.valor_meta)}</span>
+                    )}
+                  </span>
+                  <StatusIcon size="w-7 h-7" atingiu={painel.delta <= 0} />
+                </div>
                 {painel.realizado.parcial && <span className="text-xs text-amber-600">Mês em andamento</span>}
               </div>
 
@@ -859,13 +876,21 @@ export default function FarolPublicMetasPanel() {
                       <button
                         type="button"
                         onClick={() => alternarRede(r.cod_princ)}
-                        className="w-full px-3 py-2 flex items-center justify-between gap-2 text-sm text-left active:bg-slate-50"
+                        className="w-full px-3 py-2.5 text-sm text-left active:bg-slate-50"
                       >
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                          <span className="truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                        </span>
-                        <StatusIcon atingiu={r.atingiu} />
+                        {/* Mesmo padrão do modo Combinado (Heverton 25/09/2026):
+                            "código - nome   Métrica: valor / objetivo ✓" na
+                            mesma linha; sem objetivo (snapshot antigo) mostra
+                            só o valor. */}
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                          <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
+                            <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+                            <span className="font-medium truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                          </span>
+                          <span className="flex items-center gap-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                            {rotuloMetrica}: {fmtMetrica(r.valor)}{r.objetivo ? ` / ${fmtMetrica(r.objetivo)}` : ''} <StatusIcon atingiu={r.atingiu} />
+                          </span>
+                        </div>
                       </button>
                       {aberta && (
                         <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
@@ -877,7 +902,8 @@ export default function FarolPublicMetasPanel() {
                               nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
                               cnpj={c.cnpj}
                               codCli={c.cod_cli}
-                              badges={[{ atingiu: c.atingiu }]}
+                              badges={[]}
+                              detalhes={[{ label: rotuloMetrica, valorTexto: `${fmtMetrica(c.valor)}${c.objetivo ? ` / ${fmtMetrica(c.objetivo)}` : ''}`, atingiu: c.atingiu }]}
                               clienteAberto={clienteAberto}
                               onToggle={alternarCliente}
                               temSortimento={!!sortimentoVinculoID}

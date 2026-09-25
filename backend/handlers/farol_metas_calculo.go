@@ -94,6 +94,11 @@ type RealizadoCliente struct {
 	// clique, só no cálculo/snapshot. Vazio se o par (cnpj, cod_princ)
 	// nunca vendeu nada (cliente novo, sem histórico ainda).
 	CodCli string `json:"cod_cli,omitempty"`
+	// Objetivo — alvo POR loja contra o qual Atingiu foi decidido (Cobertura:
+	// limiar_valor_medio do vínculo, R$; Sortimento: maior faixa cadastrada).
+	// Pedido do Heverton 25/09/2026: o painel mobile por métrica única
+	// (Cobertura por Rede / Sortimento por Rede) mostra "valor / objetivo".
+	Objetivo float64 `json:"objetivo,omitempty"`
 }
 
 type RealizadoRede struct {
@@ -109,6 +114,7 @@ type RealizadoRede struct {
 	NomeRCA    string  `json:"nome_rca"`
 	Valor      float64 `json:"valor"`       // média entre lojas (Cobertura: R$; Sortimento: qtd EANs)
 	ValorTotal float64 `json:"valor_total"` // só Cobertura: soma (não-média) entre lojas — coluna "VALOR VENDA" do modelo V1
+	Objetivo   float64 `json:"objetivo,omitempty"` // alvo por Rede usado em Atingiu (ver RealizadoCliente.Objetivo)
 	Atingiu    bool    `json:"atingiu"`     // Cobertura: valor médio >= limiar do vínculo. Sortimento: valor médio >= maior faixa cadastrada (ver CalcularRealizadoComPeriodo)
 
 	Clientes []RealizadoCliente `json:"clientes,omitempty"` // nível 5 — só populado quando o chamador pede (ver incluirClientes)
@@ -257,8 +263,10 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 			return nil, ferr
 		}
 		for i := range redes {
+			redes[i].Objetivo = objetivo
 			redes[i].Atingiu = redes[i].Valor >= objetivo
 			for j := range redes[i].Clientes {
+				redes[i].Clientes[j].Objetivo = objetivo
 				redes[i].Clientes[j].Atingiu = redes[i].Clientes[j].Valor >= objetivo
 			}
 		}
@@ -475,7 +483,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), CodCli: codCliPorCliente[c.CNPJ+"|"+c.CodPrinc], Atingiu: valor >= limiar})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), CodCli: codCliPorCliente[c.CNPJ+"|"+c.CodPrinc], Objetivo: limiar, Atingiu: valor >= limiar})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
@@ -483,7 +491,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 			CodPrinc: codPrinc, Razao: dono.Razao, Fantasia: dono.Fantasia, QtLojas: len(clientesDaRede),
 			CodGGV: dono.CodGGV, NomeGGV: dono.NomeGGV, CodCRV: dono.CodCRV, NomeCRV: dono.NomeCRV,
 			CodRCA: dono.CodRCA, NomeRCA: dono.NomeRCA,
-			Valor: media, ValorTotal: somaCompras, Atingiu: media >= limiar,
+			Valor: media, ValorTotal: somaCompras, Objetivo: limiar, Atingiu: media >= limiar,
 			Clientes: clientesResultado,
 		})
 	}
