@@ -240,27 +240,31 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
   const itensOrdenados = itens ? [...itens].sort((a, b) => (a.nome || a.ean).localeCompare(b.nome || b.ean, 'pt-BR')) : itens
   return (
     <div>
-      <button type="button" onClick={() => onToggle(cnpj)} className="w-full flex items-center justify-between gap-2 py-1 text-left active:opacity-70">
-        <span className="text-xs flex items-center gap-1.5 min-w-0">
+      {/* Tudo na MESMA linha (pedido do Heverton 25/09/2026): "código - nome
+          Cobertura: R$ x / R$ y ✓  Sortimento: n / m ✗". Só quebra de linha
+          se a tela não comportar (celular estreito). */}
+      <button type="button" onClick={() => onToggle(cnpj)} className="w-full flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1 text-left active:opacity-70">
+        <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
           <ChevronDown className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${aberto ? '' : '-rotate-90'}`} />
-          <span className="truncate">{nome}</span>
-          {/* codclie — pedido do Heverton 25/09/2026: apendar o código do
-              cliente (COD CL, ver resolverCodCliClientes no backend) ao
-              abrir a Rede. Fallback pro CNPJ formatado quando o cliente
-              nunca vendeu nada ainda (sem histórico pra resolver o código). */}
-          <span className="font-mono text-[10px] text-muted-foreground shrink-0">{codCli || formatCNPJ(cnpj)}</span>
+          {/* codclie — pedido do Heverton 25/09/2026: código do cliente (COD
+              CL, ver resolverCodCliClientes no backend) ANTES do nome, "-"
+              entre eles. Fallback pro CNPJ formatado quando o cliente nunca
+              vendeu nada ainda (sem histórico pra resolver o código). */}
+          <span className="truncate text-sm"><span className="font-mono font-semibold">{codCli || formatCNPJ(cnpj)}</span> - {nome}</span>
         </span>
-        <span className="flex gap-1.5 shrink-0">
-          {badges.map((b, i) => <StatusIcon key={i} atingiu={b.atingiu} />)}
-        </span>
+        {detalhes && (
+          <span className="flex gap-3 shrink-0 text-[11px] text-muted-foreground">
+            {detalhes.map((d, i) => (
+              <span key={i} className="flex items-center gap-1 whitespace-nowrap">{d.label}: {d.valorTexto} <StatusIcon atingiu={d.atingiu} /></span>
+            ))}
+          </span>
+        )}
+        {badges.length > 0 && (
+          <span className="flex gap-1.5 shrink-0">
+            {badges.map((b, i) => <StatusIcon key={i} atingiu={b.atingiu} />)}
+          </span>
+        )}
       </button>
-      {detalhes && (
-        <div className="pl-5 pb-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-          {detalhes.map((d, i) => (
-            <span key={i} className="flex items-center gap-1">{d.label}: {d.valorTexto} <StatusIcon atingiu={d.atingiu} /></span>
-          ))}
-        </div>
-      )}
       {aberto && (
         <div className="pl-5 pb-1.5 space-y-1">
           {!temSortimento ? (
@@ -628,7 +632,7 @@ export default function FarolPublicMetasPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-md mx-auto">
+    <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-2xl mx-auto">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-lg font-semibold">Objetivos por Indústria</h1>
@@ -699,13 +703,32 @@ export default function FarolPublicMetasPanel() {
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Cobertura — redes cobertas
                 </div>
-                <div className="text-2xl font-bold">{fmt(painelCombinado.cobertura.realizado_total)}</div>
+                {/* Objetivo nos cards — pedido do Heverton 25/09/2026. Não usa
+                    as faixas do resumo (faixa_atual/proxima_faixa): são da
+                    empresa inteira, sem sentido no recorte de 1 RCA/SUP/GGV.
+                    Cobertura: redes cobertas / redes do escopo + objetivo em
+                    R$ por Rede. Sortimento: média / objetivo por Rede (o
+                    mesmo em todas as Redes). */}
+                <div className="text-2xl font-bold">
+                  {fmt(painelCombinado.cobertura.realizado_total)}
+                  <span className="text-base font-medium text-muted-foreground"> / {painelCombinado.redes.length}</span>
+                </div>
+                {painelCombinado.redes.length > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Objetivo por Rede: {fmtBRLMobile(painelCombinado.redes[0].cobertura_objetivo)}
+                  </div>
+                )}
               </div>
               <div className="bg-white border rounded-xl p-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Sortimento — média de Itens (EANs)
                 </div>
-                <div className="text-2xl font-bold">{fmt(painelCombinado.sortimento.realizado_total)}</div>
+                <div className="text-2xl font-bold">
+                  {fmt(painelCombinado.sortimento.realizado_total)}
+                  {painelCombinado.redes.length > 0 && (
+                    <span className="text-base font-medium text-muted-foreground"> / {fmt(painelCombinado.redes[0].sortimento_objetivo)}</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -729,14 +752,15 @@ export default function FarolPublicMetasPanel() {
                       onClick={() => alternarRede(r.cod_princ)}
                       className="w-full px-3 py-2.5 text-sm text-left space-y-1 active:bg-slate-50"
                     >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                        <span className="font-medium truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground shrink-0">{r.cod_princ}</span>
-                      </div>
-                      <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 pl-5">
-                        <span className="flex items-center gap-1">Cobertura: {fmtBRLMobile(r.cobertura_valor)} / {fmtBRLMobile(r.cobertura_objetivo)} <StatusIcon atingiu={r.cobertura_atingiu} /></span>
-                        <span className="flex items-center gap-1">Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)} <StatusIcon atingiu={sortimentoAtingiu} /></span>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
+                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+                          <span className="font-medium truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                        </span>
+                        <span className="flex gap-3 shrink-0 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1 whitespace-nowrap">Cobertura: {fmtBRLMobile(r.cobertura_valor)} / {fmtBRLMobile(r.cobertura_objetivo)} <StatusIcon atingiu={r.cobertura_atingiu} /></span>
+                          <span className="flex items-center gap-1 whitespace-nowrap">Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)} <StatusIcon atingiu={sortimentoAtingiu} /></span>
+                        </span>
                       </div>
                     </button>
                     {aberta && (
@@ -752,7 +776,7 @@ export default function FarolPublicMetasPanel() {
                               nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
                               cnpj={c.cnpj}
                               codCli={c.cod_cli}
-                              badges={[{ atingiu: coberturaAtingiu }, { atingiu: sortimentoClienteAtingiu }]}
+                              badges={[]}
                               detalhes={[
                                 { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: coberturaAtingiu },
                                 { label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: sortimentoClienteAtingiu },
@@ -829,8 +853,7 @@ export default function FarolPublicMetasPanel() {
                       >
                         <span className="flex items-center gap-1.5 min-w-0">
                           <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                          <span className="truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                          <span className="font-mono text-[10px] text-muted-foreground shrink-0">{r.cod_princ}</span>
+                          <span className="truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
                         </span>
                         <StatusIcon atingiu={r.atingiu} />
                       </button>
