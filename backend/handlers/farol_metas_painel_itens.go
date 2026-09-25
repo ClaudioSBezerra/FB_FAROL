@@ -47,6 +47,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,14 @@ type PainelItemLinha struct {
 	// limite inferior de data (histórico completo), só não passa do fim da
 	// vigência (sem vazar período futuro — mesmo cuidado do Dt.Ult.Cmp).
 	DataUltimaVenda string `json:"data_ultima_venda,omitempty"`
+	// CodProds — códigos de produto (WinThor) do item, pedido do Heverton
+	// 25/09/2026 ("código do produto / EAN - descrição"). Um item (grupo,
+	// ver agruparItensPorComponente) pode ter VÁRIOS cod_prod (variantes de
+	// embalagem — em PRD ~60% das linhas de EAN têm 2+), por isso é lista.
+	// Resolvido na LEITURA a partir de metas_itens_validos, não gravado em
+	// metas_itens_realizado — vale pra qualquer vigência (inclusive fechada)
+	// sem migration nem reprocessamento.
+	CodProds []string `json:"cod_prods,omitempty"`
 }
 
 type itemAgregado struct {
@@ -524,6 +533,26 @@ func calcularItensPorEscopo(db *sql.DB, empresaID string, vigenciaID int, fluxo 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if len(out) > 0 {
+		if validos, verr := lerItensValidos(db, empresaID, vigenciaID); verr == nil {
+			grupoDoCodProd := agruparItensPorComponente(validos)
+			codProdsPorGrupo := map[string][]string{}
+			for codProd, grupo := range grupoDoCodProd {
+				codProdsPorGrupo[grupo] = append(codProdsPorGrupo[grupo], codProd)
+			}
+			for _, cods := range codProdsPorGrupo {
+				sort.Slice(cods, func(i, j int) bool {
+					if len(cods[i]) != len(cods[j]) {
+						return len(cods[i]) < len(cods[j])
+					}
+					return cods[i] < cods[j]
+				})
+			}
+			for i := range out {
+				out[i].CodProds = codProdsPorGrupo[out[i].EAN]
+			}
+		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("nenhum Item Válido calculado ainda pra esta vigência — aguarde o próximo prewarm ou reimporte os Itens Válidos")

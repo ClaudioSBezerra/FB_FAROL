@@ -9,7 +9,10 @@ package handlers
 // calcularItensPorEscopo (só lê de lá) — os testes abaixo primeiro rodam o
 // recálculo com os fixtures, depois conferem a leitura.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestItensRealizado_VendeuENaoVendeu cobre o caso central: um EAN com 2
 // cod_prod (variantes) soma Qtd/Valor das duas; um EAN nunca vendido
@@ -71,9 +74,16 @@ func TestItensRealizado_VendeuENaoVendeu(t *testing.T) {
 		t.Errorf("EAN-VENDIDO.Valor = %.2f, want 65 (soma das 2 variantes)", vendido.Valor)
 	}
 
+	if got := strings.Join(vendido.CodProds, ","); got != "PRODV1,PRODV2" {
+		t.Errorf("EAN-VENDIDO.CodProds = %q, want \"PRODV1,PRODV2\" (todas as variantes do item, ordenadas)", got)
+	}
+
 	naoVendido, ok := porEan["EAN-NUNCA-VENDIDO"]
 	if !ok {
 		t.Fatalf("EAN-NUNCA-VENDIDO ausente do resultado — item nunca vendido não pode ser descartado")
+	}
+	if got := strings.Join(naoVendido.CodProds, ","); got != "PRODNUNCA" {
+		t.Errorf("EAN-NUNCA-VENDIDO.CodProds = %q, want \"PRODNUNCA\"", got)
 	}
 	if naoVendido.Vendeu {
 		t.Errorf("EAN-NUNCA-VENDIDO.Vendeu = true, want false")

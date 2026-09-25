@@ -76,6 +76,7 @@ interface PainelItemLinha {
   qtd: number
   valor: number
   vendeu: boolean
+  cod_prods?: string[]
   // data_ultima_venda — pedido do Claudio 22/09/2026: fato do PRODUTO
   // (diferente de dataUltimaCompra do Cliente, mostrado 1x acima da lista)
   // — quando ESTE item foi vendido pela última vez, mesmo fora do período.
@@ -234,7 +235,7 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
   onToggle: (cnpj: string) => void
   temSortimento: boolean
   isLoadingItens: boolean
-  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean }[]
+  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean; cod_prods?: string[] }[]
 }) {
   const aberto = clienteAberto === cnpj
   // Itens em ordem alfabética (pedido do Heverton 25/09/2026) — antes vinha
@@ -278,7 +279,11 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
           ) : (
             itensOrdenados.map(it => (
               <div key={it.ean} className="flex items-center gap-2 text-[11px] py-0.5">
-                <span className="truncate min-w-0"><span className="font-mono font-semibold">{it.ean}</span> - {it.nome}</span>
+                <span className="truncate min-w-0">
+                  {/* "cód. produto / EAN - descrição" (Heverton 25/09/2026); o
+                      item pode ter várias variantes de cod_prod. */}
+                  <span className="font-mono font-semibold">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</span> - {it.nome}
+                </span>
                 <StatusIcon atingiu={it.vendeu} />
               </div>
             ))
