@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft } from 'lucide-react'
+import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft, Check, X as XIcon } from 'lucide-react'
+import { formatCNPJ } from '@/lib/formatFilial'
 
 // Religado a pedido do Claudio 23/09/2026 (a surpresa do José Costa já
 // pode ser revelada). Ficou escondido brevemente (23/09/2026) porque o
@@ -37,6 +38,10 @@ interface RealizadoCliente {
   valor: number
   atingiu: boolean
   data_ultima_compra?: string
+  // cod_cli — código do cliente no WinThor/ION VENDAS (diferente do CNPJ e
+  // do cod_princ da Rede), pedido do Heverton 25/09/2026. Ver
+  // resolverCodCliClientes no backend.
+  cod_cli?: string
 }
 
 interface RealizadoRede {
@@ -124,6 +129,7 @@ interface PainelCombinadoCliente {
   sortimento_valor: number
   sortimento_objetivo: number
   data_ultima_compra?: string
+  cod_cli?: string
 }
 
 interface PainelCombinado {
@@ -200,76 +206,75 @@ function ChipRow<T extends string>({ label, options, value, onChange }: {
 // da versão web (FarolPainelMetas.tsx).
 const nomeOuCodigo = (fantasia: string, razao: string, codigo: string) => fantasia || razao || codigo
 
-function StatusBadge({ atingiu, label }: { atingiu: boolean; label?: string }) {
-  return (
-    <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${atingiu ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-      {label ?? (atingiu ? 'Coberta' : 'Não coberta')}
-    </span>
-  )
+// StatusIcon — pedido do Heverton 25/09/2026: no lugar do descritivo
+// "Coberta"/"Não coberta", um símbolo (ticado verde / X vermelho) — mais
+// rápido de ler numa lista longa de Redes/Clientes/Itens no celular.
+function StatusIcon({ atingiu }: { atingiu: boolean }) {
+  return atingiu
+    ? <Check className="w-4 h-4 shrink-0 text-emerald-600" strokeWidth={3} aria-label="Atingiu" />
+    : <XIcon className="w-4 h-4 shrink-0 text-red-600" strokeWidth={3} aria-label="Não atingiu" />
 }
 
 // ClienteDrillDown — 1 linha de Cliente dentro de uma Rede aberta, com o
 // drill-down de Produtos embutido (nível 6) quando o próprio Cliente está
 // aberto. `badges` carrega 1 (modo individual) ou 2 (Combinado: Cobertura +
 // Sortimento) indicadores — o pedido do CEO foi "Coberto e Não Coberto"
-// pra Cliente E Produto, não só pra Rede.
-function ClienteDrillDown({ nome, cnpj, badges, clienteAberto, onToggle, temSortimento, isLoadingItens, itens, dataUltimaCompra }: {
+// pra Cliente E Produto, não só pra Rede. `detalhes` (só no modo Combinado,
+// pedido do Heverton 25/09/2026) traz valor/objetivo de Cobertura e
+// Sortimento do próprio Cliente, mesma lógica de ticado/não ticado da Rede.
+function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto, onToggle, temSortimento, isLoadingItens, itens }: {
   nome: string
   cnpj: string
-  badges: Array<{ atingiu: boolean; label: string }>
+  codCli?: string
+  badges: Array<{ atingiu: boolean }>
+  detalhes?: Array<{ label: string; valorTexto: string; atingiu: boolean }>
   clienteAberto: string | null
   onToggle: (cnpj: string) => void
   temSortimento: boolean
   isLoadingItens: boolean
-  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean; data_ultima_venda?: string }[]
-  dataUltimaCompra?: string
+  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean }[]
 }) {
   const aberto = clienteAberto === cnpj
+  // Itens em ordem alfabética (pedido do Heverton 25/09/2026) — antes vinha
+  // na ordem do backend (não vendidos primeiro, ver calcularItensPorEscopo).
+  const itensOrdenados = itens ? [...itens].sort((a, b) => (a.nome || a.ean).localeCompare(b.nome || b.ean, 'pt-BR')) : itens
   return (
     <div>
       <button type="button" onClick={() => onToggle(cnpj)} className="w-full flex items-center justify-between gap-2 py-1 text-left active:opacity-70">
         <span className="text-xs flex items-center gap-1.5 min-w-0">
           <ChevronDown className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${aberto ? '' : '-rotate-90'}`} />
           <span className="truncate">{nome}</span>
+          {/* codclie — pedido do Heverton 25/09/2026: apendar o código do
+              cliente (COD CL, ver resolverCodCliClientes no backend) ao
+              abrir a Rede. Fallback pro CNPJ formatado quando o cliente
+              nunca vendeu nada ainda (sem histórico pra resolver o código). */}
+          <span className="font-mono text-[10px] text-muted-foreground shrink-0">{codCli || formatCNPJ(cnpj)}</span>
         </span>
-        <span className="flex gap-1 shrink-0">
-          {badges.map((b, i) => <StatusBadge key={i} atingiu={b.atingiu} label={b.label} />)}
+        <span className="flex gap-1.5 shrink-0">
+          {badges.map((b, i) => <StatusIcon key={i} atingiu={b.atingiu} />)}
         </span>
       </button>
+      {detalhes && (
+        <div className="pl-5 pb-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+          {detalhes.map((d, i) => (
+            <span key={i} className="flex items-center gap-1">{d.label}: {d.valorTexto} <StatusIcon atingiu={d.atingiu} /></span>
+          ))}
+        </div>
+      )}
       {aberto && (
         <div className="pl-5 pb-1.5 space-y-1">
-          {/* Dt.Ult.Cmp — pedido do Claudio 22/09/2026. Ajustada no mesmo
-              dia: 1 fato do CLIENTE (não do produto), mostrada 1x aqui —
-              repetir a mesma data em cada item (inclusive nos "Não
-              coberto") parecia sugerir que cada item tinha sido comprado
-              naquela data, o que é falso pra quase todos eles. Vem pronta
-              do snapshot (nunca ao vivo — mesma regra do UF, ver
-              resolverUFClientes no backend), já filtrada pelo fornecedor e
-              período desta indústria (resolverDataUltimaCompraClientes). */}
-          <div className="text-[11px] text-muted-foreground">
-            Dt.Ult.Cmp: <strong>{dataUltimaCompra ? new Date(dataUltimaCompra + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</strong>
-          </div>
           {!temSortimento ? (
             <div className="text-[11px] text-muted-foreground py-1">Produtos indisponíveis nesta métrica</div>
           ) : isLoadingItens ? (
             <div className="text-[11px] text-muted-foreground py-1">Carregando produtos...</div>
-          ) : !itens || itens.length === 0 ? (
+          ) : !itensOrdenados || itensOrdenados.length === 0 ? (
             <div className="text-[11px] text-muted-foreground py-1">Nenhum Item Válido calculado ainda</div>
           ) : (
-            itens.map(it => (
-              <div key={it.ean} className="flex items-center justify-between gap-2 text-[11px] py-0.5">
-                <span className="flex items-center gap-1.5 min-w-0">
-                  {/* Dt.Ult.Venda — pedido do Claudio 22/09/2026: fato do
-                      PRODUTO, diferente do Dt.Ult.Cmp acima (fato do
-                      Cliente) — quando ESTE item foi vendido pela última
-                      vez, mesmo fora do período (útil nos "Não coberto":
-                      mostra se já foi comprado antes ou nunca). */}
-                  <span className="shrink-0 font-mono text-muted-foreground">
-                    {it.data_ultima_venda ? new Date(it.data_ultima_venda + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
-                  </span>
-                  <span className="truncate min-w-0">{it.nome || it.ean}</span>
-                </span>
-                <StatusBadge atingiu={it.vendeu} label={it.vendeu ? 'Coberto' : 'Não coberto'} />
+            itensOrdenados.map(it => (
+              <div key={it.ean} className="flex items-center gap-2 text-[11px] py-0.5">
+                <StatusIcon atingiu={it.vendeu} />
+                <span className="shrink-0 font-mono text-muted-foreground">{it.ean}</span>
+                <span className="truncate min-w-0">{it.nome || it.ean}</span>
               </div>
             ))
           )}
@@ -698,7 +703,7 @@ export default function FarolPublicMetasPanel() {
               </div>
               <div className="bg-white border rounded-xl p-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Sortimento — média de EANs
+                  <Target className="w-4 h-4" /> Sortimento — média de Itens (EANs)
                 </div>
                 <div className="text-2xl font-bold">{fmt(painelCombinado.sortimento.realizado_total)}</div>
               </div>
@@ -711,7 +716,12 @@ export default function FarolPublicMetasPanel() {
               )}
               {painelCombinado.redes.map((r, i) => {
                 const aberta = redeAberta === r.cod_princ
-                const clientesDaRede = painelCombinado.clientes.filter(c => c.cod_princ === r.cod_princ)
+                // Clientes com maior venda realizada (Cobertura, R$) primeiro
+                // — pedido do Heverton 25/09/2026.
+                const clientesDaRede = painelCombinado.clientes
+                  .filter(c => c.cod_princ === r.cod_princ)
+                  .sort((a, b) => b.cobertura_valor - a.cobertura_valor)
+                const sortimentoAtingiu = r.sortimento_valor >= r.sortimento_objetivo
                 return (
                   <div key={i} className="border-b last:border-0">
                     <button
@@ -719,39 +729,42 @@ export default function FarolPublicMetasPanel() {
                       onClick={() => alternarRede(r.cod_princ)}
                       className="w-full px-3 py-2.5 text-sm text-left space-y-1 active:bg-slate-50"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium flex items-center gap-1.5 min-w-0">
-                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                          <span className="truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                        </span>
-                        <StatusBadge atingiu={r.cobertura_atingiu} />
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+                        <span className="font-medium truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground shrink-0">{r.cod_princ}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground flex justify-between pl-5">
-                        <span>Cobertura: {fmt(r.cobertura_valor)} / {fmt(r.cobertura_objetivo)}</span>
-                        <span>Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)}</span>
+                      <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 pl-5">
+                        <span className="flex items-center gap-1">Cobertura: {fmtBRLMobile(r.cobertura_valor)} / {fmtBRLMobile(r.cobertura_objetivo)} <StatusIcon atingiu={r.cobertura_atingiu} /></span>
+                        <span className="flex items-center gap-1">Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)} <StatusIcon atingiu={sortimentoAtingiu} /></span>
                       </div>
                     </button>
                     {aberta && (
                       <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
                         {clientesDaRede.length === 0 ? (
                           <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
-                        ) : clientesDaRede.map(c => (
-                          <ClienteDrillDown
-                            key={c.cnpj}
-                            nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
-                            cnpj={c.cnpj}
-                            badges={[
-                              { atingiu: c.cobertura_valor >= c.cobertura_objetivo, label: c.cobertura_valor >= c.cobertura_objetivo ? 'Cobertura' : 'Sem cobertura' },
-                              { atingiu: c.sortimento_valor >= c.sortimento_objetivo, label: c.sortimento_valor >= c.sortimento_objetivo ? 'Sortimento' : 'Sem sortimento' },
-                            ]}
-                            clienteAberto={clienteAberto}
-                            onToggle={alternarCliente}
-                            temSortimento={!!sortimentoVinculoID}
-                            isLoadingItens={isLoadingItens}
-                            itens={itensResp?.itens}
-                            dataUltimaCompra={c.data_ultima_compra}
-                          />
-                        ))}
+                        ) : clientesDaRede.map(c => {
+                          const coberturaAtingiu = c.cobertura_valor >= c.cobertura_objetivo
+                          const sortimentoClienteAtingiu = c.sortimento_valor >= c.sortimento_objetivo
+                          return (
+                            <ClienteDrillDown
+                              key={c.cnpj}
+                              nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
+                              cnpj={c.cnpj}
+                              codCli={c.cod_cli}
+                              badges={[{ atingiu: coberturaAtingiu }, { atingiu: sortimentoClienteAtingiu }]}
+                              detalhes={[
+                                { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: coberturaAtingiu },
+                                { label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: sortimentoClienteAtingiu },
+                              ]}
+                              clienteAberto={clienteAberto}
+                              onToggle={alternarCliente}
+                              temSortimento={!!sortimentoVinculoID}
+                              isLoadingItens={isLoadingItens}
+                              itens={itensResp?.itens}
+                            />
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -804,6 +817,9 @@ export default function FarolPublicMetasPanel() {
                 )}
                 {painel.realizado.redes.map((r, i) => {
                   const aberta = redeAberta === r.cod_princ
+                  // Clientes com maior venda realizada primeiro — pedido do
+                  // Heverton 25/09/2026, mesmo critério do modo Combinado.
+                  const clientesOrdenados = r.clientes ? [...r.clientes].sort((a, b) => b.valor - a.valor) : r.clientes
                   return (
                     <div key={i} className="border-b last:border-0">
                       <button
@@ -814,25 +830,26 @@ export default function FarolPublicMetasPanel() {
                         <span className="flex items-center gap-1.5 min-w-0">
                           <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
                           <span className="truncate">{nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+                          <span className="font-mono text-[10px] text-muted-foreground shrink-0">{r.cod_princ}</span>
                         </span>
-                        <StatusBadge atingiu={r.atingiu} />
+                        <StatusIcon atingiu={r.atingiu} />
                       </button>
                       {aberta && (
                         <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
-                          {!r.clientes || r.clientes.length === 0 ? (
+                          {!clientesOrdenados || clientesOrdenados.length === 0 ? (
                             <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
-                          ) : r.clientes.map(c => (
+                          ) : clientesOrdenados.map(c => (
                             <ClienteDrillDown
                               key={c.cnpj}
                               nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
                               cnpj={c.cnpj}
-                              badges={[{ atingiu: c.atingiu, label: c.atingiu ? 'Coberta' : 'Não coberta' }]}
+                              codCli={c.cod_cli}
+                              badges={[{ atingiu: c.atingiu }]}
                               clienteAberto={clienteAberto}
                               onToggle={alternarCliente}
                               temSortimento={!!sortimentoVinculoID}
                               isLoadingItens={isLoadingItens}
                               itens={itensResp?.itens}
-                              dataUltimaCompra={c.data_ultima_compra}
                             />
                           ))}
                         </div>

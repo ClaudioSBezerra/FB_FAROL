@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -91,6 +92,7 @@ type PainelCombinadoCliente struct {
 	Fantasia           string  `json:"fantasia"`
 	UF                 string  `json:"uf"` // ver PainelCombinadoRede.UF — aqui é exato (o CNPJ do próprio cliente, não um "dono" aproximado)
 	DataUltimaCompra   string  `json:"data_ultima_compra,omitempty"` // ver RealizadoCliente.DataUltimaCompra
+	CodCli             string  `json:"cod_cli,omitempty"`            // ver RealizadoCliente.CodCli
 	CodGGV             string  `json:"cod_ggv"`
 	NomeGGV            string  `json:"nome_ggv"`
 	CodCRV             string  `json:"cod_crv"`
@@ -253,6 +255,70 @@ func resolverDataUltimaCompraClientes(db *sql.DB, empresaID string, cnpjs []stri
 	return out, rows.Err()
 }
 
+// resolverCodCliClientes resolve o COD CLI — código do cliente no
+// WinThor/ION VENDAS, diferente do CNPJ e do COD PRINC/cod_cliprinc (esse é
+// a Rede) — pra cada par (cnpj, cod_princ) da lista de Clientes Válidos.
+// Pedido do Heverton 25/09/2026: a planilha BASE LOJAS da JC já traz a
+// coluna COD CL, mas a importação de Clientes Válidos nunca a capturou (só
+// cnpj/cod_princ, ver farol_metas_clientes_validos_csv.go) — em vez de
+// mudar o formato do CSV que a JC sobe todo mês, resolve direto de
+// vendas_faturadas/transmitidas, que já têm cod_cli desde sempre (mesma
+// fonte que o filtro "Cliente" do Painel Geral usa — ver cod_cli em
+// farol_v2_api.go).
+//
+// Escopado por (cnpj, cod_princ) via filtrarPorClienteEDono, NÃO só cnpj
+// (diferente de resolverUFClientes acima) — precisão importa aqui: o mesmo
+// CNPJ pode estar cadastrado como 2 clientes diferentes em filiais
+// diferentes (bug real achado 15/09/2026, ver filtrarPorClienteEDono em
+// farol_metas_calculo.go), cada um com seu próprio cod_cli. A chave do mapa
+// de saída é "cnpj|cod_princ" (não só cnpj) por causa disso.
+func resolverCodCliClientes(db *sql.DB, empresaID string, clientes []clienteValido) (map[string]string, error) {
+	out := map[string]string{}
+	if len(clientes) == 0 {
+		return out, nil
+	}
+	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
+	t0 := time.Now()
+	rows, err := db.Query(`
+		SELECT cv.cnpj, cv.cod_princ,
+		  CASE WHEN vf.data IS NULL THEN vt.cod_cli
+		       WHEN vt.data IS NULL THEN vf.cod_cli
+		       WHEN vf.data >= vt.data THEN vf.cod_cli
+		       ELSE vt.cod_cli
+		  END AS cod_cli
+		FROM (SELECT unnest($2::text[]) AS cnpj, unnest($3::text[]) AS cod_princ) cv
+		LEFT JOIN LATERAL (
+		  SELECT cod_cli, data_faturamento AS data FROM vendas_faturadas
+		  WHERE empresa_id = $1 AND cnpj = cv.cnpj AND cod_cliprinc = cv.cod_princ AND cod_cli <> ''
+		  ORDER BY data_faturamento DESC LIMIT 1
+		) vf ON true
+		LEFT JOIN LATERAL (
+		  SELECT cod_cli, data_transmissao AS data FROM vendas_transmitidas
+		  WHERE empresa_id = $1 AND cnpj = cv.cnpj AND cod_cliprinc = cv.cod_princ AND cod_cli <> ''
+		  ORDER BY data_transmissao DESC LIMIT 1
+		) vt ON true
+		WHERE vf.cod_cli IS NOT NULL OR vt.cod_cli IS NOT NULL
+	`, empresaID, pq.Array(cnpjs), pq.Array(codPrincs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var cnpj, codPrinc, codCli string
+		if err := rows.Scan(&cnpj, &codPrinc, &codCli); err != nil {
+			return nil, err
+		}
+		out[cnpj+"|"+codPrinc] = codCli
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	log.Printf("[farol:objetivos] resolverCodCliClientes pares=%d resolvidos=%d em %v", len(cnpjs), n, time.Since(t0))
+	return out, nil
+}
+
 // montarClientesCombinado explode as Redes já mescladas (`redes`, que já
 // resolveu o dono GGV/CRV/RCA e cobre tanto o caso normal quanto Redes
 // presentes só numa das duas métricas) em 1 linha por CNPJ, juntando o
@@ -285,6 +351,7 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
 				UF:               ufPorCliente[c.CNPJ],
 				DataUltimaCompra: dataUltimaCompraPorCliente[c.CNPJ],
+				CodCli:           c.CodCli,
 				CodGGV:           ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaValor: c.Valor, CoberturaObjetivo: ctx.CoberturaObjetivo,
@@ -305,6 +372,7 @@ func montarClientesCombinado(redes []PainelCombinadoRede, realizadoCobertura, re
 				CodPrinc: rede.CodPrinc, CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia,
 				UF:               ufPorCliente[c.CNPJ],
 				DataUltimaCompra: dataUltimaCompraPorCliente[c.CNPJ],
+				CodCli:           c.CodCli,
 				CodGGV:           ctx.CodGGV, NomeGGV: ctx.NomeGGV, CodCRV: ctx.CodCRV, NomeCRV: ctx.NomeCRV,
 				CodRCA: ctx.CodRCA, NomeRCA: ctx.NomeRCA,
 				CoberturaObjetivo: ctx.CoberturaObjetivo,

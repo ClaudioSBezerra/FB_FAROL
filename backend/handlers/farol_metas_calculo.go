@@ -84,6 +84,16 @@ type RealizadoCliente struct {
 	// drill-down de Cliente, "Dt.Ult.Cmp"). Formato AAAA-MM-DD; vazio se o
 	// cliente nunca vendeu nada.
 	DataUltimaCompra string `json:"data_ultima_compra,omitempty"`
+	// CodCli — código do cliente no WinThor/ION VENDAS (distinto do CNPJ e
+	// do COD PRINC/cod_cliprinc da Rede — pedido do Heverton 25/09/2026: a
+	// planilha BASE LOJAS da JC já traz essa coluna, mas a importação de
+	// Clientes Válidos nunca a capturou, só cnpj/cod_princ). Resolvida
+	// direto de vendas_faturadas/transmitidas (mesma fonte que o filtro
+	// "Cliente" do Painel Geral usa, ver cod_cli em farol_v2_api.go), não
+	// do CSV — mesmo padrão de UF/DataUltimaCompra acima: nunca ao vivo no
+	// clique, só no cálculo/snapshot. Vazio se o par (cnpj, cod_princ)
+	// nunca vendeu nada (cliente novo, sem histórico ainda).
+	CodCli string `json:"cod_cli,omitempty"`
 }
 
 type RealizadoRede struct {
@@ -452,6 +462,10 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 	if err != nil {
 		return nil, err
 	}
+	codCliPorCliente, err := resolverCodCliClientes(db, empresaID, clientes)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -461,7 +475,7 @@ func calcularCoberturaPorRede(db *sql.DB, empresaID string, clientes []clienteVa
 		for _, c := range clientesDaRede {
 			valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 			somaCompras += valor
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), Atingiu: valor >= limiar})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), CodCli: codCliPorCliente[c.CNPJ+"|"+c.CodPrinc], Atingiu: valor >= limiar})
 		}
 		media := somaCompras / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)
@@ -683,6 +697,10 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 	if err != nil {
 		return nil, err
 	}
+	codCliPorCliente, err := resolverCodCliClientes(db, empresaID, clientes)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []RealizadoRede
 	for _, codPrinc := range ordem {
@@ -692,7 +710,7 @@ func calcularSortimentoPorRede(db *sql.DB, empresaID string, clientes []clienteV
 		for _, c := range clientesDaRede {
 			qtdEANs := contarEANsPositivados(linhasPorCliente[c.CNPJ], grupoDoCodProd, qtdMinima)
 			somaEANsPorLoja += qtdEANs
-			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ])})
+			clientesResultado = append(clientesResultado, RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdEANs, UF: ufPorCliente[c.CNPJ], DataUltimaCompra: formatarDataUltimaCompra(dataUltimaCompraPorCliente[c.CNPJ]), CodCli: codCliPorCliente[c.CNPJ+"|"+c.CodPrinc]})
 		}
 		media := somaEANsPorLoja / float64(len(clientesDaRede))
 		dono := redeRepresentante(clientesDaRede)

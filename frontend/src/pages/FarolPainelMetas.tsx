@@ -1261,7 +1261,7 @@ export default function FarolPainelMetas() {
               </div>
 
               {painel.recortes && (
-                <div className="border rounded-lg overflow-hidden [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1321,7 +1321,7 @@ export default function FarolPainelMetas() {
             </div>
           )}
 
-          <div className="border rounded-lg overflow-hidden [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+          <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
             <Table>
               <TableHeader>
                 <TableRow>
