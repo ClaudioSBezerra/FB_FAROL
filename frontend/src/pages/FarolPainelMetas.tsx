@@ -183,8 +183,9 @@ interface PainelItemLinha {
 // linha-a-linha com os valores. Mesmo espírito do painel geral (abas fixas
 // no topo, como "Por FORN.GERAL"/"Por Gerência"/"Por Equipe"), mas os
 // nomes vêm das abas da planilha, não da nomenclatura do painel geral.
-type AbaCombinado = 'ggv_crv' | 'ggv_crv_rca' | 'rede' | 'cliente'
+type AbaCombinado = 'ggv' | 'ggv_crv' | 'ggv_crv_rca' | 'rede' | 'cliente'
 const ABAS_COMBINADO: { value: AbaCombinado; label: string }[] = [
+  { value: 'ggv', label: 'Resumo GGVs' },
   { value: 'ggv_crv', label: 'Resumo GGVs×CRVs' },
   { value: 'ggv_crv_rca', label: 'Resumo GGVs×CRVs×RCAs' },
   { value: 'rede', label: 'Resumo Redes' },
@@ -194,8 +195,8 @@ const ABAS_COMBINADO: { value: AbaCombinado; label: string }[] = [
 interface GrupoCombinado {
   cod_ggv: string
   nome_ggv: string
-  cod_crv: string
-  nome_crv: string
+  cod_crv?: string
+  nome_crv?: string
   cod_rca?: string
   nome_rca?: string
   qtd_redes: number
@@ -215,16 +216,19 @@ interface GrupoCombinado {
 // GGV+CRV+RCA, contando quantas Redes atingem/faltam Cobertura e
 // Sortimento — mesmo indicador das abas "Resumo GGvs Crvs"/"...Rcas" da
 // planilha (QT REDES ATINGINDO/FALTA ATINGIR, pras duas métricas).
-function agruparCombinado(redes: PainelCombinadoRede[], comRCA: boolean): GrupoCombinado[] {
+// nivel: 'ggv' agrupa só por GGV (pedido do Heverton 29/09/2026, nova aba
+// "Resumo GGVs"); 'crv' e 'rca' são os rollups que já existiam.
+function agruparCombinado(redes: PainelCombinadoRede[], nivel: 'ggv' | 'crv' | 'rca'): GrupoCombinado[] {
   const ordem: string[] = []
   const porChave = new Map<string, GrupoCombinado>()
   for (const r of redes) {
-    const chave = comRCA ? `${r.cod_ggv}|${r.cod_crv}|${r.cod_rca}` : `${r.cod_ggv}|${r.cod_crv}`
+    const chave = nivel === 'ggv' ? r.cod_ggv : nivel === 'rca' ? `${r.cod_ggv}|${r.cod_crv}|${r.cod_rca}` : `${r.cod_ggv}|${r.cod_crv}`
     let g = porChave.get(chave)
     if (!g) {
       g = {
-        cod_ggv: r.cod_ggv, nome_ggv: r.nome_ggv, cod_crv: r.cod_crv, nome_crv: r.nome_crv,
-        ...(comRCA ? { cod_rca: r.cod_rca, nome_rca: r.nome_rca } : {}),
+        cod_ggv: r.cod_ggv, nome_ggv: r.nome_ggv,
+        ...(nivel !== 'ggv' ? { cod_crv: r.cod_crv, nome_crv: r.nome_crv } : {}),
+        ...(nivel === 'rca' ? { cod_rca: r.cod_rca, nome_rca: r.nome_rca } : {}),
         qtd_redes: 0, qtd_atingindo_cobertura: 0, qtd_falta_cobertura: 0,
         qtd_atingindo_sortimento: 0, qtd_falta_sortimento: 0,
         sortimento_objetivo: r.sortimento_objetivo,
@@ -706,10 +710,11 @@ export default function FarolPainelMetas() {
   // linha (Obj. Cobertura, Valor Venda, Obj. EANs, Qt Méd. EANs, Falta EANs);
   // médias e Falta (R$) não são somadas (não faz sentido somar média).
   const totComb = useMemo(() => {
-    const t = { objCob: 0, valorVenda: 0, objEan: 0, qtMedEan: 0, faltaEan: 0, cob: 0, sort: 0 }
+    const t = { objCob: 0, valorVenda: 0, somaCobertura: 0, objEan: 0, qtMedEan: 0, faltaEan: 0, cob: 0, sort: 0 }
     for (const r of redesVisiveis) {
       t.objCob += r.cobertura_objetivo
       t.valorVenda += r.cobertura_valor_total
+      t.somaCobertura += r.cobertura_valor
       t.objEan += r.sortimento_objetivo
       t.qtMedEan += r.sortimento_valor
       t.faltaEan += r.sortimento_valor - r.sortimento_objetivo
@@ -742,8 +747,11 @@ export default function FarolPainelMetas() {
   }, [clientesCombinado, fGGV, fCRV, fRCA, fRede, fUF, fCliente],
   )
 
-  const gruposGGVCRV = useMemo(() => agruparCombinado(redesVisiveis, false), [redesVisiveis])
-  const gruposGGVCRVRCA = useMemo(() => agruparCombinado(redesVisiveis, true), [redesVisiveis])
+  const gruposGGV = useMemo(() => agruparCombinado(redesVisiveis, 'ggv'), [redesVisiveis])
+  const gruposGGVCRV = useMemo(() => agruparCombinado(redesVisiveis, 'crv'), [redesVisiveis])
+  const gruposGGVCRVRCA = useMemo(() => agruparCombinado(redesVisiveis, 'rca'), [redesVisiveis])
+  const gruposAtivos = abaCombinado === 'ggv' ? gruposGGV : abaCombinado === 'ggv_crv' ? gruposGGVCRV : gruposGGVCRVRCA
+  const colSpanGrupos = abaCombinado === 'ggv' ? 6 : abaCombinado === 'ggv_crv' ? 7 : 8
 
   // ─── Drill-down "Itens" (Sortimento): vendeu/não vendeu, Qtd e Valor —
   // clicar numa Rede (aba "Resumo Redes") mostra os itens de TODAS as
@@ -996,6 +1004,11 @@ export default function FarolPainelMetas() {
                     {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
                     {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.cob >= redesVisiveis.length} />}
                   </div>
+                  {redesVisiveis.length > 0 && (
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Média: {fmtBRL(totComb.somaCobertura / redesVisiveis.length)} / {fmtBRL(redesVisiveis[0].cobertura_objetivo)}
+                    </div>
+                  )}
                 </div>
                 <div className="border rounded-lg p-4">
                   <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -1013,18 +1026,32 @@ export default function FarolPainelMetas() {
                     {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
                     {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.sort >= redesVisiveis.length} />}
                   </div>
+                  {redesVisiveis.length > 0 && (
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Média: {fmt(totComb.qtMedEan / redesVisiveis.length)} / {fmt(redesVisiveis[0].sortimento_objetivo)}
+                    </div>
+                  )}
                 </div>
               </div>
             </TooltipProvider>
 
-            {(abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
+            {(abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
-                <p className="text-xs text-muted-foreground px-3 pt-2">Clique num grupo pra ver os itens que venderam e não venderam em todas as Redes dele.</p>
+                {/* Clicar num GGV ou GGV×CRV vai abrindo o nível de baixo
+                    (igual à visão mobile: toca pra descer na hierarquia) —
+                    pedido do Heverton 29/09/2026. GGV×CRV×RCA é o último
+                    rollup, aí sim clicar abre os itens (não tem pra onde
+                    descer além de Rede×Cliente, que já é outra aba). */}
+                <p className="text-xs text-muted-foreground px-3 pt-2">
+                  {abaCombinado === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.'
+                    : abaCombinado === 'ggv_crv' ? 'Clique num grupo pra ver as Redes dele.'
+                    : 'Clique num grupo pra ver os itens que venderam e não venderam em todas as Redes dele.'}
+                </p>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-white">
                     <TableRow>
                       <TableHead>GGV</TableHead>
-                      <TableHead>CRV</TableHead>
+                      {abaCombinado !== 'ggv' && <TableHead>CRV</TableHead>}
                       {abaCombinado === 'ggv_crv_rca' && <TableHead>RCA</TableHead>}
                       <TableHead className="text-right">Qt Redes</TableHead>
                       <TableHead className="text-right">Redes atingindo Cobertura</TableHead>
@@ -1034,26 +1061,35 @@ export default function FarolPainelMetas() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(abaCombinado === 'ggv_crv' ? gruposGGVCRV : gruposGGVCRVRCA).length === 0 && (
-                      <TableRow><TableCell colSpan={abaCombinado === 'ggv_crv_rca' ? 8 : 7} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte/filtros</TableCell></TableRow>
+                    {gruposAtivos.length === 0 && (
+                      <TableRow><TableCell colSpan={colSpanGrupos} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte/filtros</TableCell></TableRow>
                     )}
-                    {(abaCombinado === 'ggv_crv' ? gruposGGVCRV : gruposGGVCRVRCA).map((g, i) => (
+                    {gruposAtivos.map((g, i) => (
                       <TableRow
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => setItensAlvo({
-                          codGGV: g.cod_ggv, codCRV: g.cod_crv,
-                          ...(abaCombinado === 'ggv_crv_rca' ? { codRCA: g.cod_rca } : {}),
-                          titulo: abaCombinado === 'ggv_crv_rca'
-                            ? `${g.nome_ggv} / ${g.nome_crv} / ${g.nome_rca}`
-                            : `${g.nome_ggv} / ${g.nome_crv}`,
-                          objetivo: g.sortimento_objetivo,
-                          qtdRedes: g.qtd_redes,
-                          qtdAtingindo: g.qtd_atingindo_sortimento,
-                        })}
+                        onClick={() => {
+                          if (abaCombinado === 'ggv') {
+                            setFGGV(g.cod_ggv); setFCRV(''); setFRCA(''); setFRede(''); setFCliente('')
+                            setAbaCombinado('ggv_crv')
+                            return
+                          }
+                          if (abaCombinado === 'ggv_crv') {
+                            setFGGV(g.cod_ggv); setFCRV(g.cod_crv ?? ''); setFRCA(''); setFRede(''); setFCliente('')
+                            setAbaCombinado('rede')
+                            return
+                          }
+                          setItensAlvo({
+                            codGGV: g.cod_ggv, codCRV: g.cod_crv, codRCA: g.cod_rca,
+                            titulo: `${g.nome_ggv} / ${g.nome_crv} / ${g.nome_rca}`,
+                            objetivo: g.sortimento_objetivo,
+                            qtdRedes: g.qtd_redes,
+                            qtdAtingindo: g.qtd_atingindo_sortimento,
+                          })
+                        }}
                       >
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>
+                        {abaCombinado !== 'ggv' && <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>}
                         {abaCombinado === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
                         <TableCell className="text-right">{g.qtd_redes}</TableCell>
                         <TableCell className="text-right text-emerald-600">{g.qtd_atingindo_cobertura}</TableCell>
@@ -1071,7 +1107,7 @@ export default function FarolPainelMetas() {
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os itens que venderam e não venderam.</p>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-white">
                     <TableRow>
                       <TableHead>Cód. Princ.</TableHead>
                       <TableHead>Razão</TableHead>
@@ -1154,7 +1190,7 @@ export default function FarolPainelMetas() {
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa loja pra ver os itens que venderam e não venderam nela.</p>
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-white">
                     <TableRow>
                       <TableHead>Cód. Princ.</TableHead>
                       <TableHead>Cód. Cliente</TableHead>
@@ -1275,7 +1311,7 @@ export default function FarolPainelMetas() {
               {painel.recortes && (
                 <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-white">
                       <TableRow>
                         <TableHead>Recorte</TableHead>
                         <TableHead className="text-right">Realizado no período</TableHead>
@@ -1335,7 +1371,7 @@ export default function FarolPainelMetas() {
 
           <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-white">
                 <TableRow>
                   <TableHead>{redeAberta ? 'CNPJ' : nivel === 'rede' ? 'Rede' : nivelLabelAtual}</TableHead>
                   <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>
@@ -1416,7 +1452,7 @@ export default function FarolPainelMetas() {
               )}
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-white">
                   <TableRow>
                     <TableHead>Produto</TableHead>
                     <TableHead className="text-center">Status</TableHead>
