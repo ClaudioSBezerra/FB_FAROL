@@ -1109,7 +1109,7 @@ export default function FarolPainelMetas() {
 
             {abaCombinado === 'rede' && (
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
-                <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os itens que venderam e não venderam.</p>
+                <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os Clientes dela.</p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
                     <TableRow>
@@ -1142,7 +1142,12 @@ export default function FarolPainelMetas() {
                         <TableRow
                           key={i}
                           className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setItensAlvo({ codPrinc: r.cod_princ, titulo: `${r.cod_princ} - ${r.fantasia || r.razao || r.cod_princ}`, objetivo: r.sortimento_objetivo })}
+                          // Clicar na Rede mostra os Clientes dela primeiro (aba
+                          // Rede×Cliente), não os itens direto — pedido do
+                          // Heverton 29/09/2026, mesmo espírito do drill-down
+                          // GGV→GGV×CRV: só chega em Produtos depois de passar
+                          // por Cliente (clicar no Cliente lá já abre os itens).
+                          onClick={() => { setFRede(r.cod_princ); setFCliente(''); setAbaCombinado('cliente') }}
                         >
                           <TableCell className="font-mono text-xs">{r.cod_princ}</TableCell>
                           <TableCell className="text-sm">{r.razao}</TableCell>
