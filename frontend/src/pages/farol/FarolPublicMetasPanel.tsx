@@ -533,6 +533,10 @@ export default function FarolPublicMetasPanel() {
   // contagem de itens (EANs).
   const rotuloMetrica = metrica === 'sortimento' || metrica === 'sortimento_numerica' ? 'Sortimento' : 'Cobertura'
   const fmtMetrica = (n: number) => (metrica === 'sortimento' || metrica === 'sortimento_numerica' ? fmt(n) : fmtBRLMobile(n))
+  // Numérica (Épico 7 addendum, 2026-09-29) não tem Rede — cada "Rede" que
+  // o motor devolve é 1 Cliente só. Terminologia/navegação ajustadas mais
+  // abaixo (Suas Redes → Seus Clientes, sem abrir drill redundante).
+  const ehNumerica = metrica === 'cobertura_numerica' || metrica === 'sortimento_numerica'
 
   // ─── Modo individual ──────────────────────────────────────────────────────
 
@@ -903,36 +907,48 @@ export default function FarolPublicMetasPanel() {
               </div>
 
               <div className="bg-white border rounded-xl overflow-hidden">
-                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">Suas Redes</div>
+                {/* Numérica não tem Rede (Épico 7 addendum) — cada linha já
+                    É o Cliente, sem nível pra descer. Rótulo e formatação de
+                    código ajustados pra não confundir com a visão de Rede. */}
+                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">{ehNumerica ? 'Seus Clientes' : 'Suas Redes'}</div>
                 {painel.realizado.redes.length === 0 && (
-                  <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
+                  <div className="px-3 py-4 text-sm text-muted-foreground text-center">{ehNumerica ? 'Nenhum Cliente neste recorte' : 'Nenhuma Rede neste recorte'}</div>
                 )}
                 {[...painel.realizado.redes].sort((a, b) => (b.valor_total ?? b.valor) - (a.valor_total ?? a.valor)).map((r, i) => {
                   const aberta = redeAberta === r.cod_princ
                   // Clientes com maior venda realizada primeiro — pedido do
                   // Heverton 25/09/2026, mesmo critério do modo Combinado.
                   const clientesOrdenados = r.clientes ? [...r.clientes].sort((a, b) => b.valor - a.valor) : r.clientes
+                  const CONTEUDO_LINHA = (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
+                        {!ehNumerica && <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />}
+                        <span className="font-medium truncate">
+                          <span className="font-mono font-semibold">{ehNumerica ? formatCNPJ(r.cod_princ) : r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                        {rotuloMetrica}: {fmtMetrica(r.valor)}{r.objetivo ? ` / ${fmtMetrica(r.objetivo)}` : ''} <StatusIcon atingiu={r.atingiu} />
+                      </span>
+                    </div>
+                  )
                   return (
                     <div key={i} className="border-b last:border-0">
-                      <button
-                        type="button"
-                        onClick={() => alternarRede(r.cod_princ)}
-                        className="w-full px-3 py-2.5 text-sm text-left active:bg-slate-50"
-                      >
-                        {/* Mesmo padrão do modo Combinado (Heverton 25/09/2026):
-                            "código - nome   Métrica: valor / objetivo ✓" na
-                            mesma linha; sem objetivo (snapshot antigo) mostra
-                            só o valor. */}
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                          <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
-                            <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                            <span className="font-medium truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                          </span>
-                          <span className="flex items-center gap-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
-                            {rotuloMetrica}: {fmtMetrica(r.valor)}{r.objetivo ? ` / ${fmtMetrica(r.objetivo)}` : ''} <StatusIcon atingiu={r.atingiu} />
-                          </span>
-                        </div>
-                      </button>
+                      {/* Mesmo padrão do modo Combinado (Heverton 25/09/2026):
+                          "código - nome   Métrica: valor / objetivo ✓" na
+                          mesma linha. Numérica não abre (o Cliente já É o
+                          nível final — abrir mostraria ele mesmo de novo). */}
+                      {ehNumerica ? (
+                        <div className="w-full px-3 py-2.5 text-sm text-left">{CONTEUDO_LINHA}</div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => alternarRede(r.cod_princ)}
+                          className="w-full px-3 py-2.5 text-sm text-left active:bg-slate-50"
+                        >
+                          {CONTEUDO_LINHA}
+                        </button>
+                      )}
                       {aberta && (
                         <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
                           {!clientesOrdenados || clientesOrdenados.length === 0 ? (

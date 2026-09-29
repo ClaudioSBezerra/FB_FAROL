@@ -274,6 +274,9 @@ const NIVEIS = [
   { value: 'rca', label: 'GGV / CRV / RCA' },
   { value: 'rede', label: 'GGV / CRV / RCA / Rede' },
 ]
+// Numérica não tem Rede (Épico 7 addendum) — mesma lista, só troca o
+// rótulo do último nível pra não chamar Cliente/CNPJ de "Rede" na tela.
+const NIVEIS_NUMERICA = NIVEIS.map(n => n.value === 'rede' ? { ...n, label: 'GGV / CRV / RCA / Cliente' } : n)
 
 // Só 2 visões (orientação do Heverton, 2026-09-04: "somente 2 visões...
 // mesma filosofia do Farol V1 em uso hoje") — a 3ª visão "Faturado +
@@ -810,6 +813,14 @@ export default function FarolPainelMetas() {
   // primeira usa formatação monetária linha a linha (pedido do Claudio em
   // 10/09/2026, "colocar o R$ ao lado do Valor").
   const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede' || vinculoAtivo?.formula_codigo === 'cobertura_numerica'
+  // Numérica (Épico 7 addendum, 2026-09-29): cada "Rede" que o motor
+  // devolve é na verdade 1 Cliente só (CodPrinc=CNPJ, QtLojas=1) — sem
+  // Rede de verdade pra descer mais um nível. Terminologia e navegação
+  // ajustadas pra não repetir "Rede"/"(1 loja)" nem abrir um drill falso
+  // pro mesmo Cliente de novo (mesmo padrão pedido pro resto da tela:
+  // check verde/X vermelho, nomenclatura consistente).
+  const ehNumerica = vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
+  const niveisAtuais = ehNumerica ? NIVEIS_NUMERICA : NIVEIS
   const linhas = redeAberta
     ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
@@ -820,17 +831,19 @@ export default function FarolPainelMetas() {
     ? [...(painel?.realizado.redes ?? [])].sort((x, y) => ((y as { valor_total?: number }).valor_total ?? y.valor) - ((x as { valor_total?: number }).valor_total ?? x.valor)).map(r => ({
         // Qt de lojas AO LADO do nome da Rede (pedido do Claudio em
         // 10/09/2026) — RCA fica isolado no "sub", sem misturar os dois.
-        nome: `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
+        // Numérica não mostra "(N loja)" (sempre 1) nem abre drill (o
+        // próprio Cliente já é o nível final).
+        nome: ehNumerica ? (r.fantasia || r.razao || r.cod_princ) : `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
         sub: r.nome_rca || r.cod_rca,
-        valor: r.valor, marcador: r.atingiu as boolean | undefined, drill: () => setRedeAberta(r),
+        valor: r.valor, marcador: r.atingiu as boolean | undefined, drill: ehNumerica ? undefined : () => setRedeAberta(r),
       }))
     : (painel?.realizado.grupos ?? []).map(g => ({
-        nome: g.nome || g.codigo, sub: `${g.qtd_atingindo}/${g.qtd_redes} redes atingindo`,
+        nome: g.nome || g.codigo, sub: `${g.qtd_atingindo}/${g.qtd_redes} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
         valor: g.qtd_atingindo, marcador: undefined as boolean | undefined, drill: () => abrirGrupo(g.codigo, g.nome || g.codigo),
       }))
 
   const podeAbrirLinha = !redeAberta && nivel !== 'rede'
-  const nivelLabelAtual = redeAberta ? 'Rede/CNPJ' : NIVEIS.find(n => n.value === nivel)?.label ?? nivel
+  const nivelLabelAtual = redeAberta ? 'Rede/CNPJ' : niveisAtuais.find(n => n.value === nivel)?.label ?? nivel
 
   return (
     <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
@@ -913,7 +926,7 @@ export default function FarolPainelMetas() {
             <Select value={nivel} onValueChange={v => { voltarPara('ggv'); setNivel(v) }}>
               <SelectTrigger className="w-56 uppercase"><SelectValue /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
-                {NIVEIS.map(n => <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>)}
+                {niveisAtuais.map(n => <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1385,7 +1398,7 @@ export default function FarolPainelMetas() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-white">
                 <TableRow>
-                  <TableHead>{redeAberta ? 'CNPJ' : nivel === 'rede' ? 'Rede' : nivelLabelAtual}</TableHead>
+                  <TableHead>{redeAberta ? 'CNPJ' : nivel === 'rede' ? (ehNumerica ? 'Cliente' : 'Rede') : nivelLabelAtual}</TableHead>
                   <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>
                   <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : 'Redes atingindo'}</TableHead>
                   {(nivel === 'rede' || redeAberta) && !redeAberta && <TableHead className="w-24 text-center">Status</TableHead>}
