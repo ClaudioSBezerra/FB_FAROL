@@ -1,6 +1,7 @@
 ---
 stepsCompleted: [1, 2, 3]
 inputDocuments: ["_bmad-output/planning-artifacts/prds/prd-FB_FAROL-2026-09-02/prd.md", "_bmad-output/planning-artifacts/prds/prd-FB_FAROL-2026-09-02/addendum.md"]
+updated: 2026-09-29
 ---
 
 # FB_FAROL - Epic Breakdown
@@ -13,6 +14,7 @@ This document provides the complete epic and story breakdown for o módulo **Pai
 
 - **Modelo Excel do fornecedor (visualização CRV/RCA):** o Claudio pediu à Unilever uma planilha preenchida mostrando a visualização esperada do painel nos níveis CRV(Supervisor) e RCA. As stories do Épico 5 (Painel Web) e Épico 6 (Painel Mobile) que definem layout/disposição de dados na tela devem ser revalidadas contra esse modelo assim que ele chegar — não é bloqueante para desenhar a estrutura de dados/AC funcional, mas é para fechar o design visual final.
 - **Projeção de fechamento (FR18) é capacidade adicional, não pedida pelo fornecedor:** diferente de Cobertura/Sortimento (que fazem parte do processo oficial que a Unilever cobra), a projeção é uma capacidade nova do Farol. Decisão: exibir em aba/tela separada dos indicadores oficiais, para não ser confundida com o que o fornecedor efetivamente acompanha.
+- **Épico 7 (Numérica, addendum 2026-09-29) tem 5 Questões em aberto no PRD ainda sem resposta da equipe da JC** (nível "Cliente Rede" ambíguo na hierarquia, denominador exato da média de PPA, fornecedor das faixas agregadas de Cobertura, colunas Região/AE/BU do PPA, escopo do reforço Faturado+Emitido) — não bloqueiam o desenho das stories, mas cada uma marca a dependência explícita na story afetada. Ver `prd.md` seção "Questões em aberto".
 
 ## Requirements Inventory
 
@@ -41,6 +43,7 @@ FR13: Listas de um período já fechado não podem ser alteradas de forma que mu
 
 **Motor de Apuração**
 FR14: O sistema deve calcular, mensalmente (e sob demanda para o mês corrente/parcial), o Realizado de cada Tipo de Métrica configurado, por nível hierárquico (GGV → CRV → RCA → Rede → Cliente/CNPJ), lendo as bases de Faturado e Transmitido do Farol.
+FR14a: A janela de apuração deve ser configurável por Tipo de Métrica — mês fechado (padrão atual) ou bimestre móvel (mês corrente + mês anterior, usado pela Numérica, FR25/FR26). Característica do Tipo de Métrica (FR1), não parâmetro do vínculo (FR5).
 FR15: O cálculo deve suportar 3 visões de fluxo: Faturado, Transmitido (Emitido) e a Soma dos dois.
 FR16: O cálculo deve respeitar o tipo de venda válido configurado por vínculo (FR6), não o "Líquido" padrão do Farol.
 FR17: Meses fechados devem ter seu resultado congelado — recalcular só por ação explícita de um gestor, nunca automático/silencioso.
@@ -56,6 +59,16 @@ FR21: O painel deve permitir comparar múltiplos recortes de tempo (dia anterior
 **Painel Mobile**
 FR22: O sistema deve expor uma versão mobile do painel de metas por indústria, no mesmo padrão de acesso do painel público já existente do Farol (link direto por Supervisor/GGV, sem exigir login completo).
 FR23: O painel mobile deve oferecer os mesmos recortes de tempo e a projeção de fechamento do painel web (FR21), adaptados para tela pequena/uso em campo.
+
+**Numérica — Cobertura e Sortimento por Cliente/CNPJ (addendum 2026-09-29)**
+FR24: O sistema deve suportar Tipo de Métrica com nível de agregação Cliente/CNPJ direto (sem Rede) — realiza o nível de agregação que o FR1 já previa e nunca tinha sido implementado.
+FR25: Tipo de Métrica "Cobertura Numérica": Cliente/CNPJ considerado coberto quando compra, no bimestre móvel (FR14a), valor ≥ ao limiar da sua Classificação PDV (Num. A=R$100, Num. B=R$50, Num. C=R$15). Exclui venda Tipo 5 (bonificada). Vinculado às mesmas Indústrias FOOD/HC já existentes.
+FR26: Tipo de Métrica "Sortimento Numérica (PPA)": só apurado para Classificação A e B. Conta PPAs distintos (FR28) comprados no bimestre móvel, teto de 15. Inclui venda Tipo 5 (bonificada) — inverso do FR25. Regra de quantidade mínima: 3un pra item "UN"; CX/Pacote/Display conta com 1 venda (mesmo padrão do FR12).
+FR27: Importação mensal da lista de Clientes Numéricas — CNPJ individual, Classificação PDV (A/B/C), GGV/CRV/RCA responsável, sem cod_princ/Rede. Formato de import diferente do FR11.
+FR28: Importação mensal da lista de PPAs — mapeamento cod_prod → PPA (família) → EAN, com embalagem. Importação separada da lista de Itens Válidos (FR12).
+FR29: Apuração da Numérica deduz Devolução e Cancelamento, mesmo princípio já usado no motor de Rede.
+FR30: Apuração agregada do distribuidor (Cobertura Numérica e Sortimento Numérica) suporta múltiplas Faixas, reaproveitando o mecanismo genérico do FR7.
+FR31: Painel (web e mobile) oferece Cobertura Numérica e Sortimento Numérica como opções de Tipo de Métrica dentro de cada Indústria (FOOD/HC) já existente — sem criar filtro de "Indústria" separado.
 
 ### NonFunctional Requirements
 
@@ -77,6 +90,9 @@ NFR4: Não há SLA crítico de prazo para a apuração mensal estar pronta (risc
 - **Mecanismo de importação de metas — Fase 1:** upload de CSV pelo admin (FR8/FR9). Fase 2 (fora de escopo, registrada no addendum): integração direta com Oracle da JC como fonte de metas, substituindo o CSV manual.
 - **Modelo de dados não deve fechar a porta** para um futuro "Farol de Compras" reaproveitando esta mesma base (direção estratégica citada pelo usuário, não é requisito funcional deste PRD).
 - **Ambiente de deploy:** desenvolvimento e testes funcionais rodam na VM de dev (`2.25.119.46`, backend Farol na porta 8084); nenhum deploy em produção (`76.13.171.196`, Coolify) até aprovação explícita do usuário — trabalho deve ocorrer em branch de feature, sem merge/push para `main` sem pedido dele.
+- **Numérica reaproveita o modelo de arquitetura do Épico 1, não cria um framework paralelo:** o "teste de generalidade" da Story 1.1 (Tipo de Métrica hipotético com agregação = Cliente) deixa de ser hipotético — a Numérica é a prova real de que o modelo de parâmetros aguenta um 2º nível de agregação sem coluna nova na tabela de Tipos de Métrica. Se a implementação real exigir coluna nova, é sinal de que a Story 1.1 precisa ser revisitada, não só o Épico 7.
+- **PPA é um agrupamento de produto novo, não reaproveita a tabela de Itens Válidos (FR12):** precisa de modelo de dados próprio (cod_prod → PPA → EAN), importado por CSV separado (FR28), específico da Numérica — Sortimento por Rede continua usando a lista de Itens Válidos como está.
+- **Bimestre móvel (FR14a) muda a lógica de janela de tempo do motor de apuração**, não só o agrupamento — precisa ser resolvido na arquitetura do Épico 4/7 como uma característica configurável por Tipo de Métrica (mês fechado vs. bimestre móvel), não hardcoded.
 
 ### UX Design Requirements
 
@@ -109,6 +125,15 @@ FR20: Epic 5 - Alternância Faturado/Transmitido/Soma no painel
 FR21: Epic 5 - Recortes de tempo + projeção no painel web
 FR22: Epic 6 - Painel mobile no padrão de link público do Farol
 FR23: Epic 6 - Recortes de tempo + projeção no painel mobile
+FR14a: Epic 7 - Bimestre móvel configurável por Tipo de Métrica
+FR24: Epic 7 - Nível de agregação Cliente/CNPJ direto (sem Rede)
+FR25: Epic 7 - Tipo de Métrica Cobertura Numérica (limiar por Classificação PDV)
+FR26: Epic 7 - Tipo de Métrica Sortimento Numérica/PPA (só A/B, teto 15, inclui Tipo 5)
+FR27: Epic 7 - Importação de Clientes Numéricas (formato sem Rede)
+FR28: Epic 7 - Importação de PPAs (cod_prod → PPA → EAN)
+FR29: Epic 7 - Dedução de Devolução/Cancelamento na Numérica
+FR30: Epic 7 - Faixas agregadas do distribuidor pra Numérica (reaproveita FR7)
+FR31: Epic 7 - Cobertura/Sortimento Numérica no painel, dentro da Indústria existente
 NFR1: Epic 1, Epic 2, Epic 3 - Auditoria de alterações (quem/quando/valor anterior)
 NFR2: Epic 5 - Papel de acesso de edição vs. visualização reaproveitado
 NFR3: Epic 4 - Reprodutibilidade da apuração de mês fechado
@@ -139,6 +164,10 @@ GGV e Supervisor navegam a hierarquia GGV→CRV→RCA→Rede→Cliente e veem Me
 ### Epic 6: Painel Mobile
 Mesma visão de Meta × Realizado × delta do Épico 5, exposta no padrão de link público já existente do Farol (`/m/CNPJ/SUP|RCA/cod`, sem login completo), adaptada para tela pequena e uso em campo por GGV/Supervisor.
 **FRs covered:** FR22, FR23
+
+### Epic 7: Numérica — Cobertura e Sortimento por Cliente/CNPJ (addendum 2026-09-29)
+Dois novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA"), vinculados às mesmas Indústrias FOOD/HC já existentes (Épicos 1-2), calculados por Cliente/CNPJ direto — sem Rede — no bimestre móvel, com listas de import próprias (Clientes Numéricas, PPAs) e exibidos dentro do painel existente (Épicos 5-6) como opção de Tipo de Métrica adicional. 5 Questões em aberto no PRD ainda sem resposta da JC (ver "Pendências de Validação").
+**FRs covered:** FR14a, FR24, FR25, FR26, FR27, FR28, FR29, FR30, FR31
 
 ## Epic 1: Catálogo de Tipos de Métrica (com arquitetura embutida)
 
@@ -481,3 +510,127 @@ Para que eu tenha a mesma informação que teria no painel web, mesmo estando em
 **Então** Meta, Realizado e delta atualizam do mesmo jeito que no painel web (FR21↔FR23)
 
 **E** a projeção de fechamento aparece em aba/tela separada dos indicadores oficiais — mesma regra de separação do Épico 5 (Story 5.3), adaptada pro formato mobile
+
+## Epic 7: Numérica — Cobertura e Sortimento por Cliente/CNPJ (addendum 2026-09-29)
+
+Dois novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA"), vinculados às mesmas Indústrias FOOD/HC já existentes (Épicos 1-2, não cria Indústria nova), calculados por Cliente/CNPJ direto — sem Rede — no bimestre móvel (mês corrente + mês anterior), com listas de import próprias (Clientes Numéricas, PPAs) e exibidos dentro do painel existente (Épicos 5-6) como opção de Tipo de Métrica adicional.
+
+*(5 Questões em aberto no PRD, levadas pelo usuário à equipe da JC/Heverton, sem resposta ainda — marcadas story a story abaixo onde se aplicam. Não bloqueiam o desenho, mas travam o fechamento do AC específico até a resposta chegar.)*
+
+### Story 7.1: Tipos de Métrica "Cobertura Numérica" e "Sortimento Numérica (PPA)"
+
+Como admin,
+Eu quero cadastrar os Tipos de Métrica "Cobertura Numérica" (nível de agregação Cliente/CNPJ, janela bimestre móvel) e "Sortimento Numérica/PPA" (mesma agregação e janela), e vinculá-los às Indústrias FOOD e HC já existentes,
+Para que a Numérica seja um 2º par de métricas dentro da mesma Indústria, não um cadastro paralelo.
+
+**Critérios de Aceite:**
+
+**Dado** o modelo de Tipo de Métrica já validado pelo teste de generalidade (Story 1.1, nível de agregação = Cliente)
+**Quando** cadastro "Cobertura Numérica" com nível de agregação = Cliente/CNPJ, janela de apuração = bimestre móvel (FR14a/FR24), e parâmetro de limiar variável por Classificação PDV (Num. A=R$100, Num. B=R$50, Num. C=R$15)
+**Então** o cadastro é concluído sem exigir coluna nova na tabela de Tipos de Métrica — esta story é a prova real do teste de generalidade da Story 1.1, que até aqui só tinha sido validado com um tipo hipotético
+
+**E** o mesmo vale para "Sortimento Numérica/PPA", com parâmetro de teto (15 PPAs) e regra "só Classificação A e B" (FR26)
+
+**Dado** os 2 Tipos de Métrica cadastrados
+**Quando** vinculo cada um às Indústrias FOOD e HC já existentes (Épico 2), com seus próprios objetivos de PPA (15 pra HC, 7 pra Foods)
+**Então** os 4 vínculos (Cobertura Numérica×FOOD, Cobertura Numérica×HC, Sortimento Numérica×FOOD, Sortimento Numérica×HC) calculam de forma independente, reaproveitando o modelo de vínculo do FR3/FR4 — nenhuma tabela nova de "Indústria Numérica"
+
+**⚠ Pendência (Questão em aberto #1 do PRD):** o documento-fonte cita hierarquia até "GGV/CRV/RCA/Cliente Rede/Cliente CNPJ" — confirmar com a JC se existe um nível intermediário real antes de fechar o modelo de navegação desta story (hoje assumido como CNPJ direto, sem nível extra).
+
+### Story 7.2: Importação de Clientes Numéricas
+
+Como admin,
+Eu quero fazer upload de um CSV mensal com os Clientes Numéricas — CNPJ, Classificação PDV (A/B/C), GGV/CRV/RCA responsável —,
+Para que o motor de apuração (Story 7.4/7.5) saiba quem é cliente Numérica e qual limiar/regra aplicar a cada um.
+
+**Critérios de Aceite:**
+
+**Dado** um arquivo CSV com colunas CNPJ, Classificação PDV, GGV, CRV, RCA (sem cod_princ/Rede — FR27)
+**Quando** faço upload pra um vínculo/vigência de Cobertura Numérica ou Sortimento Numérica
+**Então** cada CNPJ fica importado com sua Classificação, pronta pra decidir o limiar de Cobertura (FR25) e se entra ou não no Sortimento (FR26)
+
+**E** segue a mesma validação estrita linha a linha do FR9 (lote inteiro recusado se houver erro) e o mesmo snapshot mensal congelado do FR13 — período fechado não aceita reimportação automática
+
+### Story 7.3: Importação de PPAs
+
+Como admin,
+Eu quero fazer upload de um CSV mensal mapeando cod_prod (código interno) para PPA (nome da família) e EAN, com embalagem,
+Para que o motor de apuração do Sortimento Numérica (Story 7.5) saiba a qual família cada produto vendido pertence.
+
+**Critérios de Aceite:**
+
+**Dado** um arquivo CSV com cod_prod, PPA, EAN, embalagem (FR28) — modelo de dados PRÓPRIO, não reaproveita a tabela de Itens Válidos do FR12
+**Quando** faço upload pra um vínculo/vigência de Sortimento Numérica
+**Então** cada cod_prod fica associado a exatamente 1 PPA, e múltiplos cod_prod/EAN podem apontar pro mesmo PPA (ex: "MAIZENA CREMOGEMA 180GR" agrega várias embalagens)
+
+**E** mesma validação estrita (FR9) e snapshot congelado (FR13) das demais listas mensais
+
+**⚠ Pendência (Questão em aberto #4 do PRD):** os dados reais trazem colunas "Região do Sortimento"/AE/BU (só 1 valor visto, "Centro Norte") não mencionadas no documento-fonte — confirmar com a JC se são relevantes pro cálculo já nesta fase antes de decidir se entram no modelo de import ou ficam ignoradas.
+
+### Story 7.4: Motor de apuração — Cobertura Numérica
+
+Como Supervisor/GGV,
+Eu quero que o sistema calcule, por Cliente/CNPJ, se ele está coberto (positivado) segundo o limiar da sua Classificação PDV, no bimestre móvel,
+Para que eu veja quem precisa de atenção sem depender da planilha manual da JC.
+
+**Critérios de Aceite:**
+
+**Dado** Clientes Numéricas (Story 7.2) com Classificação e vendas do bimestre móvel (mês corrente + mês anterior, FR14a)
+**Quando** calculo o Realizado de Cobertura Numérica
+**Então** um cliente Num. A é coberto com compra ≥R$100 no bimestre, Num. B com ≥R$50, Num. C com ≥R$15 (FR25) — limiar lido da Classificação do próprio cliente, não um valor único de vínculo
+
+**E** venda Tipo 5 (bonificada) é excluída do valor considerado
+
+**E** Devolução e Cancelamento são deduzidos do valor, mesmo princípio já usado no motor de Cobertura/Sortimento por Rede (FR29)
+
+**E** o cálculo agrega por GGV → CRV → RCA a partir do Cliente/CNPJ direto — sem passar por nível Rede (FR24), mesmo cuidado de nunca somar valor pré-agregado (Story 4.1)
+
+### Story 7.5: Motor de apuração — Sortimento Numérica (PPA)
+
+Como Supervisor/GGV,
+Eu quero que o sistema calcule, por Cliente/CNPJ Classificação A ou B, quantos PPAs distintos ele comprou no bimestre móvel,
+Para que eu veja o mix de produtos vendido sem depender da planilha manual da JC.
+
+**Critérios de Aceite:**
+
+**Dado** Clientes Numéricas Classificação A ou B (Classificação C não entra nesta métrica — FR26) e a lista de PPAs (Story 7.3)
+**Quando** calculo o Realizado de Sortimento Numérica pro bimestre móvel
+**Então** conto PPAs distintos comprados nos 2 meses somados (ex: 7 PPAs no mês anterior + 8 PPAs diferentes esse mês = 15 no total; comprar 2 itens da MESMA família em meses diferentes conta como 1 PPA só), com teto de 15 mesmo que o catálogo tenha mais
+
+**E** venda Tipo 5 (bonificada) é INCLUÍDA — inverso da Cobertura Numérica (Story 7.4)
+
+**E** um item só conta como positivado com ≥3 unidades vendidas se for tipo "UN"; item vendido em CX/Pacote/Display conta com 1 unidade de venda (mesma regra do FR12/Sortimento por Rede)
+
+**E** Devolução e Cancelamento são deduzidos (FR29)
+
+### Story 7.6: Faixas agregadas do distribuidor — Cobertura e Sortimento Numérica
+
+Como admin,
+Eu quero configurar múltiplas Faixas (ex: Faixa 1/2/3) para a meta agregada de Cobertura Numérica e Sortimento Numérica, por Indústria/Fornecedor,
+Para que o resultado do distribuidor inteiro seja comparado à meta de contrato, reaproveitando o mecanismo de Faixas já genérico do framework (FR7/FR30).
+
+**Critérios de Aceite:**
+
+**Dado** o mecanismo de Faixas do FR7 já usado por Cobertura/Sortimento por Rede
+**Quando** configuro Faixa 3/2/1 pra Cobertura Numérica (ex: 4.870/5.681/6.493 lojas positivadas) e pra Sortimento Numérica (ex: 7,33/8,46/15 PPA pra HC; 3,11/3,59/7 PPA pra Foods)
+**Então** a apuração agregada do distribuidor compara o resultado total contra essas faixas, do mesmo jeito que já funciona pras métricas por Rede
+
+**E** o Realizado agregado de Sortimento Numérica é a média de PPAs vendidos por cliente — **divisor a confirmar** (Questão em aberto #2 do PRD: "clientes com compra" pode significar "comprou algum PPA" ou "teve qualquer venda no período"; AC final desta story trava nessa resposta)
+
+**⚠ Pendência (Questão em aberto #3 do PRD):** os valores de Faixa de Cobertura Numérica citados no documento-fonte (4.870/5.681/6.493 lojas) não especificam se são de 1 fornecedor só ou da soma FOOD+HC — confirmar com a JC antes de cadastrar os valores reais de meta.
+
+### Story 7.7: Painel Web e Mobile — Cobertura Numérica e Sortimento Numérica
+
+Como Supervisor/GGV,
+Eu quero ver Cobertura Numérica e Sortimento Numérica como opções de Tipo de Métrica dentro da Indústria (FOOD/HC) que já uso hoje, no painel web e mobile,
+Para que eu não precise aprender uma tela nova pra acompanhar o 2º par de métricas do mesmo programa.
+
+**Critérios de Aceite:**
+
+**Dado** os painéis Web (Épico 5) e Mobile (Épico 6) já existentes
+**Quando** seleciono a Indústria FOOD ou HC
+**Então** o seletor de Tipo de Métrica mostra Cobertura, Sortimento, Cobertura Numérica e Sortimento Numérica — sem um filtro de "Indústria" separado pra Numérica (FR31)
+
+**E** ao selecionar Cobertura Numérica ou Sortimento Numérica, a hierarquia de navegação vai direto de RCA pra Cliente/CNPJ, sem o nível Rede (que não existe nessa métrica — FR24), reaproveitando o mesmo componente de painel (delta explícito, recortes de tempo) já usado pelas métricas por Rede
+
+**⚠ Pendência (Questão em aberto #5 do PRD):** o documento-fonte da Numérica pede explicitamente as 3 visões de fluxo (Faturado/Emitida/Faturado+Emitido — FR15/FR20), que foram cortadas pra 2 visões no motor de Rede em produção por decisão de 2026-09-04. Confirmar com o usuário se a 3ª visão volta só pra Numérica ou também pro motor Rede existente antes de fechar o AC de alternância de fluxo desta story.

@@ -2,7 +2,7 @@
 title: Painel de Gestão de Metas por Indústria
 status: final
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-29
 ---
 
 # Painel de Gestão de Metas por Indústria
@@ -38,6 +38,22 @@ A primeira indústria a entrar no módulo é a Unilever (fornecedores 131-Foods 
 
 **Importante:** este é o molde de partida, não o modelo final — o sistema é um **framework genérico**: cada indústria define seu próprio conjunto de métricas, e 2+ indústrias podem reutilizar o mesmo Tipo de Métrica (ex: "Cobertura por Rede") com parâmetros próprios.
 
+### Numérica — 2º Tipo de Métrica do Programa Único (addendum 2026-09-29)
+
+O Programa Único tem um 2º par de métricas, sobre uma base de clientes diferente: a **"Numérica"**, definida por um documento formal ("PROGRAMA ÚNICO – UNILEVER", colado pelo usuário) e validada contra 2 planilhas reais (`Unico Acompanhamento numericas Unilever HC/foods_29092026.xlsx`, 10.754 linhas cada). Confirmado com o usuário (2026-09-29): isso **não é uma 3ª Indústria** — são 2 novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA") vinculados às **mesmas** Indústrias FOOD e HC já existentes (FR3/FR4), do mesmo jeito que Cobertura/Sortimento por Rede já são hoje. Evidência: o objetivo de PPA difere por indústria (15 pra HC, 7 pra Foods) — só faz sentido se for calculado por indústria, igual as métricas atuais.
+
+Diferenças estruturais em relação a Cobertura/Sortimento por Rede (FR1-FR2):
+
+- **Nível de agregação é Cliente/CNPJ direto, sem Rede** — realiza o 2º nível de agregação que o FR1 original já cogitava ("ex: Rede, Cliente/CNPJ") e nunca tinha sido implementado.
+- **Lista de Clientes é outra** — "Clientes Numéricas", CNPJs individuais com uma Classificação PDV (Num. A/B/C) por cliente, sem `cod_princ`/Rede. Formato de import diferente do FR11 (CNPJ, CODCL, Classificação, Razão, Fantasia, GGV/CRV/RCA).
+- **Objetivo de Cobertura varia por Classificação do cliente**, não é 1 limiar fixo por vínculo como hoje: Num. A = R$100, Num. B = R$50, Num. C = R$15 (confirmado idêntico nas 2 planilhas reais, HC e Foods).
+- **Sortimento vira "PPA Positivado"** — PPA (Produto por Família) é um agrupamento de EAN/cod_prod diferente da lista de Itens Válidos atual (FR12): a planilha mensal nomeia a qual PPA cada cod_prod pertence. Só clientes Classificação A e B são apurados nessa métrica (C fica de fora). Teto de 15 PPAs distintos contados por cliente no período, mesmo que o catálogo tenha mais.
+- **Apuração é BIMESTRE MÓVEL**, não mês fechado — apuração de Setembro considera Agosto+Setembro; de Outubro considera Setembro+Outubro. Muda a lógica de cálculo do motor (FR14), não só o agrupamento.
+- **Tipos de venda considerados diferem por métrica dentro da Numérica**: Cobertura **exclui** Tipo 5 (bonificado); Sortimento/PPA **inclui** Tipo 5 — inverso do que se poderia assumir por padrão único de vínculo (FR6).
+- **Regra de quantidade mínima do PPA** é a mesma já usada em Sortimento por Rede (FR12): 3 unidades pra item vendido em "UN"; item vendido em CX/Pacote/Display conta com 1 venda.
+
+Ver FR24-FR31 pra tradução em requisito testável, e "Questões em aberto" pros 4 pontos ainda sem resposta da equipe da JC.
+
 ## Escopo organizacional e hierarquia
 
 O programa Unilever é restrito a um recorte (UF=GO, GGVs específicos) — a configuração de meta precisa suportar recorte parcial da operação, não só "empresa inteira".
@@ -58,6 +74,11 @@ Hierarquia de drill-down: **GGV (Gerente) → CRV (Supervisor) → RCA → Rede 
 | **Faixa** | Nível de meta dentro de um vínculo (ex: Faixa 3/2/1) — recurso genérico, qualquer Tipo de Métrica pode ter uma ou várias. |
 | **Vigência** | Período (normalmente um mês) em que um conjunto de metas/listas/parâmetros vale. |
 | **Realizado** | Resultado apurado de uma métrica para um recorte e período — mesmo conceito usado em FR14/FR17 ("resultado apurado"). |
+| **Numérica** | 2º par de métricas do Programa Único (Cobertura + Sortimento), calculado por Cliente/CNPJ direto, sem Rede — ver FR24-FR31. Nome vem da lista de "Clientes Numéricas" enviada pelo fornecedor. |
+| **Classificação PDV** | Faixa do cliente na Numérica — Num. A, Num. B ou Num. C — definida pelo fornecedor, decide o objetivo de Cobertura (FR25) e se o cliente entra no Sortimento/PPA (FR26). |
+| **PPA** | "Produto por família" — agrupamento de EAN/cod_prod usado só na Numérica (Sortimento), diferente da lista de Itens Válidos (FR12) usada por Sortimento por Rede. Ver FR26/FR28. |
+| **Bimestre móvel** | Janela de apuração da Numérica: mês corrente + mês anterior (ex: apuração de Outubro considera Setembro+Outubro) — diferente do mês fechado usado por Cobertura/Sortimento por Rede. Ver FR14a. |
+| **EAN tributável** | = código de barras = item, terminologia usada no documento-fonte da Unilever pra Numérica; mesmo conceito de EAN já usado em Sortimento por Rede (FR12). |
 
 ## Requisitos Funcionais
 
@@ -91,6 +112,7 @@ Hierarquia de drill-down: **GGV (Gerente) → CRV (Supervisor) → RCA → Rede 
 ### Motor de Apuração
 
 - **FR14.** O sistema deve calcular, mensalmente (e sob demanda para o mês corrente/parcial), o Realizado de cada Tipo de Métrica configurado, por nível hierárquico (GGV → CRV → RCA → Rede → Cliente/CNPJ), lendo as bases de Faturado e Transmitido do Farol.
+  - **FR14a.** A janela de apuração deve ser configurável por Tipo de Métrica: mês fechado (padrão atual, Cobertura/Sortimento por Rede) ou **bimestre móvel** (mês corrente + mês anterior, usado pela Numérica — FR25/FR26). Não é um parâmetro do vínculo (FR5), é uma característica do Tipo de Métrica em si (FR1).
 - **FR15.** O cálculo deve suportar 3 visões de fluxo: Faturado, Transmitido (Emitido) e a Soma dos dois — capacidade nova; hoje o Farol só alterna entre um ou outro.
 - **FR16.** O cálculo deve respeitar o tipo de venda válido configurado por vínculo (FR6), não o "Líquido" padrão do Farol.
 - **FR17.** Meses fechados (fora do mês corrente) devem ter seu resultado congelado — recalcular um mês fechado só deve acontecer por ação explícita (ex: reprocessamento manual disparado por um gestor), nunca de forma automática/silenciosa por causa de uma lista ou meta atualizada depois.
@@ -109,6 +131,19 @@ Hierarquia de drill-down: **GGV (Gerente) → CRV (Supervisor) → RCA → Rede 
 - **FR22.** O sistema deve expor uma versão mobile do painel de metas por indústria, no mesmo padrão de acesso do painel público já existente do Farol (link direto por Supervisor/GGV, sem exigir login completo).
 - **FR23.** O painel mobile deve oferecer os mesmos recortes de tempo e a projeção de fechamento do painel web (FR21), adaptados para tela pequena/uso em campo.
 
+### Numérica (Cobertura e Sortimento por Cliente/CNPJ) — addendum 2026-09-29
+
+- **FR24.** O sistema deve suportar Tipo de Métrica com nível de agregação **Cliente/CNPJ direto** (sem Rede) — realiza o nível de agregação que o FR1 já previa e nunca foi implementado. Não deve exigir Rede/`cod_princ` em nenhum ponto do cálculo ou da lista de Clientes Válidos desse Tipo de Métrica.
+- **FR25.** Tipo de Métrica **"Cobertura Numérica"**: um Cliente/CNPJ é considerado coberto (positivado) quando compra, no bimestre móvel (FR14a), valor igual ou maior que o limiar da sua Classificação PDV — Num. A = R$100, Num. B = R$50, Num. C = R$15. **Exclui venda Tipo 5 (bonificada).** Vinculado às mesmas Indústrias FOOD e HC que já existem (não cria Indústria nova).
+- **FR26.** Tipo de Métrica **"Sortimento Numérica (PPA)"**: só apurado para clientes Classificação A e B (Classificação C não entra nessa métrica). Conta quantos PPAs distintos (FR28) o cliente comprou no bimestre móvel, com teto de 15 PPAs mesmo que o catálogo tenha mais. **Inclui venda Tipo 5 (bonificada)** — diferente da Cobertura Numérica (FR25). Regra de quantidade mínima por item: 3 unidades para item vendido em "UN"; item vendido em CX/Pacote/Display conta com 1 unidade de venda (mesma regra do FR12, aplicada ao nível PPA em vez de EAN).
+- **FR27.** O sistema deve permitir importar/manter, por Indústria/Fornecedor e por período de vigência, a lista de **Clientes Numéricas** — CNPJs individuais com Classificação PDV (A/B/C) e GGV/CRV/RCA responsável, **sem** `cod_princ`/Rede. Formato de import diferente do FR11.
+- **FR28.** O sistema deve permitir importar/manter, por Indústria/Fornecedor e por período de vigência, a lista de **PPAs** — mapeamento de cod_prod (código interno) para PPA (nome da família) e EAN, com embalagem. Importação separada da lista de Itens Válidos (FR12) usada por Sortimento por Rede.
+- **FR29.** A apuração da Numérica (FR25/FR26) deve deduzir Devolução e Cancelamento, mesmo princípio já usado no motor de Cobertura/Sortimento por Rede.
+- **FR30.** A apuração agregada do distribuidor (nível empresa) para Cobertura Numérica e Sortimento Numérica deve suportar múltiplas Faixas (1/2/3), reaproveitando o mecanismo de Faixas genérico do FR7 — não um valor único de meta.
+- **FR31.** O painel (web e mobile) deve oferecer Cobertura Numérica e Sortimento Numérica como opções de Tipo de Métrica dentro de cada Indústria (FOOD/HC) já existente, ao lado de Cobertura/Sortimento por Rede — sem criar um filtro de "Indústria" separado.
+
+> **Nota de reconciliação — visão Faturado+Emitido (FR15/FR20):** o PRD original já previa 3 visões de fluxo (Faturado, Transmitido, Soma dos dois), mas essa 3ª visão foi cortada na implementação por decisão do usuário/Heverton em 2026-09-04 ("mesma filosofia do Farol V1"), aplicada ao motor de Cobertura/Sortimento por Rede que já está em produção. O documento-fonte da Numérica pede explicitamente as 3 visões de novo ("visão faturada, emitida e faturado+emitido"). Tratado aqui como: **FR15/FR20 voltam a valer para a Numérica**; não confirmado com o usuário se o corte de 04/09 deve ser revertido também para o motor Rede já existente — ver Questões em aberto.
+
 ## Requisitos Não-Funcionais
 
 - **NFR1.** Toda alteração de meta, faixa, lista válida ou tipo de venda configurado deve ficar auditável (quem alterou, quando, valor anterior) — dado o impacto financeiro em contrato de fornecedor.
@@ -123,5 +158,11 @@ Hierarquia de drill-down: **GGV (Gerente) → CRV (Supervisor) → RCA → Rede 
 
 ## Questões em aberto
 
-Nenhuma pendente — as 3 levantadas durante a Discovery (faixas genéricas, SLA de apuração, papel de gestão) foram resolvidas com o usuário (ver `.memlog.md`).
+As 3 levantadas durante a Discovery original (faixas genéricas, SLA de apuração, papel de gestão) foram resolvidas (ver `.memlog.md`). O addendum da Numérica (2026-09-29) trouxe 5 novas, levadas pelo usuário à equipe da JC/Heverton — bloqueiam só as stories específicas que dependem delas, não o desenho geral (FR24-FR31):
+
+1. **Nível "Cliente Rede"** — o documento-fonte cita hierarquia até "GGV/CRV/RCA/Cliente Rede/Cliente CNPJ", mas a Métrica 1 é explícita que Numérica são CNPJs individuais, sem Rede. Resíduo de texto copiado do modelo antigo, ou existe um nível intermediário real não explicado?
+2. **Denominador da média de PPA** — "dividido por quantidade de clientes com compra": só quem comprou algum PPA, ou quem teve qualquer venda no bimestre?
+3. **Faixas de Cobertura (4.870/5.681/6.493 lojas)** — são de um fornecedor só (qual?) ou da soma dos dois (FOOD+HC)? O documento só especifica por fornecedor para o Sortimento/PPA.
+4. **Colunas "Região do Sortimento"/AE/BU** no arquivo de PPA — só 1 valor visto nos dados reais ("Centro Norte"). Relevante pro cálculo já nesta fase, ou estrutura para expansão futura (ignorar por ora)?
+5. **Visão Faturado+Emitido (ver nota de reconciliação acima)** — reativar só para a Numérica, ou também reverter o corte de 04/09/2026 no motor de Cobertura/Sortimento por Rede já em produção?
 
