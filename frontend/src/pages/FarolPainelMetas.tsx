@@ -1023,12 +1023,16 @@ export default function FarolPainelMetas() {
                     </Tooltip>
                   </div>
                   <div className="text-2xl font-semibold">
-                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
+                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length}</span>{' '}
                     {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.sort >= redesVisiveis.length} />}
                   </div>
                   {redesVisiveis.length > 0 && (
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      Média: {fmt(totComb.qtMedEan / redesVisiveis.length)} / {fmt(redesVisiveis[0].sortimento_objetivo)}
+                      {/* Texto explícito — pedido do Heverton 29/09/2026:
+                          "1 de 86 redes bateram os 19 EANs" deixa claro que
+                          é contagem (régua dura), diferente da média
+                          (puxada pra baixo pelas Redes fracas/zeradas). */}
+                      Redes bateram os {fmt(redesVisiveis[0].sortimento_objetivo)} EANs · Média: {fmt(totComb.qtMedEan / redesVisiveis.length)}
                     </div>
                   )}
                 </div>

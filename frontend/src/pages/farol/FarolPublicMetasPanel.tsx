@@ -771,7 +771,7 @@ export default function FarolPublicMetasPanel() {
                     o número principal do card é a média, não a contagem. */}
                 {painelCombinado.redes.length > 0 && (
                   <div className="text-xs text-muted-foreground mt-0.5">
-                    Redes no objetivo: {painelCombinado.redes.filter(r => r.sortimento_valor >= r.sortimento_objetivo).length} de {painelCombinado.redes.length}
+                    {painelCombinado.redes.filter(r => r.sortimento_valor >= r.sortimento_objetivo).length} de {painelCombinado.redes.length} Redes bateram os {fmt(painelCombinado.redes[0].sortimento_objetivo)} EANs
                   </div>
                 )}
               </div>
