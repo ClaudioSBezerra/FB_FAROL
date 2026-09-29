@@ -758,6 +758,16 @@ export default function FarolPublicMetasPanel() {
                     <StatusIcon size="w-7 h-7" atingiu={painelCombinado.sortimento.realizado_total >= painelCombinado.redes[0].sortimento_objetivo} />
                   )}
                 </div>
+                {/* Redes que bateram o Sortimento — pedido do Heverton
+                    29/09/2026: "a média (3,85 de 19), mas também quantas
+                    Redes atingiram do total lido", mesmo par que a
+                    Cobertura já mostra (39/86) só que aqui embaixo, porque
+                    o número principal do card é a média, não a contagem. */}
+                {painelCombinado.redes.length > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Redes no objetivo: {painelCombinado.redes.filter(r => r.sortimento_valor >= r.sortimento_objetivo).length} de {painelCombinado.redes.length}
+                  </div>
+                )}
               </div>
             </div>
 
