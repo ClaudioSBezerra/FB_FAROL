@@ -281,11 +281,10 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
           ) : (
             itensOrdenados.map(it => (
               <div key={it.ean} className="flex items-center gap-2 text-[11px] py-0.5">
-                <span className="truncate min-w-0">
-                  {/* "cód. produto / EAN - descrição" (Heverton 25/09/2026); o
-                      item pode ter várias variantes de cod_prod. */}
-                  <span className="font-mono font-semibold">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</span> - {it.nome}
-                </span>
+                {/* Só a descrição — pedido do Heverton 29/09/2026: tirar o
+                    código do produto/EAN dessa tela (poluía muito quando o
+                    item tinha várias variantes de cod_prod, ver captura). */}
+                <span className="truncate min-w-0">{it.nome}</span>
                 <StatusIcon atingiu={it.vendeu} />
               </div>
             ))
