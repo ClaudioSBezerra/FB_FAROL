@@ -1041,15 +1041,13 @@ export default function FarolPainelMetas() {
 
             {(abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
               <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
-                {/* Clicar num GGV ou GGV×CRV vai abrindo o nível de baixo
-                    (igual à visão mobile: toca pra descer na hierarquia) —
-                    pedido do Heverton 29/09/2026. GGV×CRV×RCA é o último
-                    rollup, aí sim clicar abre os itens (não tem pra onde
-                    descer além de Rede×Cliente, que já é outra aba). */}
+                {/* Clicar num GGV, GGV×CRV ou GGV×CRV×RCA vai abrindo o
+                    nível de baixo (igual à visão mobile: toca pra descer na
+                    hierarquia) — pedido do Heverton 29/09/2026: Rede,
+                    Clientes e só depois Produtos (clicar no Cliente, já em
+                    Resumo Rede×Cliente, abre os itens). */}
                 <p className="text-xs text-muted-foreground px-3 pt-2">
-                  {abaCombinado === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.'
-                    : abaCombinado === 'ggv_crv' ? 'Clique num grupo pra ver as Redes dele.'
-                    : 'Clique num grupo pra ver os itens que venderam e não venderam em todas as Redes dele.'}
+                  {abaCombinado === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.' : 'Clique num grupo pra ver as Redes dele.'}
                 </p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1078,18 +1076,12 @@ export default function FarolPainelMetas() {
                             setAbaCombinado('ggv_crv')
                             return
                           }
-                          if (abaCombinado === 'ggv_crv') {
-                            setFGGV(g.cod_ggv); setFCRV(g.cod_crv ?? ''); setFRCA(''); setFRede(''); setFCliente('')
-                            setAbaCombinado('rede')
-                            return
-                          }
-                          setItensAlvo({
-                            codGGV: g.cod_ggv, codCRV: g.cod_crv, codRCA: g.cod_rca,
-                            titulo: `${g.nome_ggv} / ${g.nome_crv} / ${g.nome_rca}`,
-                            objetivo: g.sortimento_objetivo,
-                            qtdRedes: g.qtd_redes,
-                            qtdAtingindo: g.qtd_atingindo_sortimento,
-                          })
+                          // GGV×CRV e GGV×CRV×RCA também abrem em Resumo Redes
+                          // (pedido do Heverton 29/09/2026: "Rede, Clientes e
+                          // depois Produtos" — GGV×CRV×RCA deixou de pular
+                          // direto pros itens agregados).
+                          setFGGV(g.cod_ggv); setFCRV(g.cod_crv ?? ''); setFRCA(g.cod_rca ?? ''); setFRede(''); setFCliente('')
+                          setAbaCombinado('rede')
                         }}
                       >
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
