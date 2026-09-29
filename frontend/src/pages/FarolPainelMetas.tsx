@@ -248,6 +248,11 @@ interface Industria {
   nome: string
   cobertura?: MetaVinculo
   sortimento?: MetaVinculo
+  // Numérica (Épico 7 addendum, 2026-09-29) — mesma Indústria, métrica
+  // individual à parte (fora do modo "Combinado", que é o par Rede da
+  // planilha "Resumo Redes").
+  cobertura_numerica?: MetaVinculo
+  sortimento_numerica?: MetaVinculo
 }
 
 const RECORTES = [
@@ -372,7 +377,7 @@ export default function FarolPainelMetas() {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
 
   const [industriaID, setIndustriaID] = useState('')
-  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
+  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado' | 'cobertura_numerica' | 'sortimento_numerica'>('combinado')
   const [vigenciaID, setVigenciaID] = useState('') // modo individual (Cobertura OU Sortimento)
   const [vigenciaCombinadaKey, setVigenciaCombinadaKey] = useState('') // modo combinado — chave "data_inicio|data_fim"
   const [nivel, setNivel] = useState(() => landingNivelPorPersona(tipoPersona))
@@ -421,6 +426,8 @@ export default function FarolPainelMetas() {
       const ind = porID.get(v.industria_id)!
       if (v.formula_codigo === 'cobertura_rede') ind.cobertura = v
       else if (v.formula_codigo === 'sortimento_rede') ind.sortimento = v
+      else if (v.formula_codigo === 'cobertura_numerica') ind.cobertura_numerica = v
+      else if (v.formula_codigo === 'sortimento_numerica_ppa') ind.sortimento_numerica = v
     }
     return Array.from(porID.values()).sort((a, b) => a.nome.localeCompare(b.nome))
   }, [vinculos])
@@ -441,6 +448,8 @@ export default function FarolPainelMetas() {
     }
     if (industriaSelecionada?.cobertura) opcoes.push({ value: 'cobertura', label: industriaSelecionada.cobertura.tipo_metrica_nome })
     if (industriaSelecionada?.sortimento) opcoes.push({ value: 'sortimento', label: industriaSelecionada.sortimento.tipo_metrica_nome })
+    if (industriaSelecionada?.cobertura_numerica) opcoes.push({ value: 'cobertura_numerica', label: industriaSelecionada.cobertura_numerica.tipo_metrica_nome })
+    if (industriaSelecionada?.sortimento_numerica) opcoes.push({ value: 'sortimento_numerica', label: industriaSelecionada.sortimento_numerica.tipo_metrica_nome })
     return opcoes
   }, [industriaSelecionada])
 
@@ -455,6 +464,8 @@ export default function FarolPainelMetas() {
 
   const vinculoAtivo = metrica === 'cobertura' ? industriaSelecionada?.cobertura
     : metrica === 'sortimento' ? industriaSelecionada?.sortimento
+    : metrica === 'cobertura_numerica' ? industriaSelecionada?.cobertura_numerica
+    : metrica === 'sortimento_numerica' ? industriaSelecionada?.sortimento_numerica
     : undefined
 
   // ─── Modo individual (Cobertura OU Sortimento) — mesmo fluxo de sempre ───────
@@ -798,7 +809,7 @@ export default function FarolPainelMetas() {
   // Cobertura mede R$ por loja/Rede; Sortimento mede qtd de EANs — só a
   // primeira usa formatação monetária linha a linha (pedido do Claudio em
   // 10/09/2026, "colocar o R$ ao lado do Valor").
-  const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede'
+  const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede' || vinculoAtivo?.formula_codigo === 'cobertura_numerica'
   const linhas = redeAberta
     ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —

@@ -150,6 +150,12 @@ interface Industria {
   nome: string
   cobertura?: MetaVinculo
   sortimento?: MetaVinculo
+  // Numérica (Épico 7 addendum, 2026-09-29) — Cobertura/Sortimento POR
+  // CLIENTE, sem Rede, vinculada à MESMA Indústria (não é uma Indústria
+  // separada). Fica fora do modo "Combinado" (que é especificamente o par
+  // Rede da planilha "Resumo Redes") — aparece como métrica individual.
+  cobertura_numerica?: MetaVinculo
+  sortimento_numerica?: MetaVinculo
 }
 
 const RECORTES = [
@@ -446,7 +452,7 @@ export default function FarolPublicMetasPanel() {
     GAMIF_MOBILE_HABILITADO && searchParams.get('aba') === 'campanhas' ? 'gamificacao' : 'objetivos'
   )
   const [industriaID, setIndustriaID] = useState('')
-  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado'>('combinado')
+  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado' | 'cobertura_numerica' | 'sortimento_numerica'>('combinado')
   const [vigenciaID, setVigenciaID] = useState('')
   const [vigenciaCombinadaKey, setVigenciaCombinadaKey] = useState('')
   const [fluxo, setFluxo] = useState('faturado')
@@ -483,6 +489,8 @@ export default function FarolPublicMetasPanel() {
       const ind = porID.get(v.industria_id)!
       if (v.formula_codigo === 'cobertura_rede') ind.cobertura = v
       else if (v.formula_codigo === 'sortimento_rede') ind.sortimento = v
+      else if (v.formula_codigo === 'cobertura_numerica') ind.cobertura_numerica = v
+      else if (v.formula_codigo === 'sortimento_numerica_ppa') ind.sortimento_numerica = v
     }
     return Array.from(porID.values()).sort((a, b) => a.nome.localeCompare(b.nome))
   }, [vinculos])
@@ -503,6 +511,8 @@ export default function FarolPublicMetasPanel() {
     }
     if (industriaSelecionada?.cobertura) opcoes.push({ value: 'cobertura', label: industriaSelecionada.cobertura.tipo_metrica_nome })
     if (industriaSelecionada?.sortimento) opcoes.push({ value: 'sortimento', label: industriaSelecionada.sortimento.tipo_metrica_nome })
+    if (industriaSelecionada?.cobertura_numerica) opcoes.push({ value: 'cobertura_numerica', label: industriaSelecionada.cobertura_numerica.tipo_metrica_nome })
+    if (industriaSelecionada?.sortimento_numerica) opcoes.push({ value: 'sortimento_numerica', label: industriaSelecionada.sortimento_numerica.tipo_metrica_nome })
     return opcoes
   }, [industriaSelecionada])
 
@@ -515,12 +525,14 @@ export default function FarolPublicMetasPanel() {
 
   const vinculoAtivo = metrica === 'cobertura' ? industriaSelecionada?.cobertura
     : metrica === 'sortimento' ? industriaSelecionada?.sortimento
+    : metrica === 'cobertura_numerica' ? industriaSelecionada?.cobertura_numerica
+    : metrica === 'sortimento_numerica' ? industriaSelecionada?.sortimento_numerica
     : undefined
 
   // Rótulo/formatação do modo individual: Cobertura é R$, Sortimento é
   // contagem de itens (EANs).
-  const rotuloMetrica = metrica === 'sortimento' ? 'Sortimento' : 'Cobertura'
-  const fmtMetrica = (n: number) => (metrica === 'sortimento' ? fmt(n) : fmtBRLMobile(n))
+  const rotuloMetrica = metrica === 'sortimento' || metrica === 'sortimento_numerica' ? 'Sortimento' : 'Cobertura'
+  const fmtMetrica = (n: number) => (metrica === 'sortimento' || metrica === 'sortimento_numerica' ? fmt(n) : fmtBRLMobile(n))
 
   // ─── Modo individual ──────────────────────────────────────────────────────
 

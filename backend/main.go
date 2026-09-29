@@ -656,6 +656,14 @@ func main() {
 	http.HandleFunc("/api/farol/metas-itens-validos", withSP(handlers.MetasItensValidosHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-itens-validos-importar-csv", withSP(handlers.MetasItensValidosImportarCSVHandler, "gestor_geral"))
 
+	// Numérica — Épico 7 addendum, Story 7.2/7.3: Clientes Numéricas (sem
+	// Rede, Classificação PDV) e PPAs (agrupamento de produto próprio,
+	// diferente de Itens Válidos acima).
+	http.HandleFunc("/api/farol/metas-clientes-numericas", withSP(handlers.MetasClientesNumericasHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-clientes-numericas-importar-csv", withSP(handlers.MetasClientesNumericasImportarCSVHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-ppas", withSP(handlers.MetasPPAsHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-ppas-importar-csv", withSP(handlers.MetasPPAsImportarCSVHandler, "gestor_geral"))
+
 	// Motor de Apuração — Épico 4 Story 4.1. Leitura só — GGV/Supervisor
 	// (Épico 5/6, painel de visualização) também precisam acessar, então
 	// somente_leitura (o nível mais permissivo), diferente da configuração
