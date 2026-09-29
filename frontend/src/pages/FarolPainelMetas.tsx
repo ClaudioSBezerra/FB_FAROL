@@ -1418,7 +1418,6 @@ export default function FarolPainelMetas() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Cód. Prod. / EAN</TableHead>
                     <TableHead>Produto</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-right">Qtd</TableHead>
@@ -1427,11 +1426,10 @@ export default function FarolPainelMetas() {
                 </TableHeader>
                 <TableBody>
                   {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
                   )}
                   {[...itensLista].sort((x, y) => (x.nome || x.ean).localeCompare(y.nome || y.ean, 'pt-BR')).map((it, i) => (
                     <TableRow key={i}>
-                      <TableCell className="font-mono text-xs break-words min-w-[9rem]">{it.cod_prods && it.cod_prods.length > 0 ? `${it.cod_prods.join(', ')} / ${it.ean}` : it.ean}</TableCell>
                       <TableCell className="text-sm">{it.nome || '—'}</TableCell>
                       <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
                       <TableCell className="text-right">{it.qtd ? fmt(it.qtd) : '—'}</TableCell>
