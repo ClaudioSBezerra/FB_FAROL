@@ -186,22 +186,33 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 		log.Printf("[farol:objetivos] CalcularRealizado vinculo=%d vigencia=%d fluxo=%s nivel=%s em %v",
 			vinculoID, vigenciaID, fluxo, nivel, time.Since(t0))
 	}()
-	var formulaCodigo, dataInicioVigencia, dataFimVigencia string
+	var formulaCodigo, janelaApuracao, dataInicioVigencia, dataFimVigencia string
 	var industriaID int
 	var tiposVendaValidos []string
 	err := db.QueryRow(`
-		SELECT tm.formula_codigo, v.data_inicio::text, v.data_fim::text, mv.industria_id
+		SELECT tm.formula_codigo, tm.janela_apuracao, v.data_inicio::text, v.data_fim::text, mv.industria_id
 		FROM farol.metas_vigencias v
 		JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 		WHERE v.id = $1 AND v.vinculo_id = $2 AND v.empresa_id = $3
-	`, vigenciaID, vinculoID, empresaID).Scan(&formulaCodigo, &dataInicioVigencia, &dataFimVigencia, &industriaID)
+	`, vigenciaID, vinculoID, empresaID).Scan(&formulaCodigo, &janelaApuracao, &dataInicioVigencia, &dataFimVigencia, &industriaID)
 	if err != nil {
 		return nil, fmt.Errorf("vínculo/vigência não encontrado: %w", err)
 	}
 	dataInicio, dataFim := dataInicioVigencia, dataFimVigencia
 	if dataInicioOverride != "" && dataFimOverride != "" {
 		dataInicio, dataFim = dataInicioOverride, dataFimOverride
+	} else if janelaApuracao == "bimestre_movel" {
+		// FR14a — Numérica: bimestre móvel = mês da vigência + mês
+		// imediatamente anterior (ex: apuração de Outubro considera
+		// Setembro+Outubro). Só se aplica ao período NATURAL da vigência
+		// (sem override) — um recorte manual (FR21, "de/até") já é uma
+		// janela explícita do usuário, não deve ser alargada por trás.
+		// Assume vigência mês-alinhada (data_inicio = dia 1), mesma
+		// premissa do glossário ("Vigência... normalmente um mês").
+		if inicio, perr := time.Parse("2006-01-02", dataInicio); perr == nil {
+			dataInicio = inicio.AddDate(0, -1, 0).Format("2006-01-02")
+		}
 	}
 	if err := db.QueryRow(`SELECT tipos_venda_validos FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).
 		Scan(pq.Array(&tiposVendaValidos)); err != nil {
@@ -223,27 +234,50 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 		return nil, err
 	}
 
-	clientes, err := lerClientesValidos(db, empresaID, vigenciaID)
-	if err != nil {
-		return nil, err
-	}
-	if len(clientes) == 0 {
-		return nil, fmt.Errorf("nenhum Cliente Válido importado pra esta vigência — importe a lista antes de calcular (Épico 3)")
-	}
-
 	var redes []RealizadoRede
 	switch formulaCodigo {
-	case "cobertura_rede":
-		redes, err = calcularCoberturaPorRede(db, empresaID, clientes, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
-	case "sortimento_rede":
-		itens, ierr := lerItensValidos(db, empresaID, vigenciaID)
-		if ierr != nil {
-			return nil, ierr
+	case "cobertura_rede", "sortimento_rede":
+		clientes, cerr := lerClientesValidos(db, empresaID, vigenciaID)
+		if cerr != nil {
+			return nil, cerr
 		}
-		if len(itens) == 0 {
-			return nil, fmt.Errorf("nenhum Item Válido importado pra esta vigência — importe a lista antes de calcular (Épico 3)")
+		if len(clientes) == 0 {
+			return nil, fmt.Errorf("nenhum Cliente Válido importado pra esta vigência — importe a lista antes de calcular (Épico 3)")
 		}
-		redes, err = calcularSortimentoPorRede(db, empresaID, clientes, itens, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+		if formulaCodigo == "cobertura_rede" {
+			redes, err = calcularCoberturaPorRede(db, empresaID, clientes, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+		} else {
+			itens, ierr := lerItensValidos(db, empresaID, vigenciaID)
+			if ierr != nil {
+				return nil, ierr
+			}
+			if len(itens) == 0 {
+				return nil, fmt.Errorf("nenhum Item Válido importado pra esta vigência — importe a lista antes de calcular (Épico 3)")
+			}
+			redes, err = calcularSortimentoPorRede(db, empresaID, clientes, itens, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+		}
+	case "cobertura_numerica", "sortimento_numerica_ppa":
+		// FR24/FR27 — lista de Clientes Numéricas é uma tabela própria
+		// (sem cod_princ/Rede), não lerClientesValidos (Épico 3/Rede).
+		clientesNum, cerr := lerClientesNumericos(db, empresaID, vigenciaID)
+		if cerr != nil {
+			return nil, cerr
+		}
+		if len(clientesNum) == 0 {
+			return nil, fmt.Errorf("nenhum Cliente Numérica importado pra esta vigência — importe a lista antes de calcular (Épico 7)")
+		}
+		if formulaCodigo == "cobertura_numerica" {
+			redes, err = calcularCoberturaNumerica(db, empresaID, clientesNum, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+		} else {
+			ppas, perr := lerPPAsValidos(db, empresaID, vigenciaID)
+			if perr != nil {
+				return nil, perr
+			}
+			if len(ppas) == 0 {
+				return nil, fmt.Errorf("nenhum PPA importado pra esta vigência — importe a lista antes de calcular (Épico 7)")
+			}
+			redes, err = calcularSortimentoNumericaPPA(db, empresaID, clientesNum, ppas, parametros, dataInicio, dataFim, fluxo, tiposVendaValidos, codFornec)
+		}
 	case "":
 		return nil, fmt.Errorf("este Tipo de Métrica não tem calculadora implementada (formula_codigo vazio)")
 	default:
@@ -277,7 +311,7 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 		Parcial: periodoIncluiHoje(dataFim),
 	}
 	switch formulaCodigo {
-	case "cobertura_rede":
+	case "cobertura_rede", "cobertura_numerica":
 		count := 0
 		for _, r := range redes {
 			if r.Atingiu {
@@ -285,7 +319,11 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 			}
 		}
 		resultado.RealizadoTotal = float64(count)
-	case "sortimento_rede":
+	case "sortimento_rede", "sortimento_numerica_ppa":
+		// ASSUNÇÃO (Questão em aberto #2 do PRD, Story 7.6): divide pelo
+		// total de clientes elegíveis, não só "clientes com compra" — o
+		// documento-fonte da Numérica não deixa claro qual dos dois é o
+		// denominador oficial. Revisar quando a JC responder.
 		var soma float64
 		for _, r := range redes {
 			soma += r.Valor
@@ -1258,7 +1296,7 @@ func recalcularTotalDeRedes(redes []RealizadoRede, formulaCodigo string) *Realiz
 		resultado.Redes = []RealizadoRede{}
 	}
 	switch formulaCodigo {
-	case "cobertura_rede":
+	case "cobertura_rede", "cobertura_numerica":
 		count := 0
 		for _, r := range redes {
 			if r.Atingiu {
@@ -1266,7 +1304,7 @@ func recalcularTotalDeRedes(redes []RealizadoRede, formulaCodigo string) *Realiz
 			}
 		}
 		resultado.RealizadoTotal = float64(count)
-	case "sortimento_rede":
+	case "sortimento_rede", "sortimento_numerica_ppa":
 		var soma float64
 		for _, r := range redes {
 			soma += r.Valor
