@@ -550,6 +550,21 @@ export default function FarolPainelMetas() {
     : metrica === 'sortimento_numerica' ? industriaSelecionada?.sortimento_numerica
     : undefined
 
+  // Numérica (Épico 7 addendum, 2026-09-29): cada "Rede" que o motor
+  // devolve é na verdade 1 Cliente só (CodPrinc=CNPJ, QtLojas=1) — sem
+  // Rede de verdade pra descer mais um nível. Terminologia e navegação
+  // ajustadas pra não repetir "Rede"/"(1 loja)" nem abrir um drill falso
+  // pro mesmo Cliente de novo (mesmo padrão pedido pro resto da tela:
+  // check verde/X vermelho, nomenclatura consistente).
+  const ehNumerica = vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
+  // ehContextoNumerica — ehNumerica só cobre o modo individual (depende de
+  // vinculoAtivo, que fica undefined em 'combinado_numerica'). Usado nos
+  // handlers de filtro (selecionarRedeIndiv) que também valem pro
+  // Combinado Numérica. Declarado aqui (não perto de niveisAtuais/linhas
+  // lá embaixo) porque o bloco de filtros por seleção (GGV/CRV/RCA/Cliente
+  // — mais abaixo) já precisa disso antes.
+  const ehContextoNumerica = ehNumerica || metrica === 'combinado_numerica'
+
   // fluxo='soma' só existe pra Numérica (Story 7.8) — trocar pra uma
   // métrica Rede com 'soma' ainda selecionado voltaria "fluxo inválido" do
   // backend (calcularCoberturaPorRede/calcularSortimentoPorRede não têm
@@ -612,15 +627,32 @@ export default function FarolPainelMetas() {
   // opções dos selects — independente do nivel/filtro que a tabela
   // principal está mostrando agora. Mesmo endpoint que abrirGrupo/painel
   // já usa, então nenhuma rota nova no backend.
-  const { data: todasRedesResp } = useQuery<Painel>({
-    queryKey: ['farol-metas-painel-todas-redes', vinculoAtivo?.id, vigenciaID, fluxo],
+  // Combinado Numérica não tem vinculoAtivo/vigenciaID próprios (esses só
+  // existem no modo individual) — busca a vigência aberta de Cobertura
+  // Numérica só pra alimentar os selects de filtro. queryKey igual ao da
+  // query "de verdade" mais abaixo (Modo combinado Numérica) — o React
+  // Query dedupe por chave, então isso não dispara um fetch a mais.
+  const { data: vigenciasCoberturaNumOpts = [] } = useQuery<Vigencia[]>({
+    queryKey: ['farol-metas-vigencias', industriaSelecionada?.cobertura_numerica?.id],
     queryFn: async () => {
-      const p = new URLSearchParams({ vinculo_id: String(vinculoAtivo!.id), vigencia_id: vigenciaID, fluxo, nivel: 'rede' })
+      const r = await fetch(`/api/farol/metas-vigencias?vinculo_id=${industriaSelecionada!.cobertura_numerica!.id}`, { headers })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+    enabled: metrica === 'combinado_numerica' && !!industriaSelecionada?.cobertura_numerica,
+  })
+  const vigenciaCoberturaNumericaAtual = vigenciasCoberturaNumOpts.find(v => v.status === 'aberta') ?? vigenciasCoberturaNumOpts[0]
+  const vinculoIdParaOpcoes = metrica === 'combinado_numerica' ? industriaSelecionada?.cobertura_numerica?.id : vinculoAtivo?.id
+  const vigenciaIdParaOpcoes = metrica === 'combinado_numerica' ? (vigenciaCoberturaNumericaAtual ? String(vigenciaCoberturaNumericaAtual.id) : '') : vigenciaID
+  const { data: todasRedesResp } = useQuery<Painel>({
+    queryKey: ['farol-metas-painel-todas-redes', vinculoIdParaOpcoes, vigenciaIdParaOpcoes, fluxo],
+    queryFn: async () => {
+      const p = new URLSearchParams({ vinculo_id: String(vinculoIdParaOpcoes), vigencia_id: vigenciaIdParaOpcoes, fluxo, nivel: 'rede' })
       const r = await fetch(`/api/farol/metas-painel?${p}`, { headers })
       if (!r.ok) throw new Error(await r.text())
       return r.json()
     },
-    enabled: metrica !== 'combinado' && !!vinculoAtivo && !!vigenciaID,
+    enabled: metrica !== 'combinado' && !!vinculoIdParaOpcoes && !!vigenciaIdParaOpcoes,
   })
   const todasRedesIndiv = todasRedesResp?.realizado.redes ?? []
   const optsGGVIndiv = useMemo(
@@ -646,11 +678,11 @@ export default function FarolPainelMetas() {
       // seleção (é o que casa com redeAberta.cod_princ em outro lugar).
       .map(r => ({
         v: r.cod_princ,
-        l: vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
+        l: ehContextoNumerica
           ? rotuloRede(r.cod_cl || r.cod_princ, r.razao, r.fantasia)
           : rotuloRede(r.cod_princ, r.razao, r.fantasia),
       }))),
-    [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA, vinculoAtivo],
+    [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA, ehContextoNumerica],
   )
   // Selecionar direto pelo select pula pro próximo nível, igual abrirGrupo
   // já faz ao clicar numa linha — mantém nivel e filtro sempre "casados".
@@ -670,12 +702,13 @@ export default function FarolPainelMetas() {
     setFiltroRCA({ codigo: v, nome }); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('rede')
   }
   const selecionarRedeIndiv = (v: string) => {
-    if (ehNumerica) {
+    if (ehContextoNumerica) {
       // Cliente já é o nível final na Numérica — filtra a lista em vez de
       // tentar abrir um drill que não existe (ver comentário de
-      // filtroClienteNumerica acima).
+      // filtroClienteNumerica acima). Vale pro modo individual E pro
+      // Combinado Numérica (não tem nivel pra mexer nesse 2º caso).
       setFiltroClienteNumerica(v)
-      if (v) setNivel('rede')
+      if (v && metrica !== 'combinado_numerica') setNivel('rede')
       return
     }
     if (!v) { setRedeAberta(null); return }
@@ -815,7 +848,11 @@ export default function FarolPainelMetas() {
     },
     enabled: metrica === 'combinado_numerica' && !!periodoSelecionadoNum,
   })
-  const clientesCombinadoNum = painelCombinadoNum?.clientes ?? []
+  // Cliente é filtrado no navegador (o backend do Combinado Numérica não
+  // recebe esse parâmetro, só cod_ggv/cod_crv/cod_rca) — mesmo padrão do
+  // modo individual.
+  const clientesCombinadoNum = (painelCombinadoNum?.clientes ?? [])
+    .filter(c => !filtroClienteNumerica || c.cnpj === filtroClienteNumerica)
 
   // ─── Barra de filtros da visão Combinada (client-side sobre .redes) ─────────
   // Todos os campos já vêm na resposta (~120 Redes), então filtrar aqui evita
@@ -979,13 +1016,6 @@ export default function FarolPainelMetas() {
   // primeira usa formatação monetária linha a linha (pedido do Claudio em
   // 10/09/2026, "colocar o R$ ao lado do Valor").
   const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede' || vinculoAtivo?.formula_codigo === 'cobertura_numerica'
-  // Numérica (Épico 7 addendum, 2026-09-29): cada "Rede" que o motor
-  // devolve é na verdade 1 Cliente só (CodPrinc=CNPJ, QtLojas=1) — sem
-  // Rede de verdade pra descer mais um nível. Terminologia e navegação
-  // ajustadas pra não repetir "Rede"/"(1 loja)" nem abrir um drill falso
-  // pro mesmo Cliente de novo (mesmo padrão pedido pro resto da tela:
-  // check verde/X vermelho, nomenclatura consistente).
-  const ehNumerica = vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
   const niveisAtuais = ehNumerica ? NIVEIS_NUMERICA : NIVEIS
   const fluxosAtuais = ehNumerica ? FLUXOS_NUMERICA : FLUXOS
   const linhas = redeAberta
@@ -1502,10 +1532,30 @@ export default function FarolPainelMetas() {
           <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
         ) : painelCombinadoNum ? (
           <>
-            {/* Numérica não tem GGV/CRV/RCA em "abas" — o filtro GGV/
-                Supervisor/RCA já na barra de cima (mesmo do modo
-                individual) já estreita a lista abaixo direto no backend. */}
-            {ehNumerica && periodoSelecionadoNum && (
+            {/* Filtros GGV/Supervisor/RCA/Cliente — pedido do Claudio
+                30/09/2026 ("igual às outras visões"): faltava aqui, só
+                existia no modo individual e no Combinado por Rede.
+                Reaproveita o MESMO state/handlers do modo individual
+                (filtroGGV/CRV/RCA, filtroClienteNumerica) — GGV/CRV/RCA já
+                vão pro backend via cod_ggv/cod_crv/cod_rca na query;
+                Cliente filtra no navegador (ver clientesCombinadoNum). */}
+            <div className="flex flex-wrap gap-2 items-end border rounded-lg p-4">
+              <FiltroSelect label="GGV" value={filtroGGV?.codigo ?? ''} opts={optsGGVIndiv} onChange={selecionarGGVIndiv} />
+              <FiltroSelect label="Supervisor (CRV)" value={filtroCRV?.codigo ?? ''} opts={optsCRVIndiv} onChange={selecionarCRVIndiv} />
+              <FiltroSelect label="RCA" value={filtroRCA?.codigo ?? ''} opts={optsRCAIndiv} onChange={selecionarRCAIndiv} />
+              <FiltroSelect label="Cliente" value={filtroClienteNumerica} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
+              {(filtroGGV || filtroCRV || filtroRCA || filtroClienteNumerica) && (
+                <button className="text-xs text-primary hover:underline pb-2.5" onClick={() => { voltarPara('ggv'); setFiltroClienteNumerica('') }}>
+                  Limpar filtros
+                </button>
+              )}
+            </div>
+            {/* Numérica não tem GGV/CRV/RCA em "abas" — o filtro acima já
+                estreita a lista abaixo direto no backend. ehNumerica fica
+                sempre false aqui (depende de vinculoAtivo, que este modo
+                não tem) — já estamos dentro do branch combinado_numerica,
+                então não precisa checar de novo. */}
+            {periodoSelecionadoNum && (
               <p className="text-xs text-muted-foreground">
                 Apura desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)} (bimestre móvel)
               </p>
