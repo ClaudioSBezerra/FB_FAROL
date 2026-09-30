@@ -409,7 +409,7 @@ function FiltroSelect({ label, value, onChange, opts }: {
     <div className="space-y-1">
       <label className="text-xs font-medium">{label}</label>
       <SearchableCombobox
-        className="w-48 uppercase"
+        className="w-64 uppercase"
         placeholder="Todos"
         searchPlaceholder="Código ou nome..."
         emptyText="Nada encontrado."

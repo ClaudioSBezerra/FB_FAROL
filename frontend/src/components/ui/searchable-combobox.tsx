@@ -47,7 +47,13 @@ export function SearchableCombobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="p-0" style={{ width: 'var(--radix-popover-trigger-width)' }}>
+      {/* minWidth em vez de só width=trigger-width (achado real 2026-09-30:
+          gatilhos estreitos tipo w-48 forçavam o popover igualmente
+          estreito, e o texto de cada opção — sem truncamento — quebrava em
+          3-4 linhas dentro dele, ficando impossível ver onde a busca parou
+          e onde começa o nome do resultado). Nunca mais estreito que o
+          gatilho, mas livre pra crescer até um tamanho legível. */}
+      <PopoverContent className="p-0" style={{ minWidth: 'max(var(--radix-popover-trigger-width), 20rem)' }}>
         <Command>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
@@ -59,8 +65,8 @@ export function SearchableCombobox({
                   value={opt.label}
                   onSelect={() => { onChange(opt.value); setOpen(false) }}
                 >
-                  <Check className={cn('mr-2 h-4 w-4', value === opt.value ? 'opacity-100' : 'opacity-0')} />
-                  {opt.label}
+                  <Check className={cn('mr-2 h-4 w-4 shrink-0', value === opt.value ? 'opacity-100' : 'opacity-0')} />
+                  <span className="truncate">{opt.label}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
