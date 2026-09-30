@@ -450,11 +450,20 @@ export default function FarolPainelMetas() {
   const [filtroCRV, setFiltroCRV] = useState<{ codigo: string; nome: string } | null>(null)
   const [filtroRCA, setFiltroRCA] = useState<{ codigo: string; nome: string } | null>(null)
   const [redeAberta, setRedeAberta] = useState<RealizadoRede | null>(null) // nível 5 (CNPJ) — Rede escolhida
+  // filtroClienteNumerica — achado real 2026-09-30 (Claudio: "ao filtrar
+  // por Cliente não traz nada"): o filtro "Cliente" reaproveitava
+  // selecionarRedeIndiv, que abre `redeAberta` (drill Rede→lojas). Pra
+  // Numérica isso sempre vinha vazio (RealizadoRede.Clientes não é mais
+  // populado pelo backend por performance, ver farol_metas_calculo_numerica.go)
+  // — o Cliente selecionado JÁ É o nível final, não existe "loja dentro
+  // dele" pra abrir. Em vez de drill, filtra a própria lista de nível
+  // 'rede' pra só aquele CNPJ.
+  const [filtroClienteNumerica, setFiltroClienteNumerica] = useState('')
 
   // Ao trocar de Indústria/Vigência/Fluxo, o drill-down perdido de propósito
   // (senão um filtro de GGV ficaria "grudado" ao trocar de programa).
   useEffect(() => {
-    setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null)
+    setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica('')
     setNivel(landingNivelPorPersona(tipoPersona))
   }, [industriaID, tipoPersona])
 
@@ -464,9 +473,9 @@ export default function FarolPainelMetas() {
     else if (nivel === 'rca') { setFiltroRCA({ codigo, nome }); setNivel('rede') }
   }
   const voltarPara = (destino: 'ggv' | 'crv' | 'rca') => {
-    if (destino === 'ggv') { setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('ggv') }
-    else if (destino === 'crv') { setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('crv') }
-    else if (destino === 'rca') { setFiltroRCA(null); setRedeAberta(null); setNivel('rca') }
+    if (destino === 'ggv') { setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('ggv') }
+    else if (destino === 'crv') { setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('crv') }
+    else if (destino === 'rca') { setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('rca') }
   }
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
@@ -635,21 +644,29 @@ export default function FarolPainelMetas() {
   // Selecionar direto pelo select pula pro próximo nível, igual abrirGrupo
   // já faz ao clicar numa linha — mantém nivel e filtro sempre "casados".
   const selecionarGGVIndiv = (v: string) => {
-    if (!v) { setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('ggv'); return }
+    if (!v) { setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('ggv'); return }
     const nome = todasRedesIndiv.find(r => r.cod_ggv === v)?.nome_ggv ?? v
-    setFiltroGGV({ codigo: v, nome }); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel('crv')
+    setFiltroGGV({ codigo: v, nome }); setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('crv')
   }
   const selecionarCRVIndiv = (v: string) => {
-    if (!v) { setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setNivel(filtroGGV ? 'crv' : 'ggv'); return }
+    if (!v) { setFiltroCRV(null); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel(filtroGGV ? 'crv' : 'ggv'); return }
     const nome = todasRedesIndiv.find(r => r.cod_crv === v)?.nome_crv ?? v
-    setFiltroCRV({ codigo: v, nome }); setFiltroRCA(null); setRedeAberta(null); setNivel('rca')
+    setFiltroCRV({ codigo: v, nome }); setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('rca')
   }
   const selecionarRCAIndiv = (v: string) => {
-    if (!v) { setFiltroRCA(null); setRedeAberta(null); setNivel(filtroCRV ? 'rca' : filtroGGV ? 'crv' : 'ggv'); return }
+    if (!v) { setFiltroRCA(null); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel(filtroCRV ? 'rca' : filtroGGV ? 'crv' : 'ggv'); return }
     const nome = todasRedesIndiv.find(r => r.cod_rca === v)?.nome_rca ?? v
-    setFiltroRCA({ codigo: v, nome }); setRedeAberta(null); setNivel('rede')
+    setFiltroRCA({ codigo: v, nome }); setRedeAberta(null); setFiltroClienteNumerica(''); setNivel('rede')
   }
   const selecionarRedeIndiv = (v: string) => {
+    if (ehNumerica) {
+      // Cliente já é o nível final na Numérica — filtra a lista em vez de
+      // tentar abrir um drill que não existe (ver comentário de
+      // filtroClienteNumerica acima).
+      setFiltroClienteNumerica(v)
+      if (v) setNivel('rede')
+      return
+    }
     if (!v) { setRedeAberta(null); return }
     const rede = todasRedesIndiv.find(r => r.cod_princ === v)
     if (rede) { setNivel('rede'); setRedeAberta(rede) }
@@ -967,7 +984,9 @@ export default function FarolPainelMetas() {
         nome: c.fantasia || c.razao || c.cnpj, sub: c.cnpj, valor: c.valor, marcador: undefined as boolean | undefined, drill: undefined as (() => void) | undefined,
       }))
     : nivel === 'rede'
-    ? [...(painel?.realizado.redes ?? [])].sort((x, y) => ((y as { valor_total?: number }).valor_total ?? y.valor) - ((x as { valor_total?: number }).valor_total ?? x.valor)).map(r => ({
+    ? [...(painel?.realizado.redes ?? [])]
+        .filter(r => !ehNumerica || !filtroClienteNumerica || r.cod_princ === filtroClienteNumerica)
+        .sort((x, y) => ((y as { valor_total?: number }).valor_total ?? y.valor) - ((x as { valor_total?: number }).valor_total ?? x.valor)).map(r => ({
         // Qt de lojas AO LADO do nome da Rede (pedido do Claudio em
         // 10/09/2026) — RCA fica isolado no "sub", sem misturar os dois.
         // Numérica não mostra "(N loja)" (sempre 1) nem abre drill (o
@@ -1041,7 +1060,7 @@ export default function FarolPainelMetas() {
               // state do modo individual) mas não tem os controles na
               // tela pra trocar — zera ao entrar/sair pra não herdar um
               // filtro escolhido antes sem querer.
-              setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null)
+              setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null); setFiltroClienteNumerica('')
             }}>
               <SelectTrigger className="w-64 uppercase"><SelectValue /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
@@ -1583,9 +1602,9 @@ export default function FarolPainelMetas() {
             <FiltroSelect label="GGV" value={filtroGGV?.codigo ?? ''} opts={optsGGVIndiv} onChange={selecionarGGVIndiv} />
             <FiltroSelect label="Supervisor (CRV)" value={filtroCRV?.codigo ?? ''} opts={optsCRVIndiv} onChange={selecionarCRVIndiv} />
             <FiltroSelect label="RCA" value={filtroRCA?.codigo ?? ''} opts={optsRCAIndiv} onChange={selecionarRCAIndiv} />
-            <FiltroSelect label={ehNumerica ? 'Cliente' : 'Rede'} value={redeAberta?.cod_princ ?? ''} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
-            {(filtroGGV || filtroCRV || filtroRCA || redeAberta) && (
-              <button className="text-xs text-primary hover:underline pb-2.5" onClick={() => voltarPara('ggv')}>
+            <FiltroSelect label={ehNumerica ? 'Cliente' : 'Rede'} value={ehNumerica ? filtroClienteNumerica : (redeAberta?.cod_princ ?? '')} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
+            {(filtroGGV || filtroCRV || filtroRCA || redeAberta || filtroClienteNumerica) && (
+              <button className="text-xs text-primary hover:underline pb-2.5" onClick={() => { voltarPara('ggv'); setFiltroClienteNumerica('') }}>
                 Limpar filtros
               </button>
             )}
