@@ -170,11 +170,16 @@ func calcularSortimentoNumericaPPA(db *sql.DB, empresaID string, clientes []clie
 	for _, c := range elegiveis {
 		qtdPPAs := contarPPAsPositivados(linhasPorCliente[c.CNPJ], ppaDoCodProd, teto)
 		atingiu := qtdPPAs >= teto
+		// TeveCompra: qualquer produto desta Indústria no período, não só
+		// produto da lista de PPAs — linhasPorCliente já vem de
+		// qtdPorCodProdClientesNumerica sem filtro de PPA (só cod_prod <>
+		// ''), então "tem alguma linha" já é exatamente essa pergunta.
+		teveCompra := len(linhasPorCliente[c.CNPJ]) > 0
 		self := RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdPPAs, Atingiu: atingiu, Objetivo: teto}
 		out = append(out, RealizadoRede{
 			CodPrinc: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
-			Valor: qtdPPAs, Objetivo: teto, Atingiu: atingiu,
+			Valor: qtdPPAs, Objetivo: teto, Atingiu: atingiu, TeveCompra: teveCompra,
 			Clientes: []RealizadoCliente{self},
 		})
 	}

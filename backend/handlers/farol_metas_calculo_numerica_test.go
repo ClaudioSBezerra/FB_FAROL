@@ -165,6 +165,53 @@ func TestCalcularRealizado_SortimentoNumericaPPA_SoClassificacaoAeB(t *testing.T
 	}
 }
 
+// TestCalcularRealizado_SortimentoNumericaPPA_DenominadorMediaComCompra
+// cobre a Questão em aberto #2 do PRD, decisão provisória do Claudio
+// (30/09/2026): a média de PPA divide pelos clientes elegíveis (A/B) que
+// tiveram QUALQUER compra da Indústria no bimestre — nem só quem comprou
+// PPA da lista, nem todos os elegíveis mesmo sem nenhuma compra.
+func TestCalcularRealizado_SortimentoNumericaPPA_DenominadorMediaComCompra(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TNUM Denominador", "sortimento_numerica_ppa", "cliente",
+		[]ParametroSchemaDTO{{Key: "teto_ppas", Label: "Teto PPAs", Type: "integer"}},
+		map[string]any{"teto_ppas": 5.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-09-01", "2026-09-30")
+
+	cliPPA, cliNaoPPA, cliNada := "20000000000501", "20000000000502", "20000000000503"
+	t.Cleanup(func() { limparVendasFaturadasFixture(t, empresaID, []string{cliPPA, cliNaoPPA, cliNada}) })
+
+	inserirClienteNumericaFixture(t, empresaID, vinculoID, vigenciaID, cliPPA, "Num. A")
+	inserirClienteNumericaFixture(t, empresaID, vinculoID, vigenciaID, cliNaoPPA, "Num. B")
+	inserirClienteNumericaFixture(t, empresaID, vinculoID, vigenciaID, cliNada, "Num. A") // não compra nada
+
+	inserirPPAFixture(t, empresaID, vinculoID, vigenciaID, "PROD-PPA", "SABAO EM PO")
+
+	// cliPPA compra 1 PPA da lista → Valor=1, TeveCompra=true.
+	inserirVendaFaturadaFixture(t, empresaID, cliPPA, "PROD-PPA", "TCALC-NUM-RCA", "1", 40, 5, "2026-09-05")
+	// cliNaoPPA compra algo da Indústria, mas NÃO é PPA da lista → Valor=0,
+	// TeveCompra=true (conta no denominador, dilui a média).
+	inserirVendaFaturadaFixture(t, empresaID, cliNaoPPA, "PROD-FORA-DA-LISTA", "TCALC-NUM-RCA", "1", 40, 5, "2026-09-06")
+	// cliNada não compra nada — TeveCompra=false, fica de fora do denominador.
+
+	resultado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado: %v", err)
+	}
+	if len(resultado.Redes) != 3 {
+		t.Fatalf("len(Redes) = %d, want 3 (os 3 elegíveis aparecem na lista, mesmo sem compra)", len(resultado.Redes))
+	}
+	// Soma dos Valor = 1 (só cliPPA positivou algum PPA) + 0 + 0 = 1.
+	// Denominador = 2 (cliPPA e cliNaoPPA tiveram QUALQUER compra;
+	// cliNada não teve) → RealizadoTotal = 1/2 = 0.5.
+	// Se o denominador fosse "todos elegíveis" (3): 1/3 = 0.333...
+	// Se fosse "só quem comprou PPA" (1): 1/1 = 1.0.
+	if resultado.RealizadoTotal != 0.5 {
+		t.Errorf("RealizadoTotal = %.4f, want 0.5 (1 PPA positivado / 2 clientes com QUALQUER compra — não 3 elegíveis nem 1 comprador de PPA)", resultado.RealizadoTotal)
+	}
+}
+
 // TestCalcularRealizado_Numerica_BimestreMovel cobre o FR14a: uma venda do
 // mês ANTERIOR à vigência entra na apuração (janela = mês corrente + mês
 // anterior), o que não aconteceria numa vigência 'mes_fechado' comum.

@@ -515,7 +515,7 @@ Para que eu tenha a mesma informação que teria no painel web, mesmo estando em
 
 Dois novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA"), vinculados às mesmas Indústrias FOOD/HC já existentes (Épicos 1-2, não cria Indústria nova), calculados por Cliente/CNPJ direto — sem Rede — no bimestre móvel (mês corrente + mês anterior), com listas de import próprias (Clientes Numéricas, PPAs) e exibidos dentro do painel existente (Épicos 5-6) como opção de Tipo de Métrica adicional.
 
-*(Status 30/09/2026 — documentação final do Heverton confirmada: 4 das 5 Questões em aberto resolvidas (3 respondidas pelo Carlos (JC), 1 implementada no mesmo dia como Story 7.8 — visão Faturado+Emitido); resta 1 sem resposta (denominador da média PPA, Story 7.6). Ver PRD "Questões em aberto".)*
+*(Status 30/09/2026 — documentação final do Heverton confirmada: as 5 Questões em aberto estão endereçadas (3 respondidas pelo Carlos (JC); 1 implementada no mesmo dia como Story 7.8 — visão Faturado+Emitido; 1 — denominador da média PPA, Story 7.6 — segue com DECISÃO PROVISÓRIA do Claudio, não resposta formal do Carlos, fácil de reverter). Ver PRD "Questões em aberto".)*
 
 ### Story 7.1: Tipos de Métrica "Cobertura Numérica" e "Sortimento Numérica (PPA)"
 
@@ -615,11 +615,11 @@ Para que o resultado do distribuidor inteiro seja comparado à meta de contrato,
 **Quando** configuro Faixa 3/2/1 pra Cobertura Numérica (ex: 4.870/5.681/6.493 lojas positivadas) e pra Sortimento Numérica (ex: 7,33/8,46/15 PPA pra HC; 3,11/3,59/7 PPA pra Foods)
 **Então** a apuração agregada do distribuidor compara o resultado total contra essas faixas, do mesmo jeito que já funciona pras métricas por Rede
 
-**E** o Realizado agregado de Sortimento Numérica é a média de PPAs vendidos por cliente — **divisor a confirmar** (Questão em aberto #2 do PRD: "clientes com compra" pode significar "comprou algum PPA" ou "teve qualquer venda no período"; AC final desta story trava nessa resposta)
+**E** o Realizado agregado de Sortimento Numérica é a média de PPAs vendidos por cliente — divide pelos clientes elegíveis (A/B) que tiveram QUALQUER compra da Indústria no bimestre (não só quem comprou PPA da lista, nem todos os elegíveis mesmo sem compra nenhuma)
 
 **✅ Resolvida (Carlos/JC, 30/09/2026):** as Faixas de Cobertura (4.870/5.681/6.493 lojas) são as MESMAS pra HC e Foods, cada fornecedor bate esse número de forma independente (não somado). Valores já cadastrados em DEV (29-30/09/2026) — ver commit da migration/dados de teste.
 
-**⚠ Ainda em aberto (Questão em aberto #2 do PRD):** o denominador exato da média de Sortimento/PPA ("clientes com compra") — o Carlos não entendeu a pergunta original; reformulada com exemplo numérico, aguardando resposta. Implementação atual assume "todos os clientes elegíveis" (Classificação A+B), marcado como ASSUNÇÃO em `farol_metas_calculo.go`.
+**✅ Decisão provisória tomada (Claudio, 30/09/2026):** o Carlos não entendeu a pergunta original (Questão em aberto #2 do PRD) mesmo reformulada com exemplo numérico — sem resposta dele ainda, o Claudio decidiu adotar "clientes com qualquer compra no bimestre" como denominador (não "só quem comprou PPA", nem "todos os elegíveis"), fácil de reverter se o Carlos confirmar outro. Implementado: campo `RealizadoRede.TeveCompra` (`farol_metas_calculo_numerica.go`), usado em `CalcularRealizadoComPeriodo`/`recalcularTotalDeRedes` (`farol_metas_calculo.go`). Coberto por `TestCalcularRealizado_SortimentoNumericaPPA_DenominadorMediaComCompra`.
 
 ### Story 7.7: Painel Web e Mobile — Cobertura Numérica e Sortimento Numérica
 

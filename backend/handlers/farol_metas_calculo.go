@@ -116,6 +116,14 @@ type RealizadoRede struct {
 	ValorTotal float64 `json:"valor_total"` // só Cobertura: soma (não-média) entre lojas — coluna "VALOR VENDA" do modelo V1
 	Objetivo   float64 `json:"objetivo,omitempty"` // alvo por Rede usado em Atingiu (ver RealizadoCliente.Objetivo)
 	Atingiu    bool    `json:"atingiu"`     // Cobertura: valor médio >= limiar do vínculo. Sortimento: valor médio >= maior faixa cadastrada (ver CalcularRealizadoComPeriodo)
+	// TeveCompra — só preenchido por calcularSortimentoNumericaPPA (Questão
+	// em aberto #2 do PRD, decisão provisória do Claudio 30/09/2026): true
+	// se o cliente comprou QUALQUER produto desta Indústria no período
+	// (não só produto da lista de PPAs) — usado como denominador da média
+	// de Sortimento Numérica em CalcularRealizadoComPeriodo, em vez de
+	// "todos os clientes elegíveis". Não usado por nenhum outro
+	// formula_codigo — default false é inofensivo nos demais casos.
+	TeveCompra bool `json:"teve_compra,omitempty"`
 
 	Clientes []RealizadoCliente `json:"clientes,omitempty"` // nível 5 — só populado quando o chamador pede (ver incluirClientes)
 }
@@ -319,17 +327,32 @@ func CalcularRealizadoComPeriodo(db *sql.DB, empresaID string, vinculoID, vigenc
 			}
 		}
 		resultado.RealizadoTotal = float64(count)
-	case "sortimento_rede", "sortimento_numerica_ppa":
-		// ASSUNÇÃO (Questão em aberto #2 do PRD, Story 7.6): divide pelo
-		// total de clientes elegíveis, não só "clientes com compra" — o
-		// documento-fonte da Numérica não deixa claro qual dos dois é o
-		// denominador oficial. Revisar quando a JC responder.
+	case "sortimento_rede":
 		var soma float64
 		for _, r := range redes {
 			soma += r.Valor
 		}
 		if len(redes) > 0 {
 			resultado.RealizadoTotal = soma / float64(len(redes))
+		}
+	case "sortimento_numerica_ppa":
+		// Questão em aberto #2 do PRD (Story 7.6) — decisão provisória do
+		// Claudio (30/09/2026, ainda sem confirmação formal do Carlos):
+		// divide pelos clientes elegíveis (A/B) que tiveram QUALQUER compra
+		// desta Indústria no bimestre (TeveCompra, calcularSortimentoNumericaPPA)
+		// — nem "só quem comprou PPA da lista" nem "todos os elegíveis
+		// mesmo sem nenhuma compra". Fácil reverter pra outro dos 2: trocar
+		// o filtro TeveCompra abaixo.
+		var soma float64
+		var comCompra int
+		for _, r := range redes {
+			soma += r.Valor
+			if r.TeveCompra {
+				comCompra++
+			}
+		}
+		if comCompra > 0 {
+			resultado.RealizadoTotal = soma / float64(comCompra)
 		}
 	}
 
@@ -1304,13 +1327,29 @@ func recalcularTotalDeRedes(redes []RealizadoRede, formulaCodigo string) *Realiz
 			}
 		}
 		resultado.RealizadoTotal = float64(count)
-	case "sortimento_rede", "sortimento_numerica_ppa":
+	case "sortimento_rede":
 		var soma float64
 		for _, r := range redes {
 			soma += r.Valor
 		}
 		if len(redes) > 0 {
 			resultado.RealizadoTotal = soma / float64(len(redes))
+		}
+	case "sortimento_numerica_ppa":
+		// Mesmo denominador de CalcularRealizadoComPeriodo (Questão #2, ver
+		// comentário lá) — redes aqui já vem filtrado por hierarquia/escopo
+		// (filtrarRedesPorHierarquia/filtrarRedesPorEscopo), TeveCompra
+		// sobrevive ao filtro por ser campo do próprio RealizadoRede.
+		var soma float64
+		var comCompra int
+		for _, r := range redes {
+			soma += r.Valor
+			if r.TeveCompra {
+				comCompra++
+			}
+		}
+		if comCompra > 0 {
+			resultado.RealizadoTotal = soma / float64(comCompra)
 		}
 	}
 	return resultado
