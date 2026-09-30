@@ -1677,7 +1677,7 @@ export default function FarolPainelMetas() {
                       já visível no breadcrumb acima (pedido do Claudio
                       30/09/2026: "não precisa ficar repetindo o RCA"). */}
                   {mostrarColunaRCA && <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>}
-                  <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : 'Redes atingindo'}</TableHead>
+                  <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : ehNumerica ? 'Clientes atingindo' : 'Redes atingindo'}</TableHead>
                   {(nivel === 'rede' || redeAberta) && !redeAberta && <TableHead className="w-24 text-center">Status</TableHead>}
                   {podeAbrirLinha && <TableHead className="w-10" />}
                 </TableRow>
