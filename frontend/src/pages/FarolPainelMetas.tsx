@@ -298,6 +298,16 @@ const FLUXOS_NUMERICA = [
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
+// mesAnterior — só pra exibição do aviso de bimestre móvel (Numérica):
+// assume vigência mês-alinhada (data_inicio = dia 1), mesma premissa do
+// backend (CalcularRealizadoComPeriodo). Formata "AAAA-MM" pra não
+// inventar um dia-1 que confunda com data exata.
+function mesAnterior(dataInicioISO: string): string {
+  const d = new Date(dataInicioISO + 'T00:00:00')
+  d.setMonth(d.getMonth() - 1)
+  return d.toISOString().slice(0, 7)
+}
+
 // StatusBadge — ✓ verde (atingido) / ✗ vermelho (não atingido). Pedido do
 // Heverton 25/09/2026 (mesmo padrão do painel mobile): símbolo no lugar do
 // descritivo "Coberta"/"Não coberta". Os rótulos ficam como texto de
@@ -503,6 +513,7 @@ export default function FarolPainelMetas() {
     },
     enabled: metrica !== 'combinado' && !!vinculoAtivo,
   })
+  const vigenciaSelecionada = vigencias.find(v => String(v.id) === vigenciaID)
 
   // Auto-seleciona a vigência VIGENTE (aberta) assim que a lista chega —
   // é sempre isso que o usuário quer ver primeiro (pedido do Claudio
@@ -957,6 +968,16 @@ export default function FarolPainelMetas() {
                 ))}
               </SelectContent>
             </Select>
+            {/* Numérica apura em bimestre móvel (FR14a) — a vigência
+                cadastrada mostra só o mês "de referência" (ex: Setembro),
+                mas o cálculo soma desde o mês anterior também. Sem essa
+                nota a tela parece contradizer o Realizado (pedido do
+                Claudio 30/09/2026: "o código da vigência está estranho"). */}
+            {ehNumerica && vigenciaSelecionada && (
+              <p className="text-xs text-muted-foreground normal-case">
+                Apura desde {mesAnterior(vigenciaSelecionada.data_inicio)} (bimestre móvel)
+              </p>
+            )}
           </div>
         )}
         {metrica !== 'combinado' && (

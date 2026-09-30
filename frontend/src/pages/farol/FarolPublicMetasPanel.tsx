@@ -182,6 +182,14 @@ const FLUXOS_NUMERICA = [
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
+// mesAnterior — mesmo helper do painel web (FarolPainelMetas.tsx), só pra
+// exibir o aviso de bimestre móvel da Numérica.
+function mesAnterior(dataInicioISO: string): string {
+  const d = new Date(dataInicioISO + 'T00:00:00')
+  d.setMonth(d.getMonth() - 1)
+  return d.toISOString().slice(0, 7)
+}
+
 // ─── ChipRow — seleção por toque (pedido do Claudio 11/09/2026: "se possível
 // ele tocar em vez de filtrar, tem que ser seleção touch") — substitui os
 // <select> nativos, ruins de mirar com o dedo e que escondem as opções atrás
@@ -731,12 +739,21 @@ export default function FarolPublicMetasPanel() {
           />
         )}
         {industriaSelecionada && metrica !== 'combinado' && (
-          <ChipRow
-            label="Período"
-            options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
-            value={vigenciaID}
-            onChange={v => { setVigenciaID(v); fecharDrillDown() }}
-          />
+          <>
+            <ChipRow
+              label="Período"
+              options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
+              value={vigenciaID}
+              onChange={v => { setVigenciaID(v); fecharDrillDown() }}
+            />
+            {/* Numérica apura em bimestre móvel (FR14a) — mesmo aviso do
+                painel web (pedido do Claudio 30/09/2026). */}
+            {ehNumerica && vigencias.find(v => String(v.id) === vigenciaID) && (
+              <p className="text-xs text-muted-foreground px-1">
+                Apura desde {mesAnterior(vigencias.find(v => String(v.id) === vigenciaID)!.data_inicio)} (bimestre móvel)
+              </p>
+            )}
+          </>
         )}
         {industriaSelecionada && (
           <ChipRow
