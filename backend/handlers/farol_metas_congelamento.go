@@ -44,6 +44,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // obterOuCongelarRealizado é o ponto de entrada real do endpoint de leitura
@@ -79,7 +80,16 @@ func obterOuCalcularRecorte(db *sql.DB, empresaID string, vinculoID, vigenciaID 
 // gravada (vigencia_id, fluxo, nivel, recorte); no miss, calcula ao vivo e
 // grava (auto-cura — cobre o primeiro acesso do dia, antes do prewarm
 // rodar, e qualquer vínculo/vigência novo que o prewarm ainda não viu).
+// Log de hit/miss + duração — pedido do Claudio 30/09/2026 ("não está
+// mapeado pra você mapear os logs destes painéis"): antes só o motor de
+// CÁLCULO (CalcularRealizadoComPeriodo) logava tempo; a LEITURA (este
+// ponto central, usado por TODA tela — web/mobile, individual/Combinado,
+// Rede/Numérica) não logava nada, então um snapshot HIT (rápido, devia
+// ser) e um MISS/auto-cura (caro, varre vendas de novo) ficavam
+// indistinguíveis no log — impossível diagnosticar lentidão percebida sem
+// saber qual dos dois está acontecendo.
 func obterOuCalcularSnapshot(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, nivel, recorte, dataInicioOverride, dataFimOverride, motivoAutomatico string) (*RealizadoResultado, error) {
+	t0 := time.Now()
 	var raw []byte
 	err := db.QueryRow(`
 		SELECT resultado_json FROM farol.metas_realizados_snapshot
@@ -90,6 +100,8 @@ func obterOuCalcularSnapshot(db *sql.DB, empresaID string, vinculoID, vigenciaID
 		if jerr := json.Unmarshal(raw, &resultado); jerr != nil {
 			return nil, jerr
 		}
+		log.Printf("[farol:objetivos] obterOuCalcularSnapshot HIT vinculo=%d vigencia=%d fluxo=%s nivel=%s recorte=%q em %v",
+			vinculoID, vigenciaID, fluxo, nivel, recorte, time.Since(t0))
 		return &resultado, nil
 	}
 	if err != sql.ErrNoRows {
@@ -103,6 +115,8 @@ func obterOuCalcularSnapshot(db *sql.DB, empresaID string, vinculoID, vigenciaID
 	if serr := salvarSnapshot(db, empresaID, vinculoID, vigenciaID, fluxo, nivel, recorte, resultado, motivoAutomatico); serr != nil {
 		log.Printf("MetasCongelamento: falha ao gravar snapshot (vinculo=%d vigencia=%d recorte=%q): %v", vinculoID, vigenciaID, recorte, serr)
 	}
+	log.Printf("[farol:objetivos] obterOuCalcularSnapshot MISS (auto-cura) vinculo=%d vigencia=%d fluxo=%s nivel=%s recorte=%q em %v",
+		vinculoID, vigenciaID, fluxo, nivel, recorte, time.Since(t0))
 	return resultado, nil
 }
 

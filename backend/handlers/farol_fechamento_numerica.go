@@ -281,6 +281,11 @@ func FechamentoNumericaComparativoHandler(db *sql.DB) http.HandlerFunc {
 // (farol_fechamento_comercial.go), trocando cod_princ por CNPJ e
 // cobertura_rede/sortimento_rede por cobertura_numerica/sortimento_numerica_ppa.
 func gerarComparativoFechamentoNumerica(db *sql.DB, empresaID string, industriaID int, dataInicio, dataFim string) ([]comparativoNumericaLinha, error) {
+	t0 := time.Now()
+	defer func() {
+		log.Printf("[farol:objetivos] gerarComparativoFechamentoNumerica industria=%d período=[%s..%s] em %v",
+			industriaID, dataInicio, dataFim, time.Since(t0))
+	}()
 	var vinculoCobID, vigenciaCobID sql.NullInt64
 	var vinculoSortID, vigenciaSortID sql.NullInt64
 	_ = db.QueryRow(`

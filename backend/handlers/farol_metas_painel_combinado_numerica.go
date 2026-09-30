@@ -18,10 +18,12 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // PainelCombinadoNumericaCliente — 1 linha por CNPJ, Cobertura+Sortimento
@@ -70,6 +72,11 @@ type PainelCombinadoNumericaResponse struct {
 // calcularPainelCombinadoNumerica — mesmo racional de calcularPainelCombinado,
 // simplificado pro grão único (Cliente/CNPJ) da Numérica.
 func calcularPainelCombinadoNumerica(db *sql.DB, empresaID string, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID int, fluxo, dataInicioOverride, dataFimOverride string) (*PainelCombinadoNumericaResponse, error) {
+	t0 := time.Now()
+	defer func() {
+		log.Printf("[farol:objetivos] calcularPainelCombinadoNumerica vinculoCob=%d vinculoSort=%d fluxo=%s em %v",
+			vinculoCoberturaID, vinculoSortimentoID, fluxo, time.Since(t0))
+	}()
 	var industriaNome string
 	var vig PainelVigencia
 	vig.ID = vigenciaCoberturaID

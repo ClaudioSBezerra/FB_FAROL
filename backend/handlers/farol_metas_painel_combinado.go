@@ -90,7 +90,7 @@ type PainelCombinadoCliente struct {
 	CNPJ               string  `json:"cnpj"`
 	Razao              string  `json:"razao"`
 	Fantasia           string  `json:"fantasia"`
-	UF                 string  `json:"uf"` // ver PainelCombinadoRede.UF — aqui é exato (o CNPJ do próprio cliente, não um "dono" aproximado)
+	UF                 string  `json:"uf"`                           // ver PainelCombinadoRede.UF — aqui é exato (o CNPJ do próprio cliente, não um "dono" aproximado)
 	DataUltimaCompra   string  `json:"data_ultima_compra,omitempty"` // ver RealizadoCliente.DataUltimaCompra
 	CodCli             string  `json:"cod_cli,omitempty"`            // ver RealizadoCliente.CodCli
 	CodGGV             string  `json:"cod_ggv"`
@@ -492,6 +492,11 @@ func faltaOuZero(objetivo, valor float64) float64 {
 // mais importante, pra não bypassar o congelamento de um mês FECHADO só
 // porque o front preencheu as datas por padrão com os mesmos bounds).
 func calcularPainelCombinado(db *sql.DB, empresaID string, vinculoCoberturaID, vigenciaCoberturaID, vinculoSortimentoID, vigenciaSortimentoID int, fluxo, dataInicioOverride, dataFimOverride string) (*PainelCombinadoResponse, error) {
+	t0 := time.Now()
+	defer func() {
+		log.Printf("[farol:objetivos] calcularPainelCombinado vinculoCob=%d vinculoSort=%d fluxo=%s em %v",
+			vinculoCoberturaID, vinculoSortimentoID, fluxo, time.Since(t0))
+	}()
 	var industriaNome string
 	var vig PainelVigencia
 	vig.ID = vigenciaCoberturaID
