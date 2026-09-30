@@ -1326,7 +1326,7 @@ export default function FarolPainelMetas() {
             <FiltroSelect label="GGV" value={filtroGGV?.codigo ?? ''} opts={optsGGVIndiv} onChange={selecionarGGVIndiv} />
             <FiltroSelect label="Supervisor (CRV)" value={filtroCRV?.codigo ?? ''} opts={optsCRVIndiv} onChange={selecionarCRVIndiv} />
             <FiltroSelect label="RCA" value={filtroRCA?.codigo ?? ''} opts={optsRCAIndiv} onChange={selecionarRCAIndiv} />
-            <FiltroSelect label="Rede" value={redeAberta?.cod_princ ?? ''} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
+            <FiltroSelect label={ehNumerica ? 'Cliente' : 'Rede'} value={redeAberta?.cod_princ ?? ''} opts={optsRedeIndiv} onChange={selecionarRedeIndiv} />
             {(filtroGGV || filtroCRV || filtroRCA || redeAberta) && (
               <button className="text-xs text-primary hover:underline pb-2.5" onClick={() => voltarPara('ggv')}>
                 Limpar filtros

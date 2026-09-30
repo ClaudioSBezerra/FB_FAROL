@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, Download, FileUp, Scale, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileUp, Info, Scale, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -49,6 +49,12 @@ interface ComparativoLinha {
   ppas_farol: number
   diferenca_ppas: number
   status: 'OK' | 'DIVERGE' | 'SO_EXTERNO' | 'SO_FAROL'
+  // cod_cli_divergente — achado real 2026-09-30: o CNPJ tem venda no
+  // bimestre lançada sob um COD CLI diferente do cadastrado (recadastro no
+  // WinThor que o fechamento do fornecedor não acompanha) — explica boa
+  // parte das divergências sem ser erro do Farol, ver farol_fechamento_numerica.go.
+  cod_cli_divergente: boolean
+  cod_cli_vistos?: string[]
 }
 
 const RESUMO_NUMERICA_COLS: { field: string; candidates: string[] }[] = [
@@ -272,13 +278,14 @@ export default function FarolComparativoFechamentoNumerica() {
     const l = linhas ?? []
     const t = {
       valorExt: 0, valorFarol: 0, ppasExt: 0, ppasFarol: 0,
-      ok: 0, diverge: 0, soExterno: 0, soFarol: 0,
+      ok: 0, diverge: 0, soExterno: 0, soFarol: 0, codCliDivergente: 0,
     }
     for (const r of l) {
       t.valorExt += r.valor_venda_externo
       t.valorFarol += r.valor_venda_farol
       t.ppasExt += r.ppas_externo
       t.ppasFarol += r.ppas_farol
+      if (r.cod_cli_divergente) t.codCliDivergente++
       if (r.status === 'OK') t.ok++
       else if (r.status === 'DIVERGE') t.diverge++
       else if (r.status === 'SO_EXTERNO') t.soExterno++
@@ -299,6 +306,7 @@ export default function FarolComparativoFechamentoNumerica() {
         'Diferença R$': l.diferenca_valor, 'Diferença %': l.diferenca_valor_pct,
         'Qt PPAs (Fechamento)': l.ppas_externo, 'Qt PPAs (Farol)': l.ppas_farol, 'Diferença PPAs': l.diferenca_ppas,
         Status: seloStatus(l.status).texto,
+        'Cód. Cliente Divergente': l.cod_cli_divergente ? `Sim (${(l.cod_cli_vistos ?? []).join(', ')})` : 'Não',
       })),
       `Comparativo_Fechamento_Numerica_${industriaNome}_${dataInicio}_a_${dataFim}`,
       'Comparativo',
@@ -381,6 +389,7 @@ export default function FarolComparativoFechamentoNumerica() {
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-xs text-slate-500">
               {linhas.length} cliente(s) · {totais.ok} OK · {totais.diverge} divergência(s) · {totais.soExterno + totais.soFarol} órfã(s)
+              {totais.codCliDivergente > 0 && <> · {totais.codCliDivergente} com Cód. Cliente divergente (provável recadastro no WinThor)</>}
             </span>
           </div>
 
@@ -416,7 +425,7 @@ export default function FarolComparativoFechamentoNumerica() {
                     <th className="px-4 py-3 font-medium">CNPJ</th>
                     <th className="px-4 py-3 font-medium">Razão / Fantasia</th>
                     <th className="px-4 py-3 font-medium">Classif.</th>
-                    <th className="px-4 py-3 font-medium">GGV</th>
+                    <th className="px-4 py-3 font-medium">GGV / CRV / RCA</th>
                     <th className="px-4 py-3 font-medium text-right">Valor Venda (Fech.)</th>
                     <th className="px-4 py-3 font-medium text-right">Valor Venda (Farol)</th>
                     <th className="px-4 py-3 font-medium text-right">Dif. %</th>
@@ -435,21 +444,36 @@ export default function FarolComparativoFechamentoNumerica() {
                       <tr key={l.cnpj} className={`hover:bg-slate-50 ${linhaFundo(l.status)}`}>
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-600 whitespace-nowrap">{formatCNPJ(l.cnpj)}</td>
                         <td className="px-4 py-2.5 text-slate-900">
-                          <div>{l.razao || '—'}</div>
+                          <div>{l.cod_cl ? `${l.cod_cl} — ` : ''}{l.razao || '—'}</div>
                           {l.fantasia && l.fantasia !== l.razao && <div className="text-xs text-slate-400">{l.fantasia}</div>}
                         </td>
                         <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{l.classificacao_pdv || '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{l.cod_ggv} — {l.nome_ggv}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                          <div>{l.cod_ggv} — {l.nome_ggv}</div>
+                          <div className="text-slate-400">{l.cod_crv} — {l.nome_crv}</div>
+                          <div className="text-slate-400">{l.cod_rca} — {l.nome_rca}</div>
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-900">{fmtBRL(l.valor_venda_externo)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtBRL(l.valor_venda_farol)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_valor_pct)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-900">{fmtNum(l.ppas_externo)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtNum(l.ppas_farol)}</td>
                         <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${selo.classe}`}>
-                            {l.status === 'OK' && <CheckCircle2 className="h-3 w-3" />}
-                            {selo.texto}
-                          </span>
+                          <div className="flex flex-col items-start gap-1">
+                            <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${selo.classe}`}>
+                              {l.status === 'OK' && <CheckCircle2 className="h-3 w-3" />}
+                              {selo.texto}
+                            </span>
+                            {l.cod_cli_divergente && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                                title={`Cliente tem venda no período lançada sob COD CLI diferente do cadastrado (${l.cod_cl}): ${(l.cod_cli_vistos ?? []).join(', ')}. Provável recadastro no WinThor não refletido no arquivo do fornecedor — não é erro do Farol.`}
+                              >
+                                <Info className="h-3 w-3" />
+                                Cód. Cliente divergente
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )

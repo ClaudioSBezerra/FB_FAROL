@@ -32,6 +32,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/lib/pq"
 )
 
 type fechamentoNumericaRow struct {
@@ -231,6 +234,16 @@ type comparativoNumericaLinha struct {
 	PpasFarol        float64 `json:"ppas_farol"`
 	DiferencaPpas    float64 `json:"diferenca_ppas"`
 	Status           string  `json:"status"` // OK | DIVERGE | SO_EXTERNO | SO_FAROL
+	// CodCliDivergente — achado real 2026-09-30: o CNPJ tem venda no
+	// bimestre lançada sob um COD CLI diferente do cadastrado em
+	// metas_clientes_numericas (recadastro no WinThor que o arquivo do
+	// fornecedor não acompanhou). Não é bug do Farol — o Farol soma por
+	// CNPJ (FR24, sem conceito de Rede/dono na Numérica), então captura a
+	// venda certa; o fechamento do fornecedor, se junta por código de
+	// cliente, fica cego pra ela. Só um indicador informativo, não muda o
+	// Status (que continua OK/DIVERGE pela diferença de valor).
+	CodCliDivergente bool     `json:"cod_cli_divergente"`
+	CodCliVistos     []string `json:"cod_cli_vistos,omitempty"` // outros COD CLI vistos nas vendas, além do cadastrado
 }
 
 // FechamentoNumericaComparativoHandler — GET .../fechamento-numerica-comparativo?industria_id=&data_inicio=&data_fim=
@@ -306,6 +319,16 @@ func gerarComparativoFechamentoNumerica(db *sql.DB, empresaID string, industriaI
 		}
 	}
 
+	vinculoCadastroID := vinculoCobID
+	if !vinculoCadastroID.Valid {
+		vinculoCadastroID = vinculoSortID
+	}
+	codCliVistosPorCnpj, err := calcularCodCliDivergentes(db, empresaID, industriaID, int(vinculoCadastroID.Int64), dataInicio, dataFim)
+	if err != nil {
+		// Diagnóstico informativo — não trava o comparativo se falhar.
+		codCliVistosPorCnpj = map[string][]string{}
+	}
+
 	rows, err := db.Query(`
 		SELECT cnpj, cod_cl, classificacao_pdv, razao, fantasia, valor_venda, qt_ppas_vendidos,
 		       cod_ggv, nome_ggv, cod_crv, nome_crv, cod_rca, nome_rca
@@ -360,6 +383,10 @@ func gerarComparativoFechamentoNumerica(db *sql.DB, empresaID string, industriaI
 				l.CodGGV, l.NomeGGV, l.CodCRV, l.NomeCRV, l.CodRCA, l.NomeRCA = sort_.CodGGV, sort_.NomeGGV, sort_.CodCRV, sort_.NomeCRV, sort_.CodRCA, sort_.NomeRCA
 			}
 		}
+		if codigos, ok := codCliVistosPorCnpj[cnpj]; ok && len(codigos) > 0 {
+			l.CodCliDivergente = true
+			l.CodCliVistos = codigos
+		}
 		temFarol := temCob || temSort
 		l.DiferencaValor = l.ValorVendaFarol - l.ValorVendaExt
 		if l.ValorVendaExt != 0 {
@@ -397,4 +424,71 @@ func gerarComparativoFechamentoNumerica(db *sql.DB, empresaID string, industriaI
 	})
 
 	return out, nil
+}
+
+// calcularCodCliDivergentes — achado real 2026-09-30 (ver comentário de
+// CodCliDivergente acima): alguns CNPJs têm venda no bimestre lançada sob
+// um COD CLI diferente do cadastrado em metas_clientes_numericas — recadastro
+// no WinThor que o arquivo de Fechamento do fornecedor (que junta por código
+// de cliente) não acompanha. Devolve, por CNPJ, a lista de COD CLI vistos
+// nas vendas que NÃO batem com o cadastrado — vazio/ausente = sem divergência.
+//
+// Usa a MESMA janela (bimestre móvel, se aplicável) que o motor de cálculo
+// oficial usa (CalcularRealizadoComPeriodo) — senão o diagnóstico compararia
+// períodos diferentes do que realmente foi apurado.
+func calcularCodCliDivergentes(db *sql.DB, empresaID string, industriaID, vinculoCadastroID int, dataInicio, dataFim string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if vinculoCadastroID == 0 {
+		return out, nil
+	}
+
+	var janelaApuracao string
+	if err := db.QueryRow(`
+		SELECT tm.janela_apuracao FROM farol.metas_vinculos mv
+		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
+		WHERE mv.id = $1 AND mv.empresa_id = $2
+	`, vinculoCadastroID, empresaID).Scan(&janelaApuracao); err != nil {
+		return out, err
+	}
+	dataInicioJanela := dataInicio
+	if janelaApuracao == "bimestre_movel" {
+		if inicio, perr := time.Parse("2006-01-02", dataInicio); perr == nil {
+			dataInicioJanela = inicio.AddDate(0, -1, 0).Format("2006-01-02")
+		}
+	}
+
+	codFornec, err := codFornecDaIndustria(db, empresaID, industriaID)
+	if err != nil {
+		return out, err
+	}
+
+	query := `
+		SELECT c.cnpj, array_agg(DISTINCT v.cod_cli)
+		FROM farol.metas_clientes_numericas c
+		JOIN vendas_faturadas v ON v.cnpj = c.cnpj AND v.empresa_id = c.empresa_id
+		WHERE c.vinculo_id = $1 AND c.empresa_id = $2
+		  AND v.data_faturamento BETWEEN $3 AND $4
+		  AND v.cod_cli <> '' AND v.cod_cli <> c.cod_cl
+	`
+	args := []any{vinculoCadastroID, empresaID, dataInicioJanela, dataFim}
+	if len(codFornec) > 0 {
+		query += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args)+1)
+		args = append(args, pq.Array(codFornec))
+	}
+	query += " GROUP BY c.cnpj"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cnpj string
+		var codigos pq.StringArray
+		if err := rows.Scan(&cnpj, &codigos); err != nil {
+			return out, err
+		}
+		out[cnpj] = []string(codigos)
+	}
+	return out, rows.Err()
 }

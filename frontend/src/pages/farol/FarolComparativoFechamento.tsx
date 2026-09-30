@@ -444,7 +444,7 @@ export default function FarolComparativoFechamento() {
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3 font-medium">Cód. Princ.</th>
                     <th className="px-4 py-3 font-medium">Razão / Fantasia</th>
-                    <th className="px-4 py-3 font-medium">GGV</th>
+                    <th className="px-4 py-3 font-medium">GGV / CRV / RCA</th>
                     <th className="px-4 py-3 font-medium text-right">Valor Venda (Fech.)</th>
                     <th className="px-4 py-3 font-medium text-right">Valor Venda (Farol)</th>
                     <th className="px-4 py-3 font-medium text-right">Dif. %</th>
@@ -466,7 +466,11 @@ export default function FarolComparativoFechamento() {
                           <div>{l.razao || '—'}</div>
                           {l.fantasia && l.fantasia !== l.razao && <div className="text-xs text-slate-400">{l.fantasia}</div>}
                         </td>
-                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{l.cod_ggv} — {l.nome_ggv}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                          <div>{l.cod_ggv} — {l.nome_ggv}</div>
+                          <div className="text-slate-400">{l.cod_crv} — {l.nome_crv}</div>
+                          <div className="text-slate-400">{l.cod_rca} — {l.nome_rca}</div>
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-900">{fmtBRL(l.valor_venda_externo)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtBRL(l.valor_venda_farol)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{fmtPct(l.diferenca_valor_pct)}</td>
