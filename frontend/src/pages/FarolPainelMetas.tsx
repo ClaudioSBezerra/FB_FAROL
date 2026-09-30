@@ -877,6 +877,11 @@ export default function FarolPainelMetas() {
       }))
 
   const podeAbrirLinha = !redeAberta && nivel !== 'rede'
+  // Coluna de RCA some quando a lista já está escopada a um único RCA
+  // (filtroRCA) — toda linha mostraria o mesmo nome, redundante com o
+  // breadcrumb. Não afeta o nível CNPJ (redeAberta), que mostra
+  // "Documento" por loja, não RCA.
+  const mostrarColunaRCA = redeAberta ? true : !(nivel === 'rede' && filtroRCA)
   const nivelLabelAtual = redeAberta ? 'Rede/CNPJ' : niveisAtuais.find(n => n.value === nivel)?.label ?? nivel
 
   return (
@@ -1433,7 +1438,11 @@ export default function FarolPainelMetas() {
               <TableHeader className="sticky top-0 z-10 bg-white">
                 <TableRow>
                   <TableHead>{redeAberta ? 'CNPJ' : nivel === 'rede' ? (ehNumerica ? 'Cliente' : 'Rede') : nivelLabelAtual}</TableHead>
-                  <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>
+                  {/* Coluna de RCA escondida quando já drilou até o RCA
+                      (filtroRCA setado) — toda linha repetiria o MESMO RCA,
+                      já visível no breadcrumb acima (pedido do Claudio
+                      30/09/2026: "não precisa ficar repetindo o RCA"). */}
+                  {mostrarColunaRCA && <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>}
                   <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : 'Redes atingindo'}</TableHead>
                   {(nivel === 'rede' || redeAberta) && !redeAberta && <TableHead className="w-24 text-center">Status</TableHead>}
                   {podeAbrirLinha && <TableHead className="w-10" />}
@@ -1441,12 +1450,12 @@ export default function FarolPainelMetas() {
               </TableHeader>
               <TableBody>
                 {linhas.length === 0 && (
-                  <TableRow><TableCell colSpan={3 + (nivel === 'rede' && !redeAberta ? 1 : 0) + (podeAbrirLinha ? 1 : 0)} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={2 + (mostrarColunaRCA ? 1 : 0) + (nivel === 'rede' && !redeAberta ? 1 : 0) + (podeAbrirLinha ? 1 : 0)} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
                 )}
                 {linhas.map((l, i) => (
                   <TableRow key={i} className={l.drill ? 'cursor-pointer hover:bg-muted/50' : undefined} onClick={l.drill}>
                     <TableCell className="font-medium">{l.nome}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{l.sub}</TableCell>
+                    {mostrarColunaRCA && <TableCell className="text-sm text-muted-foreground">{l.sub}</TableCell>}
                     <TableCell className="text-right">{(nivel === 'rede' || redeAberta) && ehCobertura ? fmtBRL(l.valor) : fmt(l.valor)}</TableCell>
                     {nivel === 'rede' && !redeAberta && (
                       <TableCell className="text-center">
