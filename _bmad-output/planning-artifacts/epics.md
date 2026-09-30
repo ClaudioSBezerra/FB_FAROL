@@ -535,7 +535,7 @@ Para que a Numérica seja um 2º par de métricas dentro da mesma Indústria, n�
 **Quando** vinculo cada um às Indústrias FOOD e HC já existentes (Épico 2), com seus próprios objetivos de PPA (15 pra HC, 7 pra Foods)
 **Então** os 4 vínculos (Cobertura Numérica×FOOD, Cobertura Numérica×HC, Sortimento Numérica×FOOD, Sortimento Numérica×HC) calculam de forma independente, reaproveitando o modelo de vínculo do FR3/FR4 — nenhuma tabela nova de "Indústria Numérica"
 
-**⚠ Pendência (Questão em aberto #1 do PRD):** o documento-fonte cita hierarquia até "GGV/CRV/RCA/Cliente Rede/Cliente CNPJ" — confirmar com a JC se existe um nível intermediário real antes de fechar o modelo de navegação desta story (hoje assumido como CNPJ direto, sem nível extra).
+**✅ Resolvida (Carlos/JC, 30/09/2026):** confirmado, "Cliente Rede" era resíduo de texto do modelo antigo — Numérica lê individual, sem nível intermediário. Modelo de navegação desta story (CNPJ direto) está correto como implementado.
 
 ### Story 7.2: Importação de Clientes Numéricas
 
@@ -565,7 +565,7 @@ Para que o motor de apuração do Sortimento Numérica (Story 7.5) saiba a qual 
 
 **E** mesma validação estrita (FR9) e snapshot congelado (FR13) das demais listas mensais
 
-**⚠ Pendência (Questão em aberto #4 do PRD):** os dados reais trazem colunas "Região do Sortimento"/AE/BU (só 1 valor visto, "Centro Norte") não mencionadas no documento-fonte — confirmar com a JC se são relevantes pro cálculo já nesta fase antes de decidir se entram no modelo de import ou ficam ignoradas.
+**✅ Resolvida (Carlos/JC, 30/09/2026):** confirmado, pode ignorar Região do Sortimento/AE/BU — sem uso no cálculo. Bate com a decisão de design já tomada (migration 248: colunas capturadas como informativas, não usadas por `contarPPAsPositivados`).
 
 ### Story 7.4: Motor de apuração — Cobertura Numérica
 
@@ -617,7 +617,9 @@ Para que o resultado do distribuidor inteiro seja comparado à meta de contrato,
 
 **E** o Realizado agregado de Sortimento Numérica é a média de PPAs vendidos por cliente — **divisor a confirmar** (Questão em aberto #2 do PRD: "clientes com compra" pode significar "comprou algum PPA" ou "teve qualquer venda no período"; AC final desta story trava nessa resposta)
 
-**⚠ Pendência (Questão em aberto #3 do PRD):** os valores de Faixa de Cobertura Numérica citados no documento-fonte (4.870/5.681/6.493 lojas) não especificam se são de 1 fornecedor só ou da soma FOOD+HC — confirmar com a JC antes de cadastrar os valores reais de meta.
+**✅ Resolvida (Carlos/JC, 30/09/2026):** as Faixas de Cobertura (4.870/5.681/6.493 lojas) são as MESMAS pra HC e Foods, cada fornecedor bate esse número de forma independente (não somado). Valores já cadastrados em DEV (29-30/09/2026) — ver commit da migration/dados de teste.
+
+**⚠ Ainda em aberto (Questão em aberto #2 do PRD):** o denominador exato da média de Sortimento/PPA ("clientes com compra") — o Carlos não entendeu a pergunta original; reformulada com exemplo numérico, aguardando resposta. Implementação atual assume "todos os clientes elegíveis" (Classificação A+B), marcado como ASSUNÇÃO em `farol_metas_calculo.go`.
 
 ### Story 7.7: Painel Web e Mobile — Cobertura Numérica e Sortimento Numérica
 
