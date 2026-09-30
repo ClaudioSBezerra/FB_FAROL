@@ -8,6 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
 import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon } from 'lucide-react'
@@ -390,6 +391,14 @@ function dedup(items: { v: string; l: string }[]) {
 
 // FiltroSelect — select "Todos + opções" da barra de filtros da visão
 // Combinada. Radix Select não aceita value="" num item, daí o sentinel.
+// FiltroSelect — trocado de <Select> nativo pra SearchableCombobox (pedido
+// do Claudio 30/09/2026: "ao escrever nos filtros, trazer pela descrição
+// ou pelo número, principalmente de clientes") — com a lista de Cliente da
+// Numérica passando de 10.754 itens, um <select> sem busca era inviável de
+// usar (só scroll). O rótulo de cada opção já vem "código — nome" (ver
+// rotuloRede), e o CommandItem do cmdk filtra por substring no texto
+// inteiro — então digitar o código OU um pedaço do nome já funciona, sem
+// precisar de lógica de busca própria.
 function FiltroSelect({ label, value, onChange, opts }: {
   label: string
   value: string
@@ -399,13 +408,15 @@ function FiltroSelect({ label, value, onChange, opts }: {
   return (
     <div className="space-y-1">
       <label className="text-xs font-medium">{label}</label>
-      <Select value={value || '__all__'} onValueChange={v => onChange(v === '__all__' ? '' : v)}>
-        <SelectTrigger className="w-48 uppercase"><SelectValue /></SelectTrigger>
-        <SelectContent className="[&_*]:uppercase">
-          <SelectItem value="__all__">Todos</SelectItem>
-          {opts.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <SearchableCombobox
+        className="w-48 uppercase"
+        placeholder="Todos"
+        searchPlaceholder="Código ou nome..."
+        emptyText="Nada encontrado."
+        value={value || '__all__'}
+        onChange={v => onChange(v === '__all__' ? '' : v)}
+        options={[{ value: '__all__', label: 'Todos' }, ...opts.map(o => ({ value: o.v, label: o.l }))]}
+      />
     </div>
   )
 }
