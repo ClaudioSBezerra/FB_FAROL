@@ -126,12 +126,21 @@ func calcularCoberturaNumerica(db *sql.DB, empresaID string, clientes []clienteN
 		}
 		valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 		atingiu := valor >= limiar
-		self := RealizadoCliente{CNPJ: c.CNPJ, CodCli: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, Atingiu: atingiu, Objetivo: limiar}
+		// Clientes (RealizadoRede.Clientes) NÃO é preenchido aqui de
+		// propósito — achado de performance 2026-09-30: CodPrinc já É o
+		// CNPJ (truque de pseudo-Rede), então um Clientes:[self] só
+		// duplicaria os MESMOS campos (CNPJ/Razao/Fantasia/Valor/Atingiu)
+		// dentro do próprio JSON do snapshot, quase dobrando o tamanho do
+		// blob pros ~10.754 clientes reais — e sem nenhum consumidor real:
+		// o front desliga o drill-down de Cliente pra Numérica (ehNumerica
+		// ? undefined : ...) e nenhuma regra de Gamificação hoje aponta
+		// pra vínculo Numérica (confirmado em PRD, farol_gamificacao.go
+		// dependeria disso se apontasse). Se um dia precisar, resolver
+		// separado — não reintroduzir a duplicação.
 		out = append(out, RealizadoRede{
 			CodPrinc: c.CNPJ, CodCl: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
 			Valor: valor, ValorTotal: valor, Objetivo: limiar, Atingiu: atingiu,
-			Clientes: []RealizadoCliente{self},
 		})
 	}
 	return out, nil
@@ -175,12 +184,12 @@ func calcularSortimentoNumericaPPA(db *sql.DB, empresaID string, clientes []clie
 		// qtdPorCodProdClientesNumerica sem filtro de PPA (só cod_prod <>
 		// ''), então "tem alguma linha" já é exatamente essa pergunta.
 		teveCompra := len(linhasPorCliente[c.CNPJ]) > 0
-		self := RealizadoCliente{CNPJ: c.CNPJ, CodCli: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdPPAs, Atingiu: atingiu, Objetivo: teto}
+		// Clientes não preenchido — ver comentário equivalente em
+		// calcularCoberturaNumerica (achado de performance 2026-09-30).
 		out = append(out, RealizadoRede{
 			CodPrinc: c.CNPJ, CodCl: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
 			Valor: qtdPPAs, Objetivo: teto, Atingiu: atingiu, TeveCompra: teveCompra,
-			Clientes: []RealizadoCliente{self},
 		})
 	}
 	return out, nil

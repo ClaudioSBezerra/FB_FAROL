@@ -135,13 +135,9 @@ func calcularPainelCombinadoNumerica(db *sql.DB, empresaID string, vinculoCobert
 	vistos := map[string]bool{}
 	for _, c := range realizadoCobertura.Redes {
 		s, temSort := sortimentoPorCnpj[c.CodPrinc]
-		var classificacao string
-		if len(c.Clientes) > 0 {
-			// Classificação PDV não é campo de RealizadoRede — vem só do
-			// cadastro (clienteNumericaValido), que o motor não devolve
-			// aqui. Resolvida à parte logo abaixo (classificacaoPorCnpj).
-			_ = classificacao
-		}
+		// Classificação PDV não é campo de RealizadoRede — vem só do
+		// cadastro (clienteNumericaValido), que o motor não devolve aqui.
+		// Resolvida à parte abaixo, via classificacaoPdvPorCnpj.
 		clientes = append(clientes, PainelCombinadoNumericaCliente{
 			CNPJ: c.CodPrinc, CodCl: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
