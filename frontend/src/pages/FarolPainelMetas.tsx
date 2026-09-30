@@ -161,6 +161,41 @@ interface PainelCombinado {
   data_fim_usada: string
 }
 
+// PainelCombinadoNumericaCliente/Response — Combinado pra Numérica (Épico
+// 7, pedido do Claudio 30/09/2026), grão único Cliente/CNPJ (sem Rede, ver
+// farol_metas_painel_combinado_numerica.go).
+interface PainelCombinadoNumericaCliente {
+  cnpj: string
+  cod_cl?: string
+  classificacao_pdv: string
+  razao: string
+  fantasia: string
+  cod_ggv: string
+  nome_ggv: string
+  cod_crv: string
+  nome_crv: string
+  cod_rca: string
+  nome_rca: string
+  cobertura_valor: number
+  cobertura_objetivo: number
+  cobertura_falta: number
+  cobertura_atingiu: boolean
+  sortimento_valor: number
+  sortimento_objetivo: number
+  sortimento_falta: number
+  sortimento_atingiu: boolean
+  sortimento_aplicavel: boolean
+}
+interface PainelCombinadoNumerica {
+  industria_nome: string
+  vigencia: Vigencia
+  cobertura: PainelMetricaResumo
+  sortimento: PainelMetricaResumo
+  clientes: PainelCombinadoNumericaCliente[]
+  data_inicio_usada: string
+  data_fim_usada: string
+}
+
 // PainelItemLinha — 1 linha do drill-down "Itens" (Sortimento): quais EANs
 // venderam/não venderam numa Rede ou Loja, com Qtd e Valor — pedido do
 // Claudio em 10/09/2026.
@@ -400,9 +435,10 @@ export default function FarolPainelMetas() {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
 
   const [industriaID, setIndustriaID] = useState('')
-  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado' | 'cobertura_numerica' | 'sortimento_numerica'>('combinado')
+  const [metrica, setMetrica] = useState<'cobertura' | 'sortimento' | 'combinado' | 'cobertura_numerica' | 'sortimento_numerica' | 'combinado_numerica'>('combinado')
   const [vigenciaID, setVigenciaID] = useState('') // modo individual (Cobertura OU Sortimento)
   const [vigenciaCombinadaKey, setVigenciaCombinadaKey] = useState('') // modo combinado — chave "data_inicio|data_fim"
+  const [vigenciaCombinadaNumericaKey, setVigenciaCombinadaNumericaKey] = useState('') // combinado_numerica
   const [nivel, setNivel] = useState(() => landingNivelPorPersona(tipoPersona))
   const [fluxo, setFluxo] = useState('faturado')
   const [aba, setAba] = useState<'oficiais' | 'projecao'>('oficiais')
@@ -471,6 +507,9 @@ export default function FarolPainelMetas() {
     }
     if (industriaSelecionada?.cobertura) opcoes.push({ value: 'cobertura', label: industriaSelecionada.cobertura.tipo_metrica_nome })
     if (industriaSelecionada?.sortimento) opcoes.push({ value: 'sortimento', label: industriaSelecionada.sortimento.tipo_metrica_nome })
+    if (industriaSelecionada?.cobertura_numerica && industriaSelecionada?.sortimento_numerica) {
+      opcoes.push({ value: 'combinado_numerica', label: 'Combinado Numérica' })
+    }
     if (industriaSelecionada?.cobertura_numerica) opcoes.push({ value: 'cobertura_numerica', label: industriaSelecionada.cobertura_numerica.tipo_metrica_nome })
     if (industriaSelecionada?.sortimento_numerica) opcoes.push({ value: 'sortimento_numerica', label: industriaSelecionada.sortimento_numerica.tipo_metrica_nome })
     return opcoes
@@ -691,6 +730,64 @@ export default function FarolPainelMetas() {
     },
     enabled: metrica === 'combinado' && !!periodoSelecionado && !!periodoManualInicio && !!periodoManualFim,
   })
+
+  // ─── Modo combinado Numérica — Cobertura + Sortimento juntos, 1 linha por Cliente ───
+  const { data: vigenciasCoberturaNum = [] } = useQuery<Vigencia[]>({
+    queryKey: ['farol-metas-vigencias', industriaSelecionada?.cobertura_numerica?.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/metas-vigencias?vinculo_id=${industriaSelecionada!.cobertura_numerica!.id}`, { headers })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+    enabled: metrica === 'combinado_numerica' && !!industriaSelecionada?.cobertura_numerica,
+  })
+  const { data: vigenciasSortimentoNum = [] } = useQuery<Vigencia[]>({
+    queryKey: ['farol-metas-vigencias', industriaSelecionada?.sortimento_numerica?.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/metas-vigencias?vinculo_id=${industriaSelecionada!.sortimento_numerica!.id}`, { headers })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+    enabled: metrica === 'combinado_numerica' && !!industriaSelecionada?.sortimento_numerica,
+  })
+  const periodosCombinadosNum = useMemo(() => {
+    const porPeriodo = new Map(vigenciasSortimentoNum.map(v => [`${v.data_inicio}|${v.data_fim}`, v]))
+    return vigenciasCoberturaNum
+      .filter(vc => porPeriodo.has(`${vc.data_inicio}|${vc.data_fim}`))
+      .map(vc => ({ chave: `${vc.data_inicio}|${vc.data_fim}`, cobertura: vc, sortimento: porPeriodo.get(`${vc.data_inicio}|${vc.data_fim}`)! }))
+  }, [vigenciasCoberturaNum, vigenciasSortimentoNum])
+  const periodoSelecionadoNum = periodosCombinadosNum.find(p => p.chave === vigenciaCombinadaNumericaKey)
+  useEffect(() => {
+    if (periodosCombinadosNum.length === 0) return
+    if (periodosCombinadosNum.some(p => p.chave === vigenciaCombinadaNumericaKey)) return
+    const preferido = periodosCombinadosNum.find(p => p.cobertura.status === 'aberta') ?? periodosCombinadosNum[0]
+    setVigenciaCombinadaNumericaKey(preferido.chave)
+  }, [periodosCombinadosNum])
+
+  // Reaproveita o MESMO filtro GGV/Supervisor/RCA do modo individual (ver
+  // filtroGGV/filtroCRV/filtroRCA acima) em vez de duplicar um filtro novo
+  // só pra este modo — o backend já aceita cod_ggv/cod_crv/cod_rca em
+  // qualquer endpoint de painel (resolverFiltroDrillDown).
+  const { data: painelCombinadoNum, isLoading: isLoadingCombinadoNum } = useQuery<PainelCombinadoNumerica>({
+    queryKey: ['farol-metas-painel-combinado-numerica', industriaSelecionada?.cobertura_numerica?.id, industriaSelecionada?.sortimento_numerica?.id, periodoSelecionadoNum?.chave, fluxo, filtroGGV?.codigo, filtroCRV?.codigo, filtroRCA?.codigo],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        vinculo_cobertura_id: String(industriaSelecionada!.cobertura_numerica!.id),
+        vigencia_cobertura_id: String(periodoSelecionadoNum!.cobertura.id),
+        vinculo_sortimento_id: String(industriaSelecionada!.sortimento_numerica!.id),
+        vigencia_sortimento_id: String(periodoSelecionadoNum!.sortimento.id),
+        fluxo,
+      })
+      if (filtroGGV) p.set('cod_ggv', filtroGGV.codigo)
+      if (filtroCRV) p.set('cod_crv', filtroCRV.codigo)
+      if (filtroRCA) p.set('cod_rca', filtroRCA.codigo)
+      const r = await fetch(`/api/farol/metas-painel-combinado-numerica?${p}`, { headers })
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    enabled: metrica === 'combinado_numerica' && !!periodoSelecionadoNum,
+  })
+  const clientesCombinadoNum = painelCombinadoNum?.clientes ?? []
 
   // ─── Barra de filtros da visão Combinada (client-side sobre .redes) ─────────
   // Todos os campos já vêm na resposta (~120 Redes), então filtrar aqui evita
@@ -933,7 +1030,14 @@ export default function FarolPainelMetas() {
         {industriaSelecionada && (
           <div className="space-y-1">
             <label className="text-xs font-medium">Visão</label>
-            <Select value={metrica} onValueChange={v => { setMetrica(v as typeof metrica); setVigenciaID(''); setVigenciaCombinadaKey('') }}>
+            <Select value={metrica} onValueChange={v => {
+              setMetrica(v as typeof metrica); setVigenciaID(''); setVigenciaCombinadaKey('')
+              // Combinado Numérica reaproveita filtroGGV/CRV/RCA (mesmo
+              // state do modo individual) mas não tem os controles na
+              // tela pra trocar — zera ao entrar/sair pra não herdar um
+              // filtro escolhido antes sem querer.
+              setFiltroGGV(null); setFiltroCRV(null); setFiltroRCA(null)
+            }}>
               <SelectTrigger className="w-64 uppercase"><SelectValue /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
                 {metricasDisponiveis.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
@@ -948,6 +1052,20 @@ export default function FarolPainelMetas() {
               <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
                 {periodosCombinados.map(p => (
+                  <SelectItem key={p.chave} value={p.chave}>
+                    {p.cobertura.data_inicio} – {p.cobertura.data_fim} {p.cobertura.status === 'fechada' ? '(fechada)' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : metrica === 'combinado_numerica' ? (
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Período</label>
+            <Select value={vigenciaCombinadaNumericaKey} onValueChange={setVigenciaCombinadaNumericaKey}>
+              <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent className="[&_*]:uppercase">
+                {periodosCombinadosNum.map(p => (
                   <SelectItem key={p.chave} value={p.chave}>
                     {p.cobertura.data_inicio} – {p.cobertura.data_fim} {p.cobertura.status === 'fechada' ? '(fechada)' : ''}
                   </SelectItem>
@@ -980,7 +1098,7 @@ export default function FarolPainelMetas() {
             )}
           </div>
         )}
-        {metrica !== 'combinado' && (
+        {metrica !== 'combinado' && metrica !== 'combinado_numerica' && (
           <div className="space-y-1">
             <label className="text-xs font-medium">Nível</label>
             <Select value={nivel} onValueChange={v => { voltarPara('ggv'); setNivel(v) }}>
@@ -1336,6 +1454,97 @@ export default function FarolPainelMetas() {
                 </Table>
               </div>
             )}
+          </>
+        ) : null
+      ) : metrica === 'combinado_numerica' ? (
+        !periodoSelecionadoNum ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">
+            {periodosCombinadosNum.length === 0
+              ? 'Nenhum período com Cobertura Numérica e Sortimento Numérica cadastrados pro mesmo intervalo de datas ainda.'
+              : 'Selecione a Vigência pra ver o painel combinado.'}
+          </p>
+        ) : isLoadingCombinadoNum ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
+        ) : painelCombinadoNum ? (
+          <>
+            {/* Numérica não tem GGV/CRV/RCA em "abas" — o filtro GGV/
+                Supervisor/RCA já na barra de cima (mesmo do modo
+                individual) já estreita a lista abaixo direto no backend. */}
+            {ehNumerica && periodoSelecionadoNum && (
+              <p className="text-xs text-muted-foreground">
+                Apura desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)} (bimestre móvel)
+              </p>
+            )}
+            <TooltipProvider delayDuration={150}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
+                  </div>
+                  <div className="text-2xl font-semibold">
+                    {fmt(painelCombinadoNum.cobertura.realizado_total)} <span className="text-sm text-muted-foreground">/ {clientesCombinadoNum.length} clientes</span>
+                  </div>
+                  {painelCombinadoNum.cobertura.faixa_atual && (
+                    <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.cobertura.faixa_atual.faixa}): {fmt(painelCombinadoNum.cobertura.faixa_atual.valor_meta)}</div>
+                  )}
+                  {painelCombinadoNum.cobertura.proxima_faixa && (
+                    <div className="text-xs text-muted-foreground">Falta {fmt(painelCombinadoNum.cobertura.delta)} pra bater Faixa {painelCombinadoNum.cobertura.proxima_faixa.faixa}</div>
+                  )}
+                </div>
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
+                  </div>
+                  <div className="text-2xl font-semibold">{fmt(painelCombinadoNum.sortimento.realizado_total)}</div>
+                  {painelCombinadoNum.sortimento.faixa_atual && (
+                    <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.sortimento.faixa_atual.faixa}): {fmt(painelCombinadoNum.sortimento.faixa_atual.valor_meta)}</div>
+                  )}
+                  {painelCombinadoNum.sortimento.proxima_faixa && (
+                    <div className="text-xs text-muted-foreground">Falta {fmt(painelCombinadoNum.sortimento.delta)} pra bater Faixa {painelCombinadoNum.sortimento.proxima_faixa.faixa}</div>
+                  )}
+                </div>
+              </div>
+            </TooltipProvider>
+
+            <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-white">
+                  <TableRow>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead>Classif.</TableHead>
+                    <TableHead>GGV / CRV / RCA</TableHead>
+                    <TableHead className="text-right">Cobertura (R$)</TableHead>
+                    <TableHead className="w-10 text-center">Status</TableHead>
+                    <TableHead className="text-right">Sortimento (PPAs)</TableHead>
+                    <TableHead className="w-10 text-center">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {clientesCombinadoNum.length === 0 && (
+                    <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
+                  )}
+                  {[...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(c => (
+                    <TableRow key={c.cnpj}>
+                      <TableCell className="font-medium">
+                        {c.cod_cl ? `${c.cod_cl} — ` : ''}{c.fantasia || c.razao || c.cnpj}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{c.classificacao_pdv || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        <div>{c.cod_ggv} — {c.nome_ggv}</div>
+                        <div className="text-muted-foreground/70">{c.cod_crv} — {c.nome_crv}</div>
+                        <div className="text-muted-foreground/70">{c.cod_rca} — {c.nome_rca}</div>
+                      </TableCell>
+                      <TableCell className="text-right">{fmtBRL(c.cobertura_valor)} <span className="text-muted-foreground">/ {fmtBRL(c.cobertura_objetivo)}</span></TableCell>
+                      <TableCell className="text-center"><StatusBadge atingiu={c.cobertura_atingiu} /></TableCell>
+                      <TableCell className="text-right">
+                        {c.sortimento_aplicavel ? <>{fmt(c.sortimento_valor)} <span className="text-muted-foreground">/ {fmt(c.sortimento_objetivo)}</span></> : <span className="text-muted-foreground">N/A</span>}
+                      </TableCell>
+                      <TableCell className="text-center">{c.sortimento_aplicavel && <StatusBadge atingiu={c.sortimento_atingiu} />}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </>
         ) : null
       ) : isLoading || isFetching ? (

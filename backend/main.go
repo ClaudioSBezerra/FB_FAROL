@@ -692,6 +692,10 @@ func main() {
 	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
 	http.HandleFunc("/api/farol/metas-painel-combinado", withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura"))
 
+	// Painel combinado pra Numérica (Épico 7, pedido do Claudio 30/09/2026)
+	// — mesmo princípio acima, grão único Cliente/CNPJ (sem Rede).
+	http.HandleFunc("/api/farol/metas-painel-combinado-numerica", withSP(handlers.MetasPainelCombinadoNumericaHandler, "somente_leitura"))
+
 	// Drill-down de itens (Sortimento): vendeu/não vendeu, Qtd, Valor — por
 	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
 	http.HandleFunc("/api/farol/metas-painel-itens", withSP(handlers.MetasPainelItensHandler, "somente_leitura"))
@@ -755,6 +759,7 @@ func main() {
 	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
 	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
 	http.HandleFunc("/api/farol/public/metas-painel-combinado", publicHandler(handlers.MetasPublicPainelCombinadoHandler))
+	http.HandleFunc("/api/farol/public/metas-painel-combinado-numerica", publicHandler(handlers.MetasPublicPainelCombinadoNumericaHandler))
 	// Drill-down "Produtos" (Sortimento) sem login — pedido do José Costa (CEO) 15/09/2026.
 	http.HandleFunc("/api/farol/public/metas-painel-itens", publicHandler(handlers.MetasPublicPainelItensHandler))
 	// Gamificação — visão real do RCA em campo (mesma URL pública, sem
