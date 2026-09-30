@@ -981,7 +981,12 @@ export default function FarolPainelMetas() {
     : (painel?.realizado.grupos ?? []).map(g => ({
         nome: g.codigo && g.nome ? `${g.codigo} — ${g.nome}` : (g.nome || g.codigo),
         sub: `${g.qtd_atingindo}/${g.qtd_redes} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
-        valor: g.qtd_atingindo, marcador: undefined as boolean | undefined, drill: () => abrirGrupo(g.codigo, g.nome || g.codigo),
+        valor: g.qtd_atingindo,
+        // marcador no nível de grupo (pedido do Claudio 30/09/2026): check
+        // só quando TODO mundo do grupo bateu (mesmo critério binário do
+        // nível Rede/Cliente — sem meio-termo), X caso contrário.
+        marcador: g.qtd_redes > 0 ? g.qtd_falta_atingir === 0 : undefined,
+        drill: () => abrirGrupo(g.codigo, g.nome || g.codigo),
       }))
 
   const podeAbrirLinha = !redeAberta && nivel !== 'rede'
@@ -1678,20 +1683,25 @@ export default function FarolPainelMetas() {
                       30/09/2026: "não precisa ficar repetindo o RCA"). */}
                   {mostrarColunaRCA && <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>}
                   <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : ehNumerica ? 'Clientes atingindo' : 'Redes atingindo'}</TableHead>
-                  {(nivel === 'rede' || redeAberta) && !redeAberta && <TableHead className="w-24 text-center">Status</TableHead>}
+                  {/* Status agora aparece no nível de grupo também (pedido
+                      do Claudio 30/09/2026: "não está trazendo o tickado e
+                      X pra essa visão nem as subsequentes") — só some no
+                      nível 5 (CNPJ dentro de uma Rede aberta), que não tem
+                      marcador calculado. */}
+                  {!redeAberta && <TableHead className="w-24 text-center">Status</TableHead>}
                   {podeAbrirLinha && <TableHead className="w-10" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {linhas.length === 0 && (
-                  <TableRow><TableCell colSpan={2 + (mostrarColunaRCA ? 1 : 0) + (nivel === 'rede' && !redeAberta ? 1 : 0) + (podeAbrirLinha ? 1 : 0)} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={2 + (mostrarColunaRCA ? 1 : 0) + (!redeAberta ? 1 : 0) + (podeAbrirLinha ? 1 : 0)} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
                 )}
                 {linhas.map((l, i) => (
                   <TableRow key={i} className={l.drill ? 'cursor-pointer hover:bg-muted/50' : undefined} onClick={l.drill}>
                     <TableCell className="font-medium">{l.nome}</TableCell>
                     {mostrarColunaRCA && <TableCell className="text-sm text-muted-foreground">{l.sub}</TableCell>}
                     <TableCell className="text-right">{(nivel === 'rede' || redeAberta) && ehCobertura ? fmtBRL(l.valor) : fmt(l.valor)}</TableCell>
-                    {nivel === 'rede' && !redeAberta && (
+                    {!redeAberta && (
                       <TableCell className="text-center">
                         <StatusBadge atingiu={!!l.marcador} />
                       </TableCell>
