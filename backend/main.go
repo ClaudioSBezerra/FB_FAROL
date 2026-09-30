@@ -702,6 +702,12 @@ func main() {
 	http.HandleFunc("/api/farol/fechamento-comercial-importar-csv", withSP(handlers.FechamentoComercialImportarCSVHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/fechamento-comercial-comparativo", withSP(handlers.FechamentoComercialComparativoHandler, "somente_leitura"))
 
+	// Comparativo Fechamento Numérica (Relatórios) — Épico 7 addendum,
+	// 2026-09-30: mesmo princípio acima, só que pro par Numérica (Cobertura
+	// Numérica + Sortimento Numérica/PPA), chave por CNPJ em vez de Rede.
+	http.HandleFunc("/api/farol/fechamento-numerica-importar-csv", withSP(handlers.FechamentoNumericaImportarCSVHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/fechamento-numerica-comparativo", withSP(handlers.FechamentoNumericaComparativoHandler, "somente_leitura"))
+
 	// ── Farol API (machine-to-machine) — consumida pelo SmartPick (Monitor de
 	//    Faturamento sem Calibragem). Não usa withSP/publicHandler: autenticação
 	//    por API key estática (FarolAPIKeyAuth), não sessão de usuário. ────────

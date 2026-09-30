@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import FarolRelatorioReceita from './FarolRelatorioReceita'
 import FarolComparativoRel322 from './FarolComparativoRel322'
+import FarolComparativoFechamento from './FarolComparativoFechamento'
+import FarolComparativoFechamentoNumerica from './FarolComparativoFechamentoNumerica'
 
 // Função para formatar data para input date (YYYY-MM-DD)
 function formatDateForInput(date: Date): string {
@@ -82,7 +84,7 @@ export default function FarolRelatorios() {
   const [dataInicio, setDataInicio] = useState(getOneYearAgo())
   const [dataFim, setDataFim] = useState(getToday())
   const [searchExecuted, setSearchExecuted] = useState(false)
-  const [aba, setAba] = useState<'extrato' | 'receita' | 'comparativo'>(isAdminOuTI ? 'extrato' : 'comparativo')
+  const [aba, setAba] = useState<'extrato' | 'receita' | 'comparativo' | 'fechamento' | 'fechamento_numerica'>(isAdminOuTI ? 'extrato' : 'comparativo')
 
   const { data, isLoading, refetch } = useQuery<RelatorioResponse>({
     queryKey: ['relatorio-extrato', codProduto, codCliente, dataInicio, dataFim],
@@ -172,6 +174,8 @@ export default function FarolRelatorios() {
           { id: 'extrato', label: 'Extrato de Produtos por Cliente', adminOuTI: true },
           { id: 'receita', label: 'Clientes com CNPJ irregular', adminOuTI: true },
           { id: 'comparativo', label: 'Comparativo REL 322' },
+          { id: 'fechamento', label: 'Comparativo Fechamento Comercial' },
+          { id: 'fechamento_numerica', label: 'Comparativo Fechamento Numérica' },
         ] as const)
           .filter(t => !t.adminOuTI || isAdminOuTI)
           .map(t => (
@@ -192,6 +196,10 @@ export default function FarolRelatorios() {
       {aba === 'receita' && <FarolRelatorioReceita />}
 
       {aba === 'comparativo' && <FarolComparativoRel322 />}
+
+      {aba === 'fechamento' && <FarolComparativoFechamento />}
+
+      {aba === 'fechamento_numerica' && <FarolComparativoFechamentoNumerica />}
 
       {aba === 'extrato' && (<>
       {/* Filtros */}
