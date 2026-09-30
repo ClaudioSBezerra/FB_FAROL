@@ -172,6 +172,12 @@ const FLUXOS = [
   { value: 'faturado', label: 'Faturado' },
   { value: 'transmitido', label: 'Transmitido' },
 ]
+// Numérica (Story 7.8, 2026-09-30) — ver mesmo comentário em
+// FarolPainelMetas.tsx: só a Numérica ganha a 3ª visão de volta.
+const FLUXOS_NUMERICA = [
+  ...FLUXOS,
+  { value: 'soma', label: 'Faturado + Transmitido' },
+]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
@@ -537,6 +543,13 @@ export default function FarolPublicMetasPanel() {
   // o motor devolve é 1 Cliente só. Terminologia/navegação ajustadas mais
   // abaixo (Suas Redes → Seus Clientes, sem abrir drill redundante).
   const ehNumerica = metrica === 'cobertura_numerica' || metrica === 'sortimento_numerica'
+  const fluxosAtuais = ehNumerica ? FLUXOS_NUMERICA : FLUXOS
+
+  // fluxo='soma' só existe pra Numérica (Story 7.8) — ver mesmo guard-rail
+  // em FarolPainelMetas.tsx.
+  useEffect(() => {
+    if (fluxo === 'soma' && !ehNumerica) setFluxo('faturado')
+  }, [fluxo, ehNumerica])
 
   // ─── Modo individual ──────────────────────────────────────────────────────
 
@@ -727,7 +740,7 @@ export default function FarolPublicMetasPanel() {
         {industriaSelecionada && (
           <ChipRow
             label="Visão"
-            options={FLUXOS}
+            options={fluxosAtuais}
             value={fluxo}
             onChange={v => { setFluxo(v); fecharDrillDown() }}
           />

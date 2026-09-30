@@ -208,3 +208,60 @@ func TestCalcularRealizado_Numerica_BimestreMovel(t *testing.T) {
 		t.Errorf("Atingiu = false, want true (R$15 >= limiar Num.C R$15) — bimestre móvel não juntou os meses corretamente")
 	}
 }
+
+// TestCalcularRealizado_CoberturaNumerica_FluxoSoma cobre a Story 7.8 —
+// visão "Faturado + Emitido" pedida sem condicional pela documentação
+// final do Heverton (29/09/2026). Cliente só bate o limiar somando os 2
+// fluxos: nem Faturado nem Transmitido isolados chegam lá.
+func TestCalcularRealizado_CoberturaNumerica_FluxoSoma(t *testing.T) {
+	db, empresaID := biTestDB(t)
+
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TNUM Soma", "cobertura_numerica", "cliente",
+		[]ParametroSchemaDTO{
+			{Key: "limiar_num_a", Label: "Limiar A", Type: "number"},
+			{Key: "limiar_num_b", Label: "Limiar B", Type: "number"},
+			{Key: "limiar_num_c", Label: "Limiar C", Type: "number"},
+		},
+		map[string]any{"limiar_num_a": 100.0, "limiar_num_b": 50.0, "limiar_num_c": 15.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-09-01", "2026-09-30")
+
+	cli := "20000000000401"
+	t.Cleanup(func() {
+		limparVendasFaturadasFixture(t, empresaID, []string{cli})
+		limparVendasTransmitidasFixture(t, empresaID, []string{cli})
+	})
+	inserirClienteNumericaFixture(t, empresaID, vinculoID, vigenciaID, cli, "Num. A")
+
+	// R$60 faturado + R$50 transmitido = R$110 — só bate o limiar R$100
+	// somando os 2; nenhum dos 2 isolados chega lá.
+	inserirVendaFaturadaFixture(t, empresaID, cli, "PROD1", "TCALC-NUM-RCA", "1", 60, 1, "2026-09-10")
+	inserirVendaTransmitidaFixture(t, empresaID, cli, "PROD1", "TCALC-NUM-RCA", "1", 50, 1, "2026-09-12")
+
+	faturado, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado(faturado): %v", err)
+	}
+	if r := faturado.Redes[0]; r.Valor != 60 || r.Atingiu {
+		t.Errorf("faturado isolado: Valor=%.2f Atingiu=%v, want Valor=60 Atingiu=false", r.Valor, r.Atingiu)
+	}
+
+	transmitido, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "transmitido", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado(transmitido): %v", err)
+	}
+	if r := transmitido.Redes[0]; r.Valor != 50 || r.Atingiu {
+		t.Errorf("transmitido isolado: Valor=%.2f Atingiu=%v, want Valor=50 Atingiu=false", r.Valor, r.Atingiu)
+	}
+
+	soma, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede")
+	if err != nil {
+		t.Fatalf("CalcularRealizado(soma): %v", err)
+	}
+	if len(soma.Redes) != 1 {
+		t.Fatalf("len(Redes) = %d, want 1", len(soma.Redes))
+	}
+	if r := soma.Redes[0]; r.Valor != 110 || !r.Atingiu {
+		t.Errorf("soma: Valor=%.2f Atingiu=%v, want Valor=110 Atingiu=true (R$60 faturado + R$50 transmitido >= limiar R$100)", r.Valor, r.Atingiu)
+	}
+}

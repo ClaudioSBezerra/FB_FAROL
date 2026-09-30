@@ -285,6 +285,15 @@ const FLUXOS = [
   { value: 'faturado', label: 'Faturado' },
   { value: 'transmitido', label: 'Transmitido' },
 ]
+// Numérica (Story 7.8, 2026-09-30): a documentação final do Heverton exige
+// as 3 visões de novo, sem condicional — "PRECISAMOS TER A ANÁLISE NA VISÃO
+// FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO". Escopo só pra
+// Numérica: o corte de 04/09/2026 pro motor Rede continua valendo, decisão
+// de reverter lá é separada (PRD, Questões em aberto #5).
+const FLUXOS_NUMERICA = [
+  ...FLUXOS,
+  { value: 'soma', label: 'Faturado + Transmitido' },
+]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
 
@@ -470,6 +479,17 @@ export default function FarolPainelMetas() {
     : metrica === 'cobertura_numerica' ? industriaSelecionada?.cobertura_numerica
     : metrica === 'sortimento_numerica' ? industriaSelecionada?.sortimento_numerica
     : undefined
+
+  // fluxo='soma' só existe pra Numérica (Story 7.8) — trocar pra uma
+  // métrica Rede com 'soma' ainda selecionado voltaria "fluxo inválido" do
+  // backend (calcularCoberturaPorRede/calcularSortimentoPorRede não têm
+  // esse case de propósito, ver farol_metas_calculo_numerica.go). Mesmo
+  // guard-rail que já existe pra metrica/vigenciaID acima.
+  useEffect(() => {
+    if (fluxo === 'soma' && vinculoAtivo && vinculoAtivo.formula_codigo !== 'cobertura_numerica' && vinculoAtivo.formula_codigo !== 'sortimento_numerica_ppa') {
+      setFluxo('faturado')
+    }
+  }, [fluxo, vinculoAtivo])
 
   // ─── Modo individual (Cobertura OU Sortimento) — mesmo fluxo de sempre ───────
 
@@ -821,6 +841,7 @@ export default function FarolPainelMetas() {
   // check verde/X vermelho, nomenclatura consistente).
   const ehNumerica = vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
   const niveisAtuais = ehNumerica ? NIVEIS_NUMERICA : NIVEIS
+  const fluxosAtuais = ehNumerica ? FLUXOS_NUMERICA : FLUXOS
   const linhas = redeAberta
     ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
@@ -936,7 +957,7 @@ export default function FarolPainelMetas() {
           <Select value={fluxo} onValueChange={setFluxo}>
             <SelectTrigger className="w-48 uppercase"><SelectValue /></SelectTrigger>
             <SelectContent className="[&_*]:uppercase">
-              {FLUXOS.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+              {fluxosAtuais.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

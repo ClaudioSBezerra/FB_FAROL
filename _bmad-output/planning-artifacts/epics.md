@@ -515,7 +515,7 @@ Para que eu tenha a mesma informação que teria no painel web, mesmo estando em
 
 Dois novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA"), vinculados às mesmas Indústrias FOOD/HC já existentes (Épicos 1-2, não cria Indústria nova), calculados por Cliente/CNPJ direto — sem Rede — no bimestre móvel (mês corrente + mês anterior), com listas de import próprias (Clientes Numéricas, PPAs) e exibidos dentro do painel existente (Épicos 5-6) como opção de Tipo de Métrica adicional.
 
-*(Status 30/09/2026 — documentação final do Heverton confirmada: 3 das 5 Questões em aberto resolvidas pelo Carlos (JC); 1 delas virou gap CONFIRMADO — não é mais dúvida, é feature faltando (Story 7.8); 1 segue sem resposta (denominador da média PPA, Story 7.6). Ver PRD "Questões em aberto".)*
+*(Status 30/09/2026 — documentação final do Heverton confirmada: 4 das 5 Questões em aberto resolvidas (3 respondidas pelo Carlos (JC), 1 implementada no mesmo dia como Story 7.8 — visão Faturado+Emitido); resta 1 sem resposta (denominador da média PPA, Story 7.6). Ver PRD "Questões em aberto".)*
 
 ### Story 7.1: Tipos de Métrica "Cobertura Numérica" e "Sortimento Numérica (PPA)"
 
@@ -635,7 +635,7 @@ Para que eu não precise aprender uma tela nova pra acompanhar o 2º par de mét
 
 **E** ao selecionar Cobertura Numérica ou Sortimento Numérica, a hierarquia de navegação vai direto de RCA pra Cliente/CNPJ, sem o nível Rede (que não existe nessa métrica — FR24), reaproveitando o mesmo componente de painel (delta explícito, recortes de tempo) já usado pelas métricas por Rede
 
-**⚠ Esta story ainda não cobre a visão "Faturado+Emitido" — ver Story 7.8 (gap confirmado, não implementado).**
+**✅ A visão "Faturado+Emitido" foi implementada na Story 7.8 (30/09/2026), como 3ª opção de fluxo.**
 
 ### Story 7.8: Visão Faturado+Emitido (Cobertura/Sortimento Numérica)
 
@@ -643,7 +643,7 @@ Como Supervisor/GGV,
 Eu quero ver o Realizado da Numérica somando Faturado e Transmitido (Emitido), além de poder ver cada um isolado,
 Para que eu bata com a apuração oficial do fornecedor, que exige essa 3ª visão explicitamente.
 
-**✅/⚠ Status (30/09/2026):** GAP CONFIRMADO pela documentação final do Heverton ("PRECISAMOS TER A ANÁLISE NA VISÃO FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO" — sem condicional, texto idêntico em 29/09 e no reenvio de 30/09 via Carlos). **Não implementado ainda** — hoje o motor (`fluxo` do FR14) só calcula Faturado OU Transmitido isolados; não existe soma combinada em lugar nenhum do código. Reabre também o corte de 04/09/2026 que removeu a 3ª visão do FR15/FR20 originais do motor Rede (decisão do Heverton na época: "mesma filosofia do Farol V1") — aqui a exigência é explícita e não pode ser contornada.
+**✅ Status (30/09/2026): IMPLEMENTADA.** GAP CONFIRMADO pela documentação final do Heverton ("PRECISAMOS TER A ANÁLISE NA VISÃO FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO" — sem condicional, texto idêntico em 29/09 e no reenvio de 30/09 via Carlos), fechado no mesmo dia. Fluxo `soma` adicionado só às funções de cálculo da Numérica (`somaPvendaClientesNumerica`/`qtdPorCodProdClientesNumerica` em `farol_metas_calculo_numerica.go`) — soma direta de Faturado líquido (já abatido de devolução/cancelamento, FR29) + Transmitido, mesma semântica do "soma" que existiu no motor Rede até 04/09/2026 (sem deduplicar pedido que progrediu de Transmitido pra Faturado no mesmo período — comportamento histórico, não é bug novo). Escopo deliberadamente restrito à Numérica: as funções equivalentes do motor Rede (`somaPvendaClientes`/`qtdPorCodProdClientes`) NÃO ganharam esse case — reverter o corte de 04/09 pro motor Rede é decisão separada (Pendência abaixo). Painel web e mobile ganharam a 3ª opção de fluxo ("Faturado + Transmitido") só quando a métrica ativa é Numérica (guard-rail: troca automática pra "faturado" se o usuário estava em "soma" e muda pra uma métrica Rede). Coberto por `TestCalcularRealizado_CoberturaNumerica_FluxoSoma` (backend/handlers/farol_metas_calculo_numerica_test.go) — prova que nem Faturado nem Transmitido isolados batem o limiar, só a soma dos dois.
 
 **Critérios de Aceite:**
 

@@ -275,8 +275,30 @@ func somaPvendaClientesNumerica(db *sql.DB, empresaID string, cnpjs []string, da
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
 		}
+	case "soma":
+		// Story 7.8 — visão "Faturado + Emitido" pedida pela documentação
+		// final do Heverton (29/09/2026), sem condicional. Reaproveita a
+		// MESMA semântica do "soma" que já existiu no motor Rede até ser
+		// cortado em 04/09/2026 (Heverton pediu só 2 visões pra Rede,
+		// "mesma filosofia do Farol V1") — soma direta de Faturado líquido
+		// (já abatido de devolução/cancelamento) + Transmitido, sem
+		// deduplicar pedido que progrediu de Transmitido pra Faturado no
+		// mesmo período (mesmo comportamento histórico, não é bug novo).
+		// Só entra aqui pra Numérica: as funções Rede equivalentes
+		// (somaPvendaClientes) continuam sem este case de propósito — a
+		// decisão de reverter o corte pro motor Rede é separada (ver PRD,
+		// Questões em aberto #5).
+		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
+			return nil, err
+		}
+		if err := subtrairDevolucaoCancelamentoNumerica(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
+		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	return out, nil
 }
@@ -381,8 +403,19 @@ func qtdPorCodProdClientesNumerica(db *sql.DB, empresaID string, cnpjs []string,
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
 		}
+	case "soma":
+		// Story 7.8 — ver comentário equivalente em somaPvendaClientesNumerica.
+		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
+			return nil, err
+		}
+		if err := subtrairDevolucaoCancelamentoQtdNumerica(db, empresaID, cnpjs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
+		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	return out, nil
 }
