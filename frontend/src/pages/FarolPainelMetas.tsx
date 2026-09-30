@@ -1481,8 +1481,9 @@ export default function FarolPainelMetas() {
                   <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                     <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
                   </div>
-                  <div className="text-2xl font-semibold">
+                  <div className="text-2xl font-semibold flex items-center gap-2">
                     {fmt(painelCombinadoNum.cobertura.realizado_total)} <span className="text-sm text-muted-foreground">/ {clientesCombinadoNum.length} clientes</span>
+                    <StatusBadge size="w-6 h-6" atingiu={!!painelCombinadoNum.cobertura.faixa_atual} />
                   </div>
                   {painelCombinadoNum.cobertura.faixa_atual && (
                     <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.cobertura.faixa_atual.faixa}): {fmt(painelCombinadoNum.cobertura.faixa_atual.valor_meta)}</div>
@@ -1495,7 +1496,10 @@ export default function FarolPainelMetas() {
                   <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                     <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
                   </div>
-                  <div className="text-2xl font-semibold">{fmt(painelCombinadoNum.sortimento.realizado_total)}</div>
+                  <div className="text-2xl font-semibold flex items-center gap-2">
+                    {fmt(painelCombinadoNum.sortimento.realizado_total)}
+                    <StatusBadge size="w-6 h-6" atingiu={!!painelCombinadoNum.sortimento.faixa_atual} />
+                  </div>
                   {painelCombinadoNum.sortimento.faixa_atual && (
                     <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.sortimento.faixa_atual.faixa}): {fmt(painelCombinadoNum.sortimento.faixa_atual.valor_meta)}</div>
                   )}

@@ -1000,6 +1000,7 @@ export default function FarolPublicMetasPanel() {
                 <div className="text-2xl font-bold flex items-center gap-2">
                   {fmt(painelCombinadoNum.cobertura.realizado_total)}
                   <span className="text-base font-medium text-muted-foreground"> / {clientesCombinadoNum.length}</span>
+                  <StatusIcon size="w-7 h-7" atingiu={!!painelCombinadoNum.cobertura.faixa_atual} />
                 </div>
                 {painelCombinadoNum.cobertura.faixa_atual && (
                   <div className="text-xs text-muted-foreground mt-1">Objetivo atual (Faixa {painelCombinadoNum.cobertura.faixa_atual.faixa}): {fmt(painelCombinadoNum.cobertura.faixa_atual.valor_meta)}</div>
@@ -1009,7 +1010,10 @@ export default function FarolPublicMetasPanel() {
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                   <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
                 </div>
-                <div className="text-2xl font-bold">{fmt(painelCombinadoNum.sortimento.realizado_total)}</div>
+                <div className="text-2xl font-bold flex items-center gap-2">
+                  {fmt(painelCombinadoNum.sortimento.realizado_total)}
+                  <StatusIcon size="w-7 h-7" atingiu={!!painelCombinadoNum.sortimento.faixa_atual} />
+                </div>
                 {painelCombinadoNum.sortimento.faixa_atual && (
                   <div className="text-xs text-muted-foreground mt-1">Objetivo atual (Faixa {painelCombinadoNum.sortimento.faixa_atual.faixa}): {fmt(painelCombinadoNum.sortimento.faixa_atual.valor_meta)}</div>
                 )}
