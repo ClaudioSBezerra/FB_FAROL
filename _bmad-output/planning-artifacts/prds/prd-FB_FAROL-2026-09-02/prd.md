@@ -2,7 +2,7 @@
 title: Painel de Gestão de Metas por Indústria
 status: final
 created: 2026-09-02
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 # Painel de Gestão de Metas por Indústria
@@ -40,7 +40,7 @@ A primeira indústria a entrar no módulo é a Unilever (fornecedores 131-Foods 
 
 ### Numérica — 2º Tipo de Métrica do Programa Único (addendum 2026-09-29)
 
-O Programa Único tem um 2º par de métricas, sobre uma base de clientes diferente: a **"Numérica"**, definida por um documento formal ("PROGRAMA ÚNICO – UNILEVER", colado pelo usuário) e validada contra 2 planilhas reais (`Unico Acompanhamento numericas Unilever HC/foods_29092026.xlsx`, 10.754 linhas cada). Confirmado com o usuário (2026-09-29): isso **não é uma 3ª Indústria** — são 2 novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA") vinculados às **mesmas** Indústrias FOOD e HC já existentes (FR3/FR4), do mesmo jeito que Cobertura/Sortimento por Rede já são hoje. Evidência: o objetivo de PPA difere por indústria (15 pra HC, 7 pra Foods) — só faz sentido se for calculado por indústria, igual as métricas atuais.
+O Programa Único tem um 2º par de métricas, sobre uma base de clientes diferente: a **"Numérica"**, definida por documentação final do Heverton ("PROGRAMA ÚNICO – UNILEVER", 29/09/2026 — reenviada como `.docx` em 30/09/2026 pelo Carlos, conferida byte a byte: mesmo conteúdo, sem mudança) e validada contra 2 planilhas reais (`Unico Acompanhamento numericas Unilever HC/foods_29092026.xlsx`, 10.754 linhas cada). Confirmado com o usuário (2026-09-29): isso **não é uma 3ª Indústria** — são 2 novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA") vinculados às **mesmas** Indústrias FOOD e HC já existentes (FR3/FR4), do mesmo jeito que Cobertura/Sortimento por Rede já são hoje. Evidência: o objetivo de PPA difere por indústria (15 pra HC, 7 pra Foods) — só faz sentido se for calculado por indústria, igual as métricas atuais.
 
 Diferenças estruturais em relação a Cobertura/Sortimento por Rede (FR1-FR2):
 
@@ -164,5 +164,5 @@ As 3 levantadas durante a Discovery original (faixas genéricas, SLA de apuraç�
 2. **Denominador da média de PPA** — "dividido por quantidade de clientes com compra": só quem comprou algum PPA, ou quem teve qualquer venda no bimestre, ou todo mundo da lista (mesmo quem não comprou nada)? **Ainda em aberto — o Carlos não entendeu a pergunta como formulada em 30/09/2026; reperguntar com exemplo numérico concreto** (ex: "de 100 clientes Num.A/B, 60 compraram algo da indústria no mês mas só 40 compraram algum PPA da lista — a média divide por 60, por 40, ou pelos 100?"). Implementação atual (`farol_metas_calculo.go`) assume "todos os clientes elegíveis" (equivalente ao "100" do exemplo) — marcado como ASSUNÇÃO no código, revisar quando a resposta chegar.
 3. ~~**Faixas de Cobertura (4.870/5.681/6.493 lojas)**~~ — **RESOLVIDA (Carlos, 30/09/2026):** são as MESMAS pra HC e Foods, aplicadas independentemente (não somadas) — ver FR30.
 4. ~~**Colunas "Região do Sortimento"/AE/BU**~~ — **RESOLVIDA (Carlos, 30/09/2026):** pode ignorar, sem uso no cálculo — já era a decisão de design tomada (FR28/migration 248), agora confirmada.
-5. **Visão Faturado+Emitido (ver nota de reconciliação acima)** — reativar só para a Numérica, ou também reverter o corte de 04/09/2026 no motor de Cobertura/Sortimento por Rede já em produção? Ainda não perguntado ao Carlos/Heverton.
+5. **Visão Faturado+Emitido — GAP CONFIRMADO, não é mais "talvez".** A documentação final do Heverton (29/09/2026) é categórica: "PRECISAMOS TER A ANÁLISE NA VISÃO FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO" — sem condicional. Hoje (30/09/2026) o motor da Numérica só calcula Faturado OU Transmitido isolados (`fluxo` do FR14), **sem opção de soma combinada** — a visão "Faturado+Emitido" pedida no FR15/FR20 originais nunca foi implementada (foi cortada do motor Rede em produção em 04/09/2026). Falta implementar pra Numérica no mínimo; decidir se também volta pro motor Rede é separado.
 

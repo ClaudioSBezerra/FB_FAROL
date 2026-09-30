@@ -515,7 +515,7 @@ Para que eu tenha a mesma informação que teria no painel web, mesmo estando em
 
 Dois novos Tipos de Métrica ("Cobertura Numérica" e "Sortimento Numérica/PPA"), vinculados às mesmas Indústrias FOOD/HC já existentes (Épicos 1-2, não cria Indústria nova), calculados por Cliente/CNPJ direto — sem Rede — no bimestre móvel (mês corrente + mês anterior), com listas de import próprias (Clientes Numéricas, PPAs) e exibidos dentro do painel existente (Épicos 5-6) como opção de Tipo de Métrica adicional.
 
-*(5 Questões em aberto no PRD, levadas pelo usuário à equipe da JC/Heverton, sem resposta ainda — marcadas story a story abaixo onde se aplicam. Não bloqueiam o desenho, mas travam o fechamento do AC específico até a resposta chegar.)*
+*(Status 30/09/2026 — documentação final do Heverton confirmada: 3 das 5 Questões em aberto resolvidas pelo Carlos (JC); 1 delas virou gap CONFIRMADO — não é mais dúvida, é feature faltando (Story 7.8); 1 segue sem resposta (denominador da média PPA, Story 7.6). Ver PRD "Questões em aberto".)*
 
 ### Story 7.1: Tipos de Métrica "Cobertura Numérica" e "Sortimento Numérica (PPA)"
 
@@ -635,4 +635,24 @@ Para que eu não precise aprender uma tela nova pra acompanhar o 2º par de mét
 
 **E** ao selecionar Cobertura Numérica ou Sortimento Numérica, a hierarquia de navegação vai direto de RCA pra Cliente/CNPJ, sem o nível Rede (que não existe nessa métrica — FR24), reaproveitando o mesmo componente de painel (delta explícito, recortes de tempo) já usado pelas métricas por Rede
 
-**⚠ Pendência (Questão em aberto #5 do PRD):** o documento-fonte da Numérica pede explicitamente as 3 visões de fluxo (Faturado/Emitida/Faturado+Emitido — FR15/FR20), que foram cortadas pra 2 visões no motor de Rede em produção por decisão de 2026-09-04. Confirmar com o usuário se a 3ª visão volta só pra Numérica ou também pro motor Rede existente antes de fechar o AC de alternância de fluxo desta story.
+**⚠ Esta story ainda não cobre a visão "Faturado+Emitido" — ver Story 7.8 (gap confirmado, não implementado).**
+
+### Story 7.8: Visão Faturado+Emitido (Cobertura/Sortimento Numérica)
+
+Como Supervisor/GGV,
+Eu quero ver o Realizado da Numérica somando Faturado e Transmitido (Emitido), além de poder ver cada um isolado,
+Para que eu bata com a apuração oficial do fornecedor, que exige essa 3ª visão explicitamente.
+
+**✅/⚠ Status (30/09/2026):** GAP CONFIRMADO pela documentação final do Heverton ("PRECISAMOS TER A ANÁLISE NA VISÃO FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO" — sem condicional, texto idêntico em 29/09 e no reenvio de 30/09 via Carlos). **Não implementado ainda** — hoje o motor (`fluxo` do FR14) só calcula Faturado OU Transmitido isolados; não existe soma combinada em lugar nenhum do código. Reabre também o corte de 04/09/2026 que removeu a 3ª visão do FR15/FR20 originais do motor Rede (decisão do Heverton na época: "mesma filosofia do Farol V1") — aqui a exigência é explícita e não pode ser contornada.
+
+**Critérios de Aceite:**
+
+**Dado** um vínculo/vigência de Cobertura Numérica ou Sortimento Numérica já calculado nos dois fluxos isolados
+**Quando** seleciono a visão "Faturado + Emitido"
+**Então** o Realizado de cada Cliente/CNPJ é a SOMA do valor Faturado com o valor Transmitido no mesmo bimestre móvel — não uma 3ª consulta redundante, reaproveita o que Faturado e Transmitido isolados já calculam
+
+**E** a dedução de Devolução/Cancelamento (FR29) continua valendo só sobre a parte Faturada (Transmitido não tem CCD — mesma regra já documentada em `subtrairDevolucaoCancelamentoNumerica`)
+
+**E** o painel (web e mobile, Story 7.7) ganha essa 3ª opção no toggle de fluxo, ao lado de Faturado/Transmitido
+
+**Pendência:** decidir (com o Heverton) se essa soma combinada também deve voltar pro motor Cobertura/Sortimento por Rede (Épico 4/5), ou fica restrita à Numérica — Questão em aberto #5 do PRD.
