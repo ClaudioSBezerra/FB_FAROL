@@ -1641,7 +1641,23 @@ export default function FarolPainelMetas() {
               <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
                 <Target className="w-4 h-4" /> Realizado
               </div>
-              <div className="text-2xl font-semibold">{fmt(painel.realizado.realizado_total)}</div>
+              {/* Realizado / Objetivo atual + check/X no MESMO card (pedido
+                  do Claudio 30/09/2026: "bater o olho sem fazer conta") —
+                  antes eram 3 cards separados (Realizado, Objetivo atual,
+                  Falta) exigindo comparar os 3 na cabeça; mesmo padrão que
+                  o painel mobile já usa (FarolPublicMetasPanel.tsx). */}
+              <div className="text-2xl font-semibold flex items-center gap-2">
+                <span>
+                  {fmt(painel.realizado.realizado_total)}
+                  {(painel.proxima_faixa ?? painel.faixa_atual) && (
+                    <span className="text-base font-medium text-muted-foreground"> / {fmt((painel.proxima_faixa ?? painel.faixa_atual)!.valor_meta)}</span>
+                  )}
+                </span>
+                <StatusBadge atingiu={painel.delta <= 0} />
+              </div>
+              {ehCobertura && (
+                <div className="text-xs text-muted-foreground mt-0.5">de {fmt(painel.realizado.redes.length)} {ehNumerica ? 'clientes' : 'redes'} no total</div>
+              )}
               {painel.realizado.parcial && <Badge variant="secondary" className="mt-1">Mês em andamento</Badge>}
             </div>
             <div className="border rounded-lg p-4">
