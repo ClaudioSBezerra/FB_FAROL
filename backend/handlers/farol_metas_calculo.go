@@ -112,10 +112,10 @@ type RealizadoRede struct {
 	NomeCRV    string  `json:"nome_crv"`
 	CodRCA     string  `json:"cod_rca"` // RCA "representante" da Rede — ver redeRepresentante
 	NomeRCA    string  `json:"nome_rca"`
-	Valor      float64 `json:"valor"`       // média entre lojas (Cobertura: R$; Sortimento: qtd EANs)
-	ValorTotal float64 `json:"valor_total"` // só Cobertura: soma (não-média) entre lojas — coluna "VALOR VENDA" do modelo V1
+	Valor      float64 `json:"valor"`              // média entre lojas (Cobertura: R$; Sortimento: qtd EANs)
+	ValorTotal float64 `json:"valor_total"`        // só Cobertura: soma (não-média) entre lojas — coluna "VALOR VENDA" do modelo V1
 	Objetivo   float64 `json:"objetivo,omitempty"` // alvo por Rede usado em Atingiu (ver RealizadoCliente.Objetivo)
-	Atingiu    bool    `json:"atingiu"`     // Cobertura: valor médio >= limiar do vínculo. Sortimento: valor médio >= maior faixa cadastrada (ver CalcularRealizadoComPeriodo)
+	Atingiu    bool    `json:"atingiu"`            // Cobertura: valor médio >= limiar do vínculo. Sortimento: valor médio >= maior faixa cadastrada (ver CalcularRealizadoComPeriodo)
 	// TeveCompra — só preenchido por calcularSortimentoNumericaPPA (Questão
 	// em aberto #2 do PRD, decisão provisória do Claudio 30/09/2026): true
 	// se o cliente comprou QUALQUER produto desta Indústria no período
@@ -124,6 +124,13 @@ type RealizadoRede struct {
 	// "todos os clientes elegíveis". Não usado por nenhum outro
 	// formula_codigo — default false é inofensivo nos demais casos.
 	TeveCompra bool `json:"teve_compra,omitempty"`
+	// CodCl — só preenchido pelas calculadoras Numérica (calcularCoberturaNumerica/
+	// calcularSortimentoNumericaPPA): o código de cliente (CODCLI) do
+	// cadastro da JC (farol.metas_clientes_numericas.cod_cl), pra exibir nas
+	// telas em vez do CNPJ cru (pedido do Claudio 30/09/2026 — "está sem
+	// código"). CodPrinc já É o CNPJ na Numérica (truque de reuso), então
+	// este campo é o único jeito de mostrar o código "normal" do cliente.
+	CodCl string `json:"cod_cl,omitempty"`
 
 	Clientes []RealizadoCliente `json:"clientes,omitempty"` // nível 5 — só populado quando o chamador pede (ver incluirClientes)
 }

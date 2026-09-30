@@ -40,6 +40,7 @@ interface RealizadoCliente {
 
 interface RealizadoRede {
   cod_princ: string
+  cod_cl?: string
   razao: string
   fantasia: string
   qt_lojas: number
@@ -569,8 +570,17 @@ export default function FarolPainelMetas() {
   const optsRedeIndiv = useMemo(
     () => dedup(todasRedesIndiv
       .filter(r => (!filtroGGV || r.cod_ggv === filtroGGV.codigo) && (!filtroCRV || r.cod_crv === filtroCRV.codigo) && (!filtroRCA || r.cod_rca === filtroRCA.codigo))
-      .map(r => ({ v: r.cod_princ, l: rotuloRede(r.cod_princ, r.razao, r.fantasia) }))),
-    [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA],
+      // Numérica: cod_princ É o CNPJ (truque de reuso) — mostrar o CNPJ no
+      // filtro confundiria com "código do cliente"; usa cod_cl (CODCLI do
+      // cadastro da JC) no rótulo, mantendo cod_princ como valor de
+      // seleção (é o que casa com redeAberta.cod_princ em outro lugar).
+      .map(r => ({
+        v: r.cod_princ,
+        l: vinculoAtivo?.formula_codigo === 'cobertura_numerica' || vinculoAtivo?.formula_codigo === 'sortimento_numerica_ppa'
+          ? rotuloRede(r.cod_cl || r.cod_princ, r.razao, r.fantasia)
+          : rotuloRede(r.cod_princ, r.razao, r.fantasia),
+      }))),
+    [todasRedesIndiv, filtroGGV, filtroCRV, filtroRCA, vinculoAtivo],
   )
   // Selecionar direto pelo select pula pro próximo nível, igual abrirGrupo
   // já faz ao clicar numa linha — mantém nivel e filtro sempre "casados".
@@ -854,12 +864,15 @@ export default function FarolPainelMetas() {
         // 10/09/2026) — RCA fica isolado no "sub", sem misturar os dois.
         // Numérica não mostra "(N loja)" (sempre 1) nem abre drill (o
         // próprio Cliente já é o nível final).
-        nome: ehNumerica ? (r.fantasia || r.razao || r.cod_princ) : `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
-        sub: r.nome_rca || r.cod_rca,
+        nome: ehNumerica
+          ? `${r.cod_cl ? `${r.cod_cl} — ` : ''}${r.fantasia || r.razao || r.cod_princ}`
+          : `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
+        sub: r.cod_rca ? `${r.cod_rca} — ${r.nome_rca}` : r.nome_rca,
         valor: r.valor, marcador: r.atingiu as boolean | undefined, drill: ehNumerica ? undefined : () => setRedeAberta(r),
       }))
     : (painel?.realizado.grupos ?? []).map(g => ({
-        nome: g.nome || g.codigo, sub: `${g.qtd_atingindo}/${g.qtd_redes} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
+        nome: g.codigo && g.nome ? `${g.codigo} — ${g.nome}` : (g.nome || g.codigo),
+        sub: `${g.qtd_atingindo}/${g.qtd_redes} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
         valor: g.qtd_atingindo, marcador: undefined as boolean | undefined, drill: () => abrirGrupo(g.codigo, g.nome || g.codigo),
       }))
 

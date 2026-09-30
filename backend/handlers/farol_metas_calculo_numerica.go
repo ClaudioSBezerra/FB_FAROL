@@ -126,9 +126,9 @@ func calcularCoberturaNumerica(db *sql.DB, empresaID string, clientes []clienteN
 		}
 		valor := valoresPorCliente[c.CNPJ] // ausente = 0 (nenhuma venda no período)
 		atingiu := valor >= limiar
-		self := RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, Atingiu: atingiu, Objetivo: limiar}
+		self := RealizadoCliente{CNPJ: c.CNPJ, CodCli: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, Valor: valor, Atingiu: atingiu, Objetivo: limiar}
 		out = append(out, RealizadoRede{
-			CodPrinc: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
+			CodPrinc: c.CNPJ, CodCl: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
 			Valor: valor, ValorTotal: valor, Objetivo: limiar, Atingiu: atingiu,
 			Clientes: []RealizadoCliente{self},
@@ -175,9 +175,9 @@ func calcularSortimentoNumericaPPA(db *sql.DB, empresaID string, clientes []clie
 		// qtdPorCodProdClientesNumerica sem filtro de PPA (só cod_prod <>
 		// ''), então "tem alguma linha" já é exatamente essa pergunta.
 		teveCompra := len(linhasPorCliente[c.CNPJ]) > 0
-		self := RealizadoCliente{CNPJ: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdPPAs, Atingiu: atingiu, Objetivo: teto}
+		self := RealizadoCliente{CNPJ: c.CNPJ, CodCli: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, Valor: qtdPPAs, Atingiu: atingiu, Objetivo: teto}
 		out = append(out, RealizadoRede{
-			CodPrinc: c.CNPJ, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
+			CodPrinc: c.CNPJ, CodCl: c.CodCl, Razao: c.Razao, Fantasia: c.Fantasia, QtLojas: 1,
 			CodGGV: c.CodGGV, NomeGGV: c.NomeGGV, CodCRV: c.CodCRV, NomeCRV: c.NomeCRV, CodRCA: c.CodRCA, NomeRCA: c.NomeRCA,
 			Valor: qtdPPAs, Objetivo: teto, Atingiu: atingiu, TeveCompra: teveCompra,
 			Clientes: []RealizadoCliente{self},
