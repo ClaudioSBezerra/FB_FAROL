@@ -12,6 +12,21 @@ export interface ComboboxOption {
   label: string
 }
 
+// normalizar — remove acento pra comparação ("jose" tem que achar "JOSÉ").
+function normalizar(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+}
+
+// filtroSubstring — achado real 2026-09-30 (Claudio: buscou "LUIZ" e
+// voltaram nomes sem nenhuma relação): o cmdk usa por padrão um algoritmo
+// "fuzzy" (command-score) que casa letras espalhadas fora de ordem
+// contígua — útil pra paleta de comando, péssimo pra "achar o cliente
+// certo" (dá falso positivo o tempo todo). Troca pra "contém o texto
+// exato digitado" (sem acento, sem case) — mais previsível pra esse uso.
+function filtroSubstring(value: string, search: string): number {
+  return normalizar(value).includes(normalizar(search)) ? 1 : 0
+}
+
 interface Props {
   options: ComboboxOption[]
   value: string
@@ -54,7 +69,7 @@ export function SearchableCombobox({
           e onde começa o nome do resultado). Nunca mais estreito que o
           gatilho, mas livre pra crescer até um tamanho legível. */}
       <PopoverContent className="p-0" style={{ minWidth: 'max(var(--radix-popover-trigger-width), 20rem)' }}>
-        <Command>
+        <Command filter={filtroSubstring}>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
