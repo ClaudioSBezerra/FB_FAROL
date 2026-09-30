@@ -11,9 +11,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon, Download } from 'lucide-react'
 import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
+import { Button } from '@/components/ui/button'
+import { exportToExcel } from '@/lib/exportToExcel'
+import { toast } from 'sonner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1057,6 +1060,61 @@ export default function FarolPainelMetas() {
   const mostrarColunaRCA = redeAberta ? true : !(nivel === 'rede' && filtroRCA)
   const nivelLabelAtual = redeAberta ? 'Rede/CNPJ' : niveisAtuais.find(n => n.value === nivel)?.label ?? nivel
 
+  // exportarPainel — pedido do Heverton 30/09/2026: a versão WEB não tinha
+  // nenhum jeito de baixar os dados em Excel (os comparativos já tinham,
+  // o painel principal não). Exporta sempre no grão mais fino disponível
+  // (Rede/Cliente — nunca o rollup de GGV/CRV/RCA que a tela pode estar
+  // mostrando no momento), pra servir de base pra quem quiser pivotar/
+  // cruzar os números fora do Farol — mesmo padrão dos Comparativos
+  // (FarolComparativoFechamento(Numerica).tsx), reaproveitando o mesmo
+  // exportToExcel.
+  function exportarPainel() {
+    const industriaNome = industriaSelecionada?.nome ?? ''
+    if (metrica === 'combinado') {
+      if (clientesCombinado.length === 0) { toast.error('Nada pra exportar ainda'); return }
+      exportToExcel(
+        clientesCombinado.map(c => ({
+          'Cód. Cliente': c.cod_cli || '', CNPJ: c.cnpj, Razão: c.razao, Fantasia: c.fantasia, UF: c.uf,
+          GGV: `${c.cod_ggv} — ${c.nome_ggv}`, CRV: `${c.cod_crv} — ${c.nome_crv}`, RCA: `${c.cod_rca} — ${c.nome_rca}`,
+          'Cobertura (R$)': c.cobertura_valor, 'Objetivo Cobertura': c.cobertura_objetivo,
+          'Sortimento (EANs)': c.sortimento_valor, 'Objetivo Sortimento': c.sortimento_objetivo,
+          'Dt. Últ. Compra': c.data_ultima_compra || '',
+        })),
+        `Combinado_${industriaNome}_${vigenciaCombinadaKey.replace('|', '_a_')}`, 'Combinado',
+      )
+      return
+    }
+    if (metrica === 'combinado_numerica') {
+      if (clientesCombinadoNum.length === 0) { toast.error('Nada pra exportar ainda'); return }
+      exportToExcel(
+        clientesCombinadoNum.map(c => ({
+          'Cód. Cliente': c.cod_cl || '', CNPJ: c.cnpj, Classificação: c.classificacao_pdv, Razão: c.razao, Fantasia: c.fantasia,
+          GGV: `${c.cod_ggv} — ${c.nome_ggv}`, CRV: `${c.cod_crv} — ${c.nome_crv}`, RCA: `${c.cod_rca} — ${c.nome_rca}`,
+          'Cobertura (R$)': c.cobertura_valor, 'Objetivo Cobertura': c.cobertura_objetivo, 'Cobertura Atingiu': c.cobertura_atingiu ? 'Sim' : 'Não',
+          'Sortimento (PPAs)': c.sortimento_aplicavel ? c.sortimento_valor : '', 'Objetivo Sortimento': c.sortimento_aplicavel ? c.sortimento_objetivo : '',
+          'Sortimento Aplicável': c.sortimento_aplicavel ? 'Sim' : 'Não',
+        })),
+        `Combinado_Numerica_${industriaNome}_${vigenciaCombinadaNumericaKey.replace('|', '_a_')}`, 'Combinado Numerica',
+      )
+      return
+    }
+    const redes = painel?.realizado.redes ?? []
+    if (redes.length === 0) { toast.error('Nada pra exportar ainda'); return }
+    exportToExcel(
+      redes.map(r => ({
+        [ehNumerica ? 'Cód. Cliente' : 'Cód. Princ.']: ehNumerica ? (r.cod_cl || r.cod_princ) : r.cod_princ,
+        ...(ehNumerica ? { CNPJ: r.cod_princ } : {}),
+        Razão: r.razao, Fantasia: r.fantasia,
+        ...(ehNumerica ? {} : { 'Qt Lojas': r.qt_lojas }),
+        GGV: `${r.cod_ggv} — ${r.nome_ggv}`, CRV: `${r.cod_crv} — ${r.nome_crv}`, RCA: `${r.cod_rca} — ${r.nome_rca}`,
+        [ehCobertura ? 'Valor (R$)' : 'Valor']: r.valor,
+        Objetivo: r.objetivo ?? '',
+        Status: r.atingiu ? 'Atingiu' : 'Não atingiu',
+      })),
+      `${vinculoAtivo?.tipo_metrica_nome || metrica}_${industriaNome}_${vigenciaID}`, 'Detalhe',
+    )
+  }
+
   return (
     <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
       <div className="flex items-start justify-between gap-3">
@@ -1183,6 +1241,12 @@ export default function FarolPainelMetas() {
             </SelectContent>
           </Select>
         </div>
+        {industriaID && (
+          <Button variant="outline" size="sm" className="gap-2" onClick={exportarPainel}>
+            <Download className="w-4 h-4" />
+            Exportar Excel
+          </Button>
+        )}
       </div>
 
       {!industriaID ? (
