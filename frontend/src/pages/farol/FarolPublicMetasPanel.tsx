@@ -47,6 +47,7 @@ interface RealizadoCliente {
 
 interface RealizadoRede {
   cod_princ: string
+  cod_cl?: string
   razao: string
   fantasia: string
   valor: number
@@ -937,7 +938,7 @@ export default function FarolPublicMetasPanel() {
                       <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
                         {!ehNumerica && <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />}
                         <span className="font-medium truncate">
-                          <span className="font-mono font-semibold">{ehNumerica ? formatCNPJ(r.cod_princ) : r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}
+                          <span className="font-mono font-semibold">{ehNumerica ? (r.cod_cl || formatCNPJ(r.cod_princ)) : r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}
                         </span>
                       </span>
                       <span className="flex items-center gap-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
