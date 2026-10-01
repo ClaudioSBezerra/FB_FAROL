@@ -90,9 +90,9 @@ function seloStatus(l: LinhaComparativo) {
     return { texto: `Órfã — ${lado}`, classe: 'bg-amber-50 text-amber-700 border-amber-200' }
   }
   if (l.status === 'ok') {
-    return { texto: 'OK', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    return { texto: 'OK', classe: 'bg-green-50 text-green-800 border-green-300' }
   }
-  return { texto: 'Divergência', classe: 'bg-red-50 text-red-700 border-red-200' }
+  return { texto: 'Divergência', classe: 'bg-red-50 text-red-800 border-red-300' }
 }
 
 function linhaFundo(l: LinhaComparativo) {

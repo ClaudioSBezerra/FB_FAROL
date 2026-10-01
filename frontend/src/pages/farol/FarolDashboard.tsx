@@ -61,13 +61,13 @@ function saudacao(): string {
   return 'Boa noite,'
 }
 const CORS_BORDER: Record<Cor, string> = {
-  verde: 'border-l-emerald-500', amarelo: 'border-l-amber-400', vermelho: 'border-l-red-500',
+  verde: 'border-l-green-600', amarelo: 'border-l-amber-400', vermelho: 'border-l-red-600',
 }
 const CORS_BAR: Record<Cor, string> = {
-  verde: 'bg-emerald-500', amarelo: 'bg-amber-400', vermelho: 'bg-red-500',
+  verde: 'bg-green-600', amarelo: 'bg-amber-400', vermelho: 'bg-red-600',
 }
 const CORS_TEXT: Record<Cor, string> = {
-  verde: 'text-emerald-600', amarelo: 'text-amber-600', vermelho: 'text-red-500',
+  verde: 'text-green-700', amarelo: 'text-amber-600', vermelho: 'text-red-700',
 }
 
 // ─── Pulso de Ontem ────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ function PulsoBanner({ cod, cnpj }: { cod?: string; cnpj?: string }) {
 
   const dVl = fmtDelta(data.pct)
   const dQt = fmtDelta(data.pct_qt)
-  const deltaCls = (up: boolean) => up ? 'text-emerald-600' : 'text-red-500'
+  const deltaCls = (up: boolean) => up ? 'text-green-700' : 'text-red-700'
 
   return (
     <div className={`bg-white border border-slate-100 border-l-4 ${CORS_BORDER[data.cor]} rounded-xl shadow-sm overflow-hidden`}>

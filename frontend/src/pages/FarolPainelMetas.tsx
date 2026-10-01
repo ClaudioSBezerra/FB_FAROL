@@ -358,8 +358,8 @@ function StatusBadge({ atingiu, labelSim = 'Coberta', labelNao = 'Não coberta',
   size?: string
 }) {
   return atingiu
-    ? <Check className={`${size} inline-block shrink-0 text-emerald-600`} strokeWidth={3} aria-label={labelSim}><title>{labelSim}</title></Check>
-    : <XIcon className={`${size} inline-block shrink-0 text-red-600`} strokeWidth={3} aria-label={labelNao}><title>{labelNao}</title></XIcon>
+    ? <Check className={`${size} inline-block shrink-0 text-green-700`} strokeWidth={3} aria-label={labelSim}><title>{labelSim}</title></Check>
+    : <XIcon className={`${size} inline-block shrink-0 text-red-700`} strokeWidth={3} aria-label={labelNao}><title>{labelNao}</title></XIcon>
 }
 
 // primeiroEUltimoDiaDoMes — default do filtro "Período: de/até" (pedido do
@@ -1419,10 +1419,10 @@ export default function FarolPainelMetas() {
                         {abaCombinado !== 'ggv' && <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>}
                         {abaCombinado === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
                         <TableCell className="text-right">{g.qtd_redes}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{g.qtd_atingindo_cobertura}</TableCell>
-                        <TableCell className="text-right text-red-600">{g.qtd_falta_cobertura}</TableCell>
-                        <TableCell className="text-right text-emerald-600">{g.qtd_atingindo_sortimento}</TableCell>
-                        <TableCell className="text-right text-red-600">{g.qtd_falta_sortimento}</TableCell>
+                        <TableCell className="text-right text-green-700">{g.qtd_atingindo_cobertura}</TableCell>
+                        <TableCell className="text-right text-red-700">{g.qtd_falta_cobertura}</TableCell>
+                        <TableCell className="text-right text-green-700">{g.qtd_atingindo_sortimento}</TableCell>
+                        <TableCell className="text-right text-red-700">{g.qtd_falta_sortimento}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1488,11 +1488,11 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-right">{fmtBRL(r.cobertura_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmtBRL(r.cobertura_valor_total)}</TableCell>
                           <TableCell className="text-right">{fmtBRL(r.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={r.cobertura_atingiu} /></TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
+                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
@@ -1510,7 +1510,7 @@ export default function FarolPainelMetas() {
                         <TableCell />
                         <TableCell className="text-right">{fmt(totComb.objEan)}</TableCell>
                         <TableCell className="text-right">{fmt(totComb.qtMedEan)}</TableCell>
-                        <TableCell className={`text-right ${totComb.faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(totComb.faltaEan)}</TableCell>
+                        <TableCell className={`text-right ${totComb.faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(totComb.faltaEan)}</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1571,11 +1571,11 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_rca} — {c.nome_rca}</TableCell>
                           <TableCell className="text-right">{fmtBRL(c.cobertura_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmtBRL(c.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={faltaCob >= 0} /></TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_objetivo)}</TableCell>
                           <TableCell className="text-right">{fmt(c.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
+                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
@@ -1810,9 +1810,9 @@ export default function FarolPainelMetas() {
                 {(painel.proxima_faixa ?? painel.faixa_atual)?.valor_meta !== undefined ? fmt((painel.proxima_faixa ?? painel.faixa_atual)!.valor_meta) : '—'}
               </div>
             </div>
-            <div className={`border rounded-lg p-4 ${painel.delta > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}>
+            <div className={`border rounded-lg p-4 ${painel.delta > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
               <div className="flex items-center gap-2 text-xs mb-1">
-                {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
+                {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-green-700" />}
                 Falta pra bater o objetivo
               </div>
               <div className="text-2xl font-semibold">

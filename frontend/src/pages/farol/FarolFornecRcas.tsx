@@ -24,13 +24,13 @@ function fmtBRL(v: number) {
 }
 
 const CORS_BAR: Record<Cor, string> = {
-  verde: 'bg-emerald-500', amarelo: 'bg-amber-400', vermelho: 'bg-red-500',
+  verde: 'bg-green-600', amarelo: 'bg-amber-400', vermelho: 'bg-red-600',
 }
 const CORS_BORDER: Record<Cor, string> = {
-  verde: 'border-l-emerald-500', amarelo: 'border-l-amber-400', vermelho: 'border-l-red-500',
+  verde: 'border-l-green-600', amarelo: 'border-l-amber-400', vermelho: 'border-l-red-600',
 }
 const CORS_TEXT: Record<Cor, string> = {
-  verde: 'text-emerald-600', amarelo: 'text-amber-600', vermelho: 'text-red-500',
+  verde: 'text-green-700', amarelo: 'text-amber-600', vermelho: 'text-red-700',
 }
 
 export default function FarolFornecRcas({ embedded = false }: { embedded?: boolean } = {}) {

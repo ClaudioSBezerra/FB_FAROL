@@ -24,29 +24,29 @@ import { useSortedCards } from '@/components/farol/SortToggle'
 // ─── Paleta tonal (mesma do CardVenda em FarolV2Dashboard) ────────────────
 
 const COR_BG: Record<Cor, string> = {
-  verde:    'bg-gradient-to-br from-emerald-50/60 via-white to-white',
+  verde:    'bg-gradient-to-br from-green-100/70 via-white to-white',
   amarelo:  'bg-gradient-to-br from-amber-50/60 via-white to-white',
-  vermelho: 'bg-gradient-to-br from-red-50/70 via-white to-white',
+  vermelho: 'bg-gradient-to-br from-red-100/80 via-white to-white',
 }
 const COR_RING: Record<Cor, string> = {
-  verde:    'ring-1 ring-emerald-100 hover:ring-emerald-200',
+  verde:    'ring-1 ring-green-300 hover:ring-green-400',
   amarelo:  'ring-1 ring-amber-100 hover:ring-amber-200',
-  vermelho: 'ring-1 ring-red-200 hover:ring-red-300',
+  vermelho: 'ring-1 ring-red-400 hover:ring-red-500',
 }
 const COR_DOT: Record<Cor, string> = {
-  verde:    'bg-emerald-500',
+  verde:    'bg-green-600',
   amarelo:  'bg-amber-500',
-  vermelho: 'bg-red-500',
+  vermelho: 'bg-red-600',
 }
 const COR_TEXT: Record<Cor, string> = {
-  verde:    'text-emerald-700',
+  verde:    'text-green-800',
   amarelo:  'text-amber-700',
-  vermelho: 'text-red-700',
+  vermelho: 'text-red-800',
 }
 const COR_BAR: Record<Cor, string> = {
-  verde:    'bg-emerald-500',
+  verde:    'bg-green-600',
   amarelo:  'bg-amber-400',
-  vermelho: 'bg-red-500',
+  vermelho: 'bg-red-600',
 }
 
 // Cor binária pra % de positivação (não vem direta do tipo KPI compartilhado;
@@ -62,7 +62,7 @@ function StatusDot({ cor }: { cor: Cor }) {
   return (
     <span className="relative flex h-4 w-4 shrink-0">
       {cor === 'vermelho' && (
-        <span className="absolute inline-flex h-full w-full rounded-full opacity-60 bg-red-400 animate-ping" />
+        <span className="absolute inline-flex h-full w-full rounded-full opacity-60 bg-red-500 animate-ping" />
       )}
       <span className={`relative inline-flex rounded-full h-4 w-4 ${COR_DOT[cor]}`} />
     </span>
@@ -85,7 +85,7 @@ function DeltaPct({ atual, anterior }: { atual: number; anterior: number }) {
   }
   return (
     <span className={`inline-flex items-center gap-1 text-base font-bold tabular-nums ${
-      up ? 'text-emerald-700' : 'text-red-700'
+      up ? 'text-green-800' : 'text-red-800'
     }`}>
       {up ? <TrendingUp className="h-4 w-4" strokeWidth={3} /> : <TrendingDown className="h-4 w-4" strokeWidth={3} />}
       {Math.abs(delta).toFixed(1)}%

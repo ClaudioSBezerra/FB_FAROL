@@ -1,9 +1,9 @@
 type Cor = 'verde' | 'amarelo' | 'vermelho'
 
 const STYLES: Record<Cor, { bg: string; shadow: string; symbol: string }> = {
-  verde:    { bg: 'bg-emerald-500', shadow: 'shadow-emerald-200', symbol: '✓' },
-  amarelo:  { bg: 'bg-amber-400',   shadow: 'shadow-amber-200',   symbol: '!' },
-  vermelho: { bg: 'bg-red-500',     shadow: 'shadow-red-200',     symbol: '✕' },
+  verde:    { bg: 'bg-green-600', shadow: 'shadow-green-300', symbol: '✓' },
+  amarelo:  { bg: 'bg-amber-400', shadow: 'shadow-amber-200', symbol: '!' },
+  vermelho: { bg: 'bg-red-600',   shadow: 'shadow-red-300',   symbol: '✕' },
 }
 
 const SIZES = {

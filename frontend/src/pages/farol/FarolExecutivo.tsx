@@ -201,9 +201,9 @@ function fmtMix(v: number) {
 }
 
 const COR_TXT: Record<Cor, string> = {
-  verde:    'text-emerald-600',
+  verde:    'text-green-700',
   amarelo:  'text-amber-500',
-  vermelho: 'text-red-600',
+  vermelho: 'text-red-700',
 }
 
 // Cores FORTES para a linha Total (fundo cinza): verde/vermelho mais saturados
@@ -260,9 +260,9 @@ function filtrosDaURL(): Record<string, string[]> {
 }
 
 const COR_TXT_TOTAL: Record<Cor, string> = {
-  verde:    'text-emerald-800',
+  verde:    'text-green-900',
   amarelo:  'text-amber-700',
-  vermelho: 'text-red-700',
+  vermelho: 'text-red-800',
 }
 
 // ─── Preset de período ───────────────────────────────────────────────────────

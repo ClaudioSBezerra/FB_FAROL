@@ -688,7 +688,7 @@ export default function FarolGamificacao() {
                     <TableCell className="text-sm">{l.nome_rca || l.cod_rca} <span className="text-xs text-muted-foreground font-mono">({l.cod_rca})</span></TableCell>
                     <TableCell className="text-center py-2"><GamifNivelBadge nivel={l.nivel_principal} ordem={l.nivel_ordem} percentual={l.percentual_principal} /></TableCell>
                     <TableCell className="text-right font-medium">{fmt(l.pontos_total)}</TableCell>
-                    <TableCell className="text-right font-medium text-emerald-700">{fmtBRL(l.bonus_total)}</TableCell>
+                    <TableCell className="text-right font-medium text-green-700">{fmtBRL(l.bonus_total)}</TableCell>
                     {/* Volume — critério de desempate (curva ABC, pedido do
                         Claudio 22/09/2026): quem vende mais aparece antes de
                         quem só bateu o mínimo, mesmo com o mesmo prêmio. */}
@@ -736,7 +736,7 @@ export default function FarolGamificacao() {
                 </div>
                 <div className="flex justify-center gap-6 text-sm">
                   <span><strong>{fmt(minhaPosicao.pontos_total)}</strong> pontos</span>
-                  <span className="text-emerald-700"><strong>{fmtBRL(minhaPosicao.bonus_total)}</strong> em bônus</span>
+                  <span className="text-green-700"><strong>{fmtBRL(minhaPosicao.bonus_total)}</strong> em bônus</span>
                 </div>
                 {/* Progresso — pedido do Claudio 22/09/2026: mostra "faltam
                     N" mesmo antes de bater 100%, pra servir de motivação no
@@ -745,7 +745,7 @@ export default function FarolGamificacao() {
                     (cobertura/sortimento/rede completa/RCA completo), não
                     só rca_completo. */}
                 {minhaPosicao.detalhe?.filter(d => typeof d.total === 'number').map((d, i) => (
-                  <div key={i} className={`mt-3 mx-auto max-w-xs rounded-lg border p-2 text-xs ${d.completo ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
+                  <div key={i} className={`mt-3 mx-auto max-w-xs rounded-lg border p-2 text-xs ${d.completo ? 'border-green-400 bg-green-50 text-green-900' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
                     {d.completo ? (
                       <>🏆 <strong>Objetivo completo!</strong> {d.total} de {d.total} cobertos.</>
                     ) : (

@@ -84,7 +84,7 @@ interface Resumo {
 }
 
 const MOTIVO: Record<string, { tag: string; texto: string; cor: string }> = {
-  POSITIVACAO: { tag: 'POSITIVAÇÃO', texto: 'positivação abaixo da média da equipe', cor: 'rgba(229,84,75,.14);color:#E5544B' },
+  POSITIVACAO: { tag: 'POSITIVAÇÃO', texto: 'positivação abaixo da média da equipe', cor: 'rgba(239,68,68,.14);color:#EF4444' },
   MIX:         { tag: 'MIX',         texto: 'mix abaixo da média da equipe',         cor: 'rgba(232,163,61,.14);color:#E8A33D' },
 }
 
@@ -219,7 +219,7 @@ export default function FarolDinheiroNaMesa() {
             const pct = c.alvo > 0 ? (c.real / c.alvo) * 100 : 0
             const dif = c.real - c.alvo
             const bom = pct >= 100
-            const cor = bom ? '#3DC98B' : pct >= 90 ? '#E8C13D' : '#E5544B'
+            const cor = bom ? '#22C55E' : pct >= 90 ? '#E8C13D' : '#EF4444'
             const ativo = periodo === c.id
             return (
               <button key={c.id} onClick={() => setPeriodo(c.id)}
@@ -256,7 +256,7 @@ export default function FarolDinheiroNaMesa() {
             ? <>{vista.rotulo} segue no ritmo.</>
             : <>{vista.rotulo} está devendo <b style={{ color: '#EAF0F5' }}>R$ {brl(Math.abs(saldo))}</b>
                 {!verAno && dt > dd && <> e faltam <b style={{ color: '#EAF0F5' }}>{dt - dd} dias úteis</b></>}.</>}
-          {' '}<b style={{ color: '#E5544B' }}>{vista.vermelho}</b> de{' '}
+          {' '}<b style={{ color: '#EF4444' }}>{vista.vermelho}</b> de{' '}
           {vista.vermelho + vista.amarelo + vista.verde} RCAs abaixo de 70% do ritmo.
         </p>
 

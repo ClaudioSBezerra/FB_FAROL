@@ -124,11 +124,11 @@ function PulsoCard({ data }: { data?: PulsoResp }) {
           </p>
           <div className="flex items-center gap-1 mt-1">
             {deltaVl >= 0 ? (
-              <TrendingUp className="h-3 w-3 text-emerald-400" />
+              <TrendingUp className="h-3 w-3 text-green-400" />
             ) : (
               <TrendingDown className="h-3 w-3 text-red-400" />
             )}
-            <span className={`text-xs font-bold tabular-nums ${deltaVl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            <span className={`text-xs font-bold tabular-nums ${deltaVl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {deltaVl >= 0 ? '+' : ''}{deltaVl.toFixed(0)}%
             </span>
             <span className="text-[10px] text-slate-500">vs {data.espelho_label}</span>
@@ -142,11 +142,11 @@ function PulsoCard({ data }: { data?: PulsoResp }) {
           </p>
           <div className="flex items-center gap-1 justify-end mt-1">
             {deltaQt >= 0 ? (
-              <TrendingUp className="h-3 w-3 text-emerald-400" />
+              <TrendingUp className="h-3 w-3 text-green-400" />
             ) : (
               <TrendingDown className="h-3 w-3 text-red-400" />
             )}
-            <span className={`text-xs font-bold tabular-nums ${deltaQt >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            <span className={`text-xs font-bold tabular-nums ${deltaQt >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {deltaQt >= 0 ? '+' : ''}{deltaQt.toFixed(0)}%
             </span>
           </div>

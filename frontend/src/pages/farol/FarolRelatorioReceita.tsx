@@ -76,9 +76,9 @@ function corSituacao(s: string) {
 // um palpite fraco em fato para quem só bate o olho na tabela.
 function seloReabertura(forca: string) {
   if (forca === 'placa')
-    return { texto: 'Sim — mesma placa', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    return { texto: 'Sim — mesma placa', classe: 'bg-green-50 text-green-800 border-green-300' }
   if (forca === 'endereco')
-    return { texto: 'Sim — mesmo endereço', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    return { texto: 'Sim — mesmo endereço', classe: 'bg-green-50 text-green-800 border-green-300' }
   if (forca === 'galeria')
     return { texto: 'Talvez — galeria', classe: 'bg-slate-50 text-slate-500 border-slate-200' }
   return null
@@ -217,12 +217,12 @@ export default function FarolRelatorioReceita() {
               <div className="mt-1 text-3xl font-bold text-slate-900">{fmtBRL(totalPerdido)}</div>
             </div>
             {(data?.reaberturas ?? 0) > 0 && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-                <div className="text-xs uppercase tracking-wide text-emerald-700">Reabertura provável</div>
-                <div className="mt-1 text-3xl font-bold text-emerald-900">
+              <div className="rounded-xl border border-green-300 bg-green-50 p-5">
+                <div className="text-xs uppercase tracking-wide text-green-800">Reabertura provável</div>
+                <div className="mt-1 text-3xl font-bold text-green-900">
                   {(data?.reaberturas ?? 0).toLocaleString('pt-BR')}
                 </div>
-                <div className="text-sm text-emerald-700">
+                <div className="text-sm text-green-800">
                   {fmtBRL(data?.reaberturas_valor ?? 0)} — não conte como perda
                 </div>
               </div>

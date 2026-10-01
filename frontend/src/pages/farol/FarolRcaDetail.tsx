@@ -225,9 +225,9 @@ export default function FarolRcaDetail({ embedded = false }: { embedded?: boolea
                   <div className="text-sm pt-1">
                     <span className="text-slate-600">Crescimento: </span>
                     <span className={`font-bold ${
-                      f.cor === 'verde' ? 'text-green-600' :
+                      f.cor === 'verde' ? 'text-green-700' :
                       f.cor === 'amarelo' ? 'text-yellow-700' :
-                      'text-red-600'
+                      'text-red-700'
                     }`}>
                       {fmtPct(f.pct, f.vl_anterior)}
                     </span>

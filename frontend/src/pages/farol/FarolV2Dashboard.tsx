@@ -204,46 +204,47 @@ function PeriodRangeFilter({
   )
 }
 
-// Paleta tonal — fundo claro com texto profundo. Mais elegante que cor saturada.
+// Paleta mais viva — pedido do Edinardo (gerente comercial), 2026-10-01: verde/vermelho
+// mais saturados em todos os painéis, web e mobile.
 const COR_BG: Record<Cor, string> = {
-  verde:    'bg-gradient-to-br from-emerald-50/60 via-white to-white',
+  verde:    'bg-gradient-to-br from-green-100/70 via-white to-white',
   amarelo:  'bg-gradient-to-br from-amber-50/60 via-white to-white',
-  vermelho: 'bg-gradient-to-br from-red-50/70 via-white to-white',
+  vermelho: 'bg-gradient-to-br from-red-100/80 via-white to-white',
 }
 const COR_RING: Record<Cor, string> = {
-  verde:    'ring-1 ring-emerald-100 hover:ring-emerald-200',
+  verde:    'ring-1 ring-green-300 hover:ring-green-400',
   amarelo:  'ring-1 ring-amber-100 hover:ring-amber-200',
-  vermelho: 'ring-1 ring-red-200 hover:ring-red-300',
+  vermelho: 'ring-1 ring-red-400 hover:ring-red-500',
 }
 const COR_DOT: Record<Cor, string> = {
-  verde:    'bg-emerald-500',
+  verde:    'bg-green-600',
   amarelo:  'bg-amber-500',
-  vermelho: 'bg-red-500',
+  vermelho: 'bg-red-600',
 }
 const COR_DOT_PING: Record<Cor, string> = {
   verde:    '',
   amarelo:  '',
-  vermelho: 'animate-ping bg-red-400',
+  vermelho: 'animate-ping bg-red-500',
 }
 const COR_CHIP: Record<Cor, string> = {
-  verde:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  verde:    'bg-green-100 text-green-800 ring-1 ring-inset ring-green-400',
   amarelo:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
-  vermelho: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+  vermelho: 'bg-red-100 text-red-800 ring-1 ring-inset ring-red-400',
 }
 const COR_BORDER: Record<Cor, string> = {
-  verde: 'border-l-emerald-500',
+  verde: 'border-l-green-600',
   amarelo: 'border-l-amber-400',
-  vermelho: 'border-l-red-500',
+  vermelho: 'border-l-red-600',
 }
 const COR_BAR: Record<Cor, string> = {
-  verde: 'bg-emerald-500',
+  verde: 'bg-green-600',
   amarelo: 'bg-amber-400',
-  vermelho: 'bg-red-500',
+  vermelho: 'bg-red-600',
 }
 const COR_TEXT: Record<Cor, string> = {
-  verde: 'text-emerald-700',
+  verde: 'text-green-800',
   amarelo: 'text-amber-700',
-  vermelho: 'text-red-700',
+  vermelho: 'text-red-800',
 }
 
 // ─── Hook de dados ─────────────────────────────────────────────────────────────
@@ -349,13 +350,13 @@ export function KPIBar({
           <p className={`text-sm font-bold font-bold ${COR_TEXT[kpi.total_cor]}`}>{fmtPct(kpi.total_pct)}</p>
           <div className="flex gap-1.5 mt-1">
             <span className={`inline-flex items-center gap-1 text-sm font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.verde}`}>
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-green-600" />
               {kpi.verdes}
             </span>
             <span className={`inline-flex items-center gap-1 text-sm font-semibold px-1.5 py-0.5 rounded-md ${COR_CHIP.vermelho}`}>
               <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-60 animate-ping" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
+                <span className="absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-60 animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-600" />
               </span>
               {kpi.vermelhos}
             </span>
@@ -421,7 +422,7 @@ export function CardVenda({ card, onClick }: { card: CardItem; onClick: () => vo
             <p className={`text-sm font-bold font-bold tabular-nums leading-none ${COR_TEXT[card.cor]}`}>{fmtPct(card.pct)}</p>
             {(deltaUp || deltaDown) && (
               <p className={`mt-1 inline-flex items-center gap-0.5 text-sm font-medium tabular-nums ${
-                deltaUp ? 'text-emerald-600' : 'text-red-600'
+                deltaUp ? 'text-green-700' : 'text-red-700'
               }`}>
                 {deltaUp
                   ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} />

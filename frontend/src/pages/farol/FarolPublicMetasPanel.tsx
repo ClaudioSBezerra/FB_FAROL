@@ -266,8 +266,8 @@ const nomeOuCodigo = (fantasia: string, razao: string, codigo: string) => fantas
 // rápido de ler numa lista longa de Redes/Clientes/Itens no celular.
 function StatusIcon({ atingiu, size = 'w-4 h-4' }: { atingiu: boolean; size?: string }) {
   return atingiu
-    ? <Check className={`${size} shrink-0 text-emerald-600`} strokeWidth={3} aria-label="Atingiu" />
-    : <XIcon className={`${size} shrink-0 text-red-600`} strokeWidth={3} aria-label="Não atingiu" />
+    ? <Check className={`${size} shrink-0 text-green-700`} strokeWidth={3} aria-label="Atingiu" />
+    : <XIcon className={`${size} shrink-0 text-red-700`} strokeWidth={3} aria-label="Não atingiu" />
 }
 
 // ClienteDrillDown — 1 linha de Cliente dentro de uma Rede aberta, com o
@@ -394,9 +394,9 @@ const fmtBRLMobile = (n: number) => (n ?? 0).toLocaleString('pt-BR', { style: 'c
 // bateu algum nível mas ainda não os 100% do objetivo, verde = 100%+
 // (conceito universal, independente de como a escala foi configurada).
 function gamifCorTarja(percentual: number, temNivel: boolean) {
-  if (percentual >= 100) return 'border-emerald-300 bg-emerald-50 text-emerald-800'
+  if (percentual >= 100) return 'border-green-400 bg-green-50 text-green-900'
   if (temNivel) return 'border-amber-300 bg-amber-50 text-amber-800'
-  return 'border-red-300 bg-red-50 text-red-800'
+  return 'border-red-400 bg-red-50 text-red-900'
 }
 
 function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRca: string; onVoltar: () => void }) {
@@ -442,7 +442,7 @@ function GamificacaoMobileView({ cnpj, codRca, onVoltar }: { cnpj: string; codRc
               <div className="text-xs text-muted-foreground mb-2">de {c.total_rcas} RCAs</div>
               <div className="flex justify-center gap-6 text-sm">
                 <span><strong>{fmt(c.pontos_total)}</strong> pontos</span>
-                <span className="text-emerald-700"><strong>{fmtBRLMobile(c.bonus_total)}</strong> em bônus</span>
+                <span className="text-green-700"><strong>{fmtBRLMobile(c.bonus_total)}</strong> em bônus</span>
               </div>
             </div>
             <div className={`rounded-lg border p-2 text-xs ${gamifCorTarja(c.percentual_principal, !!c.nivel_principal)}`}>
@@ -1082,9 +1082,9 @@ export default function FarolPublicMetasPanel() {
                 {painel.realizado.parcial && <span className="text-xs text-amber-600">Mês em andamento</span>}
               </div>
 
-              <div className={`rounded-xl p-4 border ${painel.delta > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+              <div className={`rounded-xl p-4 border ${painel.delta > 0 ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-300'}`}>
                 <div className="flex items-center gap-2 text-xs mb-1">
-                  {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-emerald-600" />}
+                  {painel.delta > 0 ? <TrendingDown className="w-4 h-4 text-amber-600" /> : <TrendingUp className="w-4 h-4 text-green-700" />}
                   {painel.delta > 0 ? `Falta ${fmt(painel.delta)} pra bater o objetivo` : 'Objetivo batido!'}
                 </div>
                 {painel.proxima_faixa && (

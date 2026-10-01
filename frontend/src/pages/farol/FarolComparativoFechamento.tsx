@@ -181,8 +181,8 @@ function fmtNum(v: number) {
 
 function seloStatus(status: ComparativoLinha['status']) {
   switch (status) {
-    case 'OK': return { texto: 'OK', classe: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
-    case 'DIVERGE': return { texto: 'Divergência', classe: 'bg-red-50 text-red-700 border-red-200' }
+    case 'OK': return { texto: 'OK', classe: 'bg-green-50 text-green-800 border-green-300' }
+    case 'DIVERGE': return { texto: 'Divergência', classe: 'bg-red-50 text-red-800 border-red-300' }
     case 'SO_EXTERNO': return { texto: 'Só no Fechamento', classe: 'bg-amber-50 text-amber-700 border-amber-200' }
     default: return { texto: 'Só no Farol', classe: 'bg-amber-50 text-amber-700 border-amber-200' }
   }
