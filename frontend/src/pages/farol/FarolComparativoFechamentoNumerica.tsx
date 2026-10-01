@@ -75,6 +75,13 @@ const RESUMO_NUMERICA_COLS: { field: string; candidates: string[] }[] = [
 function normalizaHeader(s: unknown): string {
   return String(s ?? '').trim().toUpperCase().replace(/\s+/g, ' ')
 }
+// ehNumC — Carlos (JC) argumentou 01/10/2026 que o grupo "Num. C" (menor
+// relevância comercial, maior volume de CNPJs) não precisa ser conferido
+// no fechamento. Normaliza pra aceitar variação de espaço/ponto/caixa
+// ("NUM. C", "NUM C", "NUMC").
+function ehNumC(classificacao: string): boolean {
+  return normalizaHeader(classificacao).replace(/[.\s]/g, '') === 'NUMC'
+}
 function normalizaCnpj(v: unknown): string {
   return String(v ?? '').replace(/\D/g, '').padStart(14, '0')
 }
@@ -205,6 +212,7 @@ export default function FarolComparativoFechamentoNumerica() {
   const [comparando, setComparando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [linhas, setLinhas] = useState<ComparativoLinha[] | null>(null)
+  const [conferirNumC, setConferirNumC] = useState(true)
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
     queryKey: ['farol-metas-vinculos'],
@@ -274,8 +282,14 @@ export default function FarolComparativoFechamentoNumerica() {
     setArquivo(f)
   }
 
-  const totais = useMemo(() => {
+  const numCCount = useMemo(() => (linhas ?? []).filter(l => ehNumC(l.classificacao_pdv)).length, [linhas])
+  const linhasFiltradas = useMemo(() => {
     const l = linhas ?? []
+    return conferirNumC ? l : l.filter(r => !ehNumC(r.classificacao_pdv))
+  }, [linhas, conferirNumC])
+
+  const totais = useMemo(() => {
+    const l = linhasFiltradas
     const t = {
       valorExt: 0, valorFarol: 0, ppasExt: 0, ppasFarol: 0,
       ok: 0, diverge: 0, soExterno: 0, soFarol: 0, codCliDivergente: 0,
@@ -292,13 +306,13 @@ export default function FarolComparativoFechamentoNumerica() {
       else t.soFarol++
     }
     return t
-  }, [linhas])
+  }, [linhasFiltradas])
 
   function exportar() {
-    if (!linhas || linhas.length === 0) { toast.error('Nada pra exportar ainda — busque o comparativo primeiro'); return }
+    if (linhasFiltradas.length === 0) { toast.error('Nada pra exportar ainda — busque o comparativo primeiro'); return }
     const industriaNome = industrias.find(i => String(i.id) === industriaID)?.nome ?? industriaID
     exportToExcel(
-      linhas.map(l => ({
+      linhasFiltradas.map(l => ({
         CNPJ: formatCNPJ(l.cnpj), 'Cód. Cliente': l.cod_cl, Classificação: l.classificacao_pdv,
         Razão: l.razao, Fantasia: l.fantasia,
         GGV: `${l.cod_ggv} — ${l.nome_ggv}`, CRV: `${l.cod_crv} — ${l.nome_crv}`, RCA: `${l.cod_rca} — ${l.nome_rca}`,
@@ -386,9 +400,26 @@ export default function FarolComparativoFechamentoNumerica() {
 
       {linhas && (
         <>
+          {numCCount > 0 && (
+            <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 cursor-pointer w-fit">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={conferirNumC}
+                onChange={e => setConferirNumC(e.target.checked)}
+              />
+              <span>
+                Conferir grupo <strong>Num. C</strong> também ({numCCount} cliente{numCCount === 1 ? '' : 's'})
+                <span className="block text-xs text-slate-400">
+                  Carlos (JC) sugeriu não conferir Num. C — desmarque pra ver o efeito nos totais e nas divergências.
+                </span>
+              </span>
+            </label>
+          )}
+
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-xs text-slate-500">
-              {linhas.length} cliente(s) · {totais.ok} OK · {totais.diverge} divergência(s) · {totais.soExterno + totais.soFarol} órfã(s)
+              {linhasFiltradas.length} cliente(s){!conferirNumC && numCCount > 0 && <> (Num. C excluído)</>} · {totais.ok} OK · {totais.diverge} divergência(s) · {totais.soExterno + totais.soFarol} órfã(s)
               {totais.codCliDivergente > 0 && <> · {totais.codCliDivergente} com Cód. Cliente divergente (provável recadastro no WinThor)</>}
             </span>
           </div>
@@ -435,10 +466,10 @@ export default function FarolComparativoFechamentoNumerica() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {linhas.length === 0 && (
+                  {linhasFiltradas.length === 0 && (
                     <tr><td colSpan={10} className="text-center py-8 text-slate-400">Nenhum cliente pra este período/indústria</td></tr>
                   )}
-                  {linhas.map(l => {
+                  {linhasFiltradas.map(l => {
                     const selo = seloStatus(l.status)
                     return (
                       <tr key={l.cnpj} className={`hover:bg-slate-50 ${linhaFundo(l.status)}`}>
