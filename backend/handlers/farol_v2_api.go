@@ -2681,6 +2681,17 @@ func fetchCards(db *sql.DB, empresaID string, fluxo fluxoCtx, view string,
 		})
 	}
 
+	// Achado real 2026-10-07 (Claudio): o nome de cards de gerente/supervisor/rca
+	// vem de vendas_*/agg_*_mes — correto por desenho pra PERÍODO histórico (um
+	// relatório de 2025 mostra o dono de 2025). Só que os relatórios da própria
+	// JC fazem o oposto: mostram o dono ATUAL mesmo pra período antigo. Comparar
+	// os dois lado a lado então mostra "código bate, nome não" — divergência
+	// cosmética, não numérica, mas que confunde quem está conferindo. Pra evitar
+	// esse falso alarme, o nome de card também passa a seguir a convenção da JC
+	// (dono atual, via cadastro_organograma_jc) — o VALOR do card continua sendo
+	// o valor histórico do período, só a etiqueta muda.
+	cards = aplicarNomeOrganogramaAtual(db, empresaID, groupCol, cards)
+
 	diag.Falhou = errAtual != nil || errAnt != nil
 	diag.MS = time.Since(t0).Milliseconds()
 
@@ -4846,6 +4857,44 @@ func lookupNome(db *sql.DB, empresaID, codCol, nomeCol, cod string) string {
 		nome = cod
 	}
 	return nome
+}
+
+// aplicarNomeOrganogramaAtual sobrescreve cardItem.Label pelo nome ATUAL
+// (farol.cadastro_organograma_jc) quando codCol é gerente/supervisor/rca —
+// ver o comentário em fetchCards pra a razão (convenção da própria JC é
+// mostrar o dono atual mesmo em relatório de período antigo; sem isto, uma
+// comparação manual Farol×JC pra 2025 mostraria "código bate, nome não").
+// Não toca em ValorAtual/ValorAnt — só a etiqueta.
+func aplicarNomeOrganogramaAtual(db *sql.DB, empresaID, codCol string, cards []cardItem) []cardItem {
+	dim, ok := codToDimName[codCol]
+	if !ok || (dim != "gerente" && dim != "supervisor" && dim != "rca") || len(cards) == 0 {
+		return cards
+	}
+	codigos := make([]string, 0, len(cards))
+	for _, c := range cards {
+		codigos = append(codigos, c.Key)
+	}
+	rows, err := db.Query(`
+		SELECT codigo, nome FROM farol.cadastro_organograma_jc
+		WHERE empresa_id=$1 AND nivel=$2 AND codigo = ANY($3)
+	`, empresaID, dim, pq.Array(codigos))
+	if err != nil {
+		return cards // best-effort — mantém o label histórico se a consulta falhar
+	}
+	defer rows.Close()
+	nomeAtual := map[string]string{}
+	for rows.Next() {
+		var cod, nome string
+		if rows.Scan(&cod, &nome) == nil {
+			nomeAtual[cod] = nome
+		}
+	}
+	for i, c := range cards {
+		if nome, ok := nomeAtual[c.Key]; ok && nome != "" {
+			cards[i].Label = nome
+		}
+	}
+	return cards
 }
 
 // lookupParent descobre o código pai de um código (ex: supervisor de um RCA).
