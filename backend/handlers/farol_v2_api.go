@@ -4601,12 +4601,24 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			// opções que devolveriam tela vazia). Ver escopoDimCond.
 			dimArgs := []any{spCtx.EmpresaID, dimName}
 			escopoCond := escopoDimCond(escopo, dimName, fluxoPrefix, "d.key", &dimArgs)
+			// Achado real 2026-10-07 (Claudio): MAX(d.label) agrupado por key pegava
+			// o rótulo alfabeticamente maior entre TODOS os meses já vistos pro
+			// código — não o mais recente, ao contrário do que o comentário acima
+			// sempre afirmou. Resultado: código de GGV/Supervisor/RCA que trocou de
+			// dono (mesmo código, pessoa nova — reportado pelo Keslley/JC via
+			// CADLOG_JC) podia continuar aparecendo no dropdown com o nome ANTIGO
+			// enquanto a tela (via lookupNome, que já fazia certo) mostrava o nome
+			// atual — inconsistência visível entre filtro e breadcrumb. Reescrito
+			// pra DISTINCT ON (key) ORDER BY ano DESC, mes DESC — mesmo critério que
+			// lookupNome já usa — e só depois reordenado por label pra exibição.
 			rows, err := db.Query(fmt.Sprintf(`
-				SELECT d.key, MAX(d.label) AS label
-				  FROM %s d
-				 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != ''%s%s
-				 GROUP BY d.key
-				 %s
+				SELECT key, label FROM (
+					SELECT DISTINCT ON (d.key) d.key AS key, d.label AS label
+					  FROM %s d
+					 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != '' AND d.label != ''%s%s
+					 ORDER BY d.key, d.ano DESC, d.mes DESC
+				) mais_recente
+				%s
 			`, dimsTable, comSemMov, escopoCond, orderClause), dimArgs...)
 			if err != nil {
 				log.Printf("[dims] %s ERRO em %v: %v", codCol, time.Since(td), err)
