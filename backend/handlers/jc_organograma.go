@@ -164,34 +164,52 @@ func SincronizarOrganogramaJC(db *sql.DB) error {
 	// do ION VENDAS já leem (farol_mobile.go, farol_web.go). Só o nome;
 	// uf/regiao/cod_filial/ativo continuam curados manualmente, por isso
 	// INSERT ... ON CONFLICT DO UPDATE SET nome (não toca o resto).
-	for cod, v := range supervisores {
-		codInt, err := strconv.Atoi(cod)
-		if err != nil {
-			continue
-		}
-		if _, err := tx.Exec(`
-			INSERT INTO gestores (empresa_id, cod_supervisor, nome)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (empresa_id, cod_supervisor) DO UPDATE SET
-				nome = EXCLUDED.nome, updated_at = now()
-			WHERE gestores.nome IS DISTINCT FROM EXCLUDED.nome
-		`, empresaID, codInt, v.nome); err != nil {
-			return fmt.Errorf("gravar gestores (supervisor) código %s: %w", cod, err)
+	//
+	// Achado real 2026-10-07: em produção essas tabelas NÃO EXISTEM — a
+	// migration que as cria está marcada como já executada em
+	// schema_migrations, mas o "schema limpo" da Reescrita 2026 (ver
+	// CLAUDE.md) aparentemente as descartou sem reexecutar a migration.
+	// Checa a existência ANTES de tentar gravar: se não existir, pula esse
+	// bloco (best-effort) em vez de abortar a transação inteira e perder
+	// também o cadastro_organograma_jc, que é o alvo principal.
+	var gestoresExiste, rcasExiste bool
+	_ = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='gestores')`).Scan(&gestoresExiste)
+	_ = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='rcas')`).Scan(&rcasExiste)
+	if !gestoresExiste || !rcasExiste {
+		log.Printf("[jc:organograma] AVISO: tabela gestores=%v rcas=%v (esperada=true) — pulando sync pros deep links do ION VENDAS, só cadastro_organograma_jc foi atualizado", gestoresExiste, rcasExiste)
+	}
+	if gestoresExiste {
+		for cod, v := range supervisores {
+			codInt, err := strconv.Atoi(cod)
+			if err != nil {
+				continue
+			}
+			if _, err := tx.Exec(`
+				INSERT INTO gestores (empresa_id, cod_supervisor, nome)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (empresa_id, cod_supervisor) DO UPDATE SET
+					nome = EXCLUDED.nome, updated_at = now()
+				WHERE gestores.nome IS DISTINCT FROM EXCLUDED.nome
+			`, empresaID, codInt, v.nome); err != nil {
+				return fmt.Errorf("gravar gestores (supervisor) código %s: %w", cod, err)
+			}
 		}
 	}
-	for cod, v := range rcasMap {
-		codInt, err := strconv.Atoi(cod)
-		if err != nil {
-			continue
-		}
-		if _, err := tx.Exec(`
-			INSERT INTO rcas (empresa_id, cod_rca, nome)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (empresa_id, cod_rca) DO UPDATE SET
-				nome = EXCLUDED.nome, updated_at = now()
-			WHERE rcas.nome IS DISTINCT FROM EXCLUDED.nome
-		`, empresaID, codInt, v.nome); err != nil {
-			return fmt.Errorf("gravar rcas código %s: %w", cod, err)
+	if rcasExiste {
+		for cod, v := range rcasMap {
+			codInt, err := strconv.Atoi(cod)
+			if err != nil {
+				continue
+			}
+			if _, err := tx.Exec(`
+				INSERT INTO rcas (empresa_id, cod_rca, nome)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (empresa_id, cod_rca) DO UPDATE SET
+					nome = EXCLUDED.nome, updated_at = now()
+				WHERE rcas.nome IS DISTINCT FROM EXCLUDED.nome
+			`, empresaID, codInt, v.nome); err != nil {
+				return fmt.Errorf("gravar rcas código %s: %w", cod, err)
+			}
 		}
 	}
 
