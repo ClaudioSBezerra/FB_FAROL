@@ -959,13 +959,12 @@ export default function FarolExecutivo() {
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
   const [fluxo, setFluxo] = useState<Fluxo>('faturado')
-  // "Somente Indústrias" (mig 228/229, 08/09/2026) — já entra LIGADO por
-  // padrão (pedido do Claudio: mesma lógica do "Faturado" já vir
-  // selecionado; o projeto nasceu pra acompanhar só as indústrias
-  // cadastradas, "importar todos os fornecedores" veio depois) — o gestor
-  // "destarja" se quiser ver todos os fornecedores, não o contrário. Vale
-  // pras 5 visões deste painel (V01/V02/V03/V06/V07).
-  const [somenteIndustria, setSomenteIndustria] = useState(true)
+  // "Somente Indústrias" (mig 228/229, 08/09/2026) — ENTRAVA ligado por
+  // padrão, revertido 07/10/2026 (Claudio: na prática piorou — quem abre a
+  // tela já vê o recorte restrito às 21 indústrias cadastradas sem ter
+  // pedido). Agora começa desligado; quem quiser as 21 clica no toggle.
+  // Vale pras 5 visões deste painel (V01/V02/V03/V06/V07).
+  const [somenteIndustria, setSomenteIndustria] = useState(false)
   // Toggles "Incluir X" (venda líquida). Vazio = Líquido puro (padrão).
   const [incluir, setIncluir] = useState<Set<CompKey>>(() => new Set())
   const [drillPath, setDrillPath] = useState<DrillStep[]>([])

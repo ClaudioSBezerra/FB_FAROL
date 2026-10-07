@@ -537,11 +537,10 @@ export default function FarolV2Dashboard() {
   // Override do período de comparação (só para mom). 0 = automático (mês anterior).
   const [compAno, setCompAno]     = useState(0)
   const [compMes, setCompMes]     = useState(0)
-  // "Somente Indústrias" (mig 228/229, 08/09/2026) — já entra LIGADO por
-  // padrão, mesmo critério do FarolExecutivo: quem cai nesta tela (fora de
-  // PERSONAS_EXECUTIVO) precisa do mesmo controle, senão fica sem jeito de
-  // desligar.
-  const [somenteIndustria, setSomenteIndustria] = useState(true)
+  // "Somente Indústrias" (mig 228/229, 08/09/2026) — revertido 07/10/2026
+  // junto com o FarolExecutivo (mesmo critério): começa desligado, quem
+  // quiser o recorte das 21 indústrias cadastradas clica no toggle.
+  const [somenteIndustria, setSomenteIndustria] = useState(false)
   const industriasQ = useIndustrias()
 
   const isExecutivo = !!(
