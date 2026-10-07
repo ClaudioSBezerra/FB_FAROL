@@ -357,6 +357,11 @@ func onDBConnected() {
 	// origem com data retroativa e que a carga D-1 nunca vê. Desligada até
 	// JC_REEXTRACAO_MESES ser definida.
 	go handlers.StartReextracaoJC(database)
+	// Sync diário de Gerente(GGV)/Supervisor(CRV)/RCA a partir do CADRCA_JC —
+	// liberado pelo Keslley/TI em 21/09/2026. Resolve nome que ficava
+	// desatualizado quando um código trocava de dono e não tinha venda
+	// recente pra "auto-curar" via o CSV diário (ver jc_organograma.go).
+	go handlers.StartOrganogramaJCDiaria(database)
 }
 
 func main() {
@@ -612,6 +617,9 @@ func main() {
 	// Carga JC sob demanda — testar antes do 1º disparo, reprocessar dia que
 	// falhou, ou cobrir atraso do JOB da origem. ?data=AAAA-MM-DD (default D-1).
 	http.HandleFunc("/api/v2/jc/carga", withSP(handlers.CargaJCManualHandler, "gestor_filial"))
+	// Sync sob demanda de Gerente/Supervisor/RCA (CADRCA_JC) — disparar depois
+	// que o Keslley avisar de uma troca, sem esperar o horário agendado.
+	http.HandleFunc("/api/v2/jc/organograma", withSP(handlers.OrganogramaJCManualHandler, "gestor_filial"))
 
 	// Resumo semanal "dinheiro na mesa". A prévia em HTML devolve SEMPRE o
 	// recorte de quem pediu; o disparo é barrado para persona com escopo, que

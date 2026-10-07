@@ -34,6 +34,88 @@ func jcHoraExtracao() (hora, minuto int) {
 	return h, m
 }
 
+// jcHoraOrganograma — horário do sync diário de Gerente/Supervisor/RCA
+// (CADRCA_JC). Antes da carga de venda (06:30 default) só por organização —
+// as duas são independentes, uma não depende da outra ter rodado.
+func jcHoraOrganograma() (hora, minuto int) {
+	hora, minuto = 6, 0
+	v := strings.TrimSpace(os.Getenv("JC_ORGANOGRAMA_HORA"))
+	if v == "" {
+		return hora, minuto
+	}
+	var h, m int
+	if _, err := fmt.Sscanf(v, "%d:%d", &h, &m); err != nil ||
+		h < 0 || h > 23 || m < 0 || m > 59 {
+		log.Printf("[jc:organograma] JC_ORGANOGRAMA_HORA=%q inválido, usando %02d:%02d", v, hora, minuto)
+		return hora, minuto
+	}
+	return h, m
+}
+
+// StartOrganogramaJCDiaria roda o sync de Gerente/Supervisor/RCA (CADRCA_JC)
+// todo dia — mesmo formato do StartCargaJCDiaria, mas sem depender de D-1
+// (o CADRCA_JC é o estado ATUAL, não um fato histórico por data).
+func StartOrganogramaJCDiaria(db *sql.DB) {
+	if jobsAgendadosPausados() {
+		log.Printf("[jc:organograma] agendador diário PAUSADO por JC_JOBS_PAUSED")
+		return
+	}
+	if !jcConfigurado() {
+		log.Printf("[jc:organograma] desativado — faltam JC_ORACLE_USER/JC_ORACLE_PASS/JC_EMPRESA_ID")
+		return
+	}
+	loc := tzBrasil()
+	hora, minuto := jcHoraOrganograma()
+	log.Printf("[jc:organograma] agendado para %02d:%02d (%s)", hora, minuto, loc)
+
+	for {
+		agora := time.Now().In(loc)
+		prox := time.Date(agora.Year(), agora.Month(), agora.Day(), hora, minuto, 0, 0, loc)
+		if !prox.After(agora) {
+			prox = prox.AddDate(0, 0, 1)
+		}
+		espera := time.Until(prox)
+		log.Printf("[jc:organograma] próxima execução %s (em %s)",
+			prox.Format("2006-01-02 15:04"), espera.Truncate(time.Minute))
+		time.Sleep(espera)
+
+		if err := SincronizarOrganogramaJC(db); err != nil {
+			log.Printf("[jc:organograma] ERRO: %v", err)
+		}
+	}
+}
+
+// OrganogramaJCManualHandler — POST /api/v2/jc/organograma — dispara o sync
+// sob demanda (ex: depois que o Keslley avisa de uma troca de supervisor,
+// sem esperar o horário agendado).
+func OrganogramaJCManualHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !RequireWrite(spCtx, w) {
+			return
+		}
+		if !jcConfigurado() {
+			http.Error(w, `{"error":"sync JC não configurado no ambiente"}`, http.StatusPreconditionFailed)
+			return
+		}
+		log.Printf("[jc:organograma] disparo MANUAL por user=%s", spCtx.UserID)
+		if err := SincronizarOrganogramaJC(db); err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}
+}
+
 // jcConfigurado — sem credencial ou empresa não há o que agendar. Distinguir
 // "desligado de propósito" de "quebrado" evita log de erro todo dia em ambiente
 // de desenvolvimento, onde essas variáveis não existem.

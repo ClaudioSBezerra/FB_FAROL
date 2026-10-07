@@ -4611,13 +4611,21 @@ func FarolV2DimsHandler(db *sql.DB) http.HandlerFunc {
 			// atual — inconsistência visível entre filtro e breadcrumb. Reescrito
 			// pra DISTINCT ON (key) ORDER BY ano DESC, mes DESC — mesmo critério que
 			// lookupNome já usa — e só depois reordenado por label pra exibição.
+			// LEFT JOIN cadastro_organograma_jc (migration 250, sync diário do
+			// CADRCA_JC) — pra gerente/supervisor/rca, o nome ali prevalece sobre
+			// o label derivado de venda (mesma razão do lookupNome acima: um
+			// código sem venda recente nunca "auto-curaria" via agg_*_dims_mes).
+			// c.nivel só bate com dimName quando é gerente/supervisor/rca — pras
+			// outras dims (cli/fornec/uf/empresa) o JOIN nunca casa, sem efeito.
 			rows, err := db.Query(fmt.Sprintf(`
-				SELECT key, label FROM (
+				SELECT key, COALESCE(c.nome, label) AS label FROM (
 					SELECT DISTINCT ON (d.key) d.key AS key, d.label AS label
 					  FROM %s d
 					 WHERE d.empresa_id=$1 AND d.dim=$2 AND d.key != '' AND d.label != ''%s%s
 					 ORDER BY d.key, d.ano DESC, d.mes DESC
 				) mais_recente
+				LEFT JOIN farol.cadastro_organograma_jc c
+				  ON c.empresa_id=$1 AND c.nivel=$2 AND c.codigo=mais_recente.key
 				%s
 			`, dimsTable, comSemMov, escopoCond, orderClause), dimArgs...)
 			if err != nil {
@@ -4807,6 +4815,21 @@ func lookupNome(db *sql.DB, empresaID, codCol, nomeCol, cod string) string {
 		return cod
 	}
 	var nome string
+	// cadastro_organograma_jc (migration 250, sync diário do CADRCA_JC) é a
+	// fonte primária pra gerente/supervisor/rca — cobre o código que não tem
+	// venda recente (e por isso nunca "auto-curaria" via agg_fat_dims_mes).
+	// Fallback pro comportamento antigo se o código não estiver (mais) lá —
+	// ex: código totalmente descontinuado no organograma atual, mas ainda
+	// referenciado em venda histórica.
+	if dim == "gerente" || dim == "supervisor" || dim == "rca" {
+		_ = db.QueryRow(`
+			SELECT nome FROM farol.cadastro_organograma_jc
+			WHERE empresa_id=$1 AND nivel=$2 AND codigo=$3
+		`, empresaID, dim, cod).Scan(&nome)
+	}
+	if nome != "" {
+		return nome
+	}
 	_ = db.QueryRow(`
 		SELECT label FROM farol.agg_fat_dims_mes
 		WHERE empresa_id=$1 AND dim=$2 AND key=$3 AND label != ''
