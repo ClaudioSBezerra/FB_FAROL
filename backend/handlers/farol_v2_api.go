@@ -2009,6 +2009,15 @@ func queryWithHigherWorkMem(db *sql.DB, query string, args []any, scan func(*sql
 	if _, err := tx.Exec(`SET LOCAL work_mem = '256MB'`); err != nil {
 		log.Printf("[farol:vendas] SET LOCAL work_mem falhou (seguindo sem): %v", err)
 	}
+	// Sem index scan simples, o planejador usa Bitmap Heap Scan, que lê os
+	// blocos em paralelo (effective_io_concurrency=200). Medido em produção
+	// 08/10/2026 no drill Rede→Cliente com cache frio: index scan lia 2.707
+	// blocos em 3,2s (1,2ms/bloco, um por vez); bitmap leu 1.694 em 33ms.
+	// Abrir a rede "Supermercados Reis" levava 11,9s. Index-only scan e seq
+	// scan (filtros amplos como UF) não são afetados.
+	if _, err := tx.Exec(`SET LOCAL enable_indexscan = off`); err != nil {
+		log.Printf("[farol:vendas] SET LOCAL enable_indexscan falhou (seguindo sem): %v", err)
+	}
 	rows, err := tx.Query(query, args...)
 	if err != nil {
 		return err
