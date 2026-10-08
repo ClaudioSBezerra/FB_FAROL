@@ -1010,7 +1010,7 @@ func main() {
 	allowedOrigins := handlers.GetAllowedOrigins()
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: handlers.SecurityMiddleware(http.DefaultServeMux, allowedOrigins),
+		Handler: handlers.SlowRequestLog(handlers.SecurityMiddleware(http.DefaultServeMux, allowedOrigins)),
 		// Timeouts de 30 min necessários para uploads grandes (jul/2026: preparação
 		// pra 400 fornecedores com CSVs de até 1 GB, upload pode levar minutos em
 		// redes corporativas típicas). Anteriormente 5 min quebrava upload lento.
