@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -2851,10 +2852,10 @@ func computeKPI(cards []cardItem, _ string, overlappingBase bool) kpiSummary {
 // era combinado com um drill (visto em produção 08/08/2026, ~07:46-07:49) a
 // query batia em "column v.empresa does not exist" e devolvia 0 — zerando o
 // totalizador de clientes ativos/positivados na tela, sem nenhum sinal visível.
-func queryDistinctCliPositivados(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) int {
+func queryDistinctCliPositivados(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) (int, bool) {
 	leafTable, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
 	if !ok {
-		return 0
+		return 0, false
 	}
 
 	args := []any{empresaID}
@@ -2873,9 +2874,9 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 	var count int
 	if err := db.QueryRow(q, args...).Scan(&count); err != nil {
 		log.Printf("[farol:posit] queryDistinctCliPositivados view=%s nível=%s folha=%s ERRO: %v", view, groupCol, leafTable, err)
-		return 0
+		return 0, false
 	}
-	return count
+	return count, true
 }
 
 // queryDistinctCliMix — Mix Médio do recorte (drillPath+filtros), direto na
@@ -2907,10 +2908,10 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 // esse fornecedor) — a fórmula converge sozinha pro mix "dentro da
 // indústria" sem caso especial, e sobe certo por Supervisor/GGV/Diretoria
 // (soma direta na folha, nunca média de médias).
-func queryDistinctCliMix(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) float64 {
+func queryDistinctCliMix(db *sql.DB, fluxo fluxoCtx, view, groupCol string, empresaID string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) (float64, bool) {
 	leafTable, ok := leafForPositivados(fluxo, view, groupCol, drillPath, filters)
 	if !ok {
-		return 0
+		return 0, false
 	}
 
 	args := []any{empresaID}
@@ -2929,9 +2930,88 @@ WHERE v.empresa_id=$1 AND %s %s AND v.positivados > 0`,
 	var avg sql.NullFloat64
 	if err := db.QueryRow(q, args...).Scan(&avg); err != nil {
 		log.Printf("[farol:mix] queryDistinctCliMix view=%s nível=%s folha=%s ERRO: %v", view, groupCol, leafTable, err)
-		return 0
+		return 0, false
 	}
-	return avg.Float64
+	return avg.Float64, true
+}
+
+// kpiMixEscala — o cache (baseCache + painel_cache_snapshot) guarda inteiros;
+// o Mix Médio vai multiplicado por 1e6 (precisão de sobra para 1 casa na tela).
+const kpiMixEscala = 1e6
+
+var (
+	kpiVooMu sync.Mutex
+	kpiVoo   = map[string]chan struct{}{}
+)
+
+// cachedKPITotal — totalizador do recorte ("kpi_total" = clientes distintos
+// positivados; "kpi_mix" = Mix Médio × kpiMixEscala) com o mesmo cache dos
+// cards (baseCache em RAM + painel_cache_snapshot no banco, invalidados juntos
+// por invalidateBaseCache*). Medido em produção 08/10/2026: sem cache eram 5
+// consultas na folha por requisição — 11,3s + 5,6s + 8,0s + 0,6s + 1,0s na V01
+// — repetidas em cada uma das 4 requisições que a tela dispara no login, por
+// isso os cards ficavam prontos em 30ms e a resposta saía em 15-35s.
+// Pedidos simultâneos da mesma chave esperam o primeiro em vez de recalcular.
+// Falha de consulta devolve 0 e NÃO é gravada no cache.
+func cachedKPITotal(db *sql.DB, empresaID string, fluxo fluxoCtx, view, groupCol, tipo string, ymStart, ymEnd int, drillPath []drillStep, filters multiFilters) (int, bool) {
+	key := baseCacheKey(empresaID, fluxo.name, view, tipo+":"+groupCol, ymStart, ymEnd, drillPath, filters)
+	for {
+		baseCacheMu.RLock()
+		e, ok := baseCache[key]
+		baseCacheMu.RUnlock()
+		if ok && time.Since(e.at) < baseCacheTTL {
+			return e.data["v"], true
+		}
+		kpiVooMu.Lock()
+		espera, emVoo := kpiVoo[key]
+		if !emVoo {
+			kpiVoo[key] = make(chan struct{})
+		}
+		kpiVooMu.Unlock()
+		if !emVoo {
+			break
+		}
+		<-espera
+		baseCacheMu.RLock()
+		e, ok = baseCache[key]
+		baseCacheMu.RUnlock()
+		if ok {
+			return e.data["v"], true
+		}
+		// quem estava calculando falhou — tenta de novo (vira o calculador)
+	}
+	defer func() {
+		kpiVooMu.Lock()
+		close(kpiVoo[key])
+		delete(kpiVoo, key)
+		kpiVooMu.Unlock()
+	}()
+
+	if data, ok := painelCacheGet(db, empresaID, "base_positivados", key); ok {
+		baseCacheMu.Lock()
+		baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
+		baseCacheMu.Unlock()
+		return data["v"], true
+	}
+
+	var v int
+	var ok bool
+	if tipo == "kpi_mix" {
+		var m float64
+		m, ok = queryDistinctCliMix(db, fluxo, view, groupCol, empresaID, ymStart, ymEnd, drillPath, filters)
+		v = int(math.Round(m * kpiMixEscala))
+	} else {
+		v, ok = queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ymStart, ymEnd, drillPath, filters)
+	}
+	if !ok {
+		return 0, false
+	}
+	data := map[string]int{"v": v}
+	baseCacheMu.Lock()
+	baseCache[key] = baseCacheEntry{data: data, at: time.Now()}
+	baseCacheMu.Unlock()
+	painelCacheSet(db, empresaID, "base_positivados", key, ymStart, ymEnd, data)
+	return v, false
 }
 
 // leafTableFor — tabela folha (grão cnpj) da view: o nível mais profundo das
@@ -3327,16 +3407,38 @@ func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view, gr
 			baseFilters[k] = v
 		}
 	}
-	base := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, 0, 999912, drillPath, baseFilters)
+	t0 := time.Now()
+	hits := 0
+	contar := func(ymIni, ymFim int, f multiFilters) int {
+		n, hit := cachedKPITotal(db, empresaID, fluxo, view, groupCol, "kpi_total", ymIni, ymFim, drillPath, f)
+		if hit {
+			hits++
+		}
+		return n
+	}
+	mixMedio := func(ymIni, ymFim int) float64 {
+		n, hit := cachedKPITotal(db, empresaID, fluxo, view, groupCol, "kpi_mix", ymIni, ymFim, drillPath, filters)
+		if hit {
+			hits++
+		}
+		return float64(n) / kpiMixEscala
+	}
+	defer func() {
+		if d := time.Since(t0); d > 200*time.Millisecond {
+			log.Printf("[farol:kpi] totalizador fluxo=%s view=%s nível=%s drill=%d filters=%s em %v (%d do cache)",
+				fluxo.name, view, groupCol, len(drillPath), filters.names(), d, hits)
+		}
+	}()
+	base := contar(0, 999912, baseFilters)
 	kpi.TotalBaseCli = base
 	kpi.TotalBaseCliAnt = base
-	ref := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+	ref := contar(ym(pr.RefInicio), ym(pr.RefFim), filters)
 	kpi.TotalPositivados = ref
 	if kpi.TotalBaseCli > 0 {
 		kpi.TotalPositPct = float64(ref) / float64(kpi.TotalBaseCli) * 100
 	}
 	if !pr.CompInicio.IsZero() {
-		ant := queryDistinctCliPositivados(db, fluxo, view, groupCol, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+		ant := contar(ym(pr.CompInicio), ym(pr.CompFim), filters)
 		kpi.TotalPositivadosAnt = ant
 		if kpi.TotalBaseCliAnt > 0 {
 			kpi.TotalPositPctAnt = float64(ant) / float64(kpi.TotalBaseCliAnt) * 100
@@ -3348,9 +3450,9 @@ func fixOverlappingBaseKPI(db *sql.DB, kpi *kpiSummary, fluxo fluxoCtx, view, gr
 	}
 	// Mix Médio real do recorte — substitui a média simples dos cards
 	// (computeKPI), que varia com a visão. Ver queryDistinctCliMix.
-	kpi.AvgMix = queryDistinctCliMix(db, fluxo, view, groupCol, empresaID, ym(pr.RefInicio), ym(pr.RefFim), drillPath, filters)
+	kpi.AvgMix = mixMedio(ym(pr.RefInicio), ym(pr.RefFim))
 	if !pr.CompInicio.IsZero() {
-		kpi.AvgMixAnt = queryDistinctCliMix(db, fluxo, view, groupCol, empresaID, ym(pr.CompInicio), ym(pr.CompFim), drillPath, filters)
+		kpi.AvgMixAnt = mixMedio(ym(pr.CompInicio), ym(pr.CompFim))
 	}
 	kpi.MixCor = "vermelho"
 	if kpi.AvgMix >= kpi.AvgMixAnt {
@@ -3912,6 +4014,11 @@ func prewarmAggMesCore(db *sql.DB, empresaID string) time.Time {
 			go func() {
 				defer wg.Done()
 				queryBasePositivados(db, empresaID, fl, v.view, v.group, nil, v.filters)
+				// Base do totalizador: histórico inteiro, sem o filtro de
+				// fornecedor (mesma regra de baseFilters em fixOverlappingBaseKPI).
+				if _, temFornec := v.filters["cod_fornec"]; !temFornec {
+					cachedKPITotal(db, empresaID, fl, v.view, v.group, "kpi_total", 0, 999912, nil, v.filters)
+				}
 			}()
 		}
 	}
@@ -3974,6 +4081,9 @@ func prewarmPeriodKeys(db *sql.DB, empresaID string) {
 					sem <- struct{}{}
 					defer func() { <-sem }()
 					cachedDistinctPositivados(db, empresaID, fl, v.view, v.group, p.ini, p.fim, nil, v.filters)
+					// Totalizador do mesmo recorte (ver cachedKPITotal).
+					cachedKPITotal(db, empresaID, fl, v.view, v.group, "kpi_total", p.ini, p.fim, nil, v.filters)
+					cachedKPITotal(db, empresaID, fl, v.view, v.group, "kpi_mix", p.ini, p.fim, nil, v.filters)
 				}()
 			}
 		}
