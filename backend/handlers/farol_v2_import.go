@@ -1025,6 +1025,7 @@ func processImportJob(ctx context.Context, db *sql.DB, jobID string,
 		for ym := range mesesTocados {
 			meses = append(meses, aggMesYM{Ano: ym[0], Mes: ym[1]})
 		}
+		analisarVendasAnos(db, anosTocados)
 		upsertAggsMesParallel(db, spCtx.EmpresaID, meses, 4)
 		// Sazonalidade Produto×Filial×Ano (mig 212) — grão ANO, reusa
 		// anosTocados já computado acima pra create_agg_year_partitions.

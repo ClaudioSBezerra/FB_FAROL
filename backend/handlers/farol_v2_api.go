@@ -3467,6 +3467,28 @@ type aggMesYM struct{ Ano, Mes int }
 // Cada upsert_aggs_mes leva ~4min em 1M rows; rodar 4 em paralelo cai pra ~tempo/4
 // no inicial. Carga diária toca 1 mês só — overhead de paralelismo é zero.
 // workers=4 escolhido por equilibrar I/O do disco e CPU; pool DB tem 50 conexões.
+// analisarVendasAnos roda ANALYZE nas partições de venda dos anos que a carga
+// acabou de tocar. Medido em produção 08/10/2026: o autoanalyze só dispara a
+// cada ~10% de linhas novas (uns 9 dias de carga), então o histograma de data
+// parava dias atrás do dado real (ia até 03/10 com venda até 07/10). Para um
+// período de 1 dia além do histograma o planejador estima ~0 linhas e troca o
+// índice (empresa, cnpj, data) pelo (empresa, data) em
+// resolverDataUltimaCompraClientes: 45 mil linhas varridas POR cliente, ~30s
+// por chamada do recorte "dia_anterior", 16+ vezes por prewarm.
+func analisarVendasAnos(db *sql.DB, anos map[int]struct{}) {
+	t0 := time.Now()
+	for ano := range anos {
+		for _, base := range []string{"vendas_faturadas", "vendas_transmitidas", "vendas_ccd"} {
+			if _, err := db.Exec(fmt.Sprintf(`ANALYZE %s_%d`, base, ano)); err != nil {
+				if _, err2 := db.Exec(`ANALYZE ` + base); err2 != nil {
+					log.Printf("[farol:agg] ANALYZE %s (ano %d) ERRO: %v", base, ano, err2)
+				}
+			}
+		}
+	}
+	log.Printf("[farol:agg] ANALYZE vendas_* de %d ano(s) em %v", len(anos), time.Since(t0))
+}
+
 func upsertAggsMesParallel(db *sql.DB, empresaID string, meses []aggMesYM, workers int) {
 	if len(meses) == 0 {
 		return
