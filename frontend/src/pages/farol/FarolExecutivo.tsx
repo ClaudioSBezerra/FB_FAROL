@@ -138,6 +138,11 @@ interface CardsResponse {
   drill_path: DrillStep[]
   next_level: string
   next_level_label: string
+  // Lista limitada pelo servidor (ver limitarCards em farol_v2_api.go): acima
+  // de `limit` cards só o topo é enviado; o KPI é sempre do recorte inteiro.
+  total_cards?: number
+  total_filtrados?: number
+  truncado?: boolean
   // diag — como o backend serviu este recorte. Sem isso, uma lista vazia é
   // ambígua na tela: "não teve venda" ou "a consulta falhou"? (incidente
   // 27/07/2026: consulta morria e o painel mostrava 0 cards em silêncio).
@@ -833,12 +838,24 @@ interface UseCardsArgs {
   drillPath: DrillStep[]
   filters: Record<string, string[]>
   somenteIndustria?: boolean
+  limit: number
+  q: string
+  sort: string
+  dir: string
 }
 
+// Quantos cards a tela pede por vez. "Por Rede" tem ~42 mil: enviar e desenhar
+// todos travava o navegador (08/10/2026). Acima disso, busca e ordenação
+// passam a ser feitas no servidor.
+const LIMITE_CARDS = 200
+
 function useCards(a: UseCardsArgs) {
+  // Os 10 primeiros campos identificam o RECORTE; os 4 últimos só mudam a
+  // fatia/ordem da mesma lista.
+  const recorte = ['farol-v2-cards', a.view, a.fluxo, a.ref_inicio, a.ref_fim, a.comp_inicio, a.comp_fim,
+    JSON.stringify(a.drillPath), JSON.stringify(a.filters), a.somenteIndustria]
   return useQuery<CardsResponse>({
-    queryKey: ['farol-v2-cards', a.view, a.fluxo, a.ref_inicio, a.ref_fim, a.comp_inicio, a.comp_fim,
-      JSON.stringify(a.drillPath), JSON.stringify(a.filters), a.somenteIndustria],
+    queryKey: [...recorte, a.limit, a.q, a.sort, a.dir],
     enabled: !!a.ref_inicio && !!a.ref_fim,
     queryFn: async () => {
       const p = new URLSearchParams({
@@ -852,6 +869,9 @@ function useCards(a: UseCardsArgs) {
       // (V01/V02/V03/V06/V07) já são todas suportadas no backend
       // (FarolV2CardsHandler) — sempre manda quando ligado.
       if (a.somenteIndustria) p.set('somente_industria', '1')
+      p.set('limit', String(a.limit))
+      if (a.q) p.set('q', a.q)
+      if (a.sort) { p.set('sort', a.sort); p.set('dir', a.dir) }
       const r = await fetch(`/api/v2/farol/cards?${p}`)
       if (!r.ok) throw new Error('Falha ao carregar dados')
       return r.json()
@@ -859,6 +879,12 @@ function useCards(a: UseCardsArgs) {
     staleTime: 2 * 60_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    // Mantém a lista anterior na tela enquanto busca/ordenação/"mostrar mais"
+    // recarregam do servidor. Só quando o recorte é o MESMO: ao trocar de
+    // visão/período/filtro a lista antiga some e entra o carregamento, senão
+    // a tela mostraria os cards de outra visão como se fossem desta.
+    placeholderData: (prev, prevQuery) =>
+      prevQuery && JSON.stringify(prevQuery.queryKey.slice(0, recorte.length)) === JSON.stringify(recorte) ? prev : undefined,
   })
 }
 
@@ -1015,11 +1041,33 @@ export default function FarolExecutivo() {
     setCompInicio(r.comp_inicio); setCompFim(r.comp_fim)
   }
 
-  const { data, isLoading, error } = useCards({
+  // Lista grande (acima de LIMITE_CARDS): busca e ordenação vão para o servidor.
+  const [limite, setLimite] = useState(LIMITE_CARDS)
+  const [modoServidor, setModoServidor] = useState(false)
+  const [buscaServidor, setBuscaServidor] = useState('')
+  const [ordemServidor, setOrdemServidor] = useState<{ sort: string; dir: string }>({ sort: '', dir: '' })
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaServidor(search.trim()), 350)
+    return () => clearTimeout(t)
+  }, [search])
+  const recorteKey = JSON.stringify([view, fluxo, refInicio, refFim, compInicio, compFim, drillPath, filters, somenteIndustria])
+  useEffect(() => { setLimite(LIMITE_CARDS) }, [recorteKey, buscaServidor])
+
+  const ordemPadrao = !ordemServidor.sort || (ordemServidor.sort === 'valor' && ordemServidor.dir === 'desc')
+  const { data, isLoading, isFetching, isPlaceholderData, error } = useCards({
     view, fluxo, ref_inicio: refInicio, ref_fim: refFim,
     comp_inicio: compInicio, comp_fim: compFim,
     drillPath, filters, somenteIndustria,
+    limit: limite,
+    q: modoServidor ? buscaServidor : '',
+    // valor/desc é a ordem padrão do servidor: não manda, para a 1ª carga e a
+    // seguinte (já em modo servidor) caírem na mesma chave, sem refazer o pedido.
+    sort: modoServidor && !ordemPadrao ? ordemServidor.sort : '',
+    dir: modoServidor && !ordemPadrao ? ordemServidor.dir : '',
   })
+  useEffect(() => {
+    if (data && !isPlaceholderData) setModoServidor((data.total_cards ?? 0) > LIMITE_CARDS)
+  }, [data, isPlaceholderData])
   const dimsQ = useDims(fluxo, refInicio, refFim)
   // Lazy-load do dropdown de Cliente: só ativa após o usuário abri-lo uma vez.
   const [cliEnabled, setCliEnabled] = useState(false)
@@ -1077,13 +1125,17 @@ export default function FarolExecutivo() {
   const filteredCards = useMemo(() => {
     const s = search.trim().toLowerCase()
     if (!s) return cards
-    return cards.filter(c => c.label.toLowerCase().includes(s))
+    // label OU código — mesma regra da busca no servidor (limitarCards).
+    return cards.filter(c => c.label.toLowerCase().includes(s) || c.key.toLowerCase().includes(s))
   }, [cards, search])
 
   // Ordenação via setinhas no header do GRID — clique em "Período Atual" ou "%"
   // (ver ColumnsHeader). Default = valor desc. Preferência persistida.
   const { sorted: visibleCards, sortState, setSort } =
     useSortedCards(filteredCards, 'farol.sort.executivo', { field: 'valor', direction: 'desc' })
+  useEffect(() => {
+    setOrdemServidor({ sort: sortState.field, dir: sortState.direction })
+  }, [sortState.field, sortState.direction])
 
   // Nível atual sendo listado (cards) → esconde Positivação em Cliente/Produto.
   const curLevel = cards[0]?.level ?? ''
@@ -1491,7 +1543,10 @@ export default function FarolExecutivo() {
             </span>
           </div>
           <span className="text-sm text-slate-500 tabular-nums shrink-0">
-            {visibleCards.length} {visibleCards.length === 1 ? 'linha' : 'linhas'}
+            {data.truncado
+              ? `${visibleCards.length.toLocaleString('pt-BR')} de ${(data.total_filtrados ?? 0).toLocaleString('pt-BR')} linhas`
+              : `${visibleCards.length} ${visibleCards.length === 1 ? 'linha' : 'linhas'}`}
+            {isFetching && !isLoading && <span className="ml-2 text-slate-400">atualizando…</span>}
           </span>
         </div>
       )}
@@ -1566,7 +1621,9 @@ export default function FarolExecutivo() {
               </span>
             ) : (
               <span className="text-slate-500">
-                {search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
+                {modoServidor && search && (isFetching || search.trim() !== buscaServidor)
+                  ? 'Buscando…'
+                  : search ? 'Nenhum resultado para a busca.' : 'Sem dados para o filtro atual.'}
               </span>
             )}
           </div>
@@ -1579,6 +1636,22 @@ export default function FarolExecutivo() {
             onClick={c.level === 'cod_prod' ? undefined : () => handleDrill(c)}
           />
         ))}
+        {data?.truncado && !isLoading && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <span>
+              Mostrando {visibleCards.length.toLocaleString('pt-BR')} de {(data.total_filtrados ?? 0).toLocaleString('pt-BR')}.
+              O TOTAL acima considera todas. Use a busca para achar uma específica.
+            </span>
+            <button
+              type="button"
+              disabled={isFetching}
+              onClick={() => setLimite(l => l + LIMITE_CARDS)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {isFetching ? 'Carregando…' : `Mostrar mais ${LIMITE_CARDS}`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -482,6 +482,60 @@ type cardsResponse struct {
 	NextLevel      string      `json:"next_level"`
 	NextLevelLabel string      `json:"next_level_label"`
 	Diag           cardsDiag   `json:"diag"`
+	// Lista limitada (ver limitarCards): total_cards = quantos cards o recorte
+	// tem; total_filtrados = quantos passam na busca; truncado = a lista
+	// enviada é só o topo. O KPI é sempre do recorte inteiro.
+	TotalCards     int  `json:"total_cards"`
+	TotalFiltrados int  `json:"total_filtrados"`
+	Truncado       bool `json:"truncado"`
+}
+
+// limitarCards — "Por Rede" devolvia 42.714 cards de uma vez (medido em
+// produção 08/10/2026: 3,9s no banco e dezenas de MB para o navegador
+// desenhar linha a linha). Quando a tela manda `limit` e o recorte passa
+// dele, a busca e a ordenação passam a ser feitas aqui e só o topo é enviado.
+// Abaixo do limite nada muda: devolve tudo, na ordem que já estava, e a tela
+// segue filtrando/ordenando sozinha. A ordenação espelha useSortedCards
+// (frontend/src/components/farol/SortToggle.tsx).
+func limitarCards(cards []cardItem, limite int, busca, campo, dir string) (out []cardItem, total, filtrados int, truncado bool) {
+	total = len(cards)
+	if limite <= 0 || total <= limite {
+		return cards, total, total, false
+	}
+	out = cards
+	if b := strings.ToLower(strings.TrimSpace(busca)); b != "" {
+		out = make([]cardItem, 0, 256)
+		for _, c := range cards {
+			if strings.Contains(strings.ToLower(c.Label), b) || strings.Contains(strings.ToLower(c.Key), b) {
+				out = append(out, c)
+			}
+		}
+	}
+	filtrados = len(out)
+	sinal := -1.0
+	if dir == "asc" {
+		sinal = 1.0
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if campo == "pct" {
+			if a.Pct != b.Pct {
+				return sinal*(a.Pct-b.Pct) < 0
+			}
+			if a.ValorAtual != b.ValorAtual {
+				return a.ValorAtual > b.ValorAtual
+			}
+			return a.ValorAnt > b.ValorAnt
+		}
+		if a.ValorAtual != b.ValorAtual {
+			return sinal*(a.ValorAtual-b.ValorAtual) < 0
+		}
+		return sinal*(a.ValorAnt-b.ValorAnt) < 0
+	})
+	if filtrados > limite {
+		return out[:limite], total, filtrados, true
+	}
+	return out, total, filtrados, false
 }
 
 // cardsDiag — como o recorte foi servido. Existe porque uma lista vazia era
@@ -843,9 +897,18 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 			return cards[i].ValorAtual > cards[j].ValorAtual
 		})
 
+		limite, _ := strconv.Atoi(q.Get("limit"))
+		if limite > 5000 {
+			limite = 5000
+		}
+		cards, totalCards, totalFiltrados, truncado := limitarCards(cards, limite, q.Get("q"), q.Get("sort"), q.Get("dir"))
+
 		json.NewEncoder(w).Encode(cardsResponse{
-			Cards: cards,
-			KPI:   kpi,
+			Cards:          cards,
+			TotalCards:     totalCards,
+			TotalFiltrados: totalFiltrados,
+			Truncado:       truncado,
+			KPI:            kpi,
 			Periodo: periodoInfo{
 				Fluxo:              fluxo.name,
 				RefInicio:          pr.RefInicio.Format("2006-01-02"),
