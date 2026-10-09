@@ -53,10 +53,12 @@ type PainelCombinadoNumericaCliente struct {
 	// Sortimento Numérica) — o front não deve mostrar "faltam X PPAs" pra
 	// quem nunca vai ser cobrado disso.
 	SortimentoAplicavel bool `json:"sortimento_aplicavel"`
-	// teveCompra — só usado internamente pra recalcularResumoCombinadoNumericaParaEscopo
-	// respeitar o mesmo denominador (Questão #2 do PRD) depois de um filtro
-	// GGV/CRV/RCA; não exposto no JSON (front não precisa disso).
-	teveCompra bool
+	// TeveCompra — comprou QUALQUER produto desta Indústria no bimestre (não
+	// só PPA). É o denominador da média de Sortimento (Questão #2 do PRD):
+	// recalcularResumoCombinadoNumericaParaEscopo usa depois de um filtro
+	// GGV/CRV/RCA, e o resumo da equipe no mobile (Melhoria 1 do Heverton
+	// 08/10/2026) usa pra a média de cada CRV/RCA bater com o cartão.
+	TeveCompra bool `json:"teve_compra"`
 }
 
 type PainelCombinadoNumericaResponse struct {
@@ -144,7 +146,7 @@ func calcularPainelCombinadoNumerica(db *sql.DB, empresaID string, vinculoCobert
 			CoberturaValor: c.Valor, CoberturaObjetivo: c.Objetivo, CoberturaFalta: faltaOuZero(c.Objetivo, c.Valor), CoberturaAtingiu: c.Atingiu,
 			SortimentoValor: s.Valor, SortimentoObjetivo: s.Objetivo, SortimentoFalta: faltaOuZero(s.Objetivo, s.Valor), SortimentoAtingiu: s.Atingiu,
 			SortimentoAplicavel: temSort,
-			teveCompra:          s.TeveCompra,
+			TeveCompra:          s.TeveCompra,
 		})
 		vistos[c.CodPrinc] = true
 	}
@@ -159,7 +161,7 @@ func calcularPainelCombinadoNumerica(db *sql.DB, empresaID string, vinculoCobert
 			CodGGV: s.CodGGV, NomeGGV: s.NomeGGV, CodCRV: s.CodCRV, NomeCRV: s.NomeCRV, CodRCA: s.CodRCA, NomeRCA: s.NomeRCA,
 			SortimentoValor: s.Valor, SortimentoObjetivo: s.Objetivo, SortimentoFalta: faltaOuZero(s.Objetivo, s.Valor), SortimentoAtingiu: s.Atingiu,
 			SortimentoAplicavel: true,
-			teveCompra:          s.TeveCompra,
+			TeveCompra:          s.TeveCompra,
 		})
 	}
 
@@ -216,7 +218,7 @@ func recalcularResumoCombinadoNumericaParaEscopo(clientesFiltrados []PainelCombi
 		if !c.SortimentoAplicavel {
 			continue
 		}
-		realizadoSortimento = append(realizadoSortimento, RealizadoRede{Valor: c.SortimentoValor, TeveCompra: c.teveCompra})
+		realizadoSortimento = append(realizadoSortimento, RealizadoRede{Valor: c.SortimentoValor, TeveCompra: c.TeveCompra})
 	}
 	resumoSortimento.RealizadoTotal = recalcularTotalDeRedes(realizadoSortimento, "sortimento_numerica_ppa").RealizadoTotal
 }

@@ -3,7 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft, Check, X as XIcon } from 'lucide-react'
 import { formatCNPJ } from '@/lib/formatFilial'
-import { opcoesMetrica, resumoNumerica } from '@/lib/metricasObjetivos'
+import { opcoesMetrica, resumoNumerica, resumirEquipe, type UnidadeEquipe } from '@/lib/metricasObjetivos'
+import { CabecalhoEquipe, LinhaTabelaEquipe } from '@/components/farol/TabelaEquipe'
 
 // Religado a pedido do Claudio 23/09/2026 (a surpresa do José Costa já
 // pode ser revelada). Ficou escondido brevemente (23/09/2026) porque o
@@ -112,7 +113,10 @@ interface PainelCombinadoRede {
   cod_princ: string
   razao: string
   fantasia: string
+  cod_crv: string
+  nome_crv: string
   cod_rca: string
+  nome_rca: string
   cobertura_valor_total?: number
   cobertura_valor: number
   cobertura_objetivo: number
@@ -168,6 +172,7 @@ interface PainelCombinadoNumericaCliente {
   sortimento_objetivo: number
   sortimento_atingiu: boolean
   sortimento_aplicavel: boolean
+  teve_compra: boolean
 }
 interface PainelCombinadoNumerica {
   industria_nome: string
@@ -516,7 +521,9 @@ export default function FarolPublicMetasPanel() {
   // Rede pra abrir os Clientes dela, toca no Cliente pra abrir os Produtos.
   const [redeAberta, setRedeAberta] = useState<string | null>(null) // cod_princ
   const [clienteAberto, setClienteAberto] = useState<string | null>(null) // cnpj
-  const fecharDrillDown = () => { setRedeAberta(null); setClienteAberto(null) }
+  const [crvAberto, setCrvAberto] = useState<string | null>(null) // resumo da equipe (GGV)
+  const [rcaAberto, setRcaAberto] = useState<string | null>(null) // resumo da equipe (GGV/Supervisor)
+  const fecharDrillDown = () => { setRedeAberta(null); setClienteAberto(null); setCrvAberto(null); setRcaAberto(null) }
   const alternarRede = (codPrinc: string) => {
     setClienteAberto(null)
     setRedeAberta(atual => (atual === codPrinc ? null : codPrinc))
@@ -801,6 +808,132 @@ export default function FarolPublicMetasPanel() {
     return <GamificacaoMobileView cnpj={cnpj} codRca={scopeCod} onVoltar={() => setModo('objetivos')} />
   }
 
+  // Linha de 1 Rede (com seus Clientes e Produtos) — usada na lista plana
+  // (RCA) e dentro de cada RCA da equipe (GGV/Supervisor).
+  const renderRedeLinha = (r: PainelCombinadoRede) => {
+    const aberta = redeAberta === r.cod_princ
+    // Clientes com maior venda realizada (Cobertura, R$) primeiro
+    // — pedido do Heverton 25/09/2026.
+    const clientesDaRede = painelCombinado.clientes
+      .filter(c => c.cod_princ === r.cod_princ)
+      .sort((a, b) => b.cobertura_valor - a.cobertura_valor)
+    const sortimentoAtingiu = r.sortimento_valor >= r.sortimento_objetivo
+    return (
+      <div key={r.cod_princ} className="border-b last:border-0">
+        <button
+          type="button"
+          onClick={() => alternarRede(r.cod_princ)}
+          className="w-full px-3 py-2.5 text-sm text-left space-y-1 active:bg-slate-50"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
+              <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
+              <span className="font-medium truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
+            </span>
+            <span className="flex gap-3 shrink-0 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1 whitespace-nowrap">Cobertura: {fmtBRLMobile(r.cobertura_valor)} / {fmtBRLMobile(r.cobertura_objetivo)} <StatusIcon atingiu={r.cobertura_atingiu} /></span>
+              <span className="flex items-center gap-1 whitespace-nowrap">Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)} <StatusIcon atingiu={sortimentoAtingiu} /></span>
+            </span>
+          </div>
+        </button>
+        {aberta && (
+          <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
+            {clientesDaRede.length === 0 ? (
+              <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
+            ) : clientesDaRede.map(c => {
+              const coberturaAtingiu = c.cobertura_valor >= c.cobertura_objetivo
+              const sortimentoClienteAtingiu = c.sortimento_valor >= c.sortimento_objetivo
+              return (
+                <ClienteDrillDown
+                  key={c.cnpj}
+                  nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
+                  cnpj={c.cnpj}
+                  codCli={c.cod_cli}
+                  badges={[]}
+                  detalhes={[
+                    { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: coberturaAtingiu },
+                    { label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: sortimentoClienteAtingiu },
+                  ]}
+                  clienteAberto={clienteAberto}
+                  onToggle={alternarCliente}
+                  temSortimento={!!sortimentoVinculoID}
+                  isLoadingItens={isLoadingItens}
+                  itens={itensResp?.itens}
+                />
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Linha de 1 Cliente da Numérica (expande pros PPAs) — lista plana (RCA)
+  // e folhas da equipe (GGV/Supervisor).
+  const renderClienteNum = (c: PainelCombinadoNumericaCliente) => (
+    <div key={c.cnpj} className="border-b last:border-0 px-3 py-1.5">
+      <ClienteDrillDown
+        nome={`${nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}${c.classificacao_pdv ? ` (${c.classificacao_pdv})` : ''}`}
+        cnpj={c.cnpj}
+        codCli={c.cod_cl}
+        badges={[]}
+        detalhes={[
+          { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: c.cobertura_atingiu },
+          ...(c.sortimento_aplicavel
+            ? [{ label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: c.sortimento_atingiu }]
+            : []),
+        ]}
+        clienteAberto={clienteAberto}
+        onToggle={alternarCliente}
+        temSortimento={c.sortimento_aplicavel}
+        msgSemItens={`Sortimento não se aplica à classe ${c.classificacao_pdv || 'deste cliente'} (só Num. A e Num. B)`}
+        isLoadingItens={isLoadingPpas}
+        itens={ppasResp?.ppas.map(p => ({
+          ean: p.ppa, nome: p.ppa, qtd: p.qtd, valor: 0, vendeu: p.vendeu, cod_prods: p.cod_prods,
+          obs: p.abaixo_minimo ? 'abaixo do mínimo de 3 un.' : undefined,
+        }))}
+      />
+    </div>
+  )
+
+  // Resumo da equipe — Melhoria 1 do Heverton 08/10/2026. GGV: CRV → RCA →
+  // folhas; Supervisor: RCA → folhas. Folha = Rede (Ponderada) ou Cliente
+  // (Numérica), que já abre Cliente/Produtos como antes.
+  function renderEquipe<T extends UnidadeEquipe>(unidades: T[], rotuloQt: string, renderFolhas: (folhas: T[]) => React.ReactNode) {
+    const linhasRca = (us: T[], prefixo: string) => resumirEquipe(us, 'rca').map(l => {
+      const chave = `${prefixo}|${l.codigo}`
+      return (
+        <LinhaTabelaEquipe
+          key={chave}
+          linha={l}
+          recuo={scope === 'ggv'}
+          aberta={rcaAberto === chave}
+          onToggle={() => { setRedeAberta(null); setClienteAberto(null); setRcaAberto(a => (a === chave ? null : chave)) }}
+        >
+          {renderFolhas(us.filter(u => u.cod_rca === l.codigo))}
+        </LinhaTabelaEquipe>
+      )
+    })
+    return (
+      <>
+        <CabecalhoEquipe rotuloQt={rotuloQt} />
+        {unidades.length === 0 && <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nada neste recorte</div>}
+        {scope === 'ggv'
+          ? resumirEquipe(unidades, 'crv').map(l => (
+              <LinhaTabelaEquipe
+                key={l.codigo}
+                linha={l}
+                aberta={crvAberto === l.codigo}
+                onToggle={() => { setRedeAberta(null); setClienteAberto(null); setRcaAberto(null); setCrvAberto(a => (a === l.codigo ? null : l.codigo)) }}
+              >
+                {linhasRca(unidades.filter(u => u.cod_crv === l.codigo), l.codigo)}
+              </LinhaTabelaEquipe>
+            ))
+          : linhasRca(unidades, '')}
+      </>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 space-y-4 max-w-2xl mx-auto">
       <div className="flex items-start justify-between">
@@ -942,67 +1075,27 @@ export default function FarolPublicMetasPanel() {
             </div>
 
             <div className="bg-white border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">Suas Redes — Cobertura e Sortimento</div>
-              {painelCombinado.redes.length === 0 && (
+              <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">
+                {scope === 'rca' ? 'Suas Redes — Cobertura e Sortimento' : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA, Rede e Cliente' : 'Sua equipe — por RCA, Rede e Cliente'}
+              </div>
+              {scope === 'rca' && painelCombinado.redes.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
               )}
-              {[...painelCombinado.redes].sort((a, b) => (b.cobertura_valor_total ?? b.cobertura_valor) - (a.cobertura_valor_total ?? a.cobertura_valor)).map((r, i) => {
-                const aberta = redeAberta === r.cod_princ
-                // Clientes com maior venda realizada (Cobertura, R$) primeiro
-                // — pedido do Heverton 25/09/2026.
-                const clientesDaRede = painelCombinado.clientes
-                  .filter(c => c.cod_princ === r.cod_princ)
-                  .sort((a, b) => b.cobertura_valor - a.cobertura_valor)
-                const sortimentoAtingiu = r.sortimento_valor >= r.sortimento_objetivo
-                return (
-                  <div key={i} className="border-b last:border-0">
-                    <button
-                      type="button"
-                      onClick={() => alternarRede(r.cod_princ)}
-                      className="w-full px-3 py-2.5 text-sm text-left space-y-1 active:bg-slate-50"
-                    >
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                        <span className="flex-1 min-w-[10rem] flex items-center gap-1.5">
-                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-                          <span className="font-medium truncate"><span className="font-mono font-semibold">{r.cod_princ}</span> - {nomeOuCodigo(r.fantasia, r.razao, r.cod_princ)}</span>
-                        </span>
-                        <span className="flex gap-3 shrink-0 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1 whitespace-nowrap">Cobertura: {fmtBRLMobile(r.cobertura_valor)} / {fmtBRLMobile(r.cobertura_objetivo)} <StatusIcon atingiu={r.cobertura_atingiu} /></span>
-                          <span className="flex items-center gap-1 whitespace-nowrap">Sortimento: {fmt(r.sortimento_valor)} / {fmt(r.sortimento_objetivo)} <StatusIcon atingiu={sortimentoAtingiu} /></span>
-                        </span>
-                      </div>
-                    </button>
-                    {aberta && (
-                      <div className="bg-slate-50 border-t px-3 py-2 pl-7 space-y-2">
-                        {clientesDaRede.length === 0 ? (
-                          <div className="text-xs text-muted-foreground py-1">Nenhum Cliente neste recorte</div>
-                        ) : clientesDaRede.map(c => {
-                          const coberturaAtingiu = c.cobertura_valor >= c.cobertura_objetivo
-                          const sortimentoClienteAtingiu = c.sortimento_valor >= c.sortimento_objetivo
-                          return (
-                            <ClienteDrillDown
-                              key={c.cnpj}
-                              nome={nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
-                              cnpj={c.cnpj}
-                              codCli={c.cod_cli}
-                              badges={[]}
-                              detalhes={[
-                                { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: coberturaAtingiu },
-                                { label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: sortimentoClienteAtingiu },
-                              ]}
-                              clienteAberto={clienteAberto}
-                              onToggle={alternarCliente}
-                              temSortimento={!!sortimentoVinculoID}
-                              isLoadingItens={isLoadingItens}
-                              itens={itensResp?.itens}
-                            />
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
+              {scope === 'rca' ? (
+                [...painelCombinado.redes].sort((a, b) => (b.cobertura_valor_total ?? b.cobertura_valor) - (a.cobertura_valor_total ?? a.cobertura_valor)).map(r => renderRedeLinha(r))
+              ) : (
+                renderEquipe(
+                  painelCombinado.redes.map<UnidadeEquipe & { chave: PainelCombinadoRede }>(r => ({
+                    ...r,
+                    chave: r,
+                    cobertura_atingiu: r.cobertura_atingiu,
+                    sortimento_aplicavel: true,
+                    teve_compra: true,
+                  })),
+                  'Ponderadas',
+                  folhas => [...folhas].sort((a, b) => (b.chave.cobertura_valor_total ?? b.chave.cobertura_valor) - (a.chave.cobertura_valor_total ?? a.chave.cobertura_valor)).map(f => renderRedeLinha(f.chave)),
                 )
-              })}
+              )}
             </div>
           </div>
         )
@@ -1060,35 +1153,19 @@ export default function FarolPublicMetasPanel() {
             </div>
 
             <div className="bg-white border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">Seus Clientes</div>
-              {clientesCombinadoNum.length === 0 && (
+              <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">
+                {scope === 'rca' ? 'Seus Clientes' : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA e Cliente' : 'Sua equipe — por RCA e Cliente'}
+              </div>
+              {scope === 'rca' && clientesCombinadoNum.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhum Cliente neste recorte</div>
               )}
-              {[...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(c => (
-                <div key={c.cnpj} className="border-b last:border-0 px-3 py-1.5">
-                  <ClienteDrillDown
-                    nome={`${nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}${c.classificacao_pdv ? ` (${c.classificacao_pdv})` : ''}`}
-                    cnpj={c.cnpj}
-                    codCli={c.cod_cl}
-                    badges={[]}
-                    detalhes={[
-                      { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: c.cobertura_atingiu },
-                      ...(c.sortimento_aplicavel
-                        ? [{ label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: c.sortimento_atingiu }]
-                        : []),
-                    ]}
-                    clienteAberto={clienteAberto}
-                    onToggle={alternarCliente}
-                    temSortimento={c.sortimento_aplicavel}
-                    msgSemItens={`Sortimento não se aplica à classe ${c.classificacao_pdv || 'deste cliente'} (só Num. A e Num. B)`}
-                    isLoadingItens={isLoadingPpas}
-                    itens={ppasResp?.ppas.map(p => ({
-                      ean: p.ppa, nome: p.ppa, qtd: p.qtd, valor: 0, vendeu: p.vendeu, cod_prods: p.cod_prods,
-                      obs: p.abaixo_minimo ? 'abaixo do mínimo de 3 un.' : undefined,
-                    }))}
-                  />
-                </div>
-              ))}
+              {scope === 'rca'
+                ? [...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(renderClienteNum)
+                : renderEquipe(
+                    clientesCombinadoNum,
+                    'Clientes',
+                    folhas => [...folhas].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(renderClienteNum),
+                  )}
             </div>
           </div>
         )

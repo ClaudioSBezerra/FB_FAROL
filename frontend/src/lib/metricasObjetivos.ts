@@ -64,3 +64,66 @@ export function resumoNumerica(clientes: ClienteNumResumo[]) {
     totalAplicaveis: aplicaveis.length,
   }
 }
+
+// ─── Resumo da equipe (mobile GGV/Supervisor) ───────────────────────────────
+// Melhoria 1 do Heverton 08/10/2026: quem está puxando ou derrubando o número.
+// Uma "unidade" é 1 Rede (Ponderada) ou 1 Cliente (Numérica).
+
+export interface UnidadeEquipe {
+  cod_crv: string
+  nome_crv: string
+  cod_rca: string
+  nome_rca: string
+  cobertura_atingiu: boolean
+  // Ponderada: sempre true. Numérica: false pra Num. C (FR26).
+  sortimento_aplicavel: boolean
+  sortimento_valor: number
+  sortimento_objetivo: number
+  // Denominador da média de Sortimento. Ponderada: sempre true (média entre
+  // todas as Redes). Numérica: comprou qualquer produto da indústria no
+  // bimestre (Questão #2 do PRD), igual o cartão do topo.
+  teve_compra: boolean
+}
+
+export interface LinhaEquipe {
+  codigo: string
+  nome: string
+  qt: number
+  cobertas: number
+  falta: number
+  objetivoSortimento: number
+  realSortimento: number
+  atingindoSortimento: number
+  faltaSortimento: number
+}
+
+export function resumirEquipe(unidades: UnidadeEquipe[], por: 'crv' | 'rca'): LinhaEquipe[] {
+  const grupos = new Map<string, { nome: string; us: UnidadeEquipe[] }>()
+  for (const u of unidades) {
+    const codigo = por === 'crv' ? u.cod_crv : u.cod_rca
+    const nome = por === 'crv' ? u.nome_crv : u.nome_rca
+    const g = grupos.get(codigo) ?? { nome, us: [] }
+    g.us.push(u)
+    grupos.set(codigo, g)
+  }
+  const linhas: LinhaEquipe[] = []
+  for (const [codigo, g] of grupos) {
+    const aplicaveis = g.us.filter(u => u.sortimento_aplicavel)
+    const comCompra = aplicaveis.filter(u => u.teve_compra).length
+    const atingindo = aplicaveis.filter(u => u.sortimento_valor >= u.sortimento_objetivo).length
+    const cobertas = g.us.filter(u => u.cobertura_atingiu).length
+    linhas.push({
+      codigo,
+      nome: g.nome,
+      qt: g.us.length,
+      cobertas,
+      falta: g.us.length - cobertas,
+      objetivoSortimento: aplicaveis.reduce((m, u) => Math.max(m, u.sortimento_objetivo), 0),
+      realSortimento: comCompra > 0 ? aplicaveis.reduce((s, u) => s + u.sortimento_valor, 0) / comCompra : 0,
+      atingindoSortimento: atingindo,
+      faltaSortimento: aplicaveis.length - atingindo,
+    })
+  }
+  // Maior buraco primeiro: é o que mais derruba o número.
+  return linhas.sort((a, b) => b.falta - a.falta || a.nome.localeCompare(b.nome, 'pt-BR'))
+}
