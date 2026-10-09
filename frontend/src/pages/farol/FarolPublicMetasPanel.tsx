@@ -814,7 +814,7 @@ export default function FarolPublicMetasPanel() {
     const aberta = redeAberta === r.cod_princ
     // Clientes com maior venda realizada (Cobertura, R$) primeiro
     // — pedido do Heverton 25/09/2026.
-    const clientesDaRede = painelCombinado.clientes
+    const clientesDaRede = (painelCombinado?.clientes ?? [])
       .filter(c => c.cod_princ === r.cod_princ)
       .sort((a, b) => b.cobertura_valor - a.cobertura_valor)
     const sortimentoAtingiu = r.sortimento_valor >= r.sortimento_objetivo

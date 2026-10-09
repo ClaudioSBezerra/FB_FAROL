@@ -16,7 +16,7 @@ import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 import { Button } from '@/components/ui/button'
 import { exportToExcel } from '@/lib/exportToExcel'
-import { opcoesMetrica, resumoNumerica } from '@/lib/metricasObjetivos'
+import { opcoesMetrica, resumoNumerica, resumirRollup, type NivelRollup } from '@/lib/metricasObjetivos'
 import { toast } from 'sonner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -46,6 +46,7 @@ interface RealizadoCliente {
 interface RealizadoRede {
   cod_princ: string
   cod_cl?: string
+  objetivo?: number
   razao: string
   fantasia: string
   qt_lojas: number
@@ -190,6 +191,7 @@ interface PainelCombinadoNumericaCliente {
   sortimento_falta: number
   sortimento_atingiu: boolean
   sortimento_aplicavel: boolean
+  teve_compra: boolean
 }
 // PainelPPALinha — 1 PPA do drill-down de um cliente da Numérica (Correção 2
 // do Heverton 08/10/2026): comprou ou não comprou no período.
@@ -952,6 +954,7 @@ export default function FarolPainelMetas() {
 
   // aba ativa da visão Combinado — ver AbaCombinado/ABAS_COMBINADO acima.
   const [abaCombinado, setAbaCombinado] = useState<AbaCombinado>('rede')
+  const [abaNumerica, setAbaNumerica] = useState<'cliente' | NivelRollup>('cliente')
 
   const clientesCombinado = painelCombinado?.clientes ?? []
   // Ordem por REDE (maior venda primeiro) e, dentro da Rede, por LOJA (maior
@@ -1622,6 +1625,30 @@ export default function FarolPainelMetas() {
           <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
         ) : painelCombinadoNum ? (
           <>
+            {/* Níveis do documento do programa (GGV, GGV×CRV, GGV×CRV×RCA e
+                Cliente) — voltam aqui porque só existiam na visão individual
+                da Numérica, que saiu (Correção 5 do Heverton 08/10/2026).
+                Mesmo espírito das abas da Ponderada: os filtros abaixo
+                continuam valendo em qualquer aba. */}
+            <div className="flex rounded-md border border-slate-300 overflow-hidden bg-white shadow-sm w-fit">
+              {([
+                { value: 'ggv', label: 'Resumo GGVs' },
+                { value: 'ggv_crv', label: 'Resumo GGVs × CRVs' },
+                { value: 'ggv_crv_rca', label: 'Resumo GGVs × CRVs × RCAs' },
+                { value: 'cliente', label: 'Resumo Clientes' },
+              ] as const).map(a => (
+                <button
+                  key={a.value}
+                  onClick={() => setAbaNumerica(a.value)}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    abaNumerica === a.value ? 'bg-slate-700 text-white' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
             {/* Filtros GGV/Supervisor/RCA/Cliente — pedido do Claudio
                 30/09/2026 ("igual às outras visões"): faltava aqui, só
                 existia no modo individual e no Combinado por Rede.
@@ -1692,6 +1719,65 @@ export default function FarolPainelMetas() {
               )
             })()}
 
+            {abaNumerica !== 'cliente' && (() => {
+              const nivel: NivelRollup = abaNumerica
+              const linhas = resumirRollup(clientesCombinadoNum, nivel)
+              return (
+                <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                  <p className="text-xs text-muted-foreground px-3 pt-2">
+                    {nivel === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.' : 'Clique num grupo pra ver os Clientes dele.'}
+                  </p>
+                  <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-white">
+                      <TableRow>
+                        <TableHead>GGV</TableHead>
+                        {nivel !== 'ggv' && <TableHead>CRV</TableHead>}
+                        {nivel === 'ggv_crv_rca' && <TableHead>RCA</TableHead>}
+                        <TableHead className="text-right">Qt Clientes</TableHead>
+                        <TableHead className="text-right">Clientes atingindo Cobertura</TableHead>
+                        <TableHead className="text-right">Clientes abaixo da Cobertura</TableHead>
+                        <TableHead className="text-right">Objetivo Sortimento (PPAs)</TableHead>
+                        <TableHead className="text-right">Média de PPAs</TableHead>
+                        <TableHead className="text-right">Clientes atingindo Sortimento</TableHead>
+                        <TableHead className="text-right">Clientes abaixo do Sortimento</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {linhas.length === 0 && (
+                        <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte/filtros</TableCell></TableRow>
+                      )}
+                      {linhas.map(g => (
+                        <TableRow
+                          key={`${g.cod_ggv}|${g.cod_crv}|${g.cod_rca}`}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            // Clicar desce um nível: filtra pelo grupo e abre a aba de baixo.
+                            selecionarGGVIndiv(g.cod_ggv)
+                            if (nivel === 'ggv') { setAbaNumerica('ggv_crv'); return }
+                            selecionarCRVIndiv(g.cod_crv)
+                            if (nivel === 'ggv_crv_rca') selecionarRCAIndiv(g.cod_rca)
+                            setAbaNumerica('cliente')
+                          }}
+                        >
+                          <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
+                          {nivel !== 'ggv' && <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>}
+                          {nivel === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
+                          <TableCell className="text-right">{g.qt}</TableCell>
+                          <TableCell className="text-right text-green-700">{g.cobertas}</TableCell>
+                          <TableCell className="text-right text-red-700">{g.falta}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">{g.objetivoSortimento > 0 ? fmt(g.objetivoSortimento) : '—'}</TableCell>
+                          <TableCell className="text-right">{fmt(g.realSortimento)}</TableCell>
+                          <TableCell className="text-right text-green-700">{g.atingindoSortimento}</TableCell>
+                          <TableCell className="text-right text-red-700">{g.faltaSortimento}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )
+            })()}
+
+            {abaNumerica === 'cliente' && (
             <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1744,6 +1830,7 @@ export default function FarolPainelMetas() {
                 </TableBody>
               </Table>
             </div>
+            )}
           </>
         ) : null
       ) : isLoading || isFetching ? (

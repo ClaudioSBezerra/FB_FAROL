@@ -97,6 +97,22 @@ export interface LinhaEquipe {
   faltaSortimento: number
 }
 
+function metricasDoGrupo(us: UnidadeEquipe[]): Omit<LinhaEquipe, 'codigo' | 'nome'> {
+  const aplicaveis = us.filter(u => u.sortimento_aplicavel)
+  const comCompra = aplicaveis.filter(u => u.teve_compra).length
+  const atingindo = aplicaveis.filter(u => u.sortimento_valor >= u.sortimento_objetivo).length
+  const cobertas = us.filter(u => u.cobertura_atingiu).length
+  return {
+    qt: us.length,
+    cobertas,
+    falta: us.length - cobertas,
+    objetivoSortimento: aplicaveis.reduce((m, u) => Math.max(m, u.sortimento_objetivo), 0),
+    realSortimento: comCompra > 0 ? aplicaveis.reduce((s, u) => s + u.sortimento_valor, 0) / comCompra : 0,
+    atingindoSortimento: atingindo,
+    faltaSortimento: aplicaveis.length - atingindo,
+  }
+}
+
 export function resumirEquipe(unidades: UnidadeEquipe[], por: 'crv' | 'rca'): LinhaEquipe[] {
   const grupos = new Map<string, { nome: string; us: UnidadeEquipe[] }>()
   for (const u of unidades) {
@@ -107,23 +123,47 @@ export function resumirEquipe(unidades: UnidadeEquipe[], por: 'crv' | 'rca'): Li
     grupos.set(codigo, g)
   }
   const linhas: LinhaEquipe[] = []
-  for (const [codigo, g] of grupos) {
-    const aplicaveis = g.us.filter(u => u.sortimento_aplicavel)
-    const comCompra = aplicaveis.filter(u => u.teve_compra).length
-    const atingindo = aplicaveis.filter(u => u.sortimento_valor >= u.sortimento_objetivo).length
-    const cobertas = g.us.filter(u => u.cobertura_atingiu).length
-    linhas.push({
-      codigo,
-      nome: g.nome,
-      qt: g.us.length,
-      cobertas,
-      falta: g.us.length - cobertas,
-      objetivoSortimento: aplicaveis.reduce((m, u) => Math.max(m, u.sortimento_objetivo), 0),
-      realSortimento: comCompra > 0 ? aplicaveis.reduce((s, u) => s + u.sortimento_valor, 0) / comCompra : 0,
-      atingindoSortimento: atingindo,
-      faltaSortimento: aplicaveis.length - atingindo,
-    })
-  }
+  for (const [codigo, g] of grupos) linhas.push({ codigo, nome: g.nome, ...metricasDoGrupo(g.us) })
   // Maior buraco primeiro: é o que mais derruba o número.
   return linhas.sort((a, b) => b.falta - a.falta || a.nome.localeCompare(b.nome, 'pt-BR'))
+}
+
+// ─── Níveis GGV / GGV×CRV / GGV×CRV×RCA (web, Numérica) ─────────────────────
+// O documento do programa exige esses níveis; na Numérica só existiam na
+// visão individual, que saiu (Correção 5 do Heverton 08/10/2026).
+
+export type NivelRollup = 'ggv' | 'ggv_crv' | 'ggv_crv_rca'
+
+export interface UnidadeRollup extends UnidadeEquipe {
+  cod_ggv: string
+  nome_ggv: string
+}
+
+export interface LinhaRollup extends Omit<LinhaEquipe, 'codigo' | 'nome'> {
+  cod_ggv: string
+  nome_ggv: string
+  cod_crv: string
+  nome_crv: string
+  cod_rca: string
+  nome_rca: string
+}
+
+export function resumirRollup(unidades: UnidadeRollup[], nivel: NivelRollup): LinhaRollup[] {
+  const grupos = new Map<string, UnidadeRollup[]>()
+  for (const u of unidades) {
+    const k = nivel === 'ggv' ? u.cod_ggv : nivel === 'ggv_crv' ? `${u.cod_ggv}|${u.cod_crv}` : `${u.cod_ggv}|${u.cod_crv}|${u.cod_rca}`
+    const g = grupos.get(k)
+    if (g) g.push(u); else grupos.set(k, [u])
+  }
+  const linhas: LinhaRollup[] = []
+  for (const us of grupos.values()) {
+    const p = us[0]
+    linhas.push({
+      cod_ggv: p.cod_ggv, nome_ggv: p.nome_ggv,
+      cod_crv: nivel === 'ggv' ? '' : p.cod_crv, nome_crv: nivel === 'ggv' ? '' : p.nome_crv,
+      cod_rca: nivel === 'ggv_crv_rca' ? p.cod_rca : '', nome_rca: nivel === 'ggv_crv_rca' ? p.nome_rca : '',
+      ...metricasDoGrupo(us),
+    })
+  }
+  return linhas.sort((a, b) => b.falta - a.falta || a.nome_ggv.localeCompare(b.nome_ggv, 'pt-BR'))
 }
