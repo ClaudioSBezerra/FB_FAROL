@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Sparkles, Send, Download, RotateCcw, Clock, ChevronDown, ChevronUp, Copy, Check, BarChart3, Table2 } from 'lucide-react'
 import { fmtCell, buildChartSpec } from '@/lib/farolAiFormat'
 import AssistenteChart from './AssistenteChart'
+import GuiaIndustria from './GuiaIndustria'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ function saveHistory(h: string[]) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function FarolAssistente() {
+  const [aba, setAba]               = useState<'consultas' | 'industria'>('consultas')
   const [pergunta, setPergunta]     = useState('')
   const [result, setResult]         = useState<QueryResult | null>(null)
   const [medida, setMedida]         = useState('')
@@ -150,6 +152,19 @@ export default function FarolAssistente() {
         </span>
       </div>
 
+      <div className="flex gap-1 mb-5 border-b border-slate-200">
+        {([['consultas', 'Consultas'], ['industria', 'Indústria']] as const).map(([k, rot]) => (
+          <button
+            key={k}
+            onClick={() => setAba(k)}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${aba === k ? 'border-violet-600 text-violet-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            {rot}
+          </button>
+        ))}
+      </div>
+
+      {aba === 'industria' ? <GuiaIndustria /> : (<>
       {/* ── Input ───────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
         <textarea
@@ -358,6 +373,7 @@ export default function FarolAssistente() {
           )}
         </div>
       )}
+      </>)}
     </div>
   )
 }
