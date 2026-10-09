@@ -69,6 +69,24 @@ type PainelCombinadoNumericaResponse struct {
 	Clientes        []PainelCombinadoNumericaCliente `json:"clientes"`
 	DataInicioUsada string                           `json:"data_inicio_usada"`
 	DataFimUsada    string                           `json:"data_fim_usada"`
+	// Apuração* — a janela REAL de venda que entrou na conta. Na Numérica
+	// (bimestre móvel) ela é maior que a vigência cadastrada: vigência de
+	// Setembro (01/09–30/09) apura 01/08–30/09. A tela mostra isto pro
+	// usuário não ter que adivinhar (pedido do Claudio, 09/10/2026).
+	ApuracaoInicio string `json:"apuracao_inicio"`
+	ApuracaoFim    string `json:"apuracao_fim"`
+	ApuracaoTipo   string `json:"apuracao_tipo"` // bimestre_movel | mes_fechado | periodo_manual
+}
+
+// janelaDeApuracao devolve a janela efetiva de venda de uma vigência — a
+// mesma regra de CalcularRealizadoComPeriodo (vigência natural, sem override).
+func janelaDeApuracao(janela, dataInicio, dataFim string) (string, string) {
+	if janela == "bimestre_movel" {
+		if ini, err := time.Parse("2006-01-02", dataInicio); err == nil {
+			return ini.AddDate(0, -1, 0).Format("2006-01-02"), dataFim
+		}
+	}
+	return dataInicio, dataFim
 }
 
 // calcularPainelCombinadoNumerica — mesmo racional de calcularPainelCombinado,
@@ -177,7 +195,18 @@ func calcularPainelCombinadoNumerica(db *sql.DB, empresaID string, vinculoCobert
 
 	sort.Slice(clientes, func(i, j int) bool { return clientes[i].CoberturaValor > clientes[j].CoberturaValor })
 
+	apInicio, apFim, apTipo := dataInicioUsada, dataFimUsada, "periodo_manual"
+	if !usaPeriodoManual {
+		var janela string
+		if err := db.QueryRow(`SELECT tm.janela_apuracao FROM farol.metas_vinculos mv JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id WHERE mv.id = $1 AND mv.empresa_id = $2`,
+			vinculoCoberturaID, empresaID).Scan(&janela); err == nil {
+			apTipo = janela
+			apInicio, apFim = janelaDeApuracao(janela, vig.DataInicio, vig.DataFim)
+		}
+	}
+
 	return &PainelCombinadoNumericaResponse{
+		ApuracaoInicio: apInicio, ApuracaoFim: apFim, ApuracaoTipo: apTipo,
 		IndustriaNome: industriaNome, Vigencia: vig,
 		Cobertura: resumoCobertura, Sortimento: resumoSortimento, Clientes: clientes,
 		DataInicioUsada: dataInicioUsada, DataFimUsada: dataFimUsada,

@@ -1,3 +1,4 @@
+import AvisoJanelaApuracao from '@/components/farol/AvisoJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -210,6 +211,9 @@ interface PainelCombinadoNumerica {
   clientes: PainelCombinadoNumericaCliente[]
   data_inicio_usada: string
   data_fim_usada: string
+  apuracao_inicio?: string
+  apuracao_fim?: string
+  apuracao_tipo?: string
 }
 
 // PainelItemLinha — 1 linha do drill-down "Itens" (Sortimento): quais EANs
@@ -1627,6 +1631,13 @@ export default function FarolPainelMetas() {
           <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
         ) : painelCombinadoNum ? (
           <>
+            <AvisoJanelaApuracao
+              vigInicio={painelCombinadoNum.vigencia.data_inicio}
+              vigFim={painelCombinadoNum.vigencia.data_fim}
+              apuracaoInicio={painelCombinadoNum.apuracao_inicio}
+              apuracaoFim={painelCombinadoNum.apuracao_fim}
+              periodoManual={painelCombinadoNum.apuracao_tipo === 'periodo_manual'}
+            />
             {/* Níveis do documento do programa (GGV, GGV×CRV, GGV×CRV×RCA e
                 Cliente) — voltam aqui porque só existiam na visão individual
                 da Numérica, que saiu (Correção 5 do Heverton 08/10/2026).
@@ -1691,11 +1702,6 @@ export default function FarolPainelMetas() {
                       {r.classes.length > 0 && (
                         <div className="text-xs text-muted-foreground mt-0.5">
                           Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRL(v)}`).join(' · ')}
-                        </div>
-                      )}
-                      {periodoSelecionadoNum && (
-                        <div className="text-xs text-muted-foreground">
-                          Apuração em bimestre móvel, desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)}
                         </div>
                       )}
                     </div>

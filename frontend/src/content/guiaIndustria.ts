@@ -103,7 +103,7 @@ export const TOPICOS: Topico[] = [
   {
     id: 'cob-num', grupo: 'Programa Numérica (por Cliente)', titulo: 'Cobertura Numérica', escopo: 'ambos', status: 'ok',
     previsto: 'Cada cliente (CNPJ) é avaliado sozinho, sem Rede. Objetivo de compra por classe: Num. A = R$ 100, Num. B = R$ 50, Num. C = R$ 15, no bimestre móvel.',
-    ficou: 'Igual ao previsto. Tipos de venda que contam: 1 e 9. Fluxos disponíveis: Faturado, Emitido e Faturado+Emitido.',
+    ficou: 'Igual ao previsto. Tipos de venda que contam: 1 e 9. Fluxos disponíveis: Faturado, Emitido e Faturado+Emitido. Janela de venda: a vigência cadastrada é de 1 mês (Setembro = 01/09 a 30/09), mas a apuração soma também o mês anterior: Setembro apura 01/08/2026 a 30/09/2026; em Outubro passa a 01/09/2026 a 31/10/2026. A tela mostra essa janela em um aviso fixo.',
   },
   {
     id: 'sort-num', grupo: 'Programa Numérica (por Cliente)', titulo: 'Sortimento Numérica (PPA)', escopo: 'ambos', status: 'parcial',

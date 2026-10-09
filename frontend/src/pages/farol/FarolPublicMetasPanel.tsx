@@ -1,3 +1,4 @@
+import AvisoJanelaApuracao from '@/components/farol/AvisoJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -179,6 +180,10 @@ interface PainelCombinadoNumerica {
   cobertura: PainelMetricaResumo
   sortimento: PainelMetricaResumo
   clientes: PainelCombinadoNumericaCliente[]
+  vigencia?: { data_inicio: string; data_fim: string }
+  apuracao_inicio?: string
+  apuracao_fim?: string
+  apuracao_tipo?: string
 }
 
 interface Industria {
@@ -216,14 +221,6 @@ const FLUXOS_NUMERICA = [
 ]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
-
-// mesAnterior — mesmo helper do painel web (FarolPainelMetas.tsx), só pra
-// exibir o aviso de bimestre móvel da Numérica.
-function mesAnterior(dataInicioISO: string): string {
-  const d = new Date(dataInicioISO + 'T00:00:00')
-  d.setMonth(d.getMonth() - 1)
-  return d.toISOString().slice(0, 7)
-}
 
 // ─── ChipRow — seleção por toque (pedido do Claudio 11/09/2026: "se possível
 // ele tocar em vez de filtrar, tem que ser seleção touch") — substitui os
@@ -999,13 +996,13 @@ export default function FarolPublicMetasPanel() {
               value={vigenciaID}
               onChange={v => { setVigenciaID(v); fecharDrillDown() }}
             />
-            {/* Numérica apura em bimestre móvel (FR14a) — mesmo aviso do
-                painel web (pedido do Claudio 30/09/2026). */}
-            {ehNumerica && vigencias.find(v => String(v.id) === vigenciaID) && (
-              <p className="text-xs text-muted-foreground px-1">
-                Apura desde {mesAnterior(vigencias.find(v => String(v.id) === vigenciaID)!.data_inicio)} (bimestre móvel)
-              </p>
-            )}
+            {/* Numérica apura em bimestre móvel (FR14a): janela real explícita. */}
+            {ehContextoNumerica && (() => {
+              const v = ehNumerica
+                ? vigencias.find(x => String(x.id) === vigenciaID)
+                : periodoSelecionadoNum?.cobertura
+              return v ? <AvisoJanelaApuracao vigInicio={v.data_inicio} vigFim={v.data_fim} /> : null
+            })()}
           </>
         )}
         {industriaSelecionada && (
@@ -1125,11 +1122,6 @@ export default function FarolPublicMetasPanel() {
                       {r.classes.length > 0 && (
                         <div className="text-xs text-muted-foreground mt-0.5">
                           Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRLMobile(v)}`).join(' · ')}
-                        </div>
-                      )}
-                      {periodoSelecionadoNum && (
-                        <div className="text-xs text-muted-foreground">
-                          Bimestre móvel, desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)}
                         </div>
                       )}
                     </div>
