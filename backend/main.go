@@ -676,7 +676,7 @@ func main() {
 	// (Épico 5/6, painel de visualização) também precisam acessar, então
 	// somente_leitura (o nível mais permissivo), diferente da configuração
 	// admin acima (NFR2: edição restrita, visualização ampla).
-	http.HandleFunc("/api/farol/metas-realizado", withSP(handlers.MetasRealizadoHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-realizado", gz(withSP(handlers.MetasRealizadoHandler, "somente_leitura")))
 	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-itens-realizado/reprocessar", withSP(handlers.MetasItensRealizadoReprocessarHandler, "gestor_geral"))
 
@@ -694,21 +694,21 @@ func main() {
 	http.HandleFunc("/api/farol/gamif-extratos-excel", withSP(handlers.GamifExtratoExcelHandler, "admin_fbtax"))
 
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
-	http.HandleFunc("/api/farol/metas-painel", withSP(handlers.MetasPainelHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-painel", gz(withSP(handlers.MetasPainelHandler, "somente_leitura")))
 
 	// Painel combinado Cobertura + Sortimento numa linha por Rede — pedido
 	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
-	http.HandleFunc("/api/farol/metas-painel-combinado", withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-painel-combinado", gz(withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura")))
 
 	// Painel combinado pra Numérica (Épico 7, pedido do Claudio 30/09/2026)
 	// — mesmo princípio acima, grão único Cliente/CNPJ (sem Rede).
-	http.HandleFunc("/api/farol/metas-painel-combinado-numerica", withSP(handlers.MetasPainelCombinadoNumericaHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-painel-combinado-numerica", gz(withSP(handlers.MetasPainelCombinadoNumericaHandler, "somente_leitura")))
 
 	// Drill-down de itens (Sortimento): vendeu/não vendeu, Qtd, Valor — por
 	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
-	http.HandleFunc("/api/farol/metas-painel-itens", withSP(handlers.MetasPainelItensHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-painel-itens", gz(withSP(handlers.MetasPainelItensHandler, "somente_leitura")))
 	// PPAs que um cliente da Numérica comprou/não comprou — Correção 2 do Heverton 08/10/2026.
-	http.HandleFunc("/api/farol/metas-painel-ppas", withSP(handlers.MetasPainelPPAsHandler, "somente_leitura"))
+	http.HandleFunc("/api/farol/metas-painel-ppas", gz(withSP(handlers.MetasPainelPPAsHandler, "somente_leitura")))
 
 	// Comparativo Fechamento Comercial (Painel Vendas) — pedido do Claudio
 	// 14/09/2026: compara o fechamento que o fornecedor manda por fora com
@@ -767,12 +767,12 @@ func main() {
 	// recortado pro Supervisor/RCA da URL (nunca a empresa toda).
 	http.HandleFunc("/api/farol/public/metas-vinculos", publicHandler(handlers.MetasPublicVinculosHandler))
 	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
-	http.HandleFunc("/api/farol/public/metas-painel", publicHandler(handlers.MetasPublicPainelHandler))
-	http.HandleFunc("/api/farol/public/metas-painel-combinado", publicHandler(handlers.MetasPublicPainelCombinadoHandler))
-	http.HandleFunc("/api/farol/public/metas-painel-combinado-numerica", publicHandler(handlers.MetasPublicPainelCombinadoNumericaHandler))
+	http.HandleFunc("/api/farol/public/metas-painel", gz(publicHandler(handlers.MetasPublicPainelHandler)))
+	http.HandleFunc("/api/farol/public/metas-painel-combinado", gz(publicHandler(handlers.MetasPublicPainelCombinadoHandler)))
+	http.HandleFunc("/api/farol/public/metas-painel-combinado-numerica", gz(publicHandler(handlers.MetasPublicPainelCombinadoNumericaHandler)))
 	// Drill-down "Produtos" (Sortimento) sem login — pedido do José Costa (CEO) 15/09/2026.
-	http.HandleFunc("/api/farol/public/metas-painel-itens", publicHandler(handlers.MetasPublicPainelItensHandler))
-	http.HandleFunc("/api/farol/public/metas-painel-ppas", publicHandler(handlers.MetasPublicPainelPPAsHandler))
+	http.HandleFunc("/api/farol/public/metas-painel-itens", gz(publicHandler(handlers.MetasPublicPainelItensHandler)))
+	http.HandleFunc("/api/farol/public/metas-painel-ppas", gz(publicHandler(handlers.MetasPublicPainelPPAsHandler)))
 	// Gamificação — visão real do RCA em campo (mesma URL pública, sem
 	// login, que ele já usa pra Cobertura/Sortimento). Pedido do Claudio
 	// 22/09/2026: mesmo padrão de segurança do resto da tela mobile.
