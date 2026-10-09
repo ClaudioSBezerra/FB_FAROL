@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner'
 import { Plus, Pencil, Trash2, CalendarClock, Lock, X, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import type * as XLSXType from 'xlsx'
+import { parseClientesValidosXlsx } from '@/lib/metasXlsx'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,107 +76,6 @@ const EMPTY_FORM = {
   recorte_uf: '',
   recorte_ggvs: '', // texto separado por vírgula na UI, vira array só no submit
   tipos_venda_validos: '', // idem — vazio = usa o "Líquido" padrão do Farol
-}
-
-// ─── Importação de Clientes Válidos direto do .xlsx da Unilever ───────────────
-//
-// O modelo real que a JC manda ("Unico Acompanhamento Ponderadas..."), aba
-// "BASE LOJAS", tem as colunas CNPJ/COD PRINC/COD CL/RAZAO/FANTASIA/GGV COD/
-// GGV NOME/CRV COD/CRV NOME/RCA COD/RCA NOME — quase o mesmo layout do CSV que
-// o backend já aceita (`cnpj;cod_princ;razao;fantasia;cod_ggv;nome_ggv;
-// cod_crv;nome_crv;cod_rca;nome_rca`), só que largo (colunas nomeadas
-// diferente, sem "COD CL"). Backend continua só CSV (nunca viu um xlsx) — a
-// tradução acontece aqui, no navegador, antes do upload.
-//
-// Cada candidato é tentado nessa ordem — cobre tanto o nome exato do modelo
-// real quanto variações razoáveis (ex.: "COD_GGV" num arquivo editado à mão).
-const CLIENTES_XLSX_COLS: { field: string; candidates: string[] }[] = [
-  { field: 'cnpj', candidates: ['CNPJ'] },
-  { field: 'cod_princ', candidates: ['COD PRINC', 'COD_PRINC', 'CODPRINC'] },
-  { field: 'razao', candidates: ['RAZAO', 'RAZÃO', 'RAZAO SOCIAL', 'RAZÃO SOCIAL'] },
-  { field: 'fantasia', candidates: ['FANTASIA'] },
-  { field: 'cod_ggv', candidates: ['GGV COD', 'COD GGV', 'COD_GGV'] },
-  { field: 'nome_ggv', candidates: ['GGV NOME', 'NOME GGV', 'NOME_GGV'] },
-  { field: 'cod_crv', candidates: ['CRV COD', 'COD CRV', 'COD_CRV'] },
-  { field: 'nome_crv', candidates: ['CRV NOME', 'NOME CRV', 'NOME_CRV'] },
-  { field: 'cod_rca', candidates: ['RCA COD', 'COD RCA', 'COD_RCA'] },
-  { field: 'nome_rca', candidates: ['RCA NOME', 'NOME RCA', 'NOME_RCA'] },
-]
-
-function normalizaHeaderXlsx(s: unknown): string {
-  return String(s ?? '').trim().toUpperCase().replace(/\s+/g, ' ')
-}
-
-// csvEscape — só entra em aspas quando o valor tem ';', '"' ou quebra de
-// linha (regra padrão de CSV); dobra aspas internas.
-function csvEscape(v: string): string {
-  if (/[;"\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"'
-  return v
-}
-
-// acharAbaBaseLojas — o arquivo real tem várias abas ("Resumo Redes",
-// "BASE EANS", etc.); procura pela que tem "LOJA" no nome (cobre "BASE
-// LOJAS" e "BASE DE LOJAS", as duas variações já vistas).
-function acharAbaBaseLojas(wb: XLSXType.WorkBook): string | null {
-  const porNome = wb.SheetNames.find(n => normalizaHeaderXlsx(n).includes('LOJA'))
-  return porNome ?? wb.SheetNames[0] ?? null
-}
-
-// parseClientesValidosXlsx — lê o .xlsx no navegador e devolve o mesmo CSV
-// (';') que o endpoint de importação já espera. CNPJ lido como NÚMERO (perde
-// zero à esquerda no Excel) é preenchido de volta pra 14 dígitos; como texto,
-// só limpa não-dígitos — o backend valida os 14 dígitos de qualquer jeito.
-//
-// import() dinâmico de propósito: a lib xlsx (~430kB) já é lazy-loaded pro
-// resto do app (SpDashboard/exportToExcel) — import estático aqui empurraria
-// ela pro bundle principal de novo (visto no build: +435kB no chunk main).
-async function parseClientesValidosXlsx(file: File): Promise<string> {
-  const XLSX = await import('xlsx')
-  const buf = await file.arrayBuffer()
-  const wb = XLSX.read(buf, { type: 'array', cellText: false, cellDates: false })
-  const abaNome = acharAbaBaseLojas(wb)
-  if (!abaNome) throw new Error('Planilha sem nenhuma aba — arquivo .xlsx inválido')
-  const sheet = wb.Sheets[abaNome]
-  const linhas = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' })
-  if (linhas.length === 0) throw new Error(`Aba "${abaNome}" está vazia`)
-
-  const headerRow = linhas[0].map(normalizaHeaderXlsx)
-  const idxPorCampo: Record<string, number> = {}
-  const faltando: string[] = []
-  for (const { field, candidates } of CLIENTES_XLSX_COLS) {
-    const idx = headerRow.findIndex(h => candidates.includes(h))
-    if (idx === -1) {
-      // razao/fantasia/nome_* são só rótulo — o backend aceita vazio.
-      if (field.startsWith('nome_') || field === 'razao' || field === 'fantasia') continue
-      faltando.push(candidates[0])
-      continue
-    }
-    idxPorCampo[field] = idx
-  }
-  if (faltando.length > 0) {
-    throw new Error(`Aba "${abaNome}" sem a(s) coluna(s): ${faltando.join(', ')}`)
-  }
-
-  const header = CLIENTES_XLSX_COLS.map(c => c.field)
-  const out = [header.join(';')]
-  for (let i = 1; i < linhas.length; i++) {
-    const row = linhas[i]
-    if (!row || row.length === 0) continue
-    const valores = header.map(field => {
-      const idx = idxPorCampo[field]
-      if (idx === undefined) return ''
-      const raw = row[idx]
-      if (raw === undefined || raw === null) return ''
-      if (field === 'cnpj' && typeof raw === 'number') {
-        return String(Math.trunc(raw)).padStart(14, '0')
-      }
-      return csvEscape(String(raw).trim())
-    })
-    // Pula linha totalmente vazia (aba costuma ter linhas sobrando no fim).
-    if (valores.every(v => v === '')) continue
-    out.push(valores.join(';'))
-  }
-  return out.join('\r\n')
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────

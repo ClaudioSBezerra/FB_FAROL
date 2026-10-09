@@ -652,6 +652,7 @@ func main() {
 	// Vigências e Faixas de meta — Épico 2 Story 2.2.
 	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-carga-status", withSP(handlers.MetasCargaStatusHandler, "gestor_geral"))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.
 	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))

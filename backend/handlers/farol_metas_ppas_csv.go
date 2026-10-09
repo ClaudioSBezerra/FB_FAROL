@@ -216,6 +216,9 @@ func MetasPPAsImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		log.Printf("MetasPPAs: %d linhas importadas (vinculo=%d, vigencia=%d) empresa %s por %s",
 			len(rows), vinculoID, vigenciaID, spCtx.EmpresaID, spCtx.UserID)
 
+		// Resultado salvo foi calculado com a lista ANTIGA — invalida e reaquece.
+		aposImportarLista(db, spCtx.EmpresaID, vinculoID, vigenciaID)
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "ppas_importados": len(rows)})
 	}

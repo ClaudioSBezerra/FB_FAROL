@@ -274,6 +274,31 @@ func MetaVigenciaItemHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// POST /api/farol/metas-vigencias/{id}/reprocessar — apaga o resultado
+		// salvo da vigência (aberta OU fechada) e recalcula em background.
+		// Em vigência fechada é a ação explícita de gestor prevista no FR17.
+		if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/reprocessar") && r.Method == http.MethodPost {
+			if !hasSpRole(spCtx.SpRole, "gestor_geral") {
+				http.Error(w, "Forbidden: gestor_geral necessário", http.StatusForbidden)
+				return
+			}
+			var vinculoID int
+			if err := db.QueryRow(`SELECT vinculo_id FROM farol.metas_vigencias WHERE id = $1 AND empresa_id = $2`, id, spCtx.EmpresaID).Scan(&vinculoID); err != nil {
+				http.Error(w, "Vigência não encontrada", http.StatusNotFound)
+				return
+			}
+			if err := invalidarSnapshotsVigencia(db, spCtx.EmpresaID, id); err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			agendarReaquecimentoVigencia(db, spCtx.EmpresaID, vinculoID, id, true)
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "metas_vigencias", strconv.Itoa(id), "reprocessar", nil)
+			log.Printf("MetasVigencias: reprocessamento da vigência %d empresa %s por %s", id, spCtx.EmpresaID, spCtx.UserID)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"message": "Reprocessamento iniciado"})
+			return
+		}
+
 		switch r.Method {
 		case http.MethodPut:
 			if !hasSpRole(spCtx.SpRole, "gestor_geral") {

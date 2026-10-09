@@ -55,6 +55,7 @@ const ConfigSazonalidade = lazy(() => import('./pages/ConfigSazonalidade'))
 const GestaoIndustrias = lazy(() => import('./pages/GestaoIndustrias'))
 const ConfigTiposMetrica = lazy(() => import('./pages/ConfigTiposMetrica'))
 const ConfigMetasVinculos = lazy(() => import('./pages/ConfigMetasVinculos'))
+const ConfigCargaMes = lazy(() => import('./pages/ConfigCargaMes'))
 const FarolPainelMetas = lazy(() => import('./pages/FarolPainelMetas'))
 const FarolWebList = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebList })))
 const FarolWebDashboard = lazy(() => import('./pages/farol/FarolWeb').then(m => ({ default: m.FarolWebDashboard })))
@@ -335,6 +336,7 @@ function AppLayout() {
               <Route path="/gestao/regras"  element={<ProtectedRoute><SpAmbiente /></ProtectedRoute>} />
               <Route path="/gestao/industrias" element={<ProtectedRoute><GestaoIndustrias /></ProtectedRoute>} />
               <Route path="/gestao/tipos-metrica" element={<ProtectedRoute><ConfigTiposMetrica /></ProtectedRoute>} />
+              <Route path="/gestao/carga-mes" element={<ProtectedRoute><ConfigCargaMes /></ProtectedRoute>} />
               <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
               <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
               <Route path="/farol/gamificacao" element={<FbtaxAdminRoute><FarolGamificacao /></FbtaxAdminRoute>} />

@@ -219,6 +219,9 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Resultado salvo foi calculado com a lista ANTIGA — invalida e reaquece.
+		aposImportarLista(db, spCtx.EmpresaID, vinculoID, vigenciaID)
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "itens_importados": len(rows)})
 	}
