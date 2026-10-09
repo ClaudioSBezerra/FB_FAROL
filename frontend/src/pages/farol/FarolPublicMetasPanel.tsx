@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, ArrowLeft, Check, X as XIcon } from 'lucide-react'
 import { formatCNPJ } from '@/lib/formatFilial'
+import { opcoesMetrica, resumoNumerica } from '@/lib/metricasObjetivos'
 
 // Religado a pedido do Claudio 23/09/2026 (a surpresa do José Costa já
 // pode ser revelada). Ficou escondido brevemente (23/09/2026) porque o
@@ -226,13 +227,16 @@ function mesAnterior(dataInicioISO: string): string {
 // Alvo de toque generoso (padding vertical ~12px, min ~44px de altura) e
 // scroll horizontal quando a lista não cabe na tela (ex: histórico de
 // vigências fechadas).
-function ChipRow<T extends string>({ label, options, value, onChange }: {
+function ChipRow<T extends string>({ label, options, value, onChange, sempre }: {
   label: string
   options: Array<{ value: T; label: string }>
   value: T
   onChange: (v: T) => void
+  // sempre — mostra mesmo com 1 opção só (Período da Numérica, Heverton
+  // 08/10/2026: "manter o formato período, como na Ponderada").
+  sempre?: boolean
 }) {
-  if (options.length <= 1) return null
+  if (!sempre && options.length <= 1) return null
   return (
     <div>
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground px-0.5 mb-1.5">{label}</div>
@@ -550,18 +554,14 @@ export default function FarolPublicMetasPanel() {
 
   const industriaSelecionada = industrias.find(i => String(i.id) === industriaID)
   const metricasDisponiveis = useMemo(() => {
-    const opcoes: Array<{ value: typeof metrica; label: string }> = []
-    if (industriaSelecionada?.cobertura && industriaSelecionada?.sortimento) {
-      opcoes.push({ value: 'combinado', label: 'Combinado (Cobertura + Sortimento)' })
-    }
-    if (industriaSelecionada?.cobertura) opcoes.push({ value: 'cobertura', label: industriaSelecionada.cobertura.tipo_metrica_nome })
-    if (industriaSelecionada?.sortimento) opcoes.push({ value: 'sortimento', label: industriaSelecionada.sortimento.tipo_metrica_nome })
-    if (industriaSelecionada?.cobertura_numerica && industriaSelecionada?.sortimento_numerica) {
-      opcoes.push({ value: 'combinado_numerica', label: 'Combinado Numérica' })
-    }
-    if (industriaSelecionada?.cobertura_numerica) opcoes.push({ value: 'cobertura_numerica', label: industriaSelecionada.cobertura_numerica.tipo_metrica_nome })
-    if (industriaSelecionada?.sortimento_numerica) opcoes.push({ value: 'sortimento_numerica', label: industriaSelecionada.sortimento_numerica.tipo_metrica_nome })
-    return opcoes
+    // Só a visão combinada de cada família (Heverton 08/10/2026) — ver
+    // opcoesMetrica em lib/metricasObjetivos.ts.
+    return opcoesMetrica({
+      cobertura: !!industriaSelecionada?.cobertura,
+      sortimento: !!industriaSelecionada?.sortimento,
+      cobertura_numerica: !!industriaSelecionada?.cobertura_numerica,
+      sortimento_numerica: !!industriaSelecionada?.sortimento_numerica,
+    })
   }, [industriaSelecionada])
 
   useEffect(() => {
@@ -824,23 +824,18 @@ export default function FarolPublicMetasPanel() {
           />
         )}
         {industriaSelecionada && metrica === 'combinado_numerica' && (
-          <>
-            <ChipRow
-              label="Período"
-              options={periodosCombinadosNum.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
-              value={vigenciaCombinadaNumericaKey}
-              onChange={v => { setVigenciaCombinadaNumericaKey(v); fecharDrillDown() }}
-            />
-            {periodoSelecionadoNum && (
-              <p className="text-xs text-muted-foreground px-1">
-                Apura desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)} (bimestre móvel)
-              </p>
-            )}
-          </>
+          <ChipRow
+            sempre
+            label="Período"
+            options={periodosCombinadosNum.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
+            value={vigenciaCombinadaNumericaKey}
+            onChange={v => { setVigenciaCombinadaNumericaKey(v); fecharDrillDown() }}
+          />
         )}
         {industriaSelecionada && metrica !== 'combinado' && metrica !== 'combinado_numerica' && (
           <>
             <ChipRow
+              sempre={ehNumerica}
               label="Período"
               options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
               value={vigenciaID}
@@ -993,31 +988,53 @@ export default function FarolPublicMetasPanel() {
         painelCombinadoNum && (
           <div className="space-y-3">
             <div className="grid grid-cols-1 gap-2">
-              <div className="bg-white border rounded-xl p-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
-                </div>
-                <div className="text-2xl font-bold flex items-center gap-2">
-                  {fmt(painelCombinadoNum.cobertura.realizado_total)}
-                  <span className="text-base font-medium text-muted-foreground"> / {clientesCombinadoNum.length}</span>
-                  <StatusIcon size="w-7 h-7" atingiu={!!painelCombinadoNum.cobertura.faixa_atual} />
-                </div>
-                {painelCombinadoNum.cobertura.faixa_atual && (
-                  <div className="text-xs text-muted-foreground mt-1">Objetivo atual (Faixa {painelCombinadoNum.cobertura.faixa_atual.faixa}): {fmt(painelCombinadoNum.cobertura.faixa_atual.valor_meta)}</div>
-                )}
-              </div>
-              <div className="bg-white border rounded-xl p-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
-                </div>
-                <div className="text-2xl font-bold flex items-center gap-2">
-                  {fmt(painelCombinadoNum.sortimento.realizado_total)}
-                  <StatusIcon size="w-7 h-7" atingiu={!!painelCombinadoNum.sortimento.faixa_atual} />
-                </div>
-                {painelCombinadoNum.sortimento.faixa_atual && (
-                  <div className="text-xs text-muted-foreground mt-1">Objetivo atual (Faixa {painelCombinadoNum.sortimento.faixa_atual.faixa}): {fmt(painelCombinadoNum.sortimento.faixa_atual.valor_meta)}</div>
-                )}
-              </div>
+              {(() => {
+                const r = resumoNumerica(clientesCombinadoNum)
+                const sortRealizado = painelCombinadoNum.sortimento.realizado_total
+                return (
+                  <>
+                    <div className="bg-white border rounded-xl p-4">
+                      <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                        <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
+                      </div>
+                      <div className="text-2xl font-bold flex items-center gap-2">
+                        <span>
+                          {fmt(r.cobertos)}
+                          <span className="text-base font-medium text-muted-foreground"> / {r.totalClientes}</span>
+                        </span>
+                        {r.totalClientes > 0 && <StatusIcon size="w-7 h-7" atingiu={r.cobertos >= r.totalClientes} />}
+                      </div>
+                      {r.classes.length > 0 && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRLMobile(v)}`).join(' · ')}
+                        </div>
+                      )}
+                      {periodoSelecionadoNum && (
+                        <div className="text-xs text-muted-foreground">
+                          Bimestre móvel, desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="bg-white border rounded-xl p-4">
+                      <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                        <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
+                      </div>
+                      <div className="text-2xl font-bold flex items-center gap-2">
+                        <span>
+                          {fmt(sortRealizado)}
+                          {r.objetivoSortimento > 0 && <span className="text-base font-medium text-muted-foreground"> / {fmt(r.objetivoSortimento)}</span>}
+                        </span>
+                        {r.objetivoSortimento > 0 && <StatusIcon size="w-7 h-7" atingiu={sortRealizado >= r.objetivoSortimento} />}
+                      </div>
+                      {r.objetivoSortimento > 0 && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {r.bateramSortimento} de {r.totalAplicaveis} clientes bateram os {fmt(r.objetivoSortimento)} PPAs
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
 
             <div className="bg-white border rounded-xl overflow-hidden">

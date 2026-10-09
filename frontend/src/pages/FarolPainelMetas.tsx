@@ -16,6 +16,7 @@ import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 import { Button } from '@/components/ui/button'
 import { exportToExcel } from '@/lib/exportToExcel'
+import { opcoesMetrica, resumoNumerica } from '@/lib/metricasObjetivos'
 import { toast } from 'sonner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -524,18 +525,14 @@ export default function FarolPainelMetas() {
 
   const industriaSelecionada = industrias.find(i => String(i.id) === industriaID)
   const metricasDisponiveis = useMemo(() => {
-    const opcoes: Array<{ value: typeof metrica; label: string }> = []
-    if (industriaSelecionada?.cobertura && industriaSelecionada?.sortimento) {
-      opcoes.push({ value: 'combinado', label: 'Combinado (igual à planilha)' })
-    }
-    if (industriaSelecionada?.cobertura) opcoes.push({ value: 'cobertura', label: industriaSelecionada.cobertura.tipo_metrica_nome })
-    if (industriaSelecionada?.sortimento) opcoes.push({ value: 'sortimento', label: industriaSelecionada.sortimento.tipo_metrica_nome })
-    if (industriaSelecionada?.cobertura_numerica && industriaSelecionada?.sortimento_numerica) {
-      opcoes.push({ value: 'combinado_numerica', label: 'Combinado Numérica' })
-    }
-    if (industriaSelecionada?.cobertura_numerica) opcoes.push({ value: 'cobertura_numerica', label: industriaSelecionada.cobertura_numerica.tipo_metrica_nome })
-    if (industriaSelecionada?.sortimento_numerica) opcoes.push({ value: 'sortimento_numerica', label: industriaSelecionada.sortimento_numerica.tipo_metrica_nome })
-    return opcoes
+    // Só a visão combinada de cada família (Heverton 08/10/2026) — ver
+    // opcoesMetrica em lib/metricasObjetivos.ts.
+    return opcoesMetrica({
+      cobertura: !!industriaSelecionada?.cobertura,
+      sortimento: !!industriaSelecionada?.sortimento,
+      cobertura_numerica: !!industriaSelecionada?.cobertura_numerica,
+      sortimento_numerica: !!industriaSelecionada?.sortimento_numerica,
+    })
   }, [industriaSelecionada])
 
   // Garante que a métrica escolhida ainda existe pra indústria atual (ex:
@@ -1619,45 +1616,52 @@ export default function FarolPainelMetas() {
                 sempre false aqui (depende de vinculoAtivo, que este modo
                 não tem) — já estamos dentro do branch combinado_numerica,
                 então não precisa checar de novo. */}
-            {periodoSelecionadoNum && (
-              <p className="text-xs text-muted-foreground">
-                Apura desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)} (bimestre móvel)
-              </p>
-            )}
-            <TooltipProvider delayDuration={150}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                    <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
+            {(() => {
+              const r = resumoNumerica(clientesCombinadoNum)
+              const sortRealizado = painelCombinadoNum.sortimento.realizado_total
+              return (
+                <TooltipProvider delayDuration={150}>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="border rounded-lg p-4">
+                      <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                        <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
+                      </div>
+                      <div className="text-2xl font-semibold flex items-center gap-2">
+                        {fmt(r.cobertos)} <span className="text-sm text-muted-foreground">/ {r.totalClientes} clientes</span>
+                        {r.totalClientes > 0 && <StatusBadge size="w-6 h-6" atingiu={r.cobertos >= r.totalClientes} />}
+                      </div>
+                      {r.classes.length > 0 && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRL(v)}`).join(' · ')}
+                        </div>
+                      )}
+                      {periodoSelecionadoNum && (
+                        <div className="text-xs text-muted-foreground">
+                          Apuração em bimestre móvel, desde {mesAnterior(periodoSelecionadoNum.cobertura.data_inicio)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="border rounded-lg p-4">
+                      <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                        <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
+                      </div>
+                      <div className="text-2xl font-semibold flex items-center gap-2">
+                        <span>
+                          {fmt(sortRealizado)}
+                          {r.objetivoSortimento > 0 && <span className="text-sm font-normal text-muted-foreground"> / {fmt(r.objetivoSortimento)}</span>}
+                        </span>
+                        {r.objetivoSortimento > 0 && <StatusBadge size="w-6 h-6" atingiu={sortRealizado >= r.objetivoSortimento} />}
+                      </div>
+                      {r.objetivoSortimento > 0 && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {r.bateramSortimento} de {r.totalAplicaveis} clientes bateram os {fmt(r.objetivoSortimento)} PPAs
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-2xl font-semibold flex items-center gap-2">
-                    {fmt(painelCombinadoNum.cobertura.realizado_total)} <span className="text-sm text-muted-foreground">/ {clientesCombinadoNum.length} clientes</span>
-                    <StatusBadge size="w-6 h-6" atingiu={!!painelCombinadoNum.cobertura.faixa_atual} />
-                  </div>
-                  {painelCombinadoNum.cobertura.faixa_atual && (
-                    <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.cobertura.faixa_atual.faixa}): {fmt(painelCombinadoNum.cobertura.faixa_atual.valor_meta)}</div>
-                  )}
-                  {painelCombinadoNum.cobertura.proxima_faixa && (
-                    <div className="text-xs text-muted-foreground">Falta {fmt(painelCombinadoNum.cobertura.delta)} pra bater Faixa {painelCombinadoNum.cobertura.proxima_faixa.faixa}</div>
-                  )}
-                </div>
-                <div className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                    <Target className="w-4 h-4" /> Sortimento Numérica — média de PPAs
-                  </div>
-                  <div className="text-2xl font-semibold flex items-center gap-2">
-                    {fmt(painelCombinadoNum.sortimento.realizado_total)}
-                    <StatusBadge size="w-6 h-6" atingiu={!!painelCombinadoNum.sortimento.faixa_atual} />
-                  </div>
-                  {painelCombinadoNum.sortimento.faixa_atual && (
-                    <div className="text-xs text-muted-foreground mt-0.5">Objetivo atual (Faixa {painelCombinadoNum.sortimento.faixa_atual.faixa}): {fmt(painelCombinadoNum.sortimento.faixa_atual.valor_meta)}</div>
-                  )}
-                  {painelCombinadoNum.sortimento.proxima_faixa && (
-                    <div className="text-xs text-muted-foreground">Falta {fmt(painelCombinadoNum.sortimento.delta)} pra bater Faixa {painelCombinadoNum.sortimento.proxima_faixa.faixa}</div>
-                  )}
-                </div>
-              </div>
-            </TooltipProvider>
+                </TooltipProvider>
+              )
+            })()}
 
             <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
