@@ -1,4 +1,4 @@
-import AvisoJanelaApuracao from '@/components/farol/AvisoJanelaApuracao'
+import AjudaJanelaApuracao from '@/components/farol/AjudaJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -352,16 +352,6 @@ const FLUXOS_NUMERICA = [
 ]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
-
-// mesAnterior — só pra exibição do aviso de bimestre móvel (Numérica):
-// assume vigência mês-alinhada (data_inicio = dia 1), mesma premissa do
-// backend (CalcularRealizadoComPeriodo). Formata "AAAA-MM" pra não
-// inventar um dia-1 que confunda com data exata.
-function mesAnterior(dataInicioISO: string): string {
-  const d = new Date(dataInicioISO + 'T00:00:00')
-  d.setMonth(d.getMonth() - 1)
-  return d.toISOString().slice(0, 7)
-}
 
 // StatusBadge — ✓ verde (atingido) / ✗ vermelho (não atingido). Pedido do
 // Heverton 25/09/2026 (mesmo padrão do painel mobile): símbolo no lugar do
@@ -1219,7 +1209,10 @@ export default function FarolPainelMetas() {
           </div>
         ) : metrica === 'combinado_numerica' ? (
           <div className="space-y-1">
-            <label className="text-xs font-medium">Período</label>
+            <label className="text-xs font-medium flex items-center gap-2">
+              Período
+              {periodoSelecionadoNum && <AjudaJanelaApuracao vigInicio={periodoSelecionadoNum.cobertura.data_inicio} vigFim={periodoSelecionadoNum.cobertura.data_fim} />}
+            </label>
             <Select value={vigenciaCombinadaNumericaKey} onValueChange={setVigenciaCombinadaNumericaKey}>
               <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
@@ -1233,7 +1226,10 @@ export default function FarolPainelMetas() {
           </div>
         ) : (
           <div className="space-y-1">
-            <label className="text-xs font-medium">Vigência</label>
+            <label className="text-xs font-medium flex items-center gap-2">
+              Vigência
+              {ehNumerica && vigenciaSelecionada && <AjudaJanelaApuracao vigInicio={vigenciaSelecionada.data_inicio} vigFim={vigenciaSelecionada.data_fim} />}
+            </label>
             <Select value={vigenciaID} onValueChange={setVigenciaID}>
               <SelectTrigger className="w-56 uppercase"><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent className="[&_*]:uppercase">
@@ -1244,16 +1240,6 @@ export default function FarolPainelMetas() {
                 ))}
               </SelectContent>
             </Select>
-            {/* Numérica apura em bimestre móvel (FR14a) — a vigência
-                cadastrada mostra só o mês "de referência" (ex: Setembro),
-                mas o cálculo soma desde o mês anterior também. Sem essa
-                nota a tela parece contradizer o Realizado (pedido do
-                Claudio 30/09/2026: "o código da vigência está estranho"). */}
-            {ehNumerica && vigenciaSelecionada && (
-              <p className="text-xs text-muted-foreground normal-case">
-                Apura desde {mesAnterior(vigenciaSelecionada.data_inicio)} (bimestre móvel)
-              </p>
-            )}
           </div>
         )}
         {metrica !== 'combinado' && metrica !== 'combinado_numerica' && (
@@ -1631,13 +1617,6 @@ export default function FarolPainelMetas() {
           <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
         ) : painelCombinadoNum ? (
           <>
-            <AvisoJanelaApuracao
-              vigInicio={painelCombinadoNum.vigencia.data_inicio}
-              vigFim={painelCombinadoNum.vigencia.data_fim}
-              apuracaoInicio={painelCombinadoNum.apuracao_inicio}
-              apuracaoFim={painelCombinadoNum.apuracao_fim}
-              periodoManual={painelCombinadoNum.apuracao_tipo === 'periodo_manual'}
-            />
             {/* Níveis do documento do programa (GGV, GGV×CRV, GGV×CRV×RCA e
                 Cliente) — voltam aqui porque só existiam na visão individual
                 da Numérica, que saiu (Correção 5 do Heverton 08/10/2026).

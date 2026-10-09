@@ -1,4 +1,4 @@
-import AvisoJanelaApuracao from '@/components/farol/AvisoJanelaApuracao'
+import AjudaJanelaApuracao from '@/components/farol/AjudaJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -230,7 +230,7 @@ const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 
 // scroll horizontal quando a lista não cabe na tela (ex: histórico de
 // vigências fechadas).
 function ChipRow<T extends string>({ label, options, value, onChange, sempre }: {
-  label: string
+  label: React.ReactNode
   options: Array<{ value: T; label: string }>
   value: T
   onChange: (v: T) => void
@@ -241,7 +241,7 @@ function ChipRow<T extends string>({ label, options, value, onChange, sempre }: 
   if (!sempre && options.length <= 1) return null
   return (
     <div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground px-0.5 mb-1.5">{label}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground px-0.5 mb-1.5 flex items-center gap-2">{label}</div>
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none">
         {options.map(opt => (
           <button
@@ -981,7 +981,7 @@ export default function FarolPublicMetasPanel() {
         {industriaSelecionada && metrica === 'combinado_numerica' && (
           <ChipRow
             sempre
-            label="Período"
+            label={<>Período{periodoSelecionadoNum && <AjudaJanelaApuracao vigInicio={periodoSelecionadoNum.cobertura.data_inicio} vigFim={periodoSelecionadoNum.cobertura.data_fim} />}</>}
             options={periodosCombinadosNum.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
             value={vigenciaCombinadaNumericaKey}
             onChange={v => { setVigenciaCombinadaNumericaKey(v); fecharDrillDown() }}
@@ -991,18 +991,11 @@ export default function FarolPublicMetasPanel() {
           <>
             <ChipRow
               sempre={ehNumerica}
-              label="Período"
+              label={<>Período{ehNumerica && vigencias.find(x => String(x.id) === vigenciaID) && <AjudaJanelaApuracao vigInicio={vigencias.find(x => String(x.id) === vigenciaID)!.data_inicio} vigFim={vigencias.find(x => String(x.id) === vigenciaID)!.data_fim} />}</>}
               options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
               value={vigenciaID}
               onChange={v => { setVigenciaID(v); fecharDrillDown() }}
             />
-            {/* Numérica apura em bimestre móvel (FR14a): janela real explícita. */}
-            {ehContextoNumerica && (() => {
-              const v = ehNumerica
-                ? vigencias.find(x => String(x.id) === vigenciaID)
-                : periodoSelecionadoNum?.cobertura
-              return v ? <AvisoJanelaApuracao vigInicio={v.data_inicio} vigFim={v.data_fim} /> : null
-            })()}
           </>
         )}
         {industriaSelecionada && (
