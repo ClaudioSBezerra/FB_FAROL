@@ -105,20 +105,24 @@ export default function ConfigCargaMes() {
     return m
   }, [status])
 
+  // Situação de cada indústria: 0 pronta, 1 em andamento, 2 sem nada feito,
+  // 3 sem programa configurado. As abas seguem essa ordem (prontas à esquerda),
+  // e uma indústria "anda pra esquerda" sozinha conforme a carga avança.
+  const situacao = (id: number): 0 | 1 | 2 | 3 => {
+    const vs = porIndustria.get(id)
+    if (!vs || vs.length === 0) return 3
+    if (vs.every(v => pendencias(v).length === 0)) return 0
+    return vs.some(v => v.vigencia_id != null) ? 1 : 2
+  }
   const lista = useMemo(
-    () => [...industrias].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
-    [industrias],
+    () => [...industrias].sort((a, b) => situacao(a.id) - situacao(b.id) || a.nome.localeCompare(b.nome, 'pt-BR')),
+    [industrias, porIndustria],   // eslint-disable-line react-hooks/exhaustive-deps
   )
-  const selecionada = industriaID ?? lista.find(i => porIndustria.has(i.id))?.id ?? lista[0]?.id ?? null
+  const selecionada = industriaID ?? lista.find(i => situacao(i.id) < 3)?.id ?? lista[0]?.id ?? null
   const vinculos = selecionada != null ? porIndustria.get(selecionada) ?? [] : []
 
-  function corDaAba(id: number): string {
-    const vs = porIndustria.get(id)
-    if (!vs || vs.length === 0) return 'bg-slate-300'
-    const pend = vs.reduce((n, v) => n + pendencias(v).length, 0)
-    if (pend === 0) return 'bg-emerald-500'
-    return vs.some(v => v.vigencia_id != null) ? 'bg-amber-500' : 'bg-rose-500'
-  }
+  const COR_SITUACAO = ['bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-slate-300']
+  const corDaAba = (id: number) => COR_SITUACAO[situacao(id)]
 
   return (
     <div className="space-y-5">
@@ -139,6 +143,7 @@ export default function ConfigCargaMes() {
         {lista.map(i => (
           <button
             key={i.id}
+            ref={el => { if (el && selecionada === i.id) el.scrollIntoView({ block: 'nearest', inline: 'nearest' }) }}
             onClick={() => setIndustriaID(i.id)}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px whitespace-nowrap ${
               selecionada === i.id ? 'border-violet-600 text-violet-700 font-semibold' : 'border-transparent text-slate-600 hover:text-slate-900'
