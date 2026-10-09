@@ -60,7 +60,7 @@ export const TOPICOS: Topico[] = [
     previsto: 'Navegar de cima para baixo: GGV → CRV (supervisor) → RCA → Rede → Cliente → Produto, com o total de cada nível e o farol verde/vermelho.',
     ficou:
       'Web: Ponderada abre GGV, GGV×CRV, GGV×CRV×RCA, Por Rede e Por Cliente. Numérica não tem Rede, então usa os mesmos três níveis de equipe e abre direto no Cliente. ' +
-      'Mobile: o GGV e o Supervisor veem um resumo da equipe (por CRV e por RCA) que abre nível a nível; o RCA vê direto as suas Redes/Clientes.',
+      'Mobile: o GGV e o Supervisor veem um resumo da equipe (por CRV e por RCA) que abre nível a nível; o RCA vê direto as suas Redes/Clientes. No mobile, GGV e Supervisor escolhem o Tipo de relatório: "Resumo Equipe" ou "Lista Clientes" (as duas convivem).',
   },
   {
     id: 'acesso', grupo: 'Estrutura e navegação', titulo: 'Quem acessa e como', escopo: 'ambos', status: 'ok',
@@ -126,10 +126,10 @@ export const TOPICOS: Topico[] = [
 
   // ── Dados, período e fluxo ──────────────────────────────────────────────
   {
-    id: 'fluxo', grupo: 'Dados, período e fluxo', titulo: 'Fluxo: Faturado, Emitido, Soma', escopo: 'ambos', status: 'parcial',
-    previsto: 'Mostrar o Faturado e o Transmitido (Emitido), e a soma dos dois como reforço de curto prazo.',
-    ficou: 'Numérica: Faturado, Emitido e Faturado+Emitido. Ponderada: Faturado e Emitido (a soma foi definida pelo Heverton em 04/09 só para a Numérica).',
-    nota: 'Pergunta 8.',
+    id: 'fluxo', grupo: 'Dados, período e fluxo', titulo: 'Fluxo: Faturado, Transmitido, Faturado + Transmitido', escopo: 'ambos', status: 'ok',
+    previsto: 'Mostrar o Faturado e o Transmitido (Emitido), e a soma dos dois como reforço de curto prazo, em Ponderada e Numérica.',
+    ficou: 'Desde 09/10/2026 as três visões existem na Ponderada e na Numérica, na web e no mobile (GGV, Supervisor e RCA). A soma é Faturado líquido de devolução/cancelamento + Transmitido.',
+    nota: 'Pedido do Heverton em 09/10/2026 (Correção 1); respondeu a pergunta 8.',
   },
   {
     id: 'periodo', grupo: 'Dados, período e fluxo', titulo: 'Período de apuração', escopo: 'ambos', status: 'ok',
@@ -231,6 +231,7 @@ export const PERGUNTAS: Pergunta[] = [
     contexto: 'A soma Faturado+Emitido foi decidida para a Numérica. O documento geral do programa fala em reforço de curto prazo sem dizer a qual programa se aplica.',
     hoje: 'Só na Numérica.',
     decidir: 'A Ponderada também deve ter a soma?',
+    decisao: 'Sim. Heverton pediu em 09/10/2026 (Correção 1) a visão Faturado + Transmitido também na Ponderada; implementada.',
   },
   {
     n: 9, escopo: 'web', titulo: 'Página "AJUSTE" em branco no PDF enviado',

@@ -163,8 +163,18 @@ func qtdValorPorCodProdPorCliente(db *sql.DB, empresaID string, clientes []clien
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
 		}
+	case "soma":
+		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
+			return nil, err
+		}
+		if err := subtrairDevolucaoCancelamentoItens(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
+		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	return out, nil
 }
@@ -182,12 +192,32 @@ func dataUltimaVendaPorCodProdPorCliente(db *sql.DB, empresaID string, clientes 
 	if len(clientes) == 0 {
 		return out, nil
 	}
+	if fluxo == "soma" {
+		// Última venda em qualquer dos dois fluxos.
+		for _, f := range []string{"faturado", "transmitido"} {
+			parcial, err := dataUltimaVendaPorCodProdPorCliente(db, empresaID, clientes, dataFim, f, tiposVenda, codFornec)
+			if err != nil {
+				return nil, err
+			}
+			for cnpj, prods := range parcial {
+				if out[cnpj] == nil {
+					out[cnpj] = map[string]time.Time{}
+				}
+				for p, d := range prods {
+					if d.After(out[cnpj][p]) {
+						out[cnpj][p] = d
+					}
+				}
+			}
+		}
+		return out, nil
+	}
 	cnpjs, codPrincs := cnpjCodPrincPares(clientes)
 	tabela, colData := "vendas_faturadas", "data_faturamento"
 	if fluxo == "transmitido" {
 		tabela, colData = "vendas_transmitidas", "data_transmissao"
 	} else if fluxo != "faturado" {
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	t0 := time.Now()
 	joinSQL, joinArgs := filtrarPorClienteEDono("v", 2, cnpjs, codPrincs)

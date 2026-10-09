@@ -21,6 +21,18 @@ function mesAnteriorInicio(vigInicio: string) {
   return m === 1 ? iso(a - 1, 12, 1) : iso(a, m - 1, 1)
 }
 
+// Rótulo do Período da Numérica: a janela REAL (bimestre), não a vigência
+// cadastrada — Heverton 09/10/2026, Correção 3.
+export function rotuloJanelaBimestre(vigInicio: string, vigFim: string) {
+  return `${br(mesAnteriorInicio(vigInicio))} – ${br(vigFim)}`
+}
+
+// Linha padrão do objetivo por classe — Correção 2 do Heverton 09/10/2026.
+export function textoObjetivoClasses(classes: Array<[string, number]>) {
+  const v = (n: number) => `R$ ${n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}`
+  return `Objetivo por Cliente: ${classes.map(([k, n]) => `${k.replace('.', '')} ${v(n)}`).join(' · ')}`
+}
+
 interface Props {
   vigInicio: string
   vigFim: string

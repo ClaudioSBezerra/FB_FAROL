@@ -29,7 +29,7 @@ import (
 )
 
 var (
-	fluxosPrewarmObjetivos = []string{"faturado", "transmitido"}
+	fluxosPrewarmObjetivos = []string{"faturado", "transmitido", "soma"}
 	// fluxosPrewarmNumerica — Story 7.8 (30/09/2026): a Numérica ganhou de
 	// volta a 3ª visão "Faturado + Emitido" (fluxo "soma"), só pra ela (ver
 	// farol_metas_calculo_numerica.go). Sem isso no prewarm, essa visão

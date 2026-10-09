@@ -1,4 +1,4 @@
-import AjudaJanelaApuracao from '@/components/farol/AjudaJanelaApuracao'
+import AjudaJanelaApuracao, { rotuloJanelaBimestre, textoObjetivoClasses } from '@/components/farol/AjudaJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -334,20 +334,11 @@ const NIVEIS = [
 // rótulo do último nível pra não chamar Cliente/CNPJ de "Rede" na tela.
 const NIVEIS_NUMERICA = NIVEIS.map(n => n.value === 'rede' ? { ...n, label: 'GGV / CRV / RCA / Cliente' } : n)
 
-// Só 2 visões (orientação do Heverton, 2026-09-04: "somente 2 visões...
-// mesma filosofia do Farol V1 em uso hoje") — a 3ª visão "Faturado +
-// Emitido" que uma sessão anterior chegou a implementar foi removida.
+// Faturado, Transmitido e Faturado + Transmitido, em Ponderada e Numérica
+// (Heverton 09/10/2026, Correção 1 — reverte o corte de 04/09 na Ponderada).
 const FLUXOS = [
   { value: 'faturado', label: 'Faturado' },
   { value: 'transmitido', label: 'Transmitido' },
-]
-// Numérica (Story 7.8, 2026-09-30): a documentação final do Heverton exige
-// as 3 visões de novo, sem condicional — "PRECISAMOS TER A ANÁLISE NA VISÃO
-// FATURADA, NA VISÃO EMITIDA E NA VISÃO FATURADO+EMITIDO". Escopo só pra
-// Numérica: o corte de 04/09/2026 pro motor Rede continua valendo, decisão
-// de reverter lá é separada (PRD, Questões em aberto #5).
-const FLUXOS_NUMERICA = [
-  ...FLUXOS,
   { value: 'soma', label: 'Faturado + Transmitido' },
 ]
 
@@ -569,17 +560,6 @@ export default function FarolPainelMetas() {
   // lá embaixo) porque o bloco de filtros por seleção (GGV/CRV/RCA/Cliente
   // — mais abaixo) já precisa disso antes.
   const ehContextoNumerica = ehNumerica || metrica === 'combinado_numerica'
-
-  // fluxo='soma' só existe pra Numérica (Story 7.8) — trocar pra uma
-  // métrica Rede com 'soma' ainda selecionado voltaria "fluxo inválido" do
-  // backend (calcularCoberturaPorRede/calcularSortimentoPorRede não têm
-  // esse case de propósito, ver farol_metas_calculo_numerica.go). Mesmo
-  // guard-rail que já existe pra metrica/vigenciaID acima.
-  // Vale também pra visões combinadas (que não têm vinculoAtivo): a
-  // Ponderada combinada rejeita 'soma'; a Numérica combinada aceita.
-  useEffect(() => {
-    if (fluxo === 'soma' && !ehContextoNumerica) setFluxo('faturado')
-  }, [fluxo, ehContextoNumerica])
 
   // ─── Modo individual (Cobertura OU Sortimento) — mesmo fluxo de sempre ───────
 
@@ -1045,7 +1025,7 @@ export default function FarolPainelMetas() {
   const niveisAtuais = ehNumerica ? NIVEIS_NUMERICA : NIVEIS
   // Numérica (inclusive a visão combinada, a única que sobrou) oferece a 3ª
   // visão Faturado + Emitido que o programa exige.
-  const fluxosAtuais = ehContextoNumerica ? FLUXOS_NUMERICA : FLUXOS
+  const fluxosAtuais = FLUXOS
   const linhas = redeAberta
     ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
@@ -1218,7 +1198,7 @@ export default function FarolPainelMetas() {
               <SelectContent className="[&_*]:uppercase">
                 {periodosCombinadosNum.map(p => (
                   <SelectItem key={p.chave} value={p.chave}>
-                    {p.cobertura.data_inicio} – {p.cobertura.data_fim} {p.cobertura.status === 'fechada' ? '(fechada)' : ''}
+                    {rotuloJanelaBimestre(p.cobertura.data_inicio, p.cobertura.data_fim)} {p.cobertura.status === 'fechada' ? '(fechada)' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1680,7 +1660,7 @@ export default function FarolPainelMetas() {
                       </div>
                       {r.classes.length > 0 && (
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRL(v)}`).join(' · ')}
+                          {textoObjetivoClasses(r.classes)}<br />Bimestre Móvel
                         </div>
                       )}
                     </div>

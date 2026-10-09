@@ -676,8 +676,22 @@ func somaPvendaClientes(db *sql.DB, empresaID string, clientes []clienteValido, 
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
 		}
+	case "soma":
+		// Faturado líquido + Transmitido. Pedido do Heverton 09/10/2026
+		// (Correção 1): a visão "Faturado + Transmitido" também na
+		// Ponderada. Mesma semântica da Numérica — soma direta, sem
+		// deduplicar pedido que passou de Transmitido a Faturado no período.
+		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
+			return nil, err
+		}
+		if err := subtrairDevolucaoCancelamento(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
+		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	return out, nil
 }
@@ -1024,8 +1038,19 @@ func qtdPorCodProdClientes(db *sql.DB, empresaID string, clientes []clienteValid
 		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
 			return nil, err
 		}
+	case "soma":
+		// Ver somaPvendaClientes — Faturado líquido + Transmitido.
+		if err := somar("vendas_faturadas", "data_faturamento"); err != nil {
+			return nil, err
+		}
+		if err := subtrairDevolucaoCancelamentoQtd(db, empresaID, cnpjs, codPrincs, dataInicio, dataFim, codFornec, out); err != nil {
+			return nil, err
+		}
+		if err := somar("vendas_transmitidas", "data_transmissao"); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("fluxo inválido: %q (use faturado ou transmitido)", fluxo)
+		return nil, fmt.Errorf("fluxo inválido: %q (use faturado, transmitido ou soma)", fluxo)
 	}
 	return out, nil
 }

@@ -1,4 +1,4 @@
-import AjudaJanelaApuracao from '@/components/farol/AjudaJanelaApuracao'
+import AjudaJanelaApuracao, { rotuloJanelaBimestre, textoObjetivoClasses } from '@/components/farol/AjudaJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -206,17 +206,11 @@ const RECORTES = [
   { value: 'ano_corrente', label: 'Ano' },
 ]
 
-// Só 2 visões (orientação do Heverton, 2026-09-04: "mesma filosofia do
-// Farol V1 em uso hoje") — Faturado (notas emitidas) e Transmitido
-// (pedido em carteira, ainda não faturado).
+// Faturado, Transmitido e Faturado + Transmitido, em Ponderada e Numérica
+// (Heverton 09/10/2026, Correção 1 — reverte o corte de 04/09 na Ponderada).
 const FLUXOS = [
   { value: 'faturado', label: 'Faturado' },
   { value: 'transmitido', label: 'Transmitido' },
-]
-// Numérica (Story 7.8, 2026-09-30) — ver mesmo comentário em
-// FarolPainelMetas.tsx: só a Numérica ganha a 3ª visão de volta.
-const FLUXOS_NUMERICA = [
-  ...FLUXOS,
   { value: 'soma', label: 'Faturado + Transmitido' },
 ]
 
@@ -520,6 +514,9 @@ export default function FarolPublicMetasPanel() {
   const [clienteAberto, setClienteAberto] = useState<string | null>(null) // cnpj
   const [crvAberto, setCrvAberto] = useState<string | null>(null) // resumo da equipe (GGV)
   const [rcaAberto, setRcaAberto] = useState<string | null>(null) // resumo da equipe (GGV/Supervisor)
+  // Tipo de Relatório (GGV/Supervisor) — Heverton 09/10/2026: as duas visões
+  // convivem, uma não substitui a outra.
+  const [tipoRelatorio, setTipoRelatorio] = useState<'equipe' | 'lista'>('equipe')
   const fecharDrillDown = () => { setRedeAberta(null); setClienteAberto(null); setCrvAberto(null); setRcaAberto(null) }
   const alternarRede = (codPrinc: string) => {
     setClienteAberto(null)
@@ -593,16 +590,7 @@ export default function FarolPublicMetasPanel() {
   // o motor devolve é 1 Cliente só. Terminologia/navegação ajustadas mais
   // abaixo (Suas Redes → Seus Clientes, sem abrir drill redundante).
   const ehNumerica = metrica === 'cobertura_numerica' || metrica === 'sortimento_numerica'
-  // Numérica (inclusive a visão combinada, a única que sobrou) oferece a 3ª
-  // visão Faturado + Emitido que o programa exige.
-  const ehContextoNumerica = ehNumerica || metrica === 'combinado_numerica'
-  const fluxosAtuais = ehContextoNumerica ? FLUXOS_NUMERICA : FLUXOS
-
-  // fluxo='soma' só existe pra Numérica (Story 7.8) — ver mesmo guard-rail
-  // em FarolPainelMetas.tsx.
-  useEffect(() => {
-    if (fluxo === 'soma' && !ehContextoNumerica) setFluxo('faturado')
-  }, [fluxo, ehContextoNumerica])
+  const fluxosAtuais = FLUXOS
 
   // ─── Modo individual ──────────────────────────────────────────────────────
 
@@ -896,6 +884,9 @@ export default function FarolPublicMetasPanel() {
     </div>
   )
 
+  // RCA sempre vê a lista; GGV/Supervisor escolhem (Tipo de Relatório).
+  const listaPlana = scope === 'rca' || tipoRelatorio === 'lista'
+
   // Resumo da equipe — Melhoria 1 do Heverton 08/10/2026. GGV: CRV → RCA →
   // folhas; Supervisor: RCA → folhas. Folha = Rede (Ponderada) ou Cliente
   // (Numérica), que já abre Cliente/Produtos como antes.
@@ -982,7 +973,7 @@ export default function FarolPublicMetasPanel() {
           <ChipRow
             sempre
             label={<>Período{periodoSelecionadoNum && <AjudaJanelaApuracao vigInicio={periodoSelecionadoNum.cobertura.data_inicio} vigFim={periodoSelecionadoNum.cobertura.data_fim} />}</>}
-            options={periodosCombinadosNum.map(p => ({ value: p.chave, label: `${p.cobertura.data_inicio} – ${p.cobertura.data_fim}` }))}
+            options={periodosCombinadosNum.map(p => ({ value: p.chave, label: rotuloJanelaBimestre(p.cobertura.data_inicio, p.cobertura.data_fim) }))}
             value={vigenciaCombinadaNumericaKey}
             onChange={v => { setVigenciaCombinadaNumericaKey(v); fecharDrillDown() }}
           />
@@ -992,7 +983,7 @@ export default function FarolPublicMetasPanel() {
             <ChipRow
               sempre={ehNumerica}
               label={<>Período{ehNumerica && vigencias.find(x => String(x.id) === vigenciaID) && <AjudaJanelaApuracao vigInicio={vigencias.find(x => String(x.id) === vigenciaID)!.data_inicio} vigFim={vigencias.find(x => String(x.id) === vigenciaID)!.data_fim} />}</>}
-              options={vigencias.map(v => ({ value: String(v.id), label: `${v.data_inicio} – ${v.data_fim}` }))}
+              options={vigencias.map(v => ({ value: String(v.id), label: ehNumerica ? rotuloJanelaBimestre(v.data_inicio, v.data_fim) : `${v.data_inicio} – ${v.data_fim}` }))}
               value={vigenciaID}
               onChange={v => { setVigenciaID(v); fecharDrillDown() }}
             />
@@ -1004,6 +995,15 @@ export default function FarolPublicMetasPanel() {
             options={fluxosAtuais}
             value={fluxo}
             onChange={v => { setFluxo(v); fecharDrillDown() }}
+          />
+        )}
+        {industriaSelecionada && scope !== 'rca' && (metrica === 'combinado' || metrica === 'combinado_numerica') && (
+          <ChipRow
+            sempre
+            label="Tipo de relatório"
+            options={[{ value: 'equipe' as const, label: 'Resumo Equipe' }, { value: 'lista' as const, label: 'Lista Clientes' }]}
+            value={tipoRelatorio}
+            onChange={v => { setTipoRelatorio(v); fecharDrillDown() }}
           />
         )}
       </div>
@@ -1069,12 +1069,12 @@ export default function FarolPublicMetasPanel() {
 
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">
-                {scope === 'rca' ? 'Suas Redes — Cobertura e Sortimento' : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA, Rede e Cliente' : 'Sua equipe — por RCA, Rede e Cliente'}
+                {listaPlana ? (scope === 'rca' ? 'Suas Redes — Cobertura e Sortimento' : 'Lista de Redes — Cobertura e Sortimento') : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA, Rede e Cliente' : 'Sua equipe — por RCA, Rede e Cliente'}
               </div>
-              {scope === 'rca' && painelCombinado.redes.length === 0 && (
+              {listaPlana && painelCombinado.redes.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhuma Rede neste recorte</div>
               )}
-              {scope === 'rca' ? (
+              {listaPlana ? (
                 [...painelCombinado.redes].sort((a, b) => (b.cobertura_valor_total ?? b.cobertura_valor) - (a.cobertura_valor_total ?? a.cobertura_valor)).map(r => renderRedeLinha(r))
               ) : (
                 renderEquipe(
@@ -1114,7 +1114,7 @@ export default function FarolPublicMetasPanel() {
                       </div>
                       {r.classes.length > 0 && (
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          Objetivo por cliente: {r.classes.map(([k, v]) => `${k} ${fmtBRLMobile(v)}`).join(' · ')}
+                          {textoObjetivoClasses(r.classes)}<br />Bimestre Móvel
                         </div>
                       )}
                     </div>
@@ -1142,12 +1142,12 @@ export default function FarolPublicMetasPanel() {
 
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">
-                {scope === 'rca' ? 'Seus Clientes' : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA e Cliente' : 'Sua equipe — por RCA e Cliente'}
+                {listaPlana ? (scope === 'rca' ? 'Seus Clientes' : 'Lista de Clientes') : scope === 'ggv' ? 'Sua equipe — por Supervisor, RCA e Cliente' : 'Sua equipe — por RCA e Cliente'}
               </div>
-              {scope === 'rca' && clientesCombinadoNum.length === 0 && (
+              {listaPlana && clientesCombinadoNum.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhum Cliente neste recorte</div>
               )}
-              {scope === 'rca'
+              {listaPlana
                 ? [...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(renderClienteNum)
                 : renderEquipe(
                     clientesCombinadoNum,

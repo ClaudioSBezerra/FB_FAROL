@@ -410,8 +410,8 @@ func TestCalcularRealizado_FluxoInvalido_Erro(t *testing.T) {
 	loja := "88888888000101"
 	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SOMA", loja, "TCALC-RCA8")
 
-	if _, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "soma", "rede"); err == nil {
-		t.Error("fluxo 'soma' deveria dar erro — só faturado/transmitido são suportados")
+	if _, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "inexistente", "rede"); err == nil {
+		t.Error("fluxo desconhecido deveria dar erro")
 	}
 }
 
@@ -652,5 +652,39 @@ func TestCalcularRealizado_SemClientesValidos_ErroClaro(t *testing.T) {
 	_, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, "faturado", "rede")
 	if err == nil {
 		t.Fatal("esperava erro claro quando não há Clientes Válidos importados, veio nil")
+	}
+}
+
+// TestCalcularRealizado_Cobertura_FluxoSoma — Heverton 09/10/2026 (Correção 1):
+// a Ponderada também ganha "Faturado + Transmitido". Nenhum dos 2 fluxos
+// sozinho bate o limiar; a soma bate.
+func TestCalcularRealizado_Cobertura_FluxoSoma(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TCALC SomaRede", "cobertura_rede", "rede",
+		[]ParametroSchemaDTO{{Key: "limiar_valor_medio", Label: "Limiar (R$)", Type: "number"}},
+		map[string]any{"limiar_valor_medio": 100.0})
+	t.Cleanup(cleanup)
+	vigenciaID := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-09-01", "2026-09-30")
+
+	loja := "88888888000202"
+	t.Cleanup(func() {
+		limparVendasFaturadasFixture(t, empresaID, []string{loja})
+		limparVendasTransmitidasFixture(t, empresaID, []string{loja})
+	})
+	inserirClienteValidoFixture(t, empresaID, vinculoID, vigenciaID, "REDE SOMA2", loja, "TCALC-RCA9")
+	inserirVendaFaturadaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 60, 1, "2026-09-10")
+	inserirVendaTransmitidaFixture(t, empresaID, loja, "PROD1", "TCALC-RCA9", "1", 50, 1, "2026-09-12")
+
+	for fluxo, want := range map[string]float64{"faturado": 60, "transmitido": 50, "soma": 110} {
+		res, err := CalcularRealizado(db, empresaID, vinculoID, vigenciaID, fluxo, "rede")
+		if err != nil {
+			t.Fatalf("CalcularRealizado(%s): %v", fluxo, err)
+		}
+		if len(res.Redes) != 1 || res.Redes[0].Valor != want {
+			t.Errorf("fluxo %s: Redes=%+v, want 1 rede com Valor=%.0f", fluxo, res.Redes, want)
+		}
+		if atingiu := len(res.Redes) == 1 && res.Redes[0].Atingiu; atingiu != (fluxo == "soma") {
+			t.Errorf("fluxo %s: Atingiu=%v, só a soma deveria bater o limiar de 100", fluxo, atingiu)
+		}
 	}
 }

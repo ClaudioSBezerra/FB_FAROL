@@ -213,7 +213,7 @@ func MetasItensValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		// (migration 236) fica obsoleto na hora, não só no prewarm do dia
 		// seguinte. Recalcula os 2 fluxos síncrono: é a mesma reimportação
 		// manual e rara que já espera alguns segundos de resposta.
-		for _, fluxo := range []string{"faturado", "transmitido"} {
+		for _, fluxo := range []string{"faturado", "transmitido", "soma"} {
 			if err := RecalcularItensRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo); err != nil {
 				log.Printf("MetasItensValidos: falha ao recalcular Itens Realizado (vinculo=%d vigencia=%d fluxo=%s): %v", vinculoID, vigenciaID, fluxo, err)
 			}

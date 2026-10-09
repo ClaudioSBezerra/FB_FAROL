@@ -282,7 +282,7 @@ func MetasClientesValidosImportarCSVHandler(db *sql.DB) http.HandlerFunc {
 		// reimportação de Itens Válidos (ver farol_metas_itens_validos_csv.go).
 		// No-op silencioso se este vínculo for Cobertura (RecalcularItensRealizado
 		// já trata).
-		for _, fluxo := range []string{"faturado", "transmitido"} {
+		for _, fluxo := range []string{"faturado", "transmitido", "soma"} {
 			if err := RecalcularItensRealizado(db, spCtx.EmpresaID, vinculoID, vigenciaID, fluxo); err != nil {
 				log.Printf("MetasClientesValidos: falha ao recalcular Itens Realizado (vinculo=%d vigencia=%d fluxo=%s): %v", vinculoID, vigenciaID, fluxo, err)
 			}
