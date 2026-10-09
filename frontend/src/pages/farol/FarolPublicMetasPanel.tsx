@@ -596,13 +596,16 @@ export default function FarolPublicMetasPanel() {
   // o motor devolve é 1 Cliente só. Terminologia/navegação ajustadas mais
   // abaixo (Suas Redes → Seus Clientes, sem abrir drill redundante).
   const ehNumerica = metrica === 'cobertura_numerica' || metrica === 'sortimento_numerica'
-  const fluxosAtuais = ehNumerica ? FLUXOS_NUMERICA : FLUXOS
+  // Numérica (inclusive a visão combinada, a única que sobrou) oferece a 3ª
+  // visão Faturado + Emitido que o programa exige.
+  const ehContextoNumerica = ehNumerica || metrica === 'combinado_numerica'
+  const fluxosAtuais = ehContextoNumerica ? FLUXOS_NUMERICA : FLUXOS
 
   // fluxo='soma' só existe pra Numérica (Story 7.8) — ver mesmo guard-rail
   // em FarolPainelMetas.tsx.
   useEffect(() => {
-    if (fluxo === 'soma' && !ehNumerica) setFluxo('faturado')
-  }, [fluxo, ehNumerica])
+    if (fluxo === 'soma' && !ehContextoNumerica) setFluxo('faturado')
+  }, [fluxo, ehContextoNumerica])
 
   // ─── Modo individual ──────────────────────────────────────────────────────
 

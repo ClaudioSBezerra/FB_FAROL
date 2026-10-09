@@ -581,11 +581,11 @@ export default function FarolPainelMetas() {
   // backend (calcularCoberturaPorRede/calcularSortimentoPorRede não têm
   // esse case de propósito, ver farol_metas_calculo_numerica.go). Mesmo
   // guard-rail que já existe pra metrica/vigenciaID acima.
+  // Vale também pra visões combinadas (que não têm vinculoAtivo): a
+  // Ponderada combinada rejeita 'soma'; a Numérica combinada aceita.
   useEffect(() => {
-    if (fluxo === 'soma' && vinculoAtivo && vinculoAtivo.formula_codigo !== 'cobertura_numerica' && vinculoAtivo.formula_codigo !== 'sortimento_numerica_ppa') {
-      setFluxo('faturado')
-    }
-  }, [fluxo, vinculoAtivo])
+    if (fluxo === 'soma' && !ehContextoNumerica) setFluxo('faturado')
+  }, [fluxo, ehContextoNumerica])
 
   // ─── Modo individual (Cobertura OU Sortimento) — mesmo fluxo de sempre ───────
 
@@ -1049,7 +1049,9 @@ export default function FarolPainelMetas() {
   // 10/09/2026, "colocar o R$ ao lado do Valor").
   const ehCobertura = vinculoAtivo?.formula_codigo === 'cobertura_rede' || vinculoAtivo?.formula_codigo === 'cobertura_numerica'
   const niveisAtuais = ehNumerica ? NIVEIS_NUMERICA : NIVEIS
-  const fluxosAtuais = ehNumerica ? FLUXOS_NUMERICA : FLUXOS
+  // Numérica (inclusive a visão combinada, a única que sobrou) oferece a 3ª
+  // visão Faturado + Emitido que o programa exige.
+  const fluxosAtuais = ehContextoNumerica ? FLUXOS_NUMERICA : FLUXOS
   const linhas = redeAberta
     ? [...(redeAberta.clientes ?? [])].sort((a, b) => b.valor - a.valor).map(c => ({
         // Rede/qt_lojas não se aplica no nível 5 (CNPJ é uma loja só) —
