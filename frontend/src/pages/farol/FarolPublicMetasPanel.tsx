@@ -281,7 +281,7 @@ function StatusIcon({ atingiu, size = 'w-4 h-4' }: { atingiu: boolean; size?: st
 // pra Cliente E Produto, não só pra Rede. `detalhes` (só no modo Combinado,
 // pedido do Heverton 25/09/2026) traz valor/objetivo de Cobertura e
 // Sortimento do próprio Cliente, mesma lógica de ticado/não ticado da Rede.
-function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto, onToggle, temSortimento, isLoadingItens, itens }: {
+function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto, onToggle, temSortimento, isLoadingItens, itens, msgSemItens }: {
   nome: string
   cnpj: string
   codCli?: string
@@ -291,7 +291,10 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
   onToggle: (cnpj: string) => void
   temSortimento: boolean
   isLoadingItens: boolean
-  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean; cod_prods?: string[] }[]
+  itens?: { ean: string; nome: string; qtd: number; valor: number; vendeu: boolean; cod_prods?: string[]; obs?: string }[]
+  // Mensagem quando não há lista a mostrar (ex: Numérica Num. C, que não tem
+  // Sortimento) — no lugar do genérico "Produtos indisponíveis nesta métrica".
+  msgSemItens?: string
 }) {
   const aberto = clienteAberto === cnpj
   // Itens em ordem alfabética (pedido do Heverton 25/09/2026) — antes vinha
@@ -327,7 +330,7 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
       {aberto && (
         <div className="pl-5 pb-1.5 space-y-1">
           {!temSortimento ? (
-            <div className="text-[11px] text-muted-foreground py-1">Produtos indisponíveis nesta métrica</div>
+            <div className="text-[11px] text-muted-foreground py-1">{msgSemItens ?? 'Produtos indisponíveis nesta métrica'}</div>
           ) : isLoadingItens ? (
             <div className="text-[11px] text-muted-foreground py-1">Carregando produtos...</div>
           ) : !itensOrdenados || itensOrdenados.length === 0 ? (
@@ -344,6 +347,7 @@ function ClienteDrillDown({ nome, cnpj, codCli, badges, detalhes, clienteAberto,
                     <span className="font-mono font-semibold">{it.cod_prods.join(', ')} - </span>
                   )}
                   {it.nome}
+                  {it.obs && <span className="text-amber-700"> ({it.obs})</span>}
                 </span>
                 <StatusIcon atingiu={it.vendeu} />
               </div>
@@ -771,6 +775,24 @@ export default function FarolPublicMetasPanel() {
     enabled: !!cnpj && !!scopeCod && !!sortimentoVinculoID && !!sortimentoVigenciaID && !!clienteAberto,
   })
 
+  // PPAs do cliente aberto na Numérica (Correção 2 do Heverton 08/10/2026).
+  const clienteNumAberto = metrica === 'combinado_numerica' ? clientesCombinadoNum.find(c => c.cnpj === clienteAberto) : undefined
+  const { data: ppasResp, isLoading: isLoadingPpas } = useQuery<{ ppas: { ppa: string; cod_prods?: string[]; qtd: number; vendeu: boolean; abaixo_minimo?: boolean }[] }>({
+    queryKey: ['public-metas-painel-ppas', cnpj, scope, scopeCod, periodoSelecionadoNum?.sortimento.id, fluxo, clienteAberto],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        cnpj, scope, cod: scopeCod,
+        vigencia_sortimento_id: String(periodoSelecionadoNum!.sortimento.id),
+        fluxo,
+        cliente_cnpj: clienteAberto!,
+      })
+      const r = await fetch(`/api/farol/public/metas-painel-ppas?${p}`)
+      if (!r.ok) throw new Error(await r.text())
+      return r.json()
+    },
+    enabled: !!cnpj && !!scopeCod && !!periodoSelecionadoNum && !!clienteNumAberto?.sortimento_aplicavel,
+  })
+
   if (!cnpj || !scopeCod) {
     return <div className="p-6 text-center text-sm text-muted-foreground">Link inválido.</div>
   }
@@ -1042,20 +1064,29 @@ export default function FarolPublicMetasPanel() {
               {clientesCombinadoNum.length === 0 && (
                 <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nenhum Cliente neste recorte</div>
               )}
-              {[...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map((c, i) => (
-                <div key={i} className="border-b last:border-0 px-3 py-2.5 text-sm space-y-1">
-                  <div className="font-medium truncate">
-                    <span className="font-mono font-semibold">{c.cod_cl || formatCNPJ(c.cnpj)}</span> - {nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}
-                    {c.classificacao_pdv && <span className="text-xs text-muted-foreground ml-1">({c.classificacao_pdv})</span>}
-                  </div>
-                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">Cobertura: {fmtBRLMobile(c.cobertura_valor)} / {fmtBRLMobile(c.cobertura_objetivo)} <StatusIcon atingiu={c.cobertura_atingiu} /></span>
-                    {c.sortimento_aplicavel ? (
-                      <span className="flex items-center gap-1">Sortimento: {fmt(c.sortimento_valor)} / {fmt(c.sortimento_objetivo)} <StatusIcon atingiu={c.sortimento_atingiu} /></span>
-                    ) : (
-                      <span className="text-muted-foreground/70">Sortimento: N/A</span>
-                    )}
-                  </div>
+              {[...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(c => (
+                <div key={c.cnpj} className="border-b last:border-0 px-3 py-1.5">
+                  <ClienteDrillDown
+                    nome={`${nomeOuCodigo(c.fantasia, c.razao, c.cnpj)}${c.classificacao_pdv ? ` (${c.classificacao_pdv})` : ''}`}
+                    cnpj={c.cnpj}
+                    codCli={c.cod_cl}
+                    badges={[]}
+                    detalhes={[
+                      { label: 'Cobertura', valorTexto: `${fmtBRLMobile(c.cobertura_valor)} / ${fmtBRLMobile(c.cobertura_objetivo)}`, atingiu: c.cobertura_atingiu },
+                      ...(c.sortimento_aplicavel
+                        ? [{ label: 'Sortimento', valorTexto: `${fmt(c.sortimento_valor)} / ${fmt(c.sortimento_objetivo)}`, atingiu: c.sortimento_atingiu }]
+                        : []),
+                    ]}
+                    clienteAberto={clienteAberto}
+                    onToggle={alternarCliente}
+                    temSortimento={c.sortimento_aplicavel}
+                    msgSemItens={`Sortimento não se aplica à classe ${c.classificacao_pdv || 'deste cliente'} (só Num. A e Num. B)`}
+                    isLoadingItens={isLoadingPpas}
+                    itens={ppasResp?.ppas.map(p => ({
+                      ean: p.ppa, nome: p.ppa, qtd: p.qtd, valor: 0, vendeu: p.vendeu, cod_prods: p.cod_prods,
+                      obs: p.abaixo_minimo ? 'abaixo do mínimo de 3 un.' : undefined,
+                    }))}
+                  />
                 </div>
               ))}
             </div>

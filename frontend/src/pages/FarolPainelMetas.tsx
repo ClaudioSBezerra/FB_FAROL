@@ -191,6 +191,15 @@ interface PainelCombinadoNumericaCliente {
   sortimento_atingiu: boolean
   sortimento_aplicavel: boolean
 }
+// PainelPPALinha — 1 PPA do drill-down de um cliente da Numérica (Correção 2
+// do Heverton 08/10/2026): comprou ou não comprou no período.
+interface PainelPPALinha {
+  ppa: string
+  cod_prods?: string[]
+  qtd: number
+  vendeu: boolean
+  abaixo_minimo?: boolean
+}
 interface PainelCombinadoNumerica {
   industria_nome: string
   vigencia: Vigencia
@@ -1009,6 +1018,26 @@ export default function FarolPainelMetas() {
   })
   const itensLista = itensResp?.itens ?? []
 
+  // Drill-down de PPAs de UM cliente da Numérica (clicar na linha do
+  // Combinado Numérica). Cliente Num. C não tem Sortimento (FR26) — o
+  // diálogo só avisa, sem consultar.
+  const [ppasAlvo, setPpasAlvo] = useState<{ cnpj: string; titulo: string; aplicavel: boolean; objetivo: number; classe: string } | null>(null)
+  const { data: ppasResp, isLoading: isLoadingPpas, error: ppasErro } = useQuery<{ ppas: PainelPPALinha[] }>({
+    queryKey: ['farol-metas-painel-ppas', periodoSelecionadoNum?.sortimento.id, fluxo, ppasAlvo?.cnpj],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        vigencia_sortimento_id: String(periodoSelecionadoNum!.sortimento.id),
+        fluxo,
+        cnpj: ppasAlvo!.cnpj,
+      })
+      const r = await fetch(`/api/farol/metas-painel-ppas?${p}`, { headers })
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || 'Falha ao carregar os PPAs')
+      return r.json()
+    },
+    enabled: !!ppasAlvo && ppasAlvo.aplicavel && !!periodoSelecionadoNum,
+  })
+  const ppasLista = ppasResp?.ppas ?? []
+
   // Nível 5 (CNPJ) é um drill-down de UMA Rede escolhida, não um valor de
   // `nivel` selecionável — por isso fica fora do enum NIVEIS/fetch e só lê
   // .clientes que já veio junto no Realizado da Rede.
@@ -1681,9 +1710,22 @@ export default function FarolPainelMetas() {
                     <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Sem dados pra este recorte</TableCell></TableRow>
                   )}
                   {[...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(c => (
-                    <TableRow key={c.cnpj}>
+                    <TableRow
+                      key={c.cnpj}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => setPpasAlvo({
+                        cnpj: c.cnpj,
+                        titulo: `${c.cod_cl || c.cnpj} - ${c.fantasia || c.razao || c.cnpj}`,
+                        aplicavel: c.sortimento_aplicavel,
+                        objetivo: c.sortimento_objetivo,
+                        classe: c.classificacao_pdv,
+                      })}
+                    >
                       <TableCell className="font-medium">
-                        {c.cod_cl ? `${c.cod_cl} — ` : ''}{c.fantasia || c.razao || c.cnpj}
+                        <span className="inline-flex items-center gap-1">
+                          <PackageSearch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          {c.cod_cl ? `${c.cod_cl} — ` : ''}{c.fantasia || c.razao || c.cnpj}
+                        </span>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{c.classificacao_pdv || '—'}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -1880,6 +1922,63 @@ export default function FarolPainelMetas() {
           )}
         </>
       ) : null}
+
+      {/* Drill-down de PPAs de um cliente da Numérica — Correção 2 do
+          Heverton 08/10/2026 (equivalente ao de itens da Ponderada). */}
+      <Dialog open={!!ppasAlvo} onOpenChange={open => { if (!open) setPpasAlvo(null) }}>
+        <DialogContent className="w-[95vw] max-w-3xl max-h-[85vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
+          <DialogHeader>
+            <DialogTitle>PPAs — {ppasAlvo?.titulo}</DialogTitle>
+          </DialogHeader>
+          {ppasAlvo && !ppasAlvo.aplicavel ? (
+            <p className="text-sm text-muted-foreground py-6 text-center normal-case">
+              O Sortimento Numérica não se aplica à classe {ppasAlvo.classe || 'deste cliente'} — só Num. A e Num. B têm PPAs a atingir.
+            </p>
+          ) : isLoadingPpas ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
+          ) : ppasErro ? (
+            <p className="text-sm text-red-700 py-6 text-center normal-case">{(ppasErro as Error).message}</p>
+          ) : (
+            <>
+              {ppasAlvo && (
+                <div className="flex flex-wrap gap-4 text-sm border rounded-lg p-3 bg-muted/30">
+                  <span><strong>{ppasLista.filter(p => p.vendeu).length}</strong> comprados</span>
+                  <span><strong>{ppasLista.length}</strong> PPAs no catálogo</span>
+                  <span>Objetivo: <strong>{fmt(ppasAlvo.objetivo)}</strong> PPAs distintos</span>
+                </div>
+              )}
+              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-white">
+                    <TableRow>
+                      <TableHead>Cód. Produto</TableHead>
+                      <TableHead>PPA</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                      <TableHead className="text-right">Qtd</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ppasLista.length === 0 && (
+                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">Sem PPAs pra esta vigência</TableCell></TableRow>
+                    )}
+                    {[...ppasLista].sort((x, y) => x.ppa.localeCompare(y.ppa, 'pt-BR')).map(p => (
+                      <TableRow key={p.ppa}>
+                        <TableCell className="font-mono text-xs whitespace-nowrap">{p.cod_prods && p.cod_prods.length > 0 ? p.cod_prods.join(', ') : '—'}</TableCell>
+                        <TableCell className="text-sm">
+                          {p.ppa}
+                          {p.abaixo_minimo && <span className="ml-2 text-xs text-amber-700 normal-case">abaixo do mínimo de 3 un.</span>}
+                        </TableCell>
+                        <TableCell className="text-center"><StatusBadge atingiu={p.vendeu} labelSim="Comprou" labelNao="Não comprou" /></TableCell>
+                        <TableCell className="text-right">{p.qtd ? fmt(p.qtd) : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Drill-down de itens (Sortimento): clicar numa Rede (aba "Resumo
           Redes") mostra os itens de TODAS as lojas dela; clicar numa loja

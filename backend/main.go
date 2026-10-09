@@ -707,6 +707,8 @@ func main() {
 	// Drill-down de itens (Sortimento): vendeu/não vendeu, Qtd, Valor — por
 	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
 	http.HandleFunc("/api/farol/metas-painel-itens", withSP(handlers.MetasPainelItensHandler, "somente_leitura"))
+	// PPAs que um cliente da Numérica comprou/não comprou — Correção 2 do Heverton 08/10/2026.
+	http.HandleFunc("/api/farol/metas-painel-ppas", withSP(handlers.MetasPainelPPAsHandler, "somente_leitura"))
 
 	// Comparativo Fechamento Comercial (Painel Vendas) — pedido do Claudio
 	// 14/09/2026: compara o fechamento que o fornecedor manda por fora com
@@ -770,6 +772,7 @@ func main() {
 	http.HandleFunc("/api/farol/public/metas-painel-combinado-numerica", publicHandler(handlers.MetasPublicPainelCombinadoNumericaHandler))
 	// Drill-down "Produtos" (Sortimento) sem login — pedido do José Costa (CEO) 15/09/2026.
 	http.HandleFunc("/api/farol/public/metas-painel-itens", publicHandler(handlers.MetasPublicPainelItensHandler))
+	http.HandleFunc("/api/farol/public/metas-painel-ppas", publicHandler(handlers.MetasPublicPainelPPAsHandler))
 	// Gamificação — visão real do RCA em campo (mesma URL pública, sem
 	// login, que ele já usa pra Cobertura/Sortimento). Pedido do Claudio
 	// 22/09/2026: mesmo padrão de segurança do resto da tela mobile.
