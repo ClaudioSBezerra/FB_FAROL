@@ -138,6 +138,7 @@ export default function GuiaIndustria() {
               <p className="text-slate-600 mt-2">{p.contexto}</p>
               <p className="text-slate-500 mt-1"><b>Hoje:</b> {p.hoje}</p>
               <p className="text-slate-800 mt-1"><b>Precisamos decidir:</b> {p.decidir}</p>
+              {p.decisao && <p className="text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 mt-2"><b>Decisão:</b> {p.decisao}</p>}
             </div>
           ))}
         </div>

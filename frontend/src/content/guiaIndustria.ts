@@ -24,6 +24,8 @@ export interface Pergunta {
   hoje: string
   decidir: string
   escopo: Escopo
+  // Preenchido quando a JC já decidiu; some o campo "Precisamos decidir" do destaque.
+  decisao?: string
 }
 
 export const STATUS_ROTULO: Record<Status, string> = {
@@ -192,6 +194,7 @@ export const PERGUNTAS: Pergunta[] = [
     contexto: 'Hoje o limiar de cada classe (100/50/15) e o teto ficam no vínculo da indústria, valendo para todos os meses. As faixas ficam na vigência.',
     hoje: 'Um valor único para todos os meses.',
     decidir: 'Se o desafio mudar de um mês para o outro, precisamos levar esses valores para a vigência. Isso muda o cadastro e exige fechar Setembro antes. Vai mudar?',
+    decisao: 'Decidido pelo Heverton (out/2026): se mudar em Outubro, o sistema recalcula Setembro com o valor novo e a JC refaz Setembro. Os parâmetros continuam no vínculo.',
   },
   {
     n: 3, escopo: 'web', titulo: 'Numérica no e-mail executivo',

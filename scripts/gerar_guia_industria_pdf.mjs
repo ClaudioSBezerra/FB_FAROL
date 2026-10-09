@@ -40,7 +40,7 @@ ${[...grupos].map(([g, ts]) => `<div class="g">${esc(g)}</div>` + ts.map(t => `<
 <div class="cols"><div><div class="l">Era para ser</div>${esc(t.previsto)}</div><div><div class="l">O que ficou</div>${esc(t.ficou)}</div></div>${t.nota ? `<div class="nota">${esc(t.nota)}</div>` : ''}</div>`).join('')).join('')}
 <h2 style="break-before:page">2. Perguntas para decidirmos na reunião (${C.PERGUNTAS.length})</h2>
 ${C.PERGUNTAS.map(p => `<div class="q"><h3>${p.n}. ${esc(p.titulo)} <span class="tag" style="color:#64748b">[${esc(C.ESCOPO_ROTULO[p.escopo])}]</span></h3>
-<div>${esc(p.contexto)}</div><div><b>Hoje:</b> ${esc(p.hoje)}</div><div><b>Precisamos decidir:</b> ${esc(p.decidir)}</div><div class="res">Decisão: ______________________________________________</div></div>`).join('')}
+<div>${esc(p.contexto)}</div><div><b>Hoje:</b> ${esc(p.hoje)}</div><div><b>Precisamos decidir:</b> ${esc(p.decidir)}</div>${p.decisao ? `<div class="nota" style="background:#ecfdf5;border-color:#a7f3d0;color:#047857"><b>Decisão:</b> ${esc(p.decisao)}</div>` : '<div class="res">Decisão: ______________________________________________</div>'}</div>`).join('')}
 </body></html>`
 const arq = join(dir, 'guia.html'); writeFileSync(arq, html)
 const base = join(homedir(), '.cache/ms-playwright')
