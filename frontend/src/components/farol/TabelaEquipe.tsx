@@ -6,21 +6,26 @@ import type { LinhaEquipe } from '@/lib/metricasObjetivos'
 // abre o nível de baixo (children).
 const fmt1 = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
-export function CabecalhoEquipe({ rotuloQt }: { rotuloQt: string }) {
+// Nomenclatura da sugestão do Heverton (PDF 09/10/2026): Ponderada fala em
+// Ponderadas/Cobertas/Redes, Numérica em Clientes/Cobertos/Clientes. A 1ª
+// coluna é só o código (Cód. Sup / Cód. RCA) — a visão ficou carregada com
+// código + nome.
+export function CabecalhoEquipe({ rotuloCod, numerica }: { rotuloCod: string; numerica: boolean }) {
   const col = 'text-center leading-tight'
   return (
-    <div className="px-3 pt-2 pb-1 border-b bg-slate-50 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="px-3 pt-2 pb-1 border-b bg-slate-50 text-[8px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="text-left text-[10px] text-slate-700 mb-0.5">{rotuloCod}</div>
       <div className="grid grid-cols-7 gap-1">
         <div className="col-span-3 text-center">Cobertura</div>
         <div className="col-span-4 text-center">Sortimento</div>
       </div>
       <div className="grid grid-cols-7 gap-1 mt-0.5">
-        <div className={col}>{rotuloQt}</div>
-        <div className={col}>Cobertas</div>
+        <div className={col}>{numerica ? 'Qt clientes' : 'Qt ponderadas'}</div>
+        <div className={col}>{numerica ? 'Qt cobertos' : 'Qt cobertas'}</div>
         <div className={col}>Falta</div>
-        <div className={col}>Objet.</div>
-        <div className={col}>Real</div>
-        <div className={col}>Ating.</div>
+        <div className={col}>Objetivo sortimento</div>
+        <div className={col}>Realizado</div>
+        <div className={col}>{numerica ? 'Qt clientes com sortimento' : 'Qt redes com sortimento'}</div>
         <div className={col}>Falta</div>
       </div>
     </div>
@@ -40,7 +45,7 @@ export function LinhaTabelaEquipe({ linha, aberta, onToggle, recuo = false, chil
       <button type="button" onClick={onToggle} className="w-full px-3 py-2 text-left space-y-1 active:bg-slate-100">
         <div className="flex items-center gap-1.5 min-w-0">
           <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${aberta ? '' : '-rotate-90'}`} />
-          <span className="truncate text-sm font-medium"><span className="font-mono font-semibold">{linha.codigo}</span> - {linha.nome}</span>
+          <span className="truncate text-sm font-mono font-semibold" title={linha.nome}>{linha.codigo}</span>
         </div>
         <div className="grid grid-cols-7 gap-1 pl-5">
           <div className={num}>{linha.qt}</div>

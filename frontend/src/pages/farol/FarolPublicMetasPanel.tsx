@@ -907,7 +907,7 @@ export default function FarolPublicMetasPanel() {
     })
     return (
       <>
-        <CabecalhoEquipe rotuloQt={rotuloQt} />
+        <CabecalhoEquipe rotuloCod={scope === 'ggv' ? 'Cód. Sup' : 'Cód. RCA'} numerica={rotuloQt === 'Clientes'} />
         {unidades.length === 0 && <div className="px-3 py-4 text-sm text-muted-foreground text-center">Nada neste recorte</div>}
         {scope === 'ggv'
           ? resumirEquipe(unidades, 'crv').map(l => (
@@ -917,6 +917,7 @@ export default function FarolPublicMetasPanel() {
                 aberta={crvAberto === l.codigo}
                 onToggle={() => { setRedeAberta(null); setClienteAberto(null); setRcaAberto(null); setCrvAberto(a => (a === l.codigo ? null : l.codigo)) }}
               >
+                <CabecalhoEquipe rotuloCod="Cód. RCA" numerica={rotuloQt === 'Clientes'} />
                 {linhasRca(unidades.filter(u => u.cod_crv === l.codigo), l.codigo)}
               </LinhaTabelaEquipe>
             ))
