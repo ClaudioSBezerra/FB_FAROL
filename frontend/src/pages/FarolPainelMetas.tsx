@@ -1402,7 +1402,7 @@ export default function FarolPainelMetas() {
             </TooltipProvider>
 
             {(abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
-              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 {/* Clicar num GGV, GGV×CRV ou GGV×CRV×RCA vai abrindo o
                     nível de baixo (igual à visão mobile: toca pra descer na
                     hierarquia) — pedido do Heverton 29/09/2026: Rede,
@@ -1462,7 +1462,7 @@ export default function FarolPainelMetas() {
             )}
 
             {abaCombinado === 'rede' && (
-              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os Clientes dela.</p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1550,7 +1550,7 @@ export default function FarolPainelMetas() {
             )}
 
             {abaCombinado === 'cliente' && (
-              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa loja pra ver os itens que venderam e não venderam nela.</p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1725,7 +1725,7 @@ export default function FarolPainelMetas() {
               const nivel: NivelRollup = abaNumerica
               const linhas = resumirRollup(clientesCombinadoNum, nivel)
               return (
-                <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <p className="text-xs text-muted-foreground px-3 pt-2">
                     {nivel === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.' : 'Clique num grupo pra ver os Clientes dele.'}
                   </p>
@@ -1780,7 +1780,7 @@ export default function FarolPainelMetas() {
             })()}
 
             {abaNumerica === 'cliente' && (
-            <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+            <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-white">
                   <TableRow>
@@ -1891,7 +1891,7 @@ export default function FarolPainelMetas() {
               </div>
 
               {painel.recortes && (
-                <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-white">
                       <TableRow>
@@ -1967,7 +1967,7 @@ export default function FarolPainelMetas() {
             </div>
           )}
 
-          <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+          <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-white">
                 <TableRow>
@@ -2036,7 +2036,7 @@ export default function FarolPainelMetas() {
                   <span>Objetivo: <strong>{fmt(ppasAlvo.objetivo)}</strong> PPAs distintos</span>
                 </div>
               )}
-              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
                     <TableRow>
@@ -2114,7 +2114,7 @@ export default function FarolPainelMetas() {
                   </span>
                 </div>
               )}
-              <div className="border rounded-lg overflow-x-auto [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-white">
                   <TableRow>
