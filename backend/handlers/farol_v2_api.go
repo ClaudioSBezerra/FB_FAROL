@@ -108,11 +108,18 @@ var hierarquias = map[string][]hierLevel{
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
 	// V07 "Por Departamento" (mig 184/185) — hierarquia merceológica de
-	// produto. Só valor, sem positivação.
+	// produto. Só valor, sem positivação. Departamento → Seção → Produto.
+	//
+	// O nível Categoria saiu em 13/10/2026 (pedido do Heverton: "estender até
+	// a visão Produto"): o extrator da JC nunca preencheu cod_categoria — 0 de
+	// ~16 milhões de linhas em vendas_faturadas (set/2025 a out/2026) — então
+	// agg_*_v07_l2_mes ficou vazia e o drill morria na Seção. As tabelas l2
+	// continuam existindo (vazias), só não são mais lidas. Produto sob a Seção
+	// lê a base escopada pelo drill (mesmo caminho do Produto sob a Rede, V06).
+	// Se a JC um dia entregar categoria, reintroduzir o nível aqui.
 	"V07": {
 		{Level: "cod_depto", NameField: "depto", Label: "Departamento"},
 		{Level: "cod_sec", NameField: "secao", Label: "Seção"},
-		{Level: "cod_categoria", NameField: "categoria", Label: "Categoria"},
 		{Level: "cod_prod", NameField: "nome_prod", Label: "Produto"},
 	},
 	// V08/V09 (mig 197) — hierarquias SÓ DE ROTEAMENTO: nenhuma view da UI as
@@ -171,7 +178,7 @@ var aggTablesFat = map[string][]string{
 	// escopada (drill Rede→Cliente→Produto, 2026-07-21). As agg_fat_v06_l1/l2
 	// (cliprinc,fornec[,cnpj]) continuam populadas mas não são mais lidas.
 	"V06": {"agg_fat_v06_l0_mes"},
-	"V07": {"agg_fat_v07_l0_mes", "agg_fat_v07_l1_mes", "agg_fat_v07_l2_mes"},
+	"V07": {"agg_fat_v07_l0_mes", "agg_fat_v07_l1_mes"}, // Produto lê a base (ver hierarquia V07)
 	// V08/V09 (mig 197): l0 (só UF) é o mesmo grão nas duas hierarquias →
 	// tabela física única (agg_*_v08_l0_mes) referenciada pelas duas.
 	"V08": {"agg_fat_v08_l0_mes", "agg_fat_v08_l1_mes", "agg_fat_v08_l2_mes", "agg_fat_v08_l3_mes"},
@@ -188,7 +195,7 @@ var aggTablesTrans = map[string][]string{
 	"V04": {"agg_trans_v04_l0_mes", "agg_trans_v04_l1_mes", "agg_trans_v04_l2_mes"},
 	"V05": {"agg_trans_v05_l0_mes", "agg_trans_v05_l1_mes", "agg_trans_v05_l2_mes", "agg_trans_v05_l3_mes"},
 	"V06": {"agg_trans_v06_l0_mes"},
-	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes", "agg_trans_v07_l2_mes"},
+	"V07": {"agg_trans_v07_l0_mes", "agg_trans_v07_l1_mes"},
 	"V08": {"agg_trans_v08_l0_mes", "agg_trans_v08_l1_mes", "agg_trans_v08_l2_mes", "agg_trans_v08_l3_mes"},
 	"V09": {"agg_trans_v08_l0_mes", "agg_trans_v09_l1_mes", "agg_trans_v09_l2_mes", "agg_trans_v09_l3_mes", "agg_trans_v09_l4_mes"},
 	"V10": {"agg_trans_v10_l0_mes", "agg_trans_v10_l1_mes", "agg_trans_v10_l2_mes", "agg_trans_v10_l3_mes"},
@@ -221,8 +228,9 @@ var aggTablesTrans = map[string][]string{
 // com qualquer filtro sem risco de contar errado — o handler só injeta o
 // filtro ali também.
 //
-// V07I (Departamento, mig 229) cobre L0-L2 inteiros — é taxonomia de
-// produto, nunca teve fornecedor em nível nenhum (atravessa fornecedores).
+// V07I (Departamento, mig 229) cobre L0-L1 (Departamento/Seção) — é taxonomia de
+// produto, nunca teve fornecedor nesses níveis (atravessa fornecedores). O
+// Produto sob a Seção (L2, 13/10/2026) lê a base e recebe o filtro cod_fornec.
 func init() {
 	hierarquias["V03I"] = hierarquias["V03"]
 	hierarquias["V02I"] = hierarquias["V02"]
@@ -234,8 +242,8 @@ func init() {
 	aggTablesTrans["V02I"] = []string{"agg_trans_v02_ind_l0_mes", "agg_trans_v02_ind_l1_mes", "agg_trans_v02_l2_mes", "agg_trans_v02_l3_mes"}
 	aggTablesFat["V06I"] = []string{"agg_fat_v06_ind_l0_mes"}
 	aggTablesTrans["V06I"] = []string{"agg_trans_v06_ind_l0_mes"}
-	aggTablesFat["V07I"] = []string{"agg_fat_v07_ind_l0_mes", "agg_fat_v07_ind_l1_mes", "agg_fat_v07_ind_l2_mes"}
-	aggTablesTrans["V07I"] = []string{"agg_trans_v07_ind_l0_mes", "agg_trans_v07_ind_l1_mes", "agg_trans_v07_ind_l2_mes"}
+	aggTablesFat["V07I"] = []string{"agg_fat_v07_ind_l0_mes", "agg_fat_v07_ind_l1_mes"}
+	aggTablesTrans["V07I"] = []string{"agg_trans_v07_ind_l0_mes", "agg_trans_v07_ind_l1_mes"}
 }
 
 // aggSemPositivacao — Rede (V06) e Departamento (V07), incluindo suas
@@ -861,13 +869,16 @@ func FarolV2CardsHandler(db *sql.DB) http.HandlerFunc {
 		//   V06 — só L1/L2 (Fornecedor/Cliente sob a Rede); esses níveis já
 		//     não usam tabela pronta nenhuma desde a mig 226 (sempre scan ao
 		//     vivo), então o filtro aqui não custa nada a mais.
-		//   V03/V07 — NUNCA: a pseudo-view cobre a hierarquia INTEIRA com
-		//     tabela nova, não sobra nível pra filtrar.
+		//   V07 — só L2 (Produto sob a Seção, base escopada pelo drill, 13/10/2026);
+		//     Departamento/Seção usam as tabelas novas.
+		//   V03 — NUNCA: a pseudo-view cobre a hierarquia INTEIRA com tabela
+		//     nova, não sobra nível pra filtrar.
 		// Se o usuário já filtrou uma indústria específica (FORN DIST manual),
 		// essa escolha mais específica prevalece — não sobrescreve.
 		injetaFiltroFornec := somenteIndustria && ((view == "V01") ||
 			(view == "V02" && drillIdx >= 2) ||
-			(view == "V06" && drillIdx >= 1))
+			(view == "V06" && drillIdx >= 1) ||
+			(view == "V07" && drillIdx >= 2))
 		if injetaFiltroFornec {
 			if _, jaTemFiltro := filters["cod_fornec"]; !jaTemFiltro {
 				filters["cod_fornec"] = industriaMappedFornecs(db, spCtx.EmpresaID)
