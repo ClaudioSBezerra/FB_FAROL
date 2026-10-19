@@ -121,6 +121,17 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// AdminOuFbtaxRoute — admin de plataforma OU admin_fbtax. Painel Reckitt
+// (Segmento Foco), 19/10/2026: visível só pra admin até validar com a JC.
+function AdminOuFbtaxRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user, spRole } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
+  if (user?.role !== 'admin' && spRole !== 'admin_fbtax') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 // FbtaxAdminRoute — restrito a admin_fbtax (só o Claudio, por enquanto).
 // Mais estrito que AdminOrTIRoute de propósito: Gamificação (22/09/2026) é
 // MVP com bônus em R$ visível, não deve aparecer nem pra "admin" de
@@ -340,7 +351,7 @@ function AppLayout() {
               <Route path="/gestao/carga-mes" element={<ProtectedRoute><ConfigCargaMes /></ProtectedRoute>} />
               <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
               <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
-              <Route path="/farol/segmento-foco" element={<ProtectedRoute><FarolSegmentoFoco /></ProtectedRoute>} />
+              <Route path="/farol/segmento-foco" element={<AdminOuFbtaxRoute><FarolSegmentoFoco /></AdminOuFbtaxRoute>} />
               <Route path="/farol/gamificacao" element={<FbtaxAdminRoute><FarolGamificacao /></FbtaxAdminRoute>} />
 
               {/* Configurações (admin) */}

@@ -43,6 +43,9 @@ interface RailItem {
    *  usado pelo MVP de Gamificação, 22/09/2026: não deve aparecer nem pra
    *  "admin" de plataforma de outra empresa nem pra persona TI). */
   fbtaxOnly?: boolean
+  /** quando true, só aparece pra admin (plataforma ou admin_fbtax) — Painel Reckitt,
+   *  19/10/2026: "deixe visível somente para admin" até validar com a JC. */
+  adminOnly?: boolean
   /** módulo necessário para exibir o item */
   requiredModulo?: string
 }
@@ -61,7 +64,7 @@ const mainItems: RailItem[] = [
   // simples); isto só torna visível o que já era alcançável.
   { id: 'metas_industria', icon: Factory,    label: 'Painel Unilever',     path: '/farol/metas-industria', dev: false },
   // Painel Reckitt (Segmento Foco) — 19/10/2026: um item de menu por indústria/programa.
-  { id: 'reckitt',        icon: PackageCheck, label: 'Painel Reckitt',    path: '/farol/segmento-foco',  dev: false },
+  { id: 'reckitt',        icon: PackageCheck, label: 'Painel Reckitt',    path: '/farol/segmento-foco',  dev: false, adminOnly: true },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   // Relatórios: visível pra QUALQUER usuário (Comparativo REL 322 é de uso
   // geral, pedido do Claudio em 28/08/2026) — o recorte admin/TI só se
@@ -118,6 +121,7 @@ export function AppRail() {
   const visibleItems = isTI
     ? mainItems.filter(it => it.id === 'importar' || it.id === 'relatorios')
     : mainItems.filter(it =>
+        (!it.adminOnly || isAdmin) &&
         (!it.adminOrTI || canImport) &&
         (!it.fbtaxOnly || spRole === 'admin_fbtax') &&
         (!it.requiredModulo || hasModulo(it.requiredModulo))
