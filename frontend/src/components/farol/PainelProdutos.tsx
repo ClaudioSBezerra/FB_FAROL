@@ -56,6 +56,8 @@ export default function PainelProdutos({
       .filter(l => !q || l.nome.toLowerCase().includes(q) || l.codigos.toLowerCase().includes(q))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
   }, [linhas, filtro, busca])
+  // "17 vendidos" / "1 vendido" — particípio concorda com a quantidade (Heverton 19/10/2026).
+  const particípio = rotuloSim === 'Vendeu' ? 'vendido' : 'comprado'
   const pct = objetivo > 0 ? Math.min(100, (vendidos / objetivo) * 100) : 0
   const bateu = objetivo > 0 && vendidos >= objetivo
 
@@ -100,7 +102,7 @@ export default function PainelProdutos({
               {/* Resumo + progresso do objetivo */}
               <div className="border rounded-xl p-4 bg-white">
                 <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-                  <div><span className={`text-2xl font-bold ${bateu ? 'text-emerald-600' : 'text-slate-900'}`}>{fmt(vendidos)}</span> <span className="text-sm text-slate-500">{rotuloSim.toLowerCase()}s de {fmt(linhas.length)} no catálogo</span></div>
+                  <div><span className={`text-2xl font-bold ${bateu ? 'text-emerald-600' : 'text-slate-900'}`}>{fmt(vendidos)}</span> <span className="text-sm text-slate-500">{particípio}{vendidos > 1 ? 's' : ''} de {fmt(linhas.length)} no catálogo</span></div>
                   <div className="text-sm text-slate-600">Objetivo: <strong>{fmt(objetivo)}</strong> {rotuloObjetivo}</div>
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
@@ -112,8 +114,8 @@ export default function PainelProdutos({
 
               <div className="flex flex-wrap items-center gap-2">
                 <Seg v="todos" rotulo="Todos" n={linhas.length} />
-                <Seg v="sim" rotulo={`${rotuloSim}s`} n={vendidos} />
-                <Seg v="nao" rotulo={rotuloNao === 'Não vendeu' ? 'Não vendidos' : 'Não comprados'} n={linhas.length - vendidos} />
+                <Seg v="sim" rotulo={rotuloSim} n={vendidos} />
+                <Seg v="nao" rotulo={rotuloNao} n={linhas.length - vendidos} />
                 <div className="ml-auto relative">
                   <Search className="h-3.5 w-3.5 absolute left-2 top-2 text-slate-400" />
                   <input
