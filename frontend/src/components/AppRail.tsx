@@ -1,4 +1,4 @@
-import { Settings, LogOut, KeyRound, Lightbulb, UploadCloud, FileText, Factory, Trophy } from 'lucide-react'
+import { Settings, LogOut, KeyRound, Lightbulb, UploadCloud, FileText, Factory, Trophy, PackageCheck } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
@@ -59,7 +59,9 @@ const mainItems: RailItem[] = [
   // (/farol/metas-industria) chegava na tela. Sem requiredModulo: qualquer
   // usuário Farol autenticado já podia acessar via URL (ProtectedRoute
   // simples); isto só torna visível o que já era alcançável.
-  { id: 'metas_industria', icon: Factory,    label: 'Objetivos Indústria', path: '/farol/metas-industria', dev: false },
+  { id: 'metas_industria', icon: Factory,    label: 'Painel Unilever',     path: '/farol/metas-industria', dev: false },
+  // Painel Reckitt (Segmento Foco) — 19/10/2026: um item de menu por indústria/programa.
+  { id: 'reckitt',        icon: PackageCheck, label: 'Painel Reckitt',    path: '/farol/segmento-foco',  dev: false },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   // Relatórios: visível pra QUALQUER usuário (Comparativo REL 322 é de uso
   // geral, pedido do Claudio em 28/08/2026) — o recorte admin/TI só se

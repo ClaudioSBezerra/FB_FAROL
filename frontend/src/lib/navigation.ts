@@ -56,13 +56,17 @@ export const modules: Record<string, ModuleConfig> = {
     adminOnly: true,
     tabs: [],
   },
-  // ── Objetivos por Indústria — visão de campo pra GGV/Supervisor (Épico 5) ─
+  // ── Painel Unilever (era "Objetivos Indústria") — pedido do Claudio
+  // 19/10/2026: cada indústria/programa ganha o seu painel no menu da
+  // esquerda. Rota e módulo seguem os mesmos (/farol/metas-industria).
   metas_industria: {
-    label: 'Objetivos Indústria',
-    tabs: [
-      { label: 'Painel', path: '/farol/metas-industria' },
-      { label: 'Segmento Foco', path: '/farol/segmento-foco' },
-    ],
+    label: 'Painel Unilever',
+    tabs: [],
+  },
+  // ── Painel Reckitt — Segmento Foco (positivação de grupos) ──────────────
+  reckitt: {
+    label: 'Painel Reckitt',
+    tabs: [],
   },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
   importar: {
@@ -98,7 +102,7 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/bi'))              return 'bi'
   if (pathname.startsWith('/farol/gamificacao'))     return 'gamificacao'
   if (pathname.startsWith('/farol/metas-industria')) return 'metas_industria'
-  if (pathname.startsWith('/farol/segmento-foco'))   return 'metas_industria'
+  if (pathname.startsWith('/farol/segmento-foco'))   return 'reckitt'
   if (pathname.startsWith('/farol/relatorios'))      return 'relatorios'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'
