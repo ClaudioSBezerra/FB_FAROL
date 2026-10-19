@@ -26,7 +26,7 @@ const fmtBRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', cur
 type Filtro = 'todos' | 'sim' | 'nao'
 
 export default function PainelProdutos({
-  aberto, onFechar, titulo, subtitulo, rotuloItem, rotuloSim, rotuloNao, objetivo, rotuloObjetivo,
+  aberto, onFechar, titulo, subtitulo, rotuloItem, rotuloSim, rotuloNao, objetivo, rotuloObjetivo, participio, subtituloResumo,
   linhas, carregando, erro, mensagem, nota, comValor,
 }: {
   aberto: boolean
@@ -36,8 +36,10 @@ export default function PainelProdutos({
   rotuloItem: string           // coluna do nome: "Produto" ou "PPA"
   rotuloSim: string            // "Vendeu" | "Comprou"
   rotuloNao: string            // "Não vendeu" | "Não comprou"
-  objetivo: number
-  rotuloObjetivo: string       // "EANs distintos" | "PPAs distintos"
+  objetivo?: number            // sem objetivo → esconde barra e texto de objetivo
+  rotuloObjetivo?: string      // "EANs distintos" | "PPAs distintos"
+  participio?: string          // "vendido" | "comprado" | "positivado" (default pelo rótulo)
+  subtituloResumo?: string
   linhas: LinhaProduto[]
   carregando?: boolean
   erro?: string
@@ -57,9 +59,10 @@ export default function PainelProdutos({
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
   }, [linhas, filtro, busca])
   // "17 vendidos" / "1 vendido" — particípio concorda com a quantidade (Heverton 19/10/2026).
-  const particípio = rotuloSim === 'Vendeu' ? 'vendido' : 'comprado'
-  const pct = objetivo > 0 ? Math.min(100, (vendidos / objetivo) * 100) : 0
-  const bateu = objetivo > 0 && vendidos >= objetivo
+  const particípio = participio ?? (rotuloSim === 'Vendeu' ? 'vendido' : 'comprado')
+  const temObjetivo = (objetivo ?? 0) > 0
+  const pct = temObjetivo ? Math.min(100, (vendidos / (objetivo as number)) * 100) : 0
+  const bateu = temObjetivo && vendidos >= (objetivo as number)
 
   const Seg = ({ v, rotulo, n }: { v: Filtro; rotulo: string; n: number }) => (
     <button
@@ -102,12 +105,14 @@ export default function PainelProdutos({
               {/* Resumo + progresso do objetivo */}
               <div className="border rounded-xl p-4 bg-white">
                 <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-                  <div><span className={`text-2xl font-bold ${bateu ? 'text-emerald-600' : 'text-slate-900'}`}>{fmt(vendidos)}</span> <span className="text-sm text-slate-500">{particípio}{vendidos > 1 ? 's' : ''} de {fmt(linhas.length)} no catálogo</span></div>
-                  <div className="text-sm text-slate-600">Objetivo: <strong>{fmt(objetivo)}</strong> {rotuloObjetivo}</div>
+                  <div><span className={`text-2xl font-bold ${bateu ? 'text-emerald-600' : 'text-slate-900'}`}>{fmt(vendidos)}</span> <span className="text-sm text-slate-500">{particípio}{vendidos > 1 ? 's' : ''} {subtituloResumo ?? `de ${fmt(linhas.length)} no catálogo`}</span></div>
+                  {temObjetivo && <div className="text-sm text-slate-600">Objetivo: <strong>{fmt(objetivo as number)}</strong> {rotuloObjetivo}</div>}
                 </div>
-                <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className={`h-full ${bateu ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${pct}%` }} />
-                </div>
+                {temObjetivo && (
+                  <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div className={`h-full ${bateu ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
               </div>
 
               {nota && <div className="text-xs border border-amber-300 bg-amber-50 rounded-lg p-3 text-amber-900">{nota}</div>}

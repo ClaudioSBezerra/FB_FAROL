@@ -61,6 +61,7 @@ export const modules: Record<string, ModuleConfig> = {
     label: 'Objetivos Indústria',
     tabs: [
       { label: 'Painel', path: '/farol/metas-industria' },
+      { label: 'Segmento Foco', path: '/farol/segmento-foco' },
     ],
   },
   // ── Importar — ícone próprio no rail, só admin ou TI ─────────────────────
@@ -97,6 +98,7 @@ export function getActiveModule(pathname: string): string {
   if (pathname.startsWith('/farol/bi'))              return 'bi'
   if (pathname.startsWith('/farol/gamificacao'))     return 'gamificacao'
   if (pathname.startsWith('/farol/metas-industria')) return 'metas_industria'
+  if (pathname.startsWith('/farol/segmento-foco'))   return 'metas_industria'
   if (pathname.startsWith('/farol/relatorios'))      return 'relatorios'
   if (pathname.startsWith('/farol/v2'))              return 'farol'
   if (pathname.startsWith('/farol/assistente'))      return 'farol'

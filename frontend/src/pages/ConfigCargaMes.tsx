@@ -11,7 +11,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { parseClientesNumericasXlsx, parseClientesValidosXlsx, parsePPAsXlsx } from '@/lib/metasXlsx'
+import { parseClientesNumericasXlsx, parseClientesValidosXlsx, parsePPAsXlsx, parseSegmentoFocoGruposXlsx, parseSegmentoFocoObjetivosXlsx } from '@/lib/metasXlsx'
 
 // Carga do mês — tela única do administrador (pedido do Claudio 09/10/2026:
 // "menu o mais simples possível", uma ABA de carga por indústria, cada uma
@@ -38,17 +38,23 @@ interface CargaVinculo {
   itens: number
   ppas: number
   clientes_numerica: number
+  grupos_produtos?: number
+  grupos_objetivos?: number
   calculado_em: string | null
 }
 
-type Programa = 'Ponderada' | 'Numérica'
-const programaDe = (formula: string): Programa => (formula.includes('numerica') ? 'Numérica' : 'Ponderada')
+type Programa = 'Ponderada' | 'Numérica' | 'Segmento Foco'
+const programaDe = (formula: string): Programa =>
+  formula === 'positivacao_grupos' ? 'Segmento Foco' : formula.includes('numerica') ? 'Numérica' : 'Ponderada'
 
 // O que cada vínculo precisa ter carregado pra a vigência do mês funcionar.
 function pendencias(v: CargaVinculo): string[] {
   if (v.vigencia_id == null) return ['vigência']
   const out: string[] = []
-  if (programaDe(v.formula_codigo) === 'Numérica') {
+  if (programaDe(v.formula_codigo) === 'Segmento Foco') {
+    if (!v.grupos_produtos) out.push('produtos (SKUs)')
+    if (!v.grupos_objetivos) out.push('objetivos')
+  } else if (programaDe(v.formula_codigo) === 'Numérica') {
     if (v.clientes_numerica === 0) out.push('clientes')
     if (v.formula_codigo === 'sortimento_numerica_ppa' && v.ppas === 0) out.push('PPAs')
   } else {
@@ -163,9 +169,12 @@ export default function ConfigCargaMes() {
         </div>
       )}
 
-      {(['Ponderada', 'Numérica'] as Programa[]).map(prog => {
+      {(['Ponderada', 'Numérica', 'Segmento Foco'] as Programa[]).map(prog => {
         const doPrograma = vinculos.filter(v => programaDe(v.formula_codigo) === prog)
         if (doPrograma.length === 0) return null
+        if (prog === 'Segmento Foco') {
+          return <SegmentoFocoCard key={`${selecionada}-${prog}-${mes}`} mes={mes} vinculos={doPrograma} headers={headers} onMudou={recarregar} />
+        }
         return (
           <ProgramaCard
             key={`${selecionada}-${prog}-${mes}`}
@@ -418,6 +427,128 @@ function ProgramaCard({ programa, mes, vinculos, anteriores, headers, onMudou }:
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+
+// ─── Segmento Foco (Reckitt) ─────────────────────────────────────────────────
+// Dois arquivos: SKUs válidos (valem pro trimestre inteiro) e o "Acompanhamento"
+// com a aba PAINEL FORMULA (objetivos por UF × grupo dos 3 meses). Cria a
+// vigência de cada mês que faltar (sem faixas: o programa não usa faixas — a
+// vigência leva uma faixa-placeholder só porque o cadastro exige uma).
+
+const MESES_TRI = (mes: string) => {
+  const [a, m] = mes.split('-').map(Number)
+  const q = Math.floor((m - 1) / 3)
+  return [0, 1, 2].map(i => `${a}-${String(q * 3 + i + 1).padStart(2, '0')}`)
+}
+
+function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
+  mes: string
+  vinculos: CargaVinculo[]
+  headers: Record<string, string>
+  onMudou: () => void
+}) {
+  const v = vinculos[0]
+  const [ocupado, setOcupado] = useState('')
+  const skuRef = useRef<HTMLInputElement>(null)
+  const objRef = useRef<HTMLInputElement>(null)
+  const { inicio, fim } = limitesDoMes(mes)
+  const pend = pendencias(v)
+
+  async function executar(rotulo: string, fn: () => Promise<void>) {
+    setOcupado(rotulo)
+    try { await fn() } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro', { style: { whiteSpace: 'pre-line' } })
+    } finally { setOcupado(''); onMudou() }
+  }
+
+  // Garante a vigência de um mês (cria com faixa-placeholder) e devolve o id.
+  async function garantirVigencia(m: string): Promise<number> {
+    const r = await fetch(`/api/farol/metas-vigencias?vinculo_id=${v.vinculo_id}`, { headers })
+    if (!r.ok) throw new Error('Erro ao listar vigências')
+    const lista = (await r.json()) as Array<{ id: number; data_inicio: string; status: string }>
+    const achada = lista.find(x => x.data_inicio.slice(0, 10) === `${m}-01`)
+    if (achada) {
+      if (achada.status === 'fechada') throw new Error(`A vigência de ${m} está fechada`)
+      return achada.id
+    }
+    const lim = limitesDoMes(m)
+    const c = await fetch('/api/farol/metas-vigencias', {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vinculo_id: v.vinculo_id, data_inicio: lim.inicio, data_fim: lim.fim, faixas: [{ faixa: 1, valor_meta: 100 }] }),
+    })
+    if (!c.ok) throw new Error(`Criar vigência de ${m}: ${await c.text()}`)
+    return (await c.json()).id as number
+  }
+
+  const enviarSkus = (file: File) => executar('skus', async () => {
+    const csv = await parseSegmentoFocoGruposXlsx(file)
+    const meses = MESES_TRI(mes)
+    let n = 0
+    for (const m of meses) {
+      const vig = await garantirVigencia(m)
+      const d = await enviarCSV(`/api/farol/metas-grupos-produtos-importar-csv?vinculo_id=${v.vinculo_id}&vigencia_id=${vig}`, csv, 'grupos.csv', headers)
+      n = Number(d.produtos_importados ?? 0)
+    }
+    toast.success(`${n} produtos de grupo importados nos ${meses.length} meses do trimestre`)
+  })
+
+  const enviarObjetivos = (file: File) => executar('objetivos', async () => {
+    const { porMes } = await parseSegmentoFocoObjetivosXlsx(file)
+    const ano = mes.slice(0, 4)
+    const feitos: string[] = []
+    for (const [mesNum, csv] of Object.entries(porMes)) {
+      const m = `${ano}-${String(mesNum).padStart(2, '0')}`
+      const vig = await garantirVigencia(m)
+      await enviarCSV(`/api/farol/metas-grupos-objetivos-importar-csv?vinculo_id=${v.vinculo_id}&vigencia_id=${vig}`, csv, 'objetivos.csv', headers)
+      feitos.push(m)
+    }
+    toast.success(`Objetivos importados: ${feitos.join(', ')}`)
+  })
+
+  return (
+    <div className="border rounded-xl bg-white">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b">
+        <div className="flex items-center gap-2">
+          <h2 className="font-semibold">Segmento Foco (positivação de grupos)</h2>
+          {pend.length === 0
+            ? <Badge className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1" />Pronto</Badge>
+            : <Badge variant="secondary"><CircleDashed className="w-3 h-3 mr-1" />Falta {pend.length}</Badge>}
+        </div>
+        <Link className="text-xs underline text-violet-700" to="/farol/segmento-foco">Abrir painel</Link>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        <div className="text-xs font-semibold uppercase text-slate-500">Mês {inicio.split('-').reverse().join('/')} a {fim.split('-').reverse().join('/')} · trimestre {MESES_TRI(mes).map(m => m.slice(5)).join('-')}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input ref={skuRef} type="file" accept=".xlsx,.xls" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) enviarSkus(f) }} />
+          <Button variant="outline" size="sm" disabled={ocupado !== ''} onClick={() => skuRef.current?.click()}>
+            <FileUp className="w-4 h-4 mr-1" />{ocupado === 'skus' ? 'Importando...' : 'Enviar SKUs válidos (.xlsx)'}
+          </Button>
+          <input ref={objRef} type="file" accept=".xlsx,.xls" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) enviarObjetivos(f) }} />
+          <Button variant="outline" size="sm" disabled={ocupado !== ''} onClick={() => objRef.current?.click()}>
+            <FileUp className="w-4 h-4 mr-1" />{ocupado === 'objetivos' ? 'Importando...' : 'Enviar objetivos (aba PAINEL FORMULA)'}
+          </Button>
+        </div>
+        <ul className="text-xs text-slate-600 space-y-0.5">
+          <li className="flex items-center gap-2">
+            {v.vigencia_id != null ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <CircleDashed className="w-3.5 h-3.5 text-amber-600" />}
+            Vigência do mês: {v.vigencia_id != null ? (v.status === 'aberta' ? 'aberta' : 'fechada') : 'ainda não criada (é criada junto com a primeira carga)'}
+          </li>
+          <li className="flex items-center gap-2">
+            {v.grupos_produtos ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <CircleDashed className="w-3.5 h-3.5 text-amber-600" />}
+            Produtos de grupo: {(v.grupos_produtos ?? 0).toLocaleString('pt-BR')}
+          </li>
+          <li className="flex items-center gap-2">
+            {v.grupos_objetivos ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <CircleDashed className="w-3.5 h-3.5 text-amber-600" />}
+            Objetivos (UF × grupo) do mês: {(v.grupos_objetivos ?? 0).toLocaleString('pt-BR')}
+          </li>
+        </ul>
+        <p className="text-xs text-muted-foreground">O painel calcula ao vivo a partir das vendas: não há reprocessar nem fechar. O trimestre soma os 3 meses automaticamente.</p>
+      </div>
     </div>
   )
 }

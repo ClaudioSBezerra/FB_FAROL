@@ -653,6 +653,11 @@ func main() {
 	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-carga-status", withSP(handlers.MetasCargaStatusHandler, "gestor_geral"))
+	// Segmento Foco (Reckitt, 19/10/2026) — positivação de grupos de produtos.
+	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSP(handlers.SegmentoFocoGruposImportarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSP(handlers.SegmentoFocoObjetivosImportarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/segmento-foco", gz(withSP(handlers.SegmentoFocoPainelHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSP(handlers.SegmentoFocoDetalheHandler, "somente_leitura")))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.
 	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))

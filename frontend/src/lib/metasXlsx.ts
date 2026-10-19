@@ -195,3 +195,93 @@ export async function parsePPAsXlsx(file: File): Promise<string> {
   void semCodigo
   return out.join('\r\n')
 }
+
+// ─── Segmento Foco (Reckitt): grupos de produtos e objetivos por UF ───────────
+
+// Lista de SKUs válidos ("SKUs Validos segmento foco.xlsx"): abas COD MATRIZ
+// (caixa) e COD PA (unidade), colunas EAN, COD JC, PRODUTO, EMBALAGEM,
+// CATEGORIA (= grupo). Um mesmo cod_prod vale uma vez só.
+export async function parseSegmentoFocoGruposXlsx(file: File): Promise<string> {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: false, cellDates: false })
+  const out = ['grupo;cod_prod;produto;ean;embalagem']
+  const vistos = new Set<string>()
+  let abasLidas = 0
+  for (const nome of wb.SheetNames) {
+    const linhas = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, raw: true, defval: '' })
+    if (linhas.length < 2) continue
+    const header = linhas[0].map(normalizaHeaderXlsx)
+    const iCod = acharColuna(header, ['COD JC', 'COD_JC', 'CODPROD'])
+    const iGrupo = acharColuna(header, ['CATEGORIA', 'GRUPO'])
+    if (iCod === -1 || iGrupo === -1) continue
+    const iProd = acharColuna(header, ['PRODUTO', 'DESCRICAO'])
+    const iEan = acharColuna(header, ['EAN'])
+    const iEmb = acharColuna(header, ['EMBALAGEM'])
+    abasLidas++
+    for (let r = 1; r < linhas.length; r++) {
+      const row = linhas[r]
+      const cod = String(row[iCod] ?? '').trim().replace(/\.0+$/, '')
+      const grupo = String(row[iGrupo] ?? '').replace(/\s+/g, ' ').trim()
+      if (!cod || cod === '0' || !grupo || vistos.has(cod)) continue
+      vistos.add(cod)
+      const v = (i: number) => (i === -1 ? '' : csvEscape(String(row[i] ?? '').trim()))
+      out.push([csvEscape(grupo), cod, v(iProd), v(iEan), v(iEmb)].join(';'))
+    }
+  }
+  if (abasLidas === 0) throw new Error('Nenhuma aba com as colunas "COD JC" e "CATEGORIA" — é o arquivo de SKUs válidos do Segmento Foco?')
+  if (out.length === 1) throw new Error('Nenhum produto com grupo e código preenchidos')
+  return out.join('\r\n')
+}
+
+// A planilha chama o grupo de "Limpeza Pesada" de VLP no painel.
+const ALIAS_GRUPO: Record<string, string> = { 'VEJA VLP': 'VEJA LIMPEZA PESADA' }
+
+const MESES_ABREV = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+
+export interface ObjetivosSegmentoFoco {
+  // mês (1-12) → CSV "uf;grupo;objetivo"
+  porMes: Record<number, string>
+}
+
+// Objetivos: aba "PAINEL FORMULA" — um bloco por UF (rótulo GO, MS, TO, PA...),
+// com os meses do trimestre lado a lado (JUL/AGO/SET, cada um com OBJETIVO,
+// REALIZADO, GAP) e uma linha "POSITIVAÇÃO - <grupo>" por grupo. Só as 3
+// primeiras colunas de mês entram (a planilha tem um bloco extra à direita).
+export async function parseSegmentoFocoObjetivosXlsx(file: File): Promise<ObjetivosSegmentoFoco> {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: false, cellDates: false })
+  const nome = wb.SheetNames.find(n => normalizaHeaderXlsx(n).includes('PAINEL'))
+  if (!nome) throw new Error('Arquivo sem a aba "PAINEL FORMULA"')
+  const linhas = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, raw: true, defval: '' })
+
+  const porMes: Record<number, string[]> = {}
+  let uf = ''
+  let colunasMes: Array<{ col: number; mes: number }> = []
+  for (const row of linhas) {
+    const cel = (i: number) => String(row[i] ?? '').replace(/\s+/g, ' ').trim()
+    // rótulo de UF: texto curto sozinho na coluna E (índice 4)
+    const c4 = cel(4)
+    if (c4 && /^[A-Z]{2}$/.test(c4) && !row.slice(5).some(x => x !== '') && !row.slice(0, 4).some(x => x !== '')) {
+      uf = c4; colunasMes = []; continue
+    }
+    // cabeçalho de meses: JUL/AGO/SET em colunas ≤ 9
+    const meses = row.map((x, col) => ({ col, mes: MESES_ABREV.indexOf(String(x).trim().toUpperCase().slice(0, 3)) }))
+      .filter(m => m.mes >= 0 && m.col <= 9 && String(row[m.col]).trim().length <= 4)
+    if (meses.length >= 2 && !cel(0).toUpperCase().startsWith('POSITIVA')) { colunasMes = meses; continue }
+    const kpi = cel(0).toUpperCase()
+    if (!uf || colunasMes.length === 0 || !kpi.startsWith('POSITIVA')) continue
+    let grupo = kpi.replace(/^POSITIVA[ÇC][ÃA]O\s*[-–]\s*/, '').trim()
+    grupo = ALIAS_GRUPO[grupo] ?? grupo
+    for (const { col, mes } of colunasMes) {
+      const v = row[col]
+      const n = typeof v === 'number' ? v : Number(String(v).replace(',', '.'))
+      if (!Number.isFinite(n)) continue
+      ;(porMes[mes + 1] ??= []).push(`${uf};${grupo};${Math.round(n * 10000) / 10000}`)
+    }
+  }
+  const meses = Object.keys(porMes)
+  if (meses.length === 0) throw new Error('Nenhum objetivo encontrado — esperado blocos por UF com linhas "POSITIVAÇÃO - <grupo>"')
+  const out: Record<number, string> = {}
+  for (const m of meses) out[Number(m)] = ['uf;grupo;objetivo', ...porMes[Number(m)]].join('\r\n')
+  return { porMes: out }
+}

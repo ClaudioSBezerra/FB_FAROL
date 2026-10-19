@@ -60,6 +60,7 @@ func listarVinculosAtivosComVigenciaAberta(db *sql.DB, empresaID string) ([]vinc
 		JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 		JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 		WHERE v.empresa_id = $1 AND v.status = 'aberta' AND mv.ativo = true
+		  AND tm.formula_codigo <> 'positivacao_grupos' -- Segmento Foco calcula ao vivo (farol_segmento_foco.go)
 	`, empresaID)
 	if err != nil {
 		return nil, err
