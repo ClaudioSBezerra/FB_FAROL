@@ -4,12 +4,15 @@ import { useAuth } from '@/contexts/AuthContext'
 
 // Indústrias que o usuário enxerga nos painéis e nas cargas (users.industrias_permitidas).
 // Nenhuma marcada = TODAS (padrão). Usado na edição de usuário (19/10/2026).
-export default function IndustriasVisiveis({ valor, onChange }: { valor: number[]; onChange: (v: number[]) => void }) {
+// empresaId = empresa do USUÁRIO editado (não a do admin logado): indústria é cadastro por empresa.
+export default function IndustriasVisiveis({ valor, onChange, empresaId }: { valor: number[]; onChange: (v: number[]) => void; empresaId?: string }) {
   const { token } = useAuth()
   const { data: industrias = [] } = useQuery<Array<{ id: number; nome: string }>>({
-    queryKey: ['farol-industrias-lista'],
+    queryKey: ['farol-industrias-lista', empresaId ?? ''],
     queryFn: async () => {
-      const r = await fetch('/api/farol/industrias', { headers: { Authorization: `Bearer ${token}` } })
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+      if (empresaId) headers['X-Company-ID'] = empresaId
+      const r = await fetch('/api/farol/industrias', { headers })
       if (!r.ok) return []
       return r.json()
     },

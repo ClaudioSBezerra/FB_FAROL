@@ -31,6 +31,7 @@ interface SpUsuario {
   created_at: string
   modulos: string[]
   industrias_permitidas?: number[] | null
+  company_id?: string
 }
 
 const MODULOS = [
@@ -447,7 +448,7 @@ export default function FarolUsuarios() {
                   ))}
                 </div>
                 <div className="mt-3">
-                  <IndustriasVisiveis valor={editIndustrias} onChange={setEditIndustrias} />
+                  <IndustriasVisiveis valor={editIndustrias} onChange={setEditIndustrias} empresaId={selected?.company_id} />
                 </div>
               </div>
             </div>

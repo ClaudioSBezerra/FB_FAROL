@@ -286,9 +286,26 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 		// Lista vazia = "todas as indústrias" (volta a NULL).
 		var industriasArg interface{}
 		if req.IndustriasPermitidas != nil && len(*req.IndustriasPermitidas) > 0 {
+			// Indústria é cadastro POR EMPRESA (a MASTER e a JC têm cada uma o seu
+			// "UNILEVER HC", com ids diferentes): os ids precisam ser da empresa do
+			// usuário editado, senão a lista não bate com nenhum vínculo e ele fica
+			// sem dado (achado 19/10/2026, Gilson e Carlos).
+			empresaAlvo := strings.TrimSpace(req.CompanyID)
+			if empresaAlvo == "" {
+				db.QueryRow(`SELECT COALESCE(preferred_company_id::text,'') FROM user_environments WHERE user_id = $1 LIMIT 1`, targetID).Scan(&empresaAlvo)
+			}
+			if empresaAlvo == "" {
+				empresaAlvo = spCtx.EmpresaID
+			}
 			ids := make([]int64, len(*req.IndustriasPermitidas))
 			for i, v := range *req.IndustriasPermitidas {
 				ids[i] = int64(v)
+			}
+			var validas int
+			db.QueryRow(`SELECT count(*) FROM farol.industrias WHERE empresa_id = $1::uuid AND id = ANY($2)`, empresaAlvo, pq.Array(ids)).Scan(&validas)
+			if validas != len(*req.IndustriasPermitidas) {
+				http.Error(w, "Indústria(s) de outra empresa: as indústrias precisam ser da empresa do usuário", http.StatusBadRequest)
+				return
 			}
 			industriasArg = pq.Array(ids)
 		}
