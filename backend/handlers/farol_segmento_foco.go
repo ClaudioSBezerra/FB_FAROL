@@ -325,6 +325,31 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 	return out, nil
 }
 
+// segUFsOcultas — UFs fora do painel (flag "UF liberada?" do vínculo).
+func segUFsOcultas(db *sql.DB, empresaID string, vinculoID int) map[string]bool {
+	out := map[string]bool{}
+	var arr pq.StringArray
+	if err := db.QueryRow(`SELECT ufs_ocultas FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).Scan(&arr); err == nil {
+		for _, u := range arr {
+			out[strings.ToUpper(strings.TrimSpace(u))] = true
+		}
+	}
+	return out
+}
+
+func segSemUFsOcultas(in []*segCliente, ocultas map[string]bool) []*segCliente {
+	if len(ocultas) == 0 {
+		return in
+	}
+	out := make([]*segCliente, 0, len(in))
+	for _, c := range in {
+		if !ocultas[strings.ToUpper(c.UF)] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // ─── Objetivos ────────────────────────────────────────────────────────────────
 
 func segObjetivos(db *sql.DB, empresaID string, vigenciaID int) (map[string]map[string]float64, error) {
@@ -375,6 +400,7 @@ type SegPainelResp struct {
 	Fluxo       string   `json:"fluxo"`
 	Grupos      []string `json:"grupos"`
 	UFs         []SegUF  `json:"ufs"`
+	UFsOcultas  []string `json:"ufs_ocultas"`
 }
 
 // segMesesDoTrimestre devolve os 3 meses (AAAA-MM) do trimestre civil de `mes`.
@@ -416,7 +442,8 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 	if err != nil {
 		return nil, err
 	}
-	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}}
+	ocultas := segUFsOcultas(db, empresaID, vinculoID)
+	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas)}
 	t0, _ := time.Parse("2006-01", meses[0])
 	resp.Trimestre = fmt.Sprintf("%dº tri/%d", (int(t0.Month())-1)/3+1, t0.Year())
 
@@ -440,6 +467,10 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 		}
 		dados[i].obj = obj
 		for uf := range obj {
+			if ocultas[strings.ToUpper(uf)] {
+				delete(obj, uf)
+				continue
+			}
 			ufs[uf] = true
 		}
 		d, err := segCalcular(db, empresaID, vinculoID, vig, fluxo)
@@ -447,7 +478,7 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 			// vigência sem lista de produtos: mostra só o objetivo, sem realizado.
 			dados[i].real = map[string]map[string]int{}
 		} else {
-			dados[i].real = segContarPorUF(f.filtrar(d.Clientes))
+			dados[i].real = segContarPorUF(segSemUFsOcultas(f.filtrar(d.Clientes), ocultas))
 			for _, g := range d.Grupos {
 				if !ordemVista[g] {
 					ordemVista[g] = true
@@ -586,6 +617,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 	case f.CodGGV != "":
 		nivel = "crv"
 	}
+	ocultasDet := segUFsOcultas(db, empresaID, vinculoID)
 	resp := &SegDetalheResp{Nivel: nivel, Grupos: []string{}}
 
 	var ordem []string
@@ -612,7 +644,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 				ordem = append(ordem, g)
 			}
 		}
-		for _, c := range f.filtrar(d.Clientes) {
+		for _, c := range segSemUFsOcultas(f.filtrar(d.Clientes), ocultasDet) {
 			if nivel == "produto" {
 				resp.Linhas = nil
 				for _, p := range c.Produtos {
@@ -769,5 +801,52 @@ func SegmentoFocoDetalheHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SegmentoFocoUFHandler — PUT /api/farol/segmento-foco/uf?vinculo_id=
+// body {"uf":"PA","liberada":true|false}. Liberar tira a UF da lista de ocultas.
+func SegmentoFocoUFHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil || r.Method != http.MethodPut {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !hasSpRole(spCtx.SpRole, "gestor_geral") {
+			http.Error(w, `{"error":"Forbidden: gestor_geral necessário"}`, http.StatusForbidden)
+			return
+		}
+		vinculoID, err := strconv.Atoi(r.URL.Query().Get("vinculo_id"))
+		var body struct {
+			UF       string `json:"uf"`
+			Liberada bool   `json:"liberada"`
+		}
+		if err != nil || json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.UF) == "" {
+			http.Error(w, `{"error":"vinculo_id e {uf, liberada} são obrigatórios"}`, http.StatusBadRequest)
+			return
+		}
+		uf := strings.ToUpper(strings.TrimSpace(body.UF))
+		q := `UPDATE farol.metas_vinculos SET ufs_ocultas = array_remove(ufs_ocultas, $3) WHERE id = $1 AND empresa_id = $2`
+		if !body.Liberada {
+			q = `UPDATE farol.metas_vinculos SET ufs_ocultas = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(array_append(ufs_ocultas, $3)) x)) WHERE id = $1 AND empresa_id = $2`
+		}
+		if _, err := db.Exec(q, vinculoID, spCtx.EmpresaID, uf); err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "metas_vinculos", strconv.Itoa(vinculoID), "segmento_foco_uf", map[string]any{"uf": uf, "liberada": body.Liberada})
+		segInvalidarCache()
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "uf": uf, "liberada": body.Liberada})
 	}
 }

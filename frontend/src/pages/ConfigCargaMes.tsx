@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -40,6 +41,7 @@ interface CargaVinculo {
   clientes_numerica: number
   grupos_produtos?: number
   grupos_objetivos?: number
+  ufs_ocultas?: string[]
   calculado_em: string | null
 }
 
@@ -547,6 +549,21 @@ function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
             Objetivos (UF × grupo) do mês: {(v.grupos_objetivos ?? 0).toLocaleString('pt-BR')}
           </li>
         </ul>
+        <label className="flex items-center gap-2 text-sm pt-1 cursor-pointer w-fit">
+          <Checkbox
+            checked={!(v.ufs_ocultas ?? []).includes('PA')}
+            disabled={ocupado !== ''}
+            onCheckedChange={c => executar('uf', async () => {
+              const r = await fetch(`/api/farol/segmento-foco/uf?vinculo_id=${v.vinculo_id}`, {
+                method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uf: 'PA', liberada: c === true }),
+              })
+              if (!r.ok) throw new Error(await r.text())
+              toast.success(c === true ? 'Pará liberado no painel' : 'Pará oculto no painel')
+            })}
+          />
+          <span>Pará (PA) liberado no painel <span className="text-xs text-muted-foreground">— deixe desmarcado até a base do Pará subir</span></span>
+        </label>
         <p className="text-xs text-muted-foreground">O painel calcula ao vivo a partir das vendas: não há reprocessar nem fechar. O trimestre soma os 3 meses automaticamente.</p>
       </div>
     </div>

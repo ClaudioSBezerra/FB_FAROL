@@ -11,6 +11,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/lib/pq"
 	"net/http"
 	"time"
 )
@@ -37,6 +38,7 @@ type CargaVinculo struct {
 	ClientesNum     int          `json:"clientes_numerica"`
 	GruposProdutos  int          `json:"grupos_produtos"`
 	GruposObjetivos int          `json:"grupos_objetivos"`
+	UFsOcultas      []string     `json:"ufs_ocultas"`
 	CalculadoEm     *string      `json:"calculado_em"`
 }
 
@@ -72,6 +74,7 @@ func MetasCargaStatusHandler(db *sql.DB) http.HandlerFunc {
 			       COALESCE((SELECT count(*) FROM farol.metas_clientes_numericas n WHERE n.vigencia_id = v.id), 0),
 			       COALESCE((SELECT count(*) FROM farol.metas_grupos_produtos gp WHERE gp.vigencia_id = v.id), 0),
 			       COALESCE((SELECT count(*) FROM farol.metas_grupos_objetivos go2 WHERE go2.vigencia_id = v.id), 0),
+			       mv.ufs_ocultas,
 			       (SELECT max(s.calculado_em)::text FROM farol.metas_realizados_snapshot s WHERE s.vigencia_id = v.id)
 			FROM farol.metas_vinculos mv
 			JOIN farol.industrias i ON i.id = mv.industria_id
@@ -91,7 +94,7 @@ func MetasCargaStatusHandler(db *sql.DB) http.HandlerFunc {
 			var vid sql.NullInt64
 			var di, df, st, calc sql.NullString
 			if err := rows.Scan(&c.VinculoID, &c.IndustriaID, &c.IndustriaNome, &c.TipoMetricaNome, &c.FormulaCodigo,
-				&vid, &di, &df, &st, &c.Clientes, &c.Itens, &c.PPAs, &c.ClientesNum, &c.GruposProdutos, &c.GruposObjetivos, &calc); err != nil {
+				&vid, &di, &df, &st, &c.Clientes, &c.Itens, &c.PPAs, &c.ClientesNum, &c.GruposProdutos, &c.GruposObjetivos, pq.Array(&c.UFsOcultas), &calc); err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return
 			}

@@ -657,6 +657,7 @@ func main() {
 	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSP(handlers.SegmentoFocoGruposImportarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSP(handlers.SegmentoFocoObjetivosImportarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco", gz(withSP(handlers.SegmentoFocoPainelHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/segmento-foco/uf", withSP(handlers.SegmentoFocoUFHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSP(handlers.SegmentoFocoDetalheHandler, "somente_leitura")))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.

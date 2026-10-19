@@ -120,3 +120,49 @@ func TestSegMesesDoTrimestre(t *testing.T) {
 		t.Errorf("tri de outubro = %v, quero out-dez", m)
 	}
 }
+
+// UF oculta (flag "UF liberada?"): o Pará fica fora do painel — realizado e
+// objetivo — até ser liberado.
+func TestSegmentoFoco_UFOcultaPA(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	forn := "TSEGPA"
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TSEGPA Reckitt", "positivacao_grupos", "cliente", nil, nil)
+	t.Cleanup(cleanup)
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1,$2,$3)`, empresaID, industriaID, forn)
+	db.Exec(`UPDATE farol.metas_vinculos SET tipos_venda_validos = '{1,5,9}' WHERE id = $1`, vinculoID)
+	vig := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_fornec = $2`, empresaID, forn)
+		db.Exec(`DELETE FROM farol.industria_fornecedores WHERE industria_id = $1`, industriaID)
+	})
+	db.Exec(`INSERT INTO farol.metas_grupos_produtos (empresa_id, vinculo_id, vigencia_id, grupo, cod_prod, produto) VALUES ($1,$2,$3,'GRUPO UM','TSEGPAA','A')`, empresaID, vinculoID, vig)
+	db.Exec(`INSERT INTO farol.metas_grupos_objetivos (empresa_id, vinculo_id, vigencia_id, uf, grupo, objetivo) VALUES ($1,$2,$3,'PA','GRUPO UM',10),($1,$2,$3,'GO','GRUPO UM',10)`, empresaID, vinculoID, vig)
+	for _, c := range [][]string{{"TPA1", "PA"}, {"TGO1", "GO"}} {
+		if _, err := db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
+			VALUES ($1,'2026-07-05',$2,$3,$3,$4,'TSEGPAA','UN/0001/UN',1,3,0,'1','3','91','4132')`, empresaID, forn, c[0], c[1]); err != nil {
+			t.Fatalf("venda: %v", err)
+		}
+	}
+	segInvalidarCache()
+	ufsDoPainel := func() map[string]bool {
+		p, err := segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
+		if err != nil {
+			t.Fatalf("segPainel: %v", err)
+		}
+		out := map[string]bool{}
+		for _, u := range p.UFs {
+			out[u.UF] = true
+		}
+		return out
+	}
+	if u := ufsDoPainel(); u["PA"] || !u["GO"] {
+		t.Errorf("PA oculta por padrão: UFs=%v, quero só GO", u)
+	}
+	db.Exec(`UPDATE farol.metas_vinculos SET ufs_ocultas = '{}' WHERE id = $1`, vinculoID)
+	segInvalidarCache()
+	if u := ufsDoPainel(); !u["PA"] || !u["GO"] {
+		t.Errorf("PA liberada: UFs=%v, quero PA e GO", u)
+	}
+}
