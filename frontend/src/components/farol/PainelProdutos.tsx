@@ -73,7 +73,7 @@ export default function PainelProdutos({
 
   return (
     <Sheet open={aberto} onOpenChange={o => { if (!o) { onFechar(); setFiltro('todos'); setBusca('') } }}>
-      <SheetContent side="right" className="w-full sm:max-w-3xl p-0 flex flex-col gap-0 [&>button]:hidden">
+      <SheetContent side="right" className="top-16 bottom-0 h-auto w-full sm:max-w-[1100px] p-0 flex flex-col gap-0 rounded-tl-2xl border-t [&>button]:hidden">
         {/* Aba "Produtos" + fechar */}
         <div className="flex items-end justify-between border-b bg-slate-50 px-4 pt-3">
           <div className="inline-flex items-center gap-2 bg-white border border-b-0 rounded-t-lg px-4 py-2 text-sm font-semibold text-slate-800 -mb-px">
@@ -127,7 +127,7 @@ export default function PainelProdutos({
                 </div>
               </div>
 
-              <TabelaComColunas id={comValor ? 'produtos-itens' : 'produtos-ppas'} className="border rounded-lg overflow-auto max-h-[60vh] bg-white">
+              <TabelaComColunas id={comValor ? 'produtos-itens' : 'produtos-ppas'} className="border rounded-lg overflow-auto max-h-[calc(100vh-27rem)] min-h-40 bg-white">
                 <table className="w-full text-sm table-fixed">
                   <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_#e2e8f0]">
                     <tr className="text-xs font-semibold text-slate-500">
