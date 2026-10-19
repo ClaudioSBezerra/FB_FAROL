@@ -84,8 +84,8 @@ const rotuloMes = (mes: string) => {
 }
 
 export default function ConfigCargaMes() {
-  const { token, user, spRole, industriasPermitidas } = useAuth()
-  const ehAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+  const { token, adminPleno, industriasPermitidas } = useAuth()
+  const ehAdmin = adminPleno
   const qc = useQueryClient()
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
   const [mes, setMes] = useState(mesAtual)

@@ -125,21 +125,20 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
 // Espera /api/sp/me responder antes de decidir (senão o 1º render, com os
 // módulos padrão, mandaria um usuário só-Unilever embora da própria tela).
 function PainelRoute({ modulo, children }: { modulo: string; children: React.ReactNode }) {
-  const { isAuthenticated, loading, user, spRole, hasModulo, acessoCarregado } = useAuth()
+  const { isAuthenticated, loading, hasModulo, acessoCarregado, adminPleno } = useAuth()
   const location = useLocation()
   if (loading) return null
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
   if (!acessoCarregado) return null
-  const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
-  if (!isAdmin && !hasModulo(modulo)) return <Navigate to="/" replace />
+  if (!adminPleno && !hasModulo(modulo)) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
 // Landing — "/" leva pro primeiro painel que o usuário pode ver.
 function Landing() {
-  const { loading, user, spRole, hasModulo, acessoCarregado, isAuthenticated } = useAuth()
+  const { loading, hasModulo, acessoCarregado, isAuthenticated, adminPleno } = useAuth()
   if (loading || (isAuthenticated && !acessoCarregado)) return null
-  const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+  const isAdmin = adminPleno
   const ordem: Array<[string, string]> = [
     ['vendas', '/farol/v2'], ['unilever', '/farol/metas-industria'], ['reckitt', '/farol/segmento-foco'], ['relatorios', '/farol/relatorios'],
   ]
@@ -201,7 +200,7 @@ function ManagerRoute({ children }: { children: React.ReactNode }) {
 // ── Barra de abas por módulo ─────────────────────────────────────────────────
 function ModuleTabs() {
   const location  = useLocation()
-  const { user, spRole, group, canManageUsers }  = useAuth()
+  const { user, spRole, group, canManageUsers, adminPleno }  = useAuth()
   const isMaster  = group === 'MASTER'
   const isAdmin   = isMaster || spRole === 'admin_fbtax'
   const moduleId  = getActiveModule(location.pathname)
@@ -209,9 +208,9 @@ function ModuleTabs() {
 
   // Gerente Geral (gestor_geral) sem ser admin: abre Configurações só pra
   // fazer a carga dos painéis — vê apenas as abas marcadas gestorOk.
-  const soGestor = !isAdmin && spRole === 'gestor_geral'
+  const soGestor = !isMaster && !adminPleno && (spRole === 'gestor_geral' || spRole === 'admin_fbtax')
   if (!moduleCfg || moduleCfg.tabs.length === 0) return null
-  if (moduleCfg.adminOnly && !isAdmin && !(moduleCfg.gestorOk && soGestor)) return null
+  if (moduleCfg.adminOnly && (!isAdmin || soGestor) && !(moduleCfg.gestorOk && soGestor)) return null
 
   const visibleTabs = moduleCfg.tabs.filter(t =>
     (!soGestor       || t.gestorOk) &&

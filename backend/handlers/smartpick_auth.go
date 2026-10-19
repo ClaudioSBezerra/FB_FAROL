@@ -41,6 +41,10 @@ type FarolContext struct {
 	Modulos       []string // painéis habilitados: vendas | unilever | reckitt | relatorios | bi
 	// IndustriasPermitidas — ids de farol.industrias que o usuário vê; nil = todas.
 	IndustriasPermitidas []int
+	// AdminPleno — admin da plataforma (role=admin) ou admin_fbtax com persona 'admin':
+	// ignora a lista de painéis/indústrias. Um admin_fbtax de outra persona (ex.: o
+	// analista de negócios) obedece os parâmetros do usuário (19/10/2026).
+	AdminPleno bool
 }
 
 // GetSpContext extrai o FarolContext do request. Retorna nil se não encontrado.
@@ -244,6 +248,7 @@ func FarolAuthMiddleware(db *sql.DB, next http.HandlerFunc, requiredSpRole strin
 			TipoPersona:   tipoPersona.String,
 			CodReferencia: codReferencia.String,
 			Modulos:       modulosSlice,
+			AdminPleno:    userRole == "admin" || (spRole == "admin_fbtax" && tipoPersona.String == "admin"),
 		}
 		if industriasPerm != nil {
 			spCtx.IndustriasPermitidas = make([]int, len(industriasPerm))

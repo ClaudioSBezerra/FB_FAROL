@@ -84,7 +84,7 @@ const mainItems: RailItem[] = [
 export function AppRail() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, company, logout, token, spRole, tipoPersona, hasModulo, companyId } = useAuth()
+  const { user, company, logout, token, spRole, tipoPersona, hasModulo, companyId, adminPleno } = useAuth()
   // isAdmin: plataforma admin OU admin_fbtax Farol → acessa configurações e manutenção
   const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
 
@@ -115,9 +115,9 @@ export function AppRail() {
     return () => { if (blobURL) URL.revokeObjectURL(blobURL) }
   }, [token, companyId, logoTick])
   const isTI = tipoPersona === 'ti'
-  const canImport = isAdmin || isTI
+  const canImport = adminPleno || isTI
   // Gerente Geral (ex.: Carlos, administrativo do Painel Unilever) abre Configurações só pra carga.
-  const soGestorGeral = !isAdmin && spRole === 'gestor_geral'
+  const soGestorGeral = !adminPleno && (spRole === 'gestor_geral' || spRole === 'admin_fbtax')
 
   // TI vê Importação e Relatórios; outros seguem a lógica normal
   const visibleItems = isTI
@@ -125,8 +125,8 @@ export function AppRail() {
     : mainItems.filter(it =>
         (!it.adminOnly || isAdmin) &&
         (!it.adminOrTI || canImport) &&
-        (!it.fbtaxOnly || spRole === 'admin_fbtax') &&
-        (!it.requiredModulo || isAdmin || hasModulo(it.requiredModulo))
+        (!it.fbtaxOnly || (spRole === 'admin_fbtax' && adminPleno)) &&
+        (!it.requiredModulo || adminPleno || hasModulo(it.requiredModulo))
       )
   const active = getActiveModule(location.pathname)
 

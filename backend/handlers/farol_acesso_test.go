@@ -3,7 +3,7 @@ package handlers
 import "testing"
 
 func TestAcesso_PaineisEIndustrias(t *testing.T) {
-	admin := &FarolContext{SpRole: "admin_fbtax"}
+	admin := &FarolContext{SpRole: "admin_fbtax", AdminPleno: true}
 	if !admin.PodeVerPainel("reckitt") || !admin.PodeVerIndustria(99) || len(admin.FormulasBloqueadas()) != 0 {
 		t.Errorf("admin_fbtax deve ver tudo: bloqueadas=%v", admin.FormulasBloqueadas())
 	}
@@ -21,6 +21,11 @@ func TestAcesso_PaineisEIndustrias(t *testing.T) {
 	}
 	if !bloqueadas[formulaSegmentoFoco] || bloqueadas["cobertura_rede"] {
 		t.Errorf("GGV: Segmento Foco bloqueado e Unilever liberado — bloqueadas=%v", bloqueadas)
+	}
+	// Analista com sp_role admin_fbtax (Carlos, 19/10/2026): obedece os parâmetros.
+	analista := &FarolContext{SpRole: "admin_fbtax", TipoPersona: "analista_negocios", Modulos: []string{"unilever", "relatorios"}, IndustriasPermitidas: []int{6, 7}}
+	if analista.PodeVerPainel("vendas") || analista.PodeVerPainel("reckitt") || analista.PodeVerIndustria(43) || !analista.PodeVerIndustria(6) {
+		t.Errorf("analista admin_fbtax deve obedecer: vendas=%v reckitt=%v ind43=%v ind6=%v", analista.PodeVerPainel("vendas"), analista.PodeVerPainel("reckitt"), analista.PodeVerIndustria(43), analista.PodeVerIndustria(6))
 	}
 	// Padrão (Carlos): painéis padrão, todas as indústrias, sem Reckitt.
 	carlos := &FarolContext{SpRole: "gestor_geral", Modulos: []string{"vendas", "unilever", "relatorios"}}

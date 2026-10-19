@@ -20,6 +20,8 @@ interface AuthContextType {
   spRole: string | null;
   tipoPersona: string | null;
   modulos: string[];
+  /** admin da plataforma ou admin_fbtax com persona 'admin': ignora painéis/indústrias do usuário */
+  adminPleno: boolean;
   /** ids de indústrias que o usuário vê; null = todas */
   industriasPermitidas: number[] | null;
   /** true depois que /api/sp/me respondeu (painéis/indústrias já conhecidos) */
@@ -299,6 +301,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const hasModulo = (mod: string) => modulos.includes(mod);
+  // Um admin_fbtax de outra persona (ex.: analista de negócios) obedece os parâmetros do usuário.
+  const adminPleno = user?.role === 'admin' || (spRole === 'admin_fbtax' && tipoPersona === 'admin');
 
   return (
     <AuthContext.Provider value={{
@@ -312,6 +316,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       spRole,
       tipoPersona,
       modulos,
+      adminPleno,
       industriasPermitidas,
       acessoCarregado,
       canManageUsers,

@@ -4,7 +4,7 @@ package handlers
 //
 // Painéis = users.modulos: vendas | unilever | reckitt | relatorios | bi.
 // Indústrias = users.industrias_permitidas (NULL = todas). admin_fbtax
-// (inclui o admin de plataforma) vê tudo. O Painel Reckitt nunca é liberado
+// (admin de plataforma ou admin_fbtax com persona 'admin' = AdminPleno) vê tudo. O Painel Reckitt nunca é liberado
 // por padrão: só com o módulo 'reckitt' explícito.
 
 import (
@@ -33,7 +33,7 @@ func (c *FarolContext) temModulo(m string) bool {
 
 // PodeVerPainel — o usuário tem o painel/módulo `m` (admin_fbtax sempre tem).
 func (c *FarolContext) PodeVerPainel(m string) bool {
-	return c != nil && (c.IsAdminFbtax() || c.temModulo(m))
+	return c != nil && (c.AdminPleno || c.temModulo(m))
 }
 
 // PodeVerIndustria — lista nula = todas as indústrias.
@@ -41,7 +41,7 @@ func (c *FarolContext) PodeVerIndustria(id int) bool {
 	if c == nil {
 		return false
 	}
-	if c.IsAdminFbtax() || c.IndustriasPermitidas == nil {
+	if c.AdminPleno || c.IndustriasPermitidas == nil {
 		return true
 	}
 	for _, x := range c.IndustriasPermitidas {
@@ -69,7 +69,7 @@ func (c *FarolContext) FormulasBloqueadas() []string {
 
 // industriasFiltro — argumento SQL ($n::int[]) com as indústrias permitidas; vazio = todas.
 func (c *FarolContext) industriasFiltro() any {
-	if c.IsAdminFbtax() || c.IndustriasPermitidas == nil {
+	if c.AdminPleno || c.IndustriasPermitidas == nil {
 		return nil
 	}
 	ids := make([]int64, len(c.IndustriasPermitidas))
@@ -96,7 +96,7 @@ func ExigeModulo(modulo string, next http.HandlerFunc) http.HandlerFunc {
 func ExigeVinculoPermitido(db *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		spCtx := GetSpContext(r)
-		if spCtx == nil || spCtx.IsAdminFbtax() {
+		if spCtx == nil || spCtx.AdminPleno {
 			next(w, r)
 			return
 		}
