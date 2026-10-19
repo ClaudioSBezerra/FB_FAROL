@@ -392,14 +392,14 @@ export default function FarolSegmentoFoco() {
           {medidor && (
             <TabelaComColunas id="segfoco-medidor" className="overflow-auto max-h-[70vh]">
               <p className="px-4 pt-2 text-xs text-muted-foreground">
-                Clientes positivados por grupo. “Geral” = clientes que positivaram qualquer grupo{periodo === 'trimestre' ? ' (somado mês a mês)' : ''}.
+                Clientes positivados por grupo. “Clientes c/ algum grupo” = clientes que positivaram pelo menos um grupo (não é a “Positivação Geral” da planilha do fornecedor){periodo === 'trimestre' ? ' (somado mês a mês)' : ''}.
               </p>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white shadow-[0_1px_0_0_#e2e8f0]">
                   <tr>
                     <th className={`${cabecalhoCel} text-left`}>RCA</th>
                     <th className={cabecalhoCel}>Equipe</th>
-                    <th className={cabecalhoCel}>Geral</th>
+                    <th className={cabecalhoCel}>Clientes c/ algum grupo</th>
                     {(medidor.grupos ?? []).map(g => <th key={g} className={cabecalhoCel}>{g}</th>)}
                   </tr>
                 </thead>
