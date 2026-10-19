@@ -1,3 +1,5 @@
+import TabelaComColunas from '@/components/farol/TabelaComColunas'
+import PainelProdutos from '@/components/farol/PainelProdutos'
 import AjudaJanelaApuracao, { rotuloJanelaBimestre, textoObjetivoClasses } from '@/components/farol/AjudaJanelaApuracao'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -8,7 +10,6 @@ import { Badge } from '@/components/ui/badge'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
@@ -28,6 +29,7 @@ interface MetaVinculo {
   industria_nome: string
   tipo_metrica_nome: string
   formula_codigo: string
+  parametros_valores?: Record<string, unknown>
 }
 
 interface Vigencia {
@@ -1042,13 +1044,13 @@ export default function FarolPainelMetas() {
         // próprio Cliente já é o nível final).
         nome: ehNumerica
           ? `${r.cod_cl ? `${r.cod_cl} — ` : ''}${r.fantasia || r.razao || r.cod_princ}`
-          : `${r.fantasia || r.razao || r.cod_princ} (${r.qt_lojas} loja${r.qt_lojas === 1 ? '' : 's'})`,
+          : `${r.fantasia || r.razao || r.cod_princ} (${fmt(r.qt_lojas)} loja${r.qt_lojas === 1 ? '' : 's'})`,
         sub: r.cod_rca ? `${r.cod_rca} — ${r.nome_rca}` : r.nome_rca,
         valor: r.valor, marcador: r.atingiu as boolean | undefined, drill: ehNumerica ? undefined : () => setRedeAberta(r),
       }))
     : (painel?.realizado.grupos ?? []).map(g => ({
         nome: g.codigo && g.nome ? `${g.codigo} — ${g.nome}` : (g.nome || g.codigo),
-        sub: `${g.qtd_atingindo}/${g.qtd_redes} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
+        sub: `${g.qtd_atingindo}/${fmt(g.qtd_redes)} ${ehNumerica ? 'clientes' : 'redes'} atingindo`,
         valor: g.qtd_atingindo,
         // marcador no nível de grupo (pedido do Claudio 30/09/2026): check
         // só quando TODO mundo do grupo bateu (mesmo critério binário do
@@ -1333,7 +1335,7 @@ export default function FarolPainelMetas() {
                     </Tooltip>
                   </div>
                   <div className="text-2xl font-semibold">
-                    {totComb.cob} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length} redes</span>{' '}
+                    {fmt(totComb.cob)} <span className="text-sm text-muted-foreground">/ {fmt(redesVisiveis.length)} redes</span>{' '}
                     {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.cob >= redesVisiveis.length} />}
                   </div>
                   {redesVisiveis.length > 0 && (
@@ -1355,7 +1357,7 @@ export default function FarolPainelMetas() {
                     </Tooltip>
                   </div>
                   <div className="text-2xl font-semibold">
-                    {totComb.sort} <span className="text-sm text-muted-foreground">/ {redesVisiveis.length}</span>{' '}
+                    {fmt(totComb.sort)} <span className="text-sm text-muted-foreground">/ {fmt(redesVisiveis.length)}</span>{' '}
                     {redesVisiveis.length > 0 && <StatusBadge size="w-7 h-7" atingiu={totComb.sort >= redesVisiveis.length} />}
                   </div>
                   {redesVisiveis.length > 0 && (
@@ -1372,7 +1374,7 @@ export default function FarolPainelMetas() {
             </TooltipProvider>
 
             {(abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') && (
-              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <TabelaComColunas id="ggv-rede" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 {/* Clicar num GGV, GGV×CRV ou GGV×CRV×RCA vai abrindo o
                     nível de baixo (igual à visão mobile: toca pra descer na
                     hierarquia) — pedido do Heverton 29/09/2026: Rede,
@@ -1387,11 +1389,11 @@ export default function FarolPainelMetas() {
                       <TableHead>GGV</TableHead>
                       {abaCombinado !== 'ggv' && <TableHead>CRV</TableHead>}
                       {abaCombinado === 'ggv_crv_rca' && <TableHead>RCA</TableHead>}
-                      <TableHead className="text-right">Qt Redes</TableHead>
-                      <TableHead className="text-right">Redes atingindo Cobertura</TableHead>
-                      <TableHead className="text-right">Redes abaixo da Cobertura</TableHead>
-                      <TableHead className="text-right">Redes atingindo Sortimento</TableHead>
-                      <TableHead className="text-right">Redes abaixo do Sortimento</TableHead>
+                      <TableHead className="text-center">Qt Redes</TableHead>
+                      <TableHead className="text-center">Redes atingindo Cobertura</TableHead>
+                      <TableHead className="text-center">Redes abaixo da Cobertura</TableHead>
+                      <TableHead className="text-center">Redes atingindo Sortimento</TableHead>
+                      <TableHead className="text-center">Redes abaixo do Sortimento</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1419,20 +1421,20 @@ export default function FarolPainelMetas() {
                         <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
                         {abaCombinado !== 'ggv' && <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>}
                         {abaCombinado === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
-                        <TableCell className="text-right">{g.qtd_redes}</TableCell>
-                        <TableCell className="text-right text-green-700">{g.qtd_atingindo_cobertura}</TableCell>
-                        <TableCell className="text-right text-red-700">{g.qtd_falta_cobertura}</TableCell>
-                        <TableCell className="text-right text-green-700">{g.qtd_atingindo_sortimento}</TableCell>
-                        <TableCell className="text-right text-red-700">{g.qtd_falta_sortimento}</TableCell>
+                        <TableCell className="text-center">{fmt(g.qtd_redes)}</TableCell>
+                        <TableCell className="text-center text-green-700">{fmt(g.qtd_atingindo_cobertura)}</TableCell>
+                        <TableCell className="text-center text-red-700">{fmt(g.qtd_falta_cobertura)}</TableCell>
+                        <TableCell className="text-center text-green-700">{fmt(g.qtd_atingindo_sortimento)}</TableCell>
+                        <TableCell className="text-center text-red-700">{fmt(g.qtd_falta_sortimento)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-              </div>
+              </TabelaComColunas>
             )}
 
             {abaCombinado === 'rede' && (
-              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <TabelaComColunas id="rede" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa Rede pra ver os Clientes dela.</p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1440,19 +1442,19 @@ export default function FarolPainelMetas() {
                       <TableHead>Cód. Princ.</TableHead>
                       <TableHead>Razão</TableHead>
                       <TableHead>Fantasia</TableHead>
-                      <TableHead className="text-right">Qt Lojas</TableHead>
+                      <TableHead className="text-center">Qt Lojas</TableHead>
                       <TableHead>UF</TableHead>
                       <TableHead>GGV</TableHead>
                       <TableHead>CRV</TableHead>
                       <TableHead>RCA</TableHead>
-                      <TableHead className="text-right">Obj. Cobertura</TableHead>
-                      <TableHead className="text-right">Valor Venda</TableHead>
-                      <TableHead className="text-right">Venda Média</TableHead>
-                      <TableHead className="text-right">Falta (R$)</TableHead>
+                      <TableHead className="text-center">Obj. Cobertura</TableHead>
+                      <TableHead className="text-center">Valor Venda</TableHead>
+                      <TableHead className="text-center">Venda Média</TableHead>
+                      <TableHead className="text-center">Falta (R$)</TableHead>
                       <TableHead className="text-center">Status</TableHead>
-                      <TableHead className="text-right">Obj. EANs</TableHead>
-                      <TableHead className="text-right">Qt Méd. EANs</TableHead>
-                      <TableHead className="text-right">Falta EANs</TableHead>
+                      <TableHead className="text-center">Obj. EANs</TableHead>
+                      <TableHead className="text-center">Qt Méd. EANs</TableHead>
+                      <TableHead className="text-center">Falta EANs</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1481,19 +1483,19 @@ export default function FarolPainelMetas() {
                               {r.fantasia}
                             </span>
                           </TableCell>
-                          <TableCell className="text-right">{r.qt_lojas}</TableCell>
+                          <TableCell className="text-center">{fmt(r.qt_lojas)}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{r.uf || '—'}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_ggv} — {r.nome_ggv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_crv} — {r.nome_crv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.cod_rca} — {r.nome_rca}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(r.cobertura_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(r.cobertura_valor_total)}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(r.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className="text-center">{fmtBRL(r.cobertura_objetivo)}</TableCell>
+                          <TableCell className="text-center">{fmtBRL(r.cobertura_valor_total)}</TableCell>
+                          <TableCell className="text-center">{fmtBRL(r.cobertura_valor)}</TableCell>
+                          <TableCell className={`text-center ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={r.cobertura_atingiu} /></TableCell>
-                          <TableCell className="text-right">{fmt(r.sortimento_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmt(r.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
+                          <TableCell className="text-center">{fmt(r.sortimento_objetivo)}</TableCell>
+                          <TableCell className="text-center">{fmt(r.sortimento_valor)}</TableCell>
+                          <TableCell className={`text-center whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
@@ -1504,23 +1506,23 @@ export default function FarolPainelMetas() {
                         <TableCell />
                         <TableCell />
                         <TableCell /><TableCell /><TableCell />
-                        <TableCell className="text-right">{fmtBRL(totComb.objCob)}</TableCell>
-                        <TableCell className="text-right">{fmtBRL(totComb.valorVenda)}</TableCell>
+                        <TableCell className="text-center">{fmtBRL(totComb.objCob)}</TableCell>
+                        <TableCell className="text-center">{fmtBRL(totComb.valorVenda)}</TableCell>
                         <TableCell />
                         <TableCell />
                         <TableCell />
-                        <TableCell className="text-right">{fmt(totComb.objEan)}</TableCell>
-                        <TableCell className="text-right">{fmt(totComb.qtMedEan)}</TableCell>
-                        <TableCell className={`text-right ${totComb.faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(totComb.faltaEan)}</TableCell>
+                        <TableCell className="text-center">{fmt(totComb.objEan)}</TableCell>
+                        <TableCell className="text-center">{fmt(totComb.qtMedEan)}</TableCell>
+                        <TableCell className={`text-center ${totComb.faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(totComb.faltaEan)}</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
-              </div>
+              </TabelaComColunas>
             )}
 
             {abaCombinado === 'cliente' && (
-              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+              <TabelaComColunas id="cliente" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                 <p className="text-xs text-muted-foreground px-3 pt-2">Clique numa loja pra ver os itens que venderam e não venderam nela.</p>
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-white">
@@ -1534,13 +1536,13 @@ export default function FarolPainelMetas() {
                       <TableHead>GGV</TableHead>
                       <TableHead>CRV</TableHead>
                       <TableHead>RCA</TableHead>
-                      <TableHead className="text-right">Obj. Cobertura</TableHead>
-                      <TableHead className="text-right">Valor Venda</TableHead>
-                      <TableHead className="text-right">Falta (R$)</TableHead>
+                      <TableHead className="text-center">Obj. Cobertura</TableHead>
+                      <TableHead className="text-center">Valor Venda</TableHead>
+                      <TableHead className="text-center">Falta (R$)</TableHead>
                       <TableHead className="text-center">Status</TableHead>
-                      <TableHead className="text-right">Obj. EANs</TableHead>
-                      <TableHead className="text-right">Qt EANs</TableHead>
-                      <TableHead className="text-right">Falta EANs</TableHead>
+                      <TableHead className="text-center">Obj. EANs</TableHead>
+                      <TableHead className="text-center">Qt EANs</TableHead>
+                      <TableHead className="text-center">Falta EANs</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1570,19 +1572,19 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_ggv} — {c.nome_ggv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_crv} — {c.nome_crv}</TableCell>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{c.cod_rca} — {c.nome_rca}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(c.cobertura_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmtBRL(c.cobertura_valor)}</TableCell>
-                          <TableCell className={`text-right ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
+                          <TableCell className="text-center">{fmtBRL(c.cobertura_objetivo)}</TableCell>
+                          <TableCell className="text-center">{fmtBRL(c.cobertura_valor)}</TableCell>
+                          <TableCell className={`text-center ${faltaCob >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtBRL(faltaCob)}</TableCell>
                           <TableCell className="text-center" onClick={e => e.stopPropagation()}><StatusBadge atingiu={faltaCob >= 0} /></TableCell>
-                          <TableCell className="text-right">{fmt(c.sortimento_objetivo)}</TableCell>
-                          <TableCell className="text-right">{fmt(c.sortimento_valor)}</TableCell>
-                          <TableCell className={`text-right whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
+                          <TableCell className="text-center">{fmt(c.sortimento_objetivo)}</TableCell>
+                          <TableCell className="text-center">{fmt(c.sortimento_valor)}</TableCell>
+                          <TableCell className={`text-center whitespace-nowrap ${faltaEan >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(faltaEan)} <StatusBadge size="w-4 h-4" atingiu={faltaEan >= 0} labelSim="No objetivo" labelNao="Abaixo do objetivo" /></TableCell>
                         </TableRow>
                       )
                     })}
                   </TableBody>
                 </Table>
-              </div>
+              </TabelaComColunas>
             )}
           </>
         ) : null
@@ -1655,7 +1657,7 @@ export default function FarolPainelMetas() {
                         <Target className="w-4 h-4" /> Cobertura Numérica — clientes cobertos
                       </div>
                       <div className="text-2xl font-semibold flex items-center gap-2">
-                        {fmt(r.cobertos)} <span className="text-sm text-muted-foreground">/ {r.totalClientes} clientes</span>
+                        {fmt(r.cobertos)} <span className="text-sm text-muted-foreground">/ {fmt(r.totalClientes)} clientes</span>
                         {r.totalClientes > 0 && <StatusBadge size="w-6 h-6" atingiu={r.cobertos >= r.totalClientes} />}
                       </div>
                       {r.classes.length > 0 && (
@@ -1677,7 +1679,7 @@ export default function FarolPainelMetas() {
                       </div>
                       {r.objetivoSortimento > 0 && (
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          {r.bateramSortimento} de {r.totalAplicaveis} clientes bateram os {fmt(r.objetivoSortimento)} PPAs
+                          {fmt(r.bateramSortimento)} de {fmt(r.totalAplicaveis)} clientes bateram os {fmt(r.objetivoSortimento)} PPAs
                         </div>
                       )}
                     </div>
@@ -1690,7 +1692,7 @@ export default function FarolPainelMetas() {
               const nivel: NivelRollup = abaNumerica
               const linhas = resumirRollup(clientesCombinadoNum, nivel)
               return (
-                <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <TabelaComColunas id="ggv-num" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <p className="text-xs text-muted-foreground px-3 pt-2">
                     {nivel === 'ggv' ? 'Clique num GGV pra ver as CRVs dele.' : 'Clique num grupo pra ver os Clientes dele.'}
                   </p>
@@ -1700,13 +1702,13 @@ export default function FarolPainelMetas() {
                         <TableHead>GGV</TableHead>
                         {nivel !== 'ggv' && <TableHead>CRV</TableHead>}
                         {nivel === 'ggv_crv_rca' && <TableHead>RCA</TableHead>}
-                        <TableHead className="text-right">Qt Clientes</TableHead>
-                        <TableHead className="text-right">Clientes atingindo Cobertura</TableHead>
-                        <TableHead className="text-right">Clientes abaixo da Cobertura</TableHead>
-                        <TableHead className="text-right">Objetivo Sortimento (PPAs)</TableHead>
-                        <TableHead className="text-right">Média de PPAs</TableHead>
-                        <TableHead className="text-right">Clientes atingindo Sortimento</TableHead>
-                        <TableHead className="text-right">Clientes abaixo do Sortimento</TableHead>
+                        <TableHead className="text-center">Qt Clientes</TableHead>
+                        <TableHead className="text-center">Clientes atingindo Cobertura</TableHead>
+                        <TableHead className="text-center">Clientes abaixo da Cobertura</TableHead>
+                        <TableHead className="text-center">Objetivo Sortimento (PPAs)</TableHead>
+                        <TableHead className="text-center">Média de PPAs</TableHead>
+                        <TableHead className="text-center">Clientes atingindo Sortimento</TableHead>
+                        <TableHead className="text-center">Clientes abaixo do Sortimento</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1729,32 +1731,32 @@ export default function FarolPainelMetas() {
                           <TableCell className="text-sm whitespace-nowrap">{g.cod_ggv} — {g.nome_ggv}</TableCell>
                           {nivel !== 'ggv' && <TableCell className="text-sm whitespace-nowrap">{g.cod_crv} — {g.nome_crv}</TableCell>}
                           {nivel === 'ggv_crv_rca' && <TableCell className="text-sm whitespace-nowrap">{g.cod_rca} — {g.nome_rca}</TableCell>}
-                          <TableCell className="text-right">{g.qt}</TableCell>
-                          <TableCell className="text-right text-green-700">{g.cobertas}</TableCell>
-                          <TableCell className="text-right text-red-700">{g.falta}</TableCell>
-                          <TableCell className="text-right text-muted-foreground">{g.objetivoSortimento > 0 ? fmt(g.objetivoSortimento) : '—'}</TableCell>
-                          <TableCell className="text-right">{fmt(g.realSortimento)}</TableCell>
-                          <TableCell className="text-right text-green-700">{g.atingindoSortimento}</TableCell>
-                          <TableCell className="text-right text-red-700">{g.faltaSortimento}</TableCell>
+                          <TableCell className="text-center">{fmt(g.qt)}</TableCell>
+                          <TableCell className="text-center text-green-700">{fmt(g.cobertas)}</TableCell>
+                          <TableCell className="text-center text-red-700">{fmt(g.falta)}</TableCell>
+                          <TableCell className="text-center text-muted-foreground">{g.objetivoSortimento > 0 ? fmt(g.objetivoSortimento) : '—'}</TableCell>
+                          <TableCell className="text-center">{fmt(g.realSortimento)}</TableCell>
+                          <TableCell className="text-center text-green-700">{fmt(g.atingindoSortimento)}</TableCell>
+                          <TableCell className="text-center text-red-700">{fmt(g.faltaSortimento)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </div>
+                </TabelaComColunas>
               )
             })()}
 
             {abaNumerica === 'cliente' && (
-            <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+            <TabelaComColunas id="cliente-num" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-white">
                   <TableRow>
                     <TableHead>Cliente</TableHead>
                     <TableHead>Classif.</TableHead>
                     <TableHead>GGV / CRV / RCA</TableHead>
-                    <TableHead className="text-right">Cobertura (R$)</TableHead>
+                    <TableHead className="text-center">Cobertura (R$)</TableHead>
                     <TableHead className="w-10 text-center">Status</TableHead>
-                    <TableHead className="text-right">Sortimento (PPAs)</TableHead>
+                    <TableHead className="text-center">Sortimento (PPAs)</TableHead>
                     <TableHead className="w-10 text-center">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1786,9 +1788,9 @@ export default function FarolPainelMetas() {
                         <div className="text-muted-foreground/70">{c.cod_crv} — {c.nome_crv}</div>
                         <div className="text-muted-foreground/70">{c.cod_rca} — {c.nome_rca}</div>
                       </TableCell>
-                      <TableCell className="text-right">{fmtBRL(c.cobertura_valor)} <span className="text-muted-foreground">/ {fmtBRL(c.cobertura_objetivo)}</span></TableCell>
+                      <TableCell className="text-center">{fmtBRL(c.cobertura_valor)} <span className="text-muted-foreground">/ {fmtBRL(c.cobertura_objetivo)}</span></TableCell>
                       <TableCell className="text-center"><StatusBadge atingiu={c.cobertura_atingiu} /></TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-center">
                         {c.sortimento_aplicavel ? <>{fmt(c.sortimento_valor)} <span className="text-muted-foreground">/ {fmt(c.sortimento_objetivo)}</span></> : <span className="text-muted-foreground">N/A</span>}
                       </TableCell>
                       <TableCell className="text-center">{c.sortimento_aplicavel && <StatusBadge atingiu={c.sortimento_atingiu} />}</TableCell>
@@ -1796,7 +1798,7 @@ export default function FarolPainelMetas() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
+            </TabelaComColunas>
             )}
           </>
         ) : null
@@ -1856,26 +1858,26 @@ export default function FarolPainelMetas() {
               </div>
 
               {painel.recortes && (
-                <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+                <TabelaComColunas id="recortes" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-white">
                       <TableRow>
                         <TableHead>Recorte</TableHead>
-                        <TableHead className="text-right">Realizado no período</TableHead>
+                        <TableHead className="text-center">Realizado no período</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {RECORTES.map(r => (
                         <TableRow key={r.value}>
                           <TableCell className="font-medium">{r.label}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-center">
                             {painel.recortes?.[r.value]?.realizado_total !== undefined ? fmt(painel.recortes[r.value].realizado_total) : '—'}
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </div>
+                </TabelaComColunas>
               )}
             </div>
           ) : (
@@ -1932,7 +1934,7 @@ export default function FarolPainelMetas() {
             </div>
           )}
 
-          <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
+          <TabelaComColunas id="individual" className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-white">
                 <TableRow>
@@ -1942,7 +1944,7 @@ export default function FarolPainelMetas() {
                       já visível no breadcrumb acima (pedido do Claudio
                       30/09/2026: "não precisa ficar repetindo o RCA"). */}
                   {mostrarColunaRCA && <TableHead>{redeAberta ? 'Documento' : nivel === 'rede' ? 'RCA' : 'Composição'}</TableHead>}
-                  <TableHead className="text-right">{nivel === 'rede' || redeAberta ? 'Realizado' : ehNumerica ? 'Clientes atingindo' : 'Redes atingindo'}</TableHead>
+                  <TableHead className="text-center">{nivel === 'rede' || redeAberta ? 'Realizado' : ehNumerica ? 'Clientes atingindo' : 'Redes atingindo'}</TableHead>
                   {/* Status agora aparece no nível de grupo também (pedido
                       do Claudio 30/09/2026: "não está trazendo o tickado e
                       X pra essa visão nem as subsequentes") — só some no
@@ -1960,7 +1962,7 @@ export default function FarolPainelMetas() {
                   <TableRow key={i} className={l.drill ? 'cursor-pointer hover:bg-muted/50' : undefined} onClick={l.drill}>
                     <TableCell className="font-medium">{l.nome}</TableCell>
                     {mostrarColunaRCA && <TableCell className="text-sm text-muted-foreground">{l.sub}</TableCell>}
-                    <TableCell className="text-right">{(nivel === 'rede' || redeAberta) && ehCobertura ? fmtBRL(l.valor) : fmt(l.valor)}</TableCell>
+                    <TableCell className="text-center">{(nivel === 'rede' || redeAberta) && ehCobertura ? fmtBRL(l.valor) : fmt(l.valor)}</TableCell>
                     {!redeAberta && (
                       <TableCell className="text-center">
                         <StatusBadge atingiu={!!l.marcador} />
@@ -1971,145 +1973,65 @@ export default function FarolPainelMetas() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </TabelaComColunas>
           </>
           )}
         </>
       ) : null}
 
-      {/* Drill-down de PPAs de um cliente da Numérica — Correção 2 do
-          Heverton 08/10/2026 (equivalente ao de itens da Ponderada). */}
-      <Dialog open={!!ppasAlvo} onOpenChange={open => { if (!open) setPpasAlvo(null) }}>
-        <DialogContent className="w-[95vw] max-w-3xl max-h-[85vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
-          <DialogHeader>
-            <DialogTitle>PPAs — {ppasAlvo?.titulo}</DialogTitle>
-          </DialogHeader>
-          {ppasAlvo && !ppasAlvo.aplicavel ? (
-            <p className="text-sm text-muted-foreground py-6 text-center normal-case">
-              O Sortimento Numérica não se aplica à classe {ppasAlvo.classe || 'deste cliente'} — só Num. A e Num. B têm PPAs a atingir.
-            </p>
-          ) : isLoadingPpas ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
-          ) : ppasErro ? (
-            <p className="text-sm text-red-700 py-6 text-center normal-case">{(ppasErro as Error).message}</p>
-          ) : (
-            <>
-              {ppasAlvo && (
-                <div className="flex flex-wrap gap-4 text-sm border rounded-lg p-3 bg-muted/30">
-                  <span><strong>{ppasLista.filter(p => p.vendeu).length}</strong> comprados</span>
-                  <span><strong>{ppasLista.length}</strong> PPAs no catálogo</span>
-                  <span>Objetivo: <strong>{fmt(ppasAlvo.objetivo)}</strong> PPAs distintos</span>
-                </div>
-              )}
-              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-white">
-                    <TableRow>
-                      <TableHead>Cód. Produto</TableHead>
-                      <TableHead>PPA</TableHead>
-                      <TableHead className="text-center">Status</TableHead>
-                      <TableHead className="text-right">Qtd</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ppasLista.length === 0 && (
-                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">Sem PPAs pra esta vigência</TableCell></TableRow>
-                    )}
-                    {[...ppasLista].sort((x, y) => x.ppa.localeCompare(y.ppa, 'pt-BR')).map(p => (
-                      <TableRow key={p.ppa}>
-                        <TableCell className="font-mono text-xs whitespace-nowrap">{p.cod_prods && p.cod_prods.length > 0 ? p.cod_prods.join(', ') : '—'}</TableCell>
-                        <TableCell className="text-sm">
-                          {p.ppa}
-                          {p.abaixo_minimo && <span className="ml-2 text-xs text-amber-700 normal-case">abaixo do mínimo de 3 un.</span>}
-                        </TableCell>
-                        <TableCell className="text-center"><StatusBadge atingiu={p.vendeu} labelSim="Comprou" labelNao="Não comprou" /></TableCell>
-                        <TableCell className="text-right">{p.qtd ? fmt(p.qtd) : '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Drill-down de itens (Sortimento): clicar numa Rede (aba "Resumo
-          Redes") mostra os itens de TODAS as lojas dela; clicar numa loja
-          (aba "Resumo Rede×Cliente") mostra só os itens daquele CNPJ.
-          Vendeu/não vendeu, Qtd e Valor — pedido do Claudio 10/09/2026. */}
-      <Dialog open={!!itensAlvo} onOpenChange={open => { if (!open) setItensAlvo(null) }}>
-        <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] overflow-y-auto uppercase text-sm [&_*]:uppercase">
-          <DialogHeader>
-            <DialogTitle>Itens — {itensAlvo?.titulo}</DialogTitle>
-          </DialogHeader>
-          {isLoadingItens ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">Carregando...</p>
-          ) : (
-            <>
-              {/* Resumo vendeu/objetivo — pedido do Claudio 14/09/2026: a
-                  lista de itens sozinha não deixava claro se bateu a meta;
-                  objetivo vem da mesma faixa de meta que já aparece na
-                  coluna "Obj. EANs" da tabela (Sortimento mede EANs
-                  distintos vendidos, não linhas desta lista). */}
-              {itensAlvo && (
-                <div className="flex flex-wrap gap-4 text-sm border rounded-lg p-3 bg-muted/30">
-                  <span><strong>{itensLista.filter(it => it.vendeu).length}</strong> vendidos</span>
-                  <span><strong>{itensLista.length}</strong> itens no catálogo</span>
-                  <span>Objetivo: <strong>{fmt(itensAlvo.objetivo)}</strong> EANs distintos</span>
-                </div>
-              )}
-              {/* Nota só aparece vindo de uma linha de rollup (GGVxCRV/
-                  GGVxCRVxRCA) — achado 18/09/2026: sem isso, "22 vendidos ≥
-                  Objetivo 19" ao lado de "0 de 9 redes atingindo" parece
-                  contradição. Não é: esta lista é a UNIÃO de todas as lojas
-                  do grupo; quem decide atingiu/não atingiu é a MÉDIA de
-                  EANs distintos por loja, calculada Rede a Rede (regra do
-                  PRD, não bug) — uma Rede inteira pode passar dessa soma e
-                  ainda assim nenhuma Rede dela, individualmente, bater a
-                  média sozinha. */}
-              {itensAlvo && itensAlvo.qtdRedes !== undefined && (
-                <div className="flex items-start gap-2 text-xs border border-amber-300 bg-amber-50 rounded-lg p-3 -mt-2">
-                  <span className="text-amber-800">
-                    Esta lista soma <strong>todas as lojas das {itensAlvo.qtdRedes} Redes</strong> deste
-                    grupo (união — vendeu se qualquer loja vendeu). O objetivo de {fmt(itensAlvo.objetivo)} EANs
-                    vale <strong>por Rede</strong> (média de EANs distintos entre as lojas dela, não a soma do
-                    grupo) — por isso <strong>{itensAlvo.qtdAtingindo ?? 0} de {itensAlvo.qtdRedes}</strong> Redes
-                    deste grupo atingem sozinhas, mesmo esta lista somando mais que o objetivo.
-                  </span>
-                </div>
-              )}
-              <div className="border rounded-lg overflow-auto max-h-[70vh] [&>div]:overflow-visible [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-white [&_th]:shadow-[0_1px_0_0_#e2e8f0] [&_th]:uppercase [&_th]:tracking-wide [&_th]:font-semibold [&_th]:text-xs">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-white">
-                  <TableRow>
-                    <TableHead>Cód. Produto</TableHead>
-                    <TableHead>Produto</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
-                    <TableHead className="text-right">Qtd</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {itensLista.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Sem itens pra esta vigência</TableCell></TableRow>
-                  )}
-                  {[...itensLista].sort((x, y) => (x.nome || x.ean).localeCompare(y.nome || y.ean, 'pt-BR')).map((it, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">{it.cod_prods && it.cod_prods.length > 0 ? it.cod_prods.join(', ') : '—'}</TableCell>
-                      <TableCell className="text-sm">{it.nome || '—'}</TableCell>
-                      <TableCell className="text-center"><StatusBadge atingiu={it.vendeu} labelSim="Vendeu" labelNao="Não vendeu" /></TableCell>
-                      <TableCell className="text-right">{it.qtd ? fmt(it.qtd) : '—'}</TableCell>
-                      <TableCell className="text-right">{it.valor ? fmtBRL(it.valor) : '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Último nível: painel lateral "Produtos" (Heverton 19/10/2026) — PPAs
+          do cliente na Numérica, itens (EANs) na Ponderada. */}
+      <PainelProdutos
+        aberto={!!ppasAlvo}
+        onFechar={() => setPpasAlvo(null)}
+        titulo={ppasAlvo?.titulo ?? ''}
+        rotuloItem="PPA"
+        rotuloSim="Comprou"
+        rotuloNao="Não comprou"
+        objetivo={ppasAlvo?.objetivo ?? 0}
+        rotuloObjetivo="PPAs distintos"
+        carregando={isLoadingPpas}
+        erro={ppasErro ? (ppasErro as Error).message : undefined}
+        mensagem={ppasAlvo && !ppasAlvo.aplicavel
+          ? `O Sortimento Numérica não se aplica à classe ${ppasAlvo.classe || 'deste cliente'} — só Num. A e Num. B têm PPAs a atingir.`
+          : undefined}
+        linhas={ppasLista.map(p => ({
+          chave: p.ppa,
+          codigos: p.cod_prods && p.cod_prods.length > 0 ? p.cod_prods.join(', ') : '',
+          nome: p.ppa,
+          vendeu: p.vendeu,
+          qtd: p.qtd,
+          aviso: p.abaixo_minimo ? 'abaixo do mínimo de 3 un.' : undefined,
+        }))}
+      />
+      <PainelProdutos
+        aberto={!!itensAlvo}
+        onFechar={() => setItensAlvo(null)}
+        titulo={itensAlvo?.titulo ?? ''}
+        rotuloItem="Produto"
+        rotuloSim="Vendeu"
+        rotuloNao="Não vendeu"
+        objetivo={itensAlvo?.objetivo ?? 0}
+        rotuloObjetivo="EANs distintos"
+        comValor
+        carregando={isLoadingItens}
+        nota={itensAlvo && itensAlvo.qtdRedes !== undefined ? (
+          <>
+            Esta lista soma <strong>todas as lojas das {fmt(itensAlvo.qtdRedes)} Redes</strong> deste grupo (união — vendeu se
+            qualquer loja vendeu). O objetivo de {fmt(itensAlvo.objetivo)} EANs vale <strong>por Rede</strong> (média de EANs
+            distintos entre as lojas dela, não a soma do grupo) — por isso <strong>{fmt(itensAlvo.qtdAtingindo ?? 0)} de {fmt(itensAlvo.qtdRedes)}</strong> Redes
+            deste grupo atingem sozinhas, mesmo esta lista somando mais que o objetivo.
+          </>
+        ) : undefined}
+        linhas={itensLista.map((it, i) => ({
+          chave: `${it.ean}-${i}`,
+          codigos: it.cod_prods && it.cod_prods.length > 0 ? it.cod_prods.join(', ') : '',
+          nome: it.nome || it.ean,
+          vendeu: it.vendeu,
+          qtd: it.qtd,
+          valor: it.valor,
+        }))}
+      />
     </div>
   )
 }
