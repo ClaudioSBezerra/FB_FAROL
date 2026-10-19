@@ -116,6 +116,8 @@ export function AppRail() {
   }, [token, companyId, logoTick])
   const isTI = tipoPersona === 'ti'
   const canImport = isAdmin || isTI
+  // Gerente Geral (ex.: Carlos, administrativo do Painel Unilever) abre Configurações só pra carga.
+  const soGestorGeral = !isAdmin && spRole === 'gestor_geral'
 
   // TI vê Importação e Relatórios; outros seguem a lógica normal
   const visibleItems = isTI
@@ -220,11 +222,11 @@ export function AppRail() {
         </div>
 
         <div className="flex flex-col items-center gap-1 p-2 border-t shrink-0">
-          {isAdmin && (
+          {(isAdmin || soGestorGeral) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => navigate('/config/manutencao')}
+                onClick={() => navigate(soGestorGeral ? '/gestao/carga-mes' : '/config/manutencao')}
                 className={cn(
                   'flex items-center justify-center w-10 h-10 rounded-lg transition-colors',
                   active === 'config'

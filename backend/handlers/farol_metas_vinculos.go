@@ -145,10 +145,12 @@ func MetasVinculosHandler(db *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
+			// Segmento Foco (Reckitt) só aparece pra admin (19/10/2026).
 			rows, err := db.Query(metaVinculoSelectBase+`
 				WHERE mv.empresa_id = $1
+				  AND ($2 OR tm.formula_codigo <> 'positivacao_grupos')
 				ORDER BY i.nome ASC, tm.nome ASC
-			`, spCtx.EmpresaID)
+			`, spCtx.EmpresaID, hasSpRole(spCtx.SpRole, "admin_fbtax"))
 			if err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return

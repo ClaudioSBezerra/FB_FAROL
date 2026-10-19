@@ -81,7 +81,8 @@ func MetasCargaStatusHandler(db *sql.DB) http.HandlerFunc {
 			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 			LEFT JOIN farol.metas_vigencias v ON v.vinculo_id = mv.id AND v.empresa_id = mv.empresa_id AND v.data_inicio = $2::date
 			WHERE mv.empresa_id = $1 AND mv.ativo = true
-			ORDER BY i.nome, tm.formula_codigo, mv.id`, spCtx.EmpresaID, inicio)
+			  AND ($3 OR tm.formula_codigo <> 'positivacao_grupos') -- Segmento Foco só pra admin
+			ORDER BY i.nome, tm.formula_codigo, mv.id`, spCtx.EmpresaID, inicio, hasSpRole(spCtx.SpRole, "admin_fbtax"))
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
 			return

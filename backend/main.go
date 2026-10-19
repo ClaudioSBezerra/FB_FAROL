@@ -646,19 +646,22 @@ func main() {
 	http.HandleFunc("/api/farol/tipos-metrica/", withSP(handlers.TipoMetricaItemHandler, "gestor_geral"))
 
 	// Vínculo Indústria × Tipo de Métrica — Épico 2 Story 2.1.
-	http.HandleFunc("/api/farol/metas-vinculos", withSP(handlers.MetasVinculosHandler, "gestor_geral"))
+	// GET (lista de indústrias/períodos do painel) abre pra somente_leitura — GGV/Supervisor/RCA
+	// precisam dela pra montar o painel Unilever (19/10/2026, achado ao testar com um GGV: 403).
+	// Escrita segue gestor_geral, checada dentro do handler.
+	http.HandleFunc("/api/farol/metas-vinculos", withSP(handlers.MetasVinculosHandler, "somente_leitura"))
 	http.HandleFunc("/api/farol/metas-vinculos/", withSP(handlers.MetaVinculoItemHandler, "gestor_geral"))
 
 	// Vigências e Faixas de meta — Épico 2 Story 2.2.
-	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-vigencias", withSP(handlers.MetasVigenciasHandler, "somente_leitura"))
 	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-carga-status", withSP(handlers.MetasCargaStatusHandler, "gestor_geral"))
 	// Segmento Foco (Reckitt, 19/10/2026) — positivação de grupos de produtos.
-	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSP(handlers.SegmentoFocoGruposImportarHandler, "gestor_geral"))
-	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSP(handlers.SegmentoFocoObjetivosImportarHandler, "gestor_geral"))
-	http.HandleFunc("/api/farol/segmento-foco", gz(withSP(handlers.SegmentoFocoPainelHandler, "gestor_geral")))
-	http.HandleFunc("/api/farol/segmento-foco/uf", withSP(handlers.SegmentoFocoUFHandler, "gestor_geral"))
-	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSP(handlers.SegmentoFocoDetalheHandler, "gestor_geral")))
+	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSP(handlers.SegmentoFocoGruposImportarHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSP(handlers.SegmentoFocoObjetivosImportarHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/segmento-foco", gz(withSP(handlers.SegmentoFocoPainelHandler, "admin_fbtax")))
+	http.HandleFunc("/api/farol/segmento-foco/uf", withSP(handlers.SegmentoFocoUFHandler, "admin_fbtax"))
+	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSP(handlers.SegmentoFocoDetalheHandler, "admin_fbtax")))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.
 	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))

@@ -138,16 +138,22 @@ func MetasVigenciasHandler(db *sql.DB) http.HandlerFunc {
 			var err error
 			if vinculoIDStr != "" {
 				rows, err = db.Query(`
-					SELECT id, vinculo_id, data_inicio::text, data_fim::text, status, created_at
-					FROM farol.metas_vigencias WHERE empresa_id = $1 AND vinculo_id = $2
-					ORDER BY data_inicio DESC
-				`, spCtx.EmpresaID, vinculoIDStr)
+					SELECT v.id, v.vinculo_id, v.data_inicio::text, v.data_fim::text, v.status, v.created_at
+					FROM farol.metas_vigencias v
+					JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
+					JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
+					WHERE v.empresa_id = $1 AND v.vinculo_id = $2 AND ($3 OR tm.formula_codigo <> 'positivacao_grupos')
+					ORDER BY v.data_inicio DESC
+				`, spCtx.EmpresaID, vinculoIDStr, hasSpRole(spCtx.SpRole, "admin_fbtax"))
 			} else {
 				rows, err = db.Query(`
-					SELECT id, vinculo_id, data_inicio::text, data_fim::text, status, created_at
-					FROM farol.metas_vigencias WHERE empresa_id = $1
-					ORDER BY data_inicio DESC
-				`, spCtx.EmpresaID)
+					SELECT v.id, v.vinculo_id, v.data_inicio::text, v.data_fim::text, v.status, v.created_at
+					FROM farol.metas_vigencias v
+					JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
+					JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
+					WHERE v.empresa_id = $1 AND ($2 OR tm.formula_codigo <> 'positivacao_grupos')
+					ORDER BY v.data_inicio DESC
+				`, spCtx.EmpresaID, hasSpRole(spCtx.SpRole, "admin_fbtax"))
 			}
 			if err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)

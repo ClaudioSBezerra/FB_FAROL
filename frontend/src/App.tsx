@@ -192,10 +192,14 @@ function ModuleTabs() {
   const moduleId  = getActiveModule(location.pathname)
   const moduleCfg = modules[moduleId]
 
+  // Gerente Geral (gestor_geral) sem ser admin: abre Configurações só pra
+  // fazer a carga dos painéis — vê apenas as abas marcadas gestorOk.
+  const soGestor = !isAdmin && spRole === 'gestor_geral'
   if (!moduleCfg || moduleCfg.tabs.length === 0) return null
-  if (moduleCfg.adminOnly && !isAdmin) return null
+  if (moduleCfg.adminOnly && !isAdmin && !(moduleCfg.gestorOk && soGestor)) return null
 
   const visibleTabs = moduleCfg.tabs.filter(t =>
+    (!soGestor       || t.gestorOk) &&
     (!t.adminOnly    || isAdmin) &&
     (!t.masterOnly   || isMaster) &&
     (!t.managerOnly  || canManageUsers)

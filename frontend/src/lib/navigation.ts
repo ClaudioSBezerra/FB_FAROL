@@ -6,11 +6,13 @@ export interface ModuleTab {
   adminOnly?: boolean
   masterOnly?: boolean    // visível apenas para admin de plataforma (MASTER)
   managerOnly?: boolean   // visível para quem pode gerir usuários (TI, admin, admin_fbtax)
+  gestorOk?: boolean      // também visível pro Gerente Geral (gestor_geral) que não é admin — Carlos, 19/10/2026
 }
 
 export interface ModuleConfig {
   label: string
   adminOnly?: boolean
+  gestorOk?: boolean      // módulo adminOnly que o Gerente Geral também abre (só as abas gestorOk)
   dev?: boolean           // módulo em desenvolvimento — exibido no rail com badge
   tabs: ModuleTab[]
 }
@@ -80,6 +82,7 @@ export const modules: Record<string, ModuleConfig> = {
   config: {
     label: 'Configurações',
     adminOnly: true,
+    gestorOk: true,
     tabs: [
       { label: 'Ambiente',          path: '/config/ambiente',         masterOnly: true },
       { label: 'Usuários',          path: '/config/usuarios',         masterOnly: true },
@@ -91,8 +94,8 @@ export const modules: Record<string, ModuleConfig> = {
       { label: 'Obj. Manutenção',   path: '/objetivos/manutencao'     },
       { label: 'Indústrias',        path: '/gestao/industrias'        },
       { label: 'Tipos de Métrica',  path: '/gestao/tipos-metrica'     },
-      { label: 'Carga do mês', path: '/gestao/carga-mes' },
-      { label: 'Vínculos (avançado)', path: '/gestao/metas-vinculos' },
+      { label: 'Carga do mês', path: '/gestao/carga-mes', gestorOk: true },
+      { label: 'Vínculos (avançado)', path: '/gestao/metas-vinculos', gestorOk: true },
     ],
   },
 }
