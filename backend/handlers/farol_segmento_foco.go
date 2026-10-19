@@ -554,15 +554,26 @@ func grupoKeys(obj map[string]map[string]float64) []string {
 // segEscopo — filtro de hierarquia (login e drill). Campos vazios não filtram.
 type segEscopo struct {
 	UF, CodGGV, CodCRV, CodRCA, CodCli string
+	Nivel                              string // opcional: força o nível listado no detalhe (ex.: "rca" sem passar por GGV/CRV)
+}
+
+// ufEm — UF aceita lista separada por vírgula ("GO,MS").
+func ufEm(filtro, uf string) bool {
+	for _, x := range strings.Split(filtro, ",") {
+		if strings.EqualFold(strings.TrimSpace(x), uf) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f segEscopo) filtrar(in []*segCliente) []*segCliente {
-	if f == (segEscopo{}) {
+	if f == (segEscopo{}) || f == (segEscopo{Nivel: f.Nivel}) {
 		return in
 	}
 	out := make([]*segCliente, 0, len(in))
 	for _, c := range in {
-		if f.UF != "" && c.UF != f.UF {
+		if f.UF != "" && !ufEm(f.UF, c.UF) {
 			continue
 		}
 		if f.CodGGV != "" && c.CodGGV != f.CodGGV {
@@ -585,10 +596,13 @@ func (f segEscopo) filtrar(in []*segCliente) []*segCliente {
 // ─── Detalhe (drill GGV → CRV → RCA → Cliente → Produto) ──────────────────────
 
 type SegDetalheLinha struct {
-	Cod    string `json:"cod"`
-	Nome   string `json:"nome"`
-	Grupos []int  `json:"grupos"`
-	Total  int    `json:"total"`
+	Cod     string `json:"cod"`
+	Nome    string `json:"nome"`
+	CodPai  string `json:"cod_pai,omitempty"` // nível RCA: código da Equipe (CRV)
+	NomePai string `json:"nome_pai,omitempty"`
+	Grupos  []int  `json:"grupos"`
+	Total   int    `json:"total"`
+	Geral   int    `json:"geral"` // clientes distintos que positivaram QUALQUER grupo
 }
 
 type SegDetalheResp struct {
@@ -608,6 +622,8 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 	}
 	nivel := "ggv"
 	switch {
+	case f.CodCli == "" && f.CodRCA == "" && (f.Nivel == "rca" || f.Nivel == "cliente"):
+		nivel = f.Nivel
 	case f.CodCli != "":
 		nivel = "produto"
 	case f.CodRCA != "":
@@ -623,8 +639,9 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 	var ordem []string
 	ordemVista := map[string]bool{}
 	type linhaAc struct {
-		nome   string
-		porGrp map[string]int
+		nome, codPai, nomePai string
+		porGrp                map[string]int
+		geral                 int
 	}
 	linhas := map[string]*linhaAc{}
 	produtos := map[string]*SegProduto{}
@@ -673,10 +690,16 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 			l := linhas[cod]
 			if l == nil {
 				l = &linhaAc{nome: nome, porGrp: map[string]int{}}
+				if nivel == "rca" {
+					l.codPai, l.nomePai = c.CodCRV, c.NomeCRV
+				}
 				linhas[cod] = l
 			}
 			for g := range c.Positivos {
 				l.porGrp[g]++
+			}
+			if len(c.Positivos) > 0 {
+				l.geral++
 			}
 		}
 	}
@@ -694,7 +717,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 		return resp, nil
 	}
 	for cod, l := range linhas {
-		linha := SegDetalheLinha{Cod: cod, Nome: l.nome, Grupos: make([]int, len(ordem))}
+		linha := SegDetalheLinha{Cod: cod, Nome: l.nome, CodPai: l.codPai, NomePai: l.nomePai, Geral: l.geral, Grupos: make([]int, len(ordem))}
 		for i, g := range ordem {
 			linha.Grupos[i] = l.porGrp[g]
 			linha.Total += l.porGrp[g]
@@ -789,7 +812,7 @@ func SegmentoFocoDetalheHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		q := r.URL.Query()
-		f := segEscopo{UF: q.Get("uf"), CodGGV: q.Get("cod_ggv"), CodCRV: q.Get("cod_crv"), CodRCA: q.Get("cod_rca"), CodCli: q.Get("cod_cli")}
+		f := segEscopo{UF: q.Get("uf"), CodGGV: q.Get("cod_ggv"), CodCRV: q.Get("cod_crv"), CodRCA: q.Get("cod_rca"), CodCli: q.Get("cod_cli"), Nivel: q.Get("nivel")}
 		if !segEscopoDoLogin(spCtx, &f) {
 			http.Error(w, `{"error":"acesso negado: cadastro de organograma incompleto pra este usuário"}`, http.StatusForbidden)
 			return

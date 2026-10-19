@@ -1,24 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import TabelaComColunas from '@/components/farol/TabelaComColunas'
 import PainelProdutos from '@/components/farol/PainelProdutos'
 
 // Painel "Segmento Foco" (Reckitt) — positivação de grupos de produtos por
-// cliente. Objetivo × realizado por UF e grupo, mensal e trimestral (o
-// trimestre soma os 3 meses), com drill GGV → CRV → RCA → Cliente → Produto.
-// Mesma ideia do painel de Objetivos da Unilever, painel novo (19/10/2026).
+// cliente. Primeira tela = soma de todas as UFs (com filtro de UF); clicar no
+// grupo abre por UF, na UF abre por GGV → Equipe (CRV) → RCA → Cliente →
+// Produto. Aba "Por RCA" = medidor de RCAs (uma linha por RCA, 8 grupos).
+// Desenho combinado com o Claudio em 19/10/2026.
 
 interface Vinculo { id: number; industria_nome: string; formula_codigo: string }
 interface MesValor { mes: string; objetivo: number | null; realizado: number }
 interface GrupoLinha { grupo: string; meses: MesValor[]; objetivo_tri: number | null; realizado_tri: number }
 interface UFBloco { uf: string; grupos: GrupoLinha[] }
 interface Painel { ufs_ocultas?: string[]; trimestre: string; meses: string[]; meses_sem_vigencia: string[] | null; grupos: string[]; ufs: UFBloco[] }
-interface DetLinha { cod: string; nome: string; grupos: number[]; total: number }
+interface DetLinha { cod: string; nome: string; cod_pai?: string; nome_pai?: string; grupos: number[]; total: number; geral: number }
 interface DetProduto { grupo: string; cod_prod: string; produto: string; qtd: number; positivou: boolean }
 interface Detalhe { nivel: 'ggv' | 'crv' | 'rca' | 'cliente' | 'produto'; grupos: string[]; linhas?: DetLinha[]; produtos?: DetProduto[] }
+type Filtro = Record<string, string | undefined>
 
 const FLUXOS = [
   { value: 'faturado', label: 'Faturado' },
@@ -35,13 +37,96 @@ function somaMes(mes: string, delta: number) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-// UFs com objetivo primeiro (as do programa); as demais (clientes de outras
-// UFs) vão pro fim, sob um título à parte.
 const temObjetivo = (u: UFBloco) => u.grupos.some(g => g.objetivo_tri != null || g.meses.some(m => m.objetivo != null))
-const ordenarUFs = (ufs: UFBloco[]) =>
-  [...ufs].sort((a, b) => Number(temObjetivo(b)) - Number(temObjetivo(a)) || a.uf.localeCompare(b.uf, 'pt-BR'))
+const cabecalhoCel = 'px-3 py-2 text-center text-xs font-semibold text-slate-500 whitespace-nowrap'
+const celula = 'px-3 py-2 text-center tabular-nums'
+const NIVEIS: Record<string, string> = { ggv: 'GGV', crv: 'Equipe', rca: 'RCA', cliente: 'Cliente' }
 
-interface Drill { uf: string; ggv?: { cod: string; nome: string }; crv?: { cod: string; nome: string }; rca?: { cod: string; nome: string }; cli?: { cod: string; nome: string } }
+interface Ctx {
+  vinculoId: number
+  mes: string
+  fluxo: string
+  periodo: 'mes' | 'trimestre'
+  headers: Record<string, string>
+  grupo: string
+  onCliente: (cod: string, nome: string, f: Filtro) => void
+}
+
+// Resultado (obj/real/gap/%) — células comuns às linhas do grupo e das UFs.
+function CelulasResultado({ obj, real, realComObj }: { obj: number | null; real: number; realComObj?: number }) {
+  const base = realComObj ?? real
+  const gap = obj != null ? base - obj : null
+  const bateu = obj != null && base >= obj
+  const cor = bateu ? 'text-emerald-600' : 'text-rose-600'
+  return (
+    <>
+      <td className={celula}>{obj != null ? fmt(obj) : '—'}</td>
+      <td className={`${celula} font-semibold`}>
+        {fmt(real)}
+        {realComObj != null && realComObj !== real && (
+          <div className="text-[10px] font-normal text-slate-400">{fmt(real - realComObj)} em UF sem objetivo</div>
+        )}
+      </td>
+      <td className={`${celula} ${gap == null ? '' : cor}`}>{gap == null ? '—' : bateu ? 'Atingido' : fmt(gap)}</td>
+      <td className={`${celula} ${obj ? cor : ''}`}>{obj ? `${fmt((base / obj) * 100)}%` : '—'}</td>
+    </>
+  )
+}
+
+// Linhas filhas (GGV → Equipe → RCA → Cliente) de um recorte, só pro grupo aberto.
+function LinhasFilhas({ ctx, filtro, recuo }: { ctx: Ctx; filtro: Filtro; recuo: number }) {
+  const [abertas, setAbertas] = useState<Set<string>>(new Set())
+  const { data, isLoading } = useQuery<Detalhe>({
+    queryKey: ['seg-det-filhas', ctx.vinculoId, ctx.mes, ctx.fluxo, ctx.periodo, filtro],
+    queryFn: async () => {
+      const p = new URLSearchParams({ vinculo_id: String(ctx.vinculoId), mes: ctx.mes, fluxo: ctx.fluxo, periodo: ctx.periodo })
+      Object.entries(filtro).forEach(([k, v]) => v && p.set(k, v))
+      const r = await fetch(`/api/farol/segmento-foco/detalhe?${p}`, { headers: ctx.headers })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+  })
+  const pad = { paddingLeft: `${recuo * 20 + 12}px` }
+  if (isLoading) return <tr><td colSpan={5} className="py-2 text-xs text-slate-400" style={pad}>Carregando...</td></tr>
+  if (!data || data.nivel === 'produto') return null
+  const idx = data.grupos.indexOf(ctx.grupo)
+  const linhas = (data.linhas ?? [])
+    .map(l => ({ l, n: idx >= 0 ? l.grupos[idx] : 0 }))
+    .filter(x => data.nivel !== 'cliente' || x.n > 0)
+    .sort((a, b) => b.n - a.n)
+  if (linhas.length === 0) return <tr><td colSpan={5} className="py-2 text-xs text-slate-400" style={pad}>Nenhum cliente positivou neste recorte</td></tr>
+  const campo = data.nivel === 'ggv' ? 'cod_ggv' : data.nivel === 'crv' ? 'cod_crv' : data.nivel === 'rca' ? 'cod_rca' : 'cod_cli'
+  return (
+    <>
+      {linhas.map(({ l, n }) => {
+        const aberta = abertas.has(l.cod)
+        const filtroFilho: Filtro = { ...filtro, [campo]: l.cod }
+        const ehCliente = data.nivel === 'cliente'
+        return (
+          <Fragment key={l.cod}>
+            <tr className="border-t cursor-pointer hover:bg-slate-50 bg-slate-50/40" onClick={() => {
+              if (ehCliente) { ctx.onCliente(l.cod, l.nome, filtro); return }
+              setAbertas(s => { const x = new Set(s); if (aberta) x.delete(l.cod); else x.add(l.cod); return x })
+            }}>
+              <td className="py-2 text-left" style={pad}>
+                <span className="inline-flex items-center gap-1">
+                  {!ehCliente && <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${aberta ? '' : '-rotate-90'}`} />}
+                  <span className="text-[10px] uppercase text-slate-400 mr-1">{NIVEIS[data.nivel]}</span>
+                  {l.cod} — {l.nome}
+                </span>
+              </td>
+              <td className={celula}>—</td>
+              <td className={`${celula} font-semibold`}>{fmt(n)}</td>
+              <td className={celula}>—</td>
+              <td className={celula}>—</td>
+            </tr>
+            {aberta && !ehCliente && <LinhasFilhas ctx={ctx} filtro={filtroFilho} recuo={recuo + 1} />}
+          </Fragment>
+        )
+      })}
+    </>
+  )
+}
 
 export default function FarolSegmentoFoco() {
   const { token } = useAuth()
@@ -50,12 +135,12 @@ export default function FarolSegmentoFoco() {
   const [fluxo, setFluxo] = useState('faturado')
   const [periodo, setPeriodo] = useState<'mes' | 'trimestre'>('mes')
   const [vinculoSel, setVinculoSel] = useState<number | null>(null)
-  const [drill, setDrill] = useState<Drill | null>(null)
-  const detalheRef = useRef<HTMLDivElement>(null)
-  // Ao abrir/descer no detalhe, leva a tela até ele (fica abaixo dos blocos de UF).
-  useEffect(() => {
-    if (drill) detalheRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [drill?.uf, drill?.ggv?.cod, drill?.crv?.cod, drill?.rca?.cod])   // eslint-disable-line react-hooks/exhaustive-deps
+  const [aba, setAba] = useState<'grupos' | 'rca'>('grupos')
+  const [ufsSel, setUfsSel] = useState<Set<string>>(new Set())
+  const [gruposAbertos, setGruposAbertos] = useState<Set<string>>(new Set())
+  const [ufsAbertas, setUfsAbertas] = useState<Set<string>>(new Set())   // "grupo|uf"
+  const [cliAberto, setCliAberto] = useState<{ cod: string; nome: string; f: Filtro } | null>(null)
+  const [busca, setBusca] = useState('')
 
   const { data: vinculos = [] } = useQuery<Vinculo[]>({
     queryKey: ['seg-vinculos'],
@@ -78,57 +163,90 @@ export default function FarolSegmentoFoco() {
     },
   })
 
-  const qs = (d: Drill) => {
-    const p = new URLSearchParams({ vinculo_id: String(vinculo!.id), mes, fluxo, periodo, uf: d.uf })
-    if (d.ggv) p.set('cod_ggv', d.ggv.cod)
-    if (d.crv) p.set('cod_crv', d.crv.cod)
-    if (d.rca) p.set('cod_rca', d.rca.cod)
-    if (d.cli) p.set('cod_cli', d.cli.cod)
-    return p.toString()
+  const idxMes = painel ? Math.max(0, painel.meses.indexOf(mes)) : 0
+  const todasUFs = useMemo(() => [...(painel?.ufs ?? [])].sort((a, b) =>
+    Number(temObjetivo(b)) - Number(temObjetivo(a)) || a.uf.localeCompare(b.uf, 'pt-BR')), [painel])
+  const ufsVisiveis = todasUFs.filter(u => ufsSel.size === 0 || ufsSel.has(u.uf))
+  const ufParam = ufsSel.size ? [...ufsSel].join(',') : ''
+
+  const valor = (g: GrupoLinha) => ({
+    obj: periodo === 'mes' ? g.meses[idxMes]?.objetivo ?? null : g.objetivo_tri,
+    real: periodo === 'mes' ? g.meses[idxMes]?.realizado ?? 0 : g.realizado_tri,
+  })
+
+  // Soma por grupo nas UFs selecionadas. O % e o gap só consideram as UFs que
+  // têm objetivo (senão a venda de UF sem objetivo inflaria o atingimento).
+  const porGrupo = (painel?.grupos ?? []).map(grupo => {
+    let obj = 0, temObj = false, real = 0, realComObj = 0
+    for (const u of ufsVisiveis) {
+      const g = u.grupos.find(x => x.grupo === grupo)
+      if (!g) continue
+      const v = valor(g)
+      real += v.real
+      if (v.obj != null) { obj += v.obj; temObj = true; realComObj += v.real }
+    }
+    return { grupo, obj: temObj ? obj : null, real, realComObj }
+  })
+  const tot = porGrupo.reduce((a, l) => ({
+    obj: a.obj + (l.obj ?? 0), temObj: a.temObj || l.obj != null, real: a.real + l.real, realComObj: a.realComObj + l.realComObj,
+  }), { obj: 0, temObj: false, real: 0, realComObj: 0 })
+
+  const toggle = (set: Set<string>, k: string, fn: (s: Set<string>) => void) => {
+    const x = new Set(set)
+    if (x.has(k)) x.delete(k); else x.add(k)
+    fn(x)
   }
-  const { data: detalhe, isLoading: carregandoDet } = useQuery<Detalhe>({
-    queryKey: ['seg-detalhe', vinculo?.id, mes, fluxo, periodo, drill],
-    enabled: !!vinculo && !!drill,
+
+  const ctxBase = (grupo: string): Ctx => ({
+    vinculoId: vinculo!.id, mes, fluxo, periodo, headers, grupo,
+    onCliente: (cod, nome, f) => setCliAberto({ cod, nome, f }),
+  })
+
+  // Aba "Por RCA" (medidor): uma linha por RCA, com a equipe e os 8 grupos.
+  const { data: medidor, isLoading: carregandoMed } = useQuery<Detalhe>({
+    queryKey: ['seg-medidor', vinculo?.id, mes, fluxo, periodo, ufParam],
+    enabled: !!vinculo && aba === 'rca',
     queryFn: async () => {
-      const r = await fetch(`/api/farol/segmento-foco/detalhe?${qs(drill!)}`, { headers })
-      if (!r.ok) throw new Error('Erro ao carregar o detalhe')
+      const p = new URLSearchParams({ vinculo_id: String(vinculo!.id), mes, fluxo, periodo, nivel: 'rca' })
+      if (ufParam) p.set('uf', ufParam)
+      const r = await fetch(`/api/farol/segmento-foco/detalhe?${p}`, { headers })
+      if (!r.ok) throw new Error('Erro ao carregar o medidor')
       return r.json()
     },
   })
 
-  const idxMes = painel ? Math.max(0, painel.meses.indexOf(mes)) : 0
-  const abrir = (uf: string) => setDrill({ uf })
-  const descer = (l: DetLinha) => {
-    if (!drill || !detalhe) return
-    const item = { cod: l.cod, nome: l.nome }
-    if (detalhe.nivel === 'ggv') setDrill({ ...drill, ggv: item })
-    else if (detalhe.nivel === 'crv') setDrill({ ...drill, crv: item })
-    else if (detalhe.nivel === 'rca') setDrill({ ...drill, rca: item })
-    else if (detalhe.nivel === 'cliente') setDrill({ ...drill, cli: item })
-  }
-  const subir = (ate: 'uf' | 'ggv' | 'crv' | 'rca') => {
-    if (!drill) return
-    const base: Drill = { uf: drill.uf }
-    if (ate !== 'uf') base.ggv = drill.ggv
-    if (ate === 'crv' || ate === 'rca') base.crv = drill.crv
-    if (ate === 'rca') base.rca = drill.rca
-    setDrill(base)
-  }
+  const { data: prodCli, isLoading: carregandoProd } = useQuery<Detalhe>({
+    queryKey: ['seg-produtos-cli', vinculo?.id, mes, fluxo, periodo, cliAberto],
+    enabled: !!vinculo && !!cliAberto,
+    queryFn: async () => {
+      const p = new URLSearchParams({ vinculo_id: String(vinculo!.id), mes, fluxo, periodo })
+      Object.entries({ ...cliAberto!.f, cod_cli: cliAberto!.cod }).forEach(([k, v]) => v && p.set(k, v))
+      const r = await fetch(`/api/farol/segmento-foco/detalhe?${p}`, { headers })
+      if (!r.ok) throw new Error('Erro ao carregar os produtos')
+      return r.json()
+    },
+  })
 
-  const cabecalhoCel = 'px-3 py-2 text-center text-xs font-semibold text-slate-500 whitespace-nowrap'
-  const celula = 'px-3 py-2 text-center tabular-nums'
+  const periodoRotulo = periodo === 'mes' ? rotuloMes(mes) : `trimestre ${painel?.trimestre ?? ''}`
+  const chip = (ativo: boolean, cor = 'bg-slate-800 text-white border-slate-800') =>
+    `px-3 py-1 text-xs font-semibold rounded-full border ${ativo ? cor : 'bg-white text-slate-600 hover:bg-slate-50'}`
+
+  const linhasMedidor = (medidor?.linhas ?? []).filter(l => {
+    const b = busca.trim().toLowerCase()
+    return !b || `${l.cod} ${l.nome} ${l.cod_pai ?? ''} ${l.nome_pai ?? ''}`.toLowerCase().includes(b)
+  }).sort((a, b) => (a.cod_pai ?? '').localeCompare(b.cod_pai ?? '', 'pt-BR', { numeric: true }) || b.geral - a.geral)
 
   return (
     <div className="space-y-5 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Segmento Foco{vinculo ? ` — ${vinculo.industria_nome}` : ''}</h1>
-          <p className="text-sm text-muted-foreground">Positivação de grupos de produtos por cliente: objetivo × realizado por UF, mensal e trimestral.</p>
+          <p className="text-sm text-muted-foreground">Positivação de grupos de produtos por cliente: objetivo × realizado, mensal e trimestral.</p>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="icon" onClick={() => { setMes(m => somaMes(m, -1)); setDrill(null) }} aria-label="Mês anterior"><ChevronLeft className="w-4 h-4" /></Button>
+          <Button variant="outline" size="icon" onClick={() => setMes(m => somaMes(m, -1))} aria-label="Mês anterior"><ChevronLeft className="w-4 h-4" /></Button>
           <div className="w-28 text-center text-sm font-semibold">{rotuloMes(mes)}</div>
-          <Button variant="outline" size="icon" onClick={() => { setMes(m => somaMes(m, 1)); setDrill(null) }} aria-label="Próximo mês"><ChevronRight className="w-4 h-4" /></Button>
+          <Button variant="outline" size="icon" onClick={() => setMes(m => somaMes(m, 1))} aria-label="Próximo mês"><ChevronRight className="w-4 h-4" /></Button>
         </div>
       </div>
 
@@ -141,37 +259,44 @@ export default function FarolSegmentoFoco() {
       {vinculos.length > 1 && (
         <div className="flex gap-2">
           {vinculos.map(v => (
-            <button key={v.id} onClick={() => { setVinculoSel(v.id); setDrill(null) }}
-              className={`px-3 py-1 text-xs font-semibold rounded-full border ${vinculo?.id === v.id ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600'}`}>
-              {v.industria_nome}
-            </button>
+            <button key={v.id} onClick={() => setVinculoSel(v.id)} className={chip(vinculo?.id === v.id)}>{v.industria_nome}</button>
           ))}
         </div>
       )}
 
       {vinculo && (
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase text-slate-500">Fluxo</span>
-            {FLUXOS.map(f => (
-              <button key={f.value} onClick={() => setFluxo(f.value)}
-                className={`px-3 py-1 text-xs font-semibold rounded-full border ${fluxo === f.value ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                {f.label}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Fluxo</span>
+              {FLUXOS.map(f => <button key={f.value} onClick={() => setFluxo(f.value)} className={chip(fluxo === f.value)}>{f.label}</button>)}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Período</span>
+              {(painel?.meses ?? []).map(m => (
+                <button key={m} onClick={() => { setPeriodo('mes'); setMes(m) }} className={chip(periodo === 'mes' && m === mes)}>
+                  {MESES_ROTULO[Number(m.slice(5, 7)) - 1]}
+                </button>
+              ))}
+              <button onClick={() => setPeriodo('trimestre')} className={chip(periodo === 'trimestre', 'bg-violet-700 text-white border-violet-700')}>
+                Trimestre{painel ? ` (${painel.trimestre})` : ''}
               </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase text-slate-500">UF</span>
+            <button onClick={() => setUfsSel(new Set())} className={chip(ufsSel.size === 0)}>Todas</button>
+            {todasUFs.map(u => (
+              <button key={u.uf} onClick={() => toggle(ufsSel, u.uf, setUfsSel)}
+                title={temObjetivo(u) ? undefined : 'Sem objetivo cadastrado'}
+                className={`${chip(ufsSel.has(u.uf))} ${temObjetivo(u) ? '' : 'italic opacity-80'}`}>{u.uf}</button>
             ))}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase text-slate-500">Período</span>
-            {(painel?.meses ?? []).map(m => (
-              <button key={m} onClick={() => { setPeriodo('mes'); setMes(m) }}
-                className={`px-3 py-1 text-xs font-semibold rounded-full border ${periodo === 'mes' && m === mes ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                {MESES_ROTULO[Number(m.slice(5, 7)) - 1]}
-              </button>
+          <div className="flex gap-2 border-b">
+            {([['grupos', 'Por grupo'], ['rca', 'Por RCA (medidor)']] as const).map(([k, rot]) => (
+              <button key={k} onClick={() => setAba(k)}
+                className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${aba === k ? 'border-violet-700 text-violet-800' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{rot}</button>
             ))}
-            <button onClick={() => setPeriodo('trimestre')}
-              className={`px-3 py-1 text-xs font-semibold rounded-full border ${periodo === 'trimestre' ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-              Trimestre{painel ? ` (${painel.trimestre})` : ''}
-            </button>
           </div>
         </div>
       )}
@@ -187,96 +312,107 @@ export default function FarolSegmentoFoco() {
         </div>
       )}
 
-      {painel && ordenarUFs(painel.ufs ?? []).map((u, iUF, todas) => {
-        const semObjetivo = !temObjetivo(u)
-        const primeiraSem = semObjetivo && (iUF === 0 || temObjetivo(todas[iUF - 1]))
-        const linhas = u.grupos.map(g => {
-          const obj = periodo === 'mes' ? g.meses[idxMes]?.objetivo : g.objetivo_tri
-          const real = periodo === 'mes' ? g.meses[idxMes]?.realizado ?? 0 : g.realizado_tri
-          return { grupo: g.grupo, obj, real }
-        })
-        const totObj = linhas.reduce((s, l) => s + (l.obj ?? 0), 0)
-        const totReal = linhas.reduce((s, l) => s + l.real, 0)
-        const linhaUI = (rotulo: string, obj: number | null | undefined, real: number, forte = false) => {
-          const gap = obj != null ? real - obj : null
-          const bateu = obj != null && real >= obj
-          return (
-            <tr key={rotulo} className={`border-t ${forte ? 'bg-slate-50 font-semibold' : ''}`}>
-              <td className="px-3 py-2 text-left">{rotulo}</td>
-              <td className={celula}>{obj != null ? fmt(obj) : '—'}</td>
-              <td className={`${celula} font-semibold`}>{fmt(real)}</td>
-              <td className={`${celula} ${gap == null ? '' : bateu ? 'text-emerald-600' : 'text-rose-600'}`}>
-                {gap == null ? '—' : bateu ? 'Atingido' : fmt(gap)}
-              </td>
-              <td className={`${celula} ${obj ? (bateu ? 'text-emerald-600' : 'text-rose-600') : ''}`}>{obj ? `${fmt((real / obj) * 100)}%` : '—'}</td>
-            </tr>
-          )
-        }
-        return (
-          <div key={u.uf} className="space-y-2">
-          {primeiraSem && <div className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Outras UFs — sem objetivo cadastrado</div>}
-          <div className="border rounded-xl bg-white">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b">
-              <h2 className="font-semibold">UF {u.uf}</h2>
-              <button className="text-xs underline text-violet-700" onClick={() => abrir(u.uf)}>Detalhar por GGV → cliente</button>
-            </div>
-            <TabelaComColunas id="segfoco-uf" className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className={`${cabecalhoCel} text-left`}>Grupo</th>
-                    <th className={cabecalhoCel}>{periodo === 'mes' ? 'Objetivo' : 'Meta trimestre'}</th>
-                    <th className={cabecalhoCel}>Realizado</th>
-                    <th className={cabecalhoCel}>Gap</th>
-                    <th className={cabecalhoCel}>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhas.map(l => linhaUI(l.grupo, l.obj, l.real))}
-                  {linhaUI('Total', totObj || null, totReal, true)}
-                </tbody>
-              </table>
-            </TabelaComColunas>
+      {painel && vinculo && aba === 'grupos' && (
+        <div className="border rounded-xl bg-white">
+          <div className="px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">{periodoRotulo} — {ufsSel.size ? [...ufsSel].sort().join(', ') : 'todas as UFs'}</h2>
+            <span className="text-xs text-slate-500">Clique no grupo pra abrir por UF; na UF, pra descer até o cliente.</span>
           </div>
-          </div>
-        )
-      })}
+          <TabelaComColunas id="segfoco-grupos" className="overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className={`${cabecalhoCel} text-left`}>Grupo</th>
+                  <th className={cabecalhoCel}>{periodo === 'mes' ? 'Objetivo' : 'Meta trimestre'}</th>
+                  <th className={cabecalhoCel}>Realizado</th>
+                  <th className={cabecalhoCel}>Gap</th>
+                  <th className={cabecalhoCel}>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {porGrupo.map(l => {
+                  const aberto = gruposAbertos.has(l.grupo)
+                  return (
+                    <Fragment key={l.grupo}>
+                      <tr className="border-t cursor-pointer hover:bg-slate-50" onClick={() => toggle(gruposAbertos, l.grupo, setGruposAbertos)}>
+                        <td className="px-3 py-2 text-left font-medium">
+                          <span className="inline-flex items-center gap-1">
+                            <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${aberto ? '' : '-rotate-90'}`} />{l.grupo}
+                          </span>
+                        </td>
+                        <CelulasResultado obj={l.obj} real={l.real} realComObj={l.realComObj} />
+                      </tr>
+                      {aberto && ufsVisiveis.map(u => {
+                        const g = u.grupos.find(x => x.grupo === l.grupo)
+                        if (!g) return null
+                        const v = valor(g)
+                        const kUF = `${l.grupo}|${u.uf}`
+                        const ufAberta = ufsAbertas.has(kUF)
+                        return (
+                          <Fragment key={kUF}>
+                            <tr className="border-t cursor-pointer hover:bg-slate-50 bg-slate-50/60" onClick={() => toggle(ufsAbertas, kUF, setUfsAbertas)}>
+                              <td className="py-2 text-left" style={{ paddingLeft: 32 }}>
+                                <span className="inline-flex items-center gap-1">
+                                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${ufAberta ? '' : '-rotate-90'}`} />
+                                  <span className="text-[10px] uppercase text-slate-400 mr-1">UF</span>{u.uf}
+                                </span>
+                              </td>
+                              <CelulasResultado obj={v.obj} real={v.real} />
+                            </tr>
+                            {ufAberta && <LinhasFilhas ctx={ctxBase(l.grupo)} filtro={{ uf: u.uf }} recuo={2} />}
+                          </Fragment>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })}
+                <tr className="border-t bg-slate-50 font-semibold">
+                  <td className="px-3 py-2 text-left">Total</td>
+                  <CelulasResultado obj={tot.temObj ? tot.obj : null} real={tot.real} realComObj={tot.realComObj} />
+                </tr>
+              </tbody>
+            </table>
+          </TabelaComColunas>
+          {ufsVisiveis.some(u => !temObjetivo(u)) && (
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t">
+              Gap e % consideram só as UFs com objetivo cadastrado ({ufsVisiveis.filter(temObjetivo).map(u => u.uf).join(', ') || 'nenhuma'}); o realizado das demais UFs aparece à parte.
+            </p>
+          )}
+        </div>
+      )}
 
-      {/* Detalhamento por hierarquia */}
-      {drill && (
-        <div ref={detalheRef} className="border rounded-xl bg-white scroll-mt-4">
-          <div className="flex flex-wrap items-center gap-1 px-4 py-2.5 border-b text-sm">
-            <span className="text-xs font-semibold uppercase text-slate-500 mr-2">Detalhe {periodo === 'mes' ? rotuloMes(mes) : `trimestre ${painel?.trimestre ?? ''}`}</span>
-            <button className="underline text-violet-700" onClick={() => subir('uf')}>UF {drill.uf}</button>
-            {drill.ggv && <><span>›</span><button className="underline text-violet-700" onClick={() => subir('ggv')}>{drill.ggv.cod} {drill.ggv.nome}</button></>}
-            {drill.crv && <><span>›</span><button className="underline text-violet-700" onClick={() => subir('crv')}>{drill.crv.cod} {drill.crv.nome}</button></>}
-            {drill.rca && <><span>›</span><button className="underline text-violet-700" onClick={() => subir('rca')}>{drill.rca.cod} {drill.rca.nome}</button></>}
-            {drill.cli && <><span>›</span><span>{drill.cli.cod} {drill.cli.nome}</span></>}
-            <button className="ml-auto text-xs text-slate-500 hover:text-slate-800" onClick={() => setDrill(null)}>Fechar detalhe</button>
+      {vinculo && aba === 'rca' && (
+        <div className="border rounded-xl bg-white">
+          <div className="px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">Medidor por RCA — {periodoRotulo}</h2>
+            <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar equipe, RCA ou nome"
+              className="border rounded-md px-3 py-1.5 text-sm w-64" />
           </div>
-          {carregandoDet && <p className="p-4 text-sm text-muted-foreground">Carregando...</p>}
-          {detalhe && detalhe.nivel !== 'produto' && (
-            <TabelaComColunas id="segfoco-detalhe" className="overflow-auto max-h-[60vh]">
+          {carregandoMed && <p className="p-4 text-sm text-muted-foreground">Carregando...</p>}
+          {medidor && (
+            <TabelaComColunas id="segfoco-medidor" className="overflow-auto max-h-[70vh]">
               <p className="px-4 pt-2 text-xs text-muted-foreground">
-                {detalhe.nivel === 'cliente' ? 'Clique num cliente pra ver os produtos.' : 'Clique numa linha pra descer um nível.'} Os números são clientes positivados em cada grupo.
+                Clientes positivados por grupo. “Geral” = clientes que positivaram qualquer grupo{periodo === 'trimestre' ? ' (somado mês a mês)' : ''}.
               </p>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white shadow-[0_1px_0_0_#e2e8f0]">
                   <tr>
-                    <th className={`${cabecalhoCel} text-left`}>{({ ggv: 'GGV', crv: 'CRV', rca: 'RCA', cliente: 'Cliente' } as Record<string, string>)[detalhe.nivel]}</th>
-                    {(detalhe.grupos ?? []).map(g => <th key={g} className={cabecalhoCel}>{g}</th>)}
-                    <th className={cabecalhoCel}>Total</th>
+                    <th className={`${cabecalhoCel} text-left`}>RCA</th>
+                    <th className={cabecalhoCel}>Equipe</th>
+                    <th className={cabecalhoCel}>Geral</th>
+                    {(medidor.grupos ?? []).map(g => <th key={g} className={cabecalhoCel}>{g}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {(detalhe.linhas ?? []).map(l => (
-                    <tr key={l.cod} className="border-t cursor-pointer hover:bg-slate-50" onClick={() => descer(l)}>
+                  {linhasMedidor.map(l => (
+                    <tr key={l.cod} className="border-t hover:bg-slate-50">
                       <td className="px-3 py-2 text-left whitespace-nowrap">{l.cod} — {l.nome}</td>
+                      <td className={`${celula} whitespace-nowrap`}>{l.cod_pai}</td>
+                      <td className={`${celula} font-semibold`}>{fmt(l.geral)}</td>
                       {l.grupos.map((n, i) => <td key={i} className={`${celula} ${n ? '' : 'text-slate-300'}`}>{fmt(n)}</td>)}
-                      <td className={`${celula} font-semibold`}>{fmt(l.total)}</td>
                     </tr>
                   ))}
-                  {(detalhe.linhas ?? []).length === 0 && <tr><td colSpan={(detalhe.grupos ?? []).length + 2} className="py-8 text-center text-slate-500">Nenhuma positivação neste recorte</td></tr>}
+                  {linhasMedidor.length === 0 && <tr><td colSpan={(medidor.grupos ?? []).length + 3} className="py-8 text-center text-slate-500">Nenhum RCA neste recorte</td></tr>}
                 </tbody>
               </table>
             </TabelaComColunas>
@@ -285,17 +421,17 @@ export default function FarolSegmentoFoco() {
       )}
 
       <PainelProdutos
-        aberto={!!drill?.cli}
-        onFechar={() => drill && setDrill({ ...drill, cli: undefined })}
-        titulo={drill?.cli ? `${drill.cli.cod} - ${drill.cli.nome}` : ''}
+        aberto={!!cliAberto}
+        onFechar={() => setCliAberto(null)}
+        titulo={cliAberto ? `${cliAberto.cod} - ${cliAberto.nome}` : ''}
         subtitulo="Produtos dos grupos do programa que o cliente comprou no período."
         rotuloItem="Produto"
         rotuloSim="Positivou"
         rotuloNao="Não positivou"
         participio="positivado"
         subtituloResumo="neste cliente"
-        carregando={carregandoDet}
-        linhas={(detalhe?.produtos ?? []).map(p => ({
+        carregando={carregandoProd}
+        linhas={(prodCli?.produtos ?? []).map(p => ({
           chave: p.cod_prod, codigos: p.cod_prod, nome: p.produto, vendeu: p.positivou, qtd: p.qtd, aviso: p.grupo,
         }))}
       />
