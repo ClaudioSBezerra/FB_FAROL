@@ -13,6 +13,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -287,9 +288,10 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 		var industriasArg interface{}
 		if req.IndustriasPermitidas != nil && len(*req.IndustriasPermitidas) > 0 {
 			// Indústria é cadastro POR EMPRESA (a MASTER e a JC têm cada uma o seu
-			// "UNILEVER HC", com ids diferentes): os ids precisam ser da empresa do
-			// usuário editado, senão a lista não bate com nenhum vínculo e ele fica
-			// sem dado (achado 19/10/2026, Gilson e Carlos).
+			// "UNILEVER HC", com ids diferentes). Se a tela mandar ids de outra
+			// empresa (ex.: o admin logado é da MASTER), traduz pelo NOME pra
+			// indústria equivalente da empresa do usuário — senão a lista não bate
+			// com nenhum vínculo e o usuário fica sem dado (achado 19/10/2026).
 			empresaAlvo := strings.TrimSpace(req.CompanyID)
 			if empresaAlvo == "" {
 				db.QueryRow(`SELECT COALESCE(preferred_company_id::text,'') FROM user_environments WHERE user_id = $1 LIMIT 1`, targetID).Scan(&empresaAlvo)
@@ -297,14 +299,9 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 			if empresaAlvo == "" {
 				empresaAlvo = spCtx.EmpresaID
 			}
-			ids := make([]int64, len(*req.IndustriasPermitidas))
-			for i, v := range *req.IndustriasPermitidas {
-				ids[i] = int64(v)
-			}
-			var validas int
-			db.QueryRow(`SELECT count(*) FROM farol.industrias WHERE empresa_id = $1::uuid AND id = ANY($2)`, empresaAlvo, pq.Array(ids)).Scan(&validas)
-			if validas != len(*req.IndustriasPermitidas) {
-				http.Error(w, "Indústria(s) de outra empresa: as indústrias precisam ser da empresa do usuário", http.StatusBadRequest)
+			ids, err := industriasDaEmpresa(db, empresaAlvo, *req.IndustriasPermitidas)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			industriasArg = pq.Array(ids)
@@ -472,9 +469,14 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 		var industriasNovo interface{}
 		if len(req.IndustriasPermitidas) > 0 {
-			ids := make([]int64, len(req.IndustriasPermitidas))
-			for i, v := range req.IndustriasPermitidas {
-				ids[i] = int64(v)
+			empresaNovo := strings.TrimSpace(req.CompanyID)
+			if empresaNovo == "" {
+				empresaNovo = spCtx.EmpresaID
+			}
+			ids, ierr := industriasDaEmpresa(db, empresaNovo, req.IndustriasPermitidas)
+			if ierr != nil {
+				http.Error(w, ierr.Error(), http.StatusBadRequest)
+				return
 			}
 			industriasNovo = pq.Array(ids)
 		}
@@ -873,4 +875,28 @@ func SpSaveVinculosHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "Vínculos atualizados com sucesso"})
 	}
+}
+
+// industriasDaEmpresa devolve os ids de farol.industrias DA EMPRESA informada que
+// correspondem aos ids pedidos: o id que já é da empresa fica; o de outra empresa
+// vira o da indústria de mesmo nome na empresa (ou erro se não existe equivalente).
+func industriasDaEmpresa(db *sql.DB, empresaID string, pedidos []int) ([]int64, error) {
+	out := []int64{}
+	vistos := map[int64]bool{}
+	for _, id := range pedidos {
+		var resolvido int64
+		err := db.QueryRow(`
+			SELECT x.id FROM farol.industrias o
+			JOIN farol.industrias x ON x.empresa_id = $1::uuid AND (x.id = o.id OR (o.empresa_id <> $1::uuid AND upper(x.nome) = upper(o.nome)))
+			WHERE o.id = $2
+			ORDER BY (x.id = o.id) DESC LIMIT 1`, empresaID, id).Scan(&resolvido)
+		if err != nil {
+			return nil, fmt.Errorf("indústria %d não existe na empresa do usuário", id)
+		}
+		if !vistos[resolvido] {
+			vistos[resolvido] = true
+			out = append(out, resolvido)
+		}
+	}
+	return out, nil
 }
