@@ -5246,6 +5246,9 @@ func FarolV2PublicCardsHandler(db *sql.DB) http.HandlerFunc {
 		if fluxo.name != "faturado" && fluxo.name != "transmitido" {
 			delete(filters, "tipo_venda")
 		}
+		if scope == "ggv" {
+			restringirFiltroFornecGGV(db, empresaID, cod, filters)
+		}
 		cards, diag := fetchCards(db, empresaID, fluxo, view, pr, drillIdx, currentLevel, drillPath, filters)
 		kpi := computeKPI(cards, fluxo.name, currentLevel.Level == "cod_fornec")
 		if currentLevel.Level != "cod_prod" && currentLevel.Level != "cod_cli" &&

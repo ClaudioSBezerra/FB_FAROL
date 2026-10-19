@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // MetasPublicVinculosHandler — GET /api/farol/public/metas-vinculos?cnpj=
@@ -37,8 +39,10 @@ func MetasPublicVinculosHandler(db *sql.DB) http.HandlerFunc {
 			JOIN farol.industrias i ON i.id = mv.industria_id
 			JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
 			WHERE mv.empresa_id = $1 AND mv.ativo = TRUE
+			  AND tm.formula_codigo <> 'positivacao_grupos'
+			  AND ($2::bigint[] IS NULL OR mv.industria_id = ANY($2::bigint[]))
 			ORDER BY i.nome
-		`, empresaID)
+		`, empresaID, restricaoIndustriasPublica(db, empresaID, r.URL.Query().Get("scope"), r.URL.Query().Get("cod")))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -60,6 +64,19 @@ func MetasPublicVinculosHandler(db *sql.DB) http.HandlerFunc {
 		}
 		json.NewEncoder(w).Encode(lista)
 	}
+}
+
+// restricaoIndustriasPublica — valor pro parâmetro `$n::bigint[]`: NULL quando
+// o link não tem restrição; senão a lista de indústrias liberadas.
+func restricaoIndustriasPublica(db *sql.DB, empresaID, scope, cod string) any {
+	if strings.ToLower(strings.TrimSpace(scope)) != "ggv" {
+		return nil
+	}
+	ids := industriasPublicasGGV(db, empresaID, cod)
+	if ids == nil {
+		return nil
+	}
+	return pq.Array(ids)
 }
 
 // MetasPublicVigenciasHandler — GET /api/farol/public/metas-vigencias?cnpj=&vinculo_id=

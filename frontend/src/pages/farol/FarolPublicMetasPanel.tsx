@@ -527,9 +527,9 @@ export default function FarolPublicMetasPanel() {
   }
 
   const { data: vinculos = [] } = useQuery<MetaVinculo[]>({
-    queryKey: ['public-metas-vinculos', cnpj],
+    queryKey: ['public-metas-vinculos', cnpj, scope, scopeCod],
     queryFn: async () => {
-      const r = await fetch(`/api/farol/public/metas-vinculos?cnpj=${cnpj}`)
+      const r = await fetch(`/api/farol/public/metas-vinculos?cnpj=${cnpj}&scope=${scope}&cod=${scopeCod}`)
       if (!r.ok) throw new Error()
       return r.json()
     },
