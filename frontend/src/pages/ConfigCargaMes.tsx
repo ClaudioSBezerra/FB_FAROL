@@ -84,7 +84,8 @@ const rotuloMes = (mes: string) => {
 }
 
 export default function ConfigCargaMes() {
-  const { token } = useAuth()
+  const { token, user, spRole, industriasPermitidas } = useAuth()
+  const ehAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
   const qc = useQueryClient()
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
   const [mes, setMes] = useState(mesAtual)
@@ -123,8 +124,10 @@ export default function ConfigCargaMes() {
     return vs.some(v => v.vigencia_id != null) ? 1 : 2
   }
   const lista = useMemo(
-    () => [...industrias].sort((a, b) => situacao(a.id) - situacao(b.id) || a.nome.localeCompare(b.nome, 'pt-BR')),
-    [industrias, porIndustria],   // eslint-disable-line react-hooks/exhaustive-deps
+    () => industrias
+      .filter(i => ehAdmin || !industriasPermitidas || industriasPermitidas.includes(i.id)) // só as indústrias liberadas pro usuário
+      .sort((a, b) => situacao(a.id) - situacao(b.id) || a.nome.localeCompare(b.nome, 'pt-BR')),
+    [industrias, porIndustria, ehAdmin, industriasPermitidas],   // eslint-disable-line react-hooks/exhaustive-deps
   )
   const selecionada = industriaID ?? lista.find(i => situacao(i.id) < 3)?.id ?? lista[0]?.id ?? null
   const vinculos = selecionada != null ? porIndustria.get(selecionada) ?? [] : []

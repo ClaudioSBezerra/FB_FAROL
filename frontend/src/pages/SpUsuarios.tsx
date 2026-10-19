@@ -9,6 +9,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import IndustriasVisiveis from '@/components/farol/IndustriasVisiveis'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
@@ -35,6 +36,7 @@ interface SpUsuario {
   company_id: string
   company_name: string
   modulos: string[]
+  industrias_permitidas?: number[] | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,8 +64,11 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 const MODULOS = [
-  { value: 'vendas',    label: 'Painel Vendas' },
-  { value: 'bi',        label: 'Painel BI' },
+  { value: 'vendas',     label: 'Painel Vendas' },
+  { value: 'unilever',   label: 'Painel Unilever' },
+  { value: 'reckitt',    label: 'Painel Reckitt' },
+  { value: 'relatorios', label: 'Relatórios' },
+  { value: 'bi',         label: 'Painel BI' },
 ]
 
 const MODULO_COLORS: Record<string, string> = {
@@ -158,6 +163,7 @@ export default function SpUsuarios() {
 
   // Módulos do usuário editado
   const [editModulos, setEditModulos] = useState<string[]>(['vendas'])
+  const [editIndustrias, setEditIndustrias] = useState<number[]>([])
 
   // Hierarquia do novo usuário
   const [createEnvId,     setCreateEnvId]     = useState('')
@@ -239,7 +245,7 @@ export default function SpUsuarios() {
       const res = await fetch(`/api/sp/usuarios/${id}/role`, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at, modulos: editModulos }),
+        body:    JSON.stringify({ sp_role, full_name, tipo_persona, cod_referencia, environment_id, group_id, company_id, trial_ends_at, modulos: editModulos, industrias_permitidas: editIndustrias }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao atualizar perfil')
     },
@@ -334,6 +340,7 @@ export default function SpUsuarios() {
     setEditCodRef(u.cod_referencia || '')
     setEditTrialDate(u.trial_ends_at ? u.trial_ends_at.slice(0, 10) : '')
     setEditModulos(u.modulos?.length > 0 ? u.modulos : ['vendas'])
+    setEditIndustrias(u.industrias_permitidas ?? [])
     setShowReassign(false)
     setReassignEnvId(''); setReassignGroupId(''); setReassignCompanyId('')
     setRoleDialog(true)
@@ -632,6 +639,9 @@ export default function SpUsuarios() {
                     <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
                   </div>
                 ))}
+              </div>
+              <div className="mt-3">
+                <IndustriasVisiveis valor={editIndustrias} onChange={setEditIndustrias} />
               </div>
             </div>
 

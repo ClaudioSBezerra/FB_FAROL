@@ -9,6 +9,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import IndustriasVisiveis from '@/components/farol/IndustriasVisiveis'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
@@ -29,11 +30,15 @@ interface SpUsuario {
   trial_ends_at: string
   created_at: string
   modulos: string[]
+  industrias_permitidas?: number[] | null
 }
 
 const MODULOS = [
-  { value: 'vendas',    label: 'Painel Vendas' },
-  { value: 'bi',        label: 'Painel BI' },
+  { value: 'vendas',     label: 'Painel Vendas' },
+  { value: 'unilever',   label: 'Painel Unilever' },
+  { value: 'reckitt',    label: 'Painel Reckitt' },
+  { value: 'relatorios', label: 'Relatórios' },
+  { value: 'bi',         label: 'Painel BI' },
 ]
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -151,6 +156,7 @@ export default function FarolUsuarios() {
   const [editRole,    setEditRole]    = useState('')
   const [editCodRef,  setEditCodRef]  = useState('')
   const [editModulos, setEditModulos] = useState<string[]>(['vendas'])
+  const [editIndustrias, setEditIndustrias] = useState<number[]>([])
 
   // ── Query ────────────────────────────────────────────────────────────────────
   const { data: usuarios = [], isLoading } = useQuery<SpUsuario[]>({
@@ -204,6 +210,7 @@ export default function FarolUsuarios() {
           tipo_persona:   editPersona,
           cod_referencia: editCodRef,
           modulos:        editModulos,
+          industrias_permitidas: editIndustrias,
         }),
       })
       if (!res.ok) throw new Error((await res.text()) || 'Erro ao atualizar')
@@ -231,6 +238,7 @@ export default function FarolUsuarios() {
     setEditRole(u.sp_role)
     setEditCodRef(u.cod_referencia)
     setEditModulos(u.modulos?.length > 0 ? u.modulos : ['vendas'])
+    setEditIndustrias(u.industrias_permitidas ?? [])
     setEditDialog(true)
   }
 
@@ -437,6 +445,9 @@ export default function FarolUsuarios() {
                       <label htmlFor={`edit-mod-${m.value}`} className="text-sm cursor-pointer select-none">{m.label}</label>
                     </div>
                   ))}
+                </div>
+                <div className="mt-3">
+                  <IndustriasVisiveis valor={editIndustrias} onChange={setEditIndustrias} />
                 </div>
               </div>
             </div>

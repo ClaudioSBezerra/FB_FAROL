@@ -145,12 +145,13 @@ func MetasVinculosHandler(db *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
-			// Segmento Foco (Reckitt) só aparece pra admin (19/10/2026).
+			// Só os painéis/indústrias liberados pro usuário (users.modulos / industrias_permitidas).
 			rows, err := db.Query(metaVinculoSelectBase+`
 				WHERE mv.empresa_id = $1
-				  AND ($2 OR tm.formula_codigo <> 'positivacao_grupos')
+				  AND NOT (tm.formula_codigo = ANY($2))
+				  AND ($3::int[] IS NULL OR mv.industria_id = ANY($3::int[]))
 				ORDER BY i.nome ASC, tm.nome ASC
-			`, spCtx.EmpresaID, hasSpRole(spCtx.SpRole, "admin_fbtax"))
+			`, spCtx.EmpresaID, pq.Array(spCtx.FormulasBloqueadas()), spCtx.industriasFiltro())
 			if err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)
 				return

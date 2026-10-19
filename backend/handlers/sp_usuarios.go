@@ -43,8 +43,10 @@ type SpUsuarioResponse struct {
 	// Filiais vinculadas (preenchidas pela query de listagem)
 	AllFiliais bool  `json:"all_filiais"`
 	FilialIDs  []int `json:"filial_ids"`
-	// Módulos habilitados
+	// Painéis habilitados (vendas | unilever | reckitt | relatorios | bi)
 	Modulos []string `json:"modulos"`
+	// Indústrias que o usuário vê nos painéis; null = todas
+	IndustriasPermitidas []int `json:"industrias_permitidas"`
 }
 
 type SpUpdateRoleRequest struct {
@@ -56,7 +58,9 @@ type SpUpdateRoleRequest struct {
 	GroupID       string   `json:"group_id"`       // ignorado (derivado da empresa)
 	CompanyID     string   `json:"company_id"`     // define preferred_company_id
 	TrialEndsAt   string   `json:"trial_ends_at"`  // opcional — "YYYY-MM-DD"; renova licença
-	Modulos       []string `json:"modulos"`        // módulos habilitados: vendas | marketing | bi
+	Modulos       []string `json:"modulos"`        // painéis habilitados: vendas | unilever | reckitt | relatorios | bi
+	// IndustriasPermitidas — nil = não mexe; [] = todas (volta a NULL); [ids] = só essas.
+	IndustriasPermitidas *[]int `json:"industrias_permitidas"`
 }
 
 type SpVincularFiliaisRequest struct {
@@ -114,7 +118,8 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			    COALESCE(pc.name, ''),
 			    COALESCE(eg.id::text, ''),
 			    COALESCE(eg.name, ''),
-			    COALESCE(u.modulos, ARRAY['vendas']::TEXT[])
+			    COALESCE(u.modulos, ARRAY['vendas','unilever','relatorios']::TEXT[]),
+			    u.industrias_permitidas
 			FROM users u
 			LEFT JOIN LATERAL (
 			    SELECT environment_id, preferred_company_id
@@ -162,17 +167,24 @@ func SpListUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var u SpUsuarioResponse
 			var modulos pq.StringArray
+			var industriasPerm pq.Int64Array
 			if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.SpRole,
 				&u.TipoPersona, &u.CodReferencia,
 				&u.IsVerified, &u.TrialEndsAt, &u.CreatedAt,
 				&u.EnvironmentID, &u.EnvironmentName,
 				&u.CompanyID, &u.CompanyName,
-				&u.GroupID, &u.GroupName, &modulos); err != nil {
+				&u.GroupID, &u.GroupName, &modulos, &industriasPerm); err != nil {
 				continue
 			}
 			u.Modulos = []string(modulos)
 			if len(u.Modulos) == 0 {
-				u.Modulos = []string{"vendas"}
+				u.Modulos = []string{"vendas", "unilever", "relatorios"}
+			}
+			if industriasPerm != nil {
+				u.IndustriasPermitidas = make([]int, len(industriasPerm))
+				for i, v := range industriasPerm {
+					u.IndustriasPermitidas[i] = int(v)
+				}
 			}
 			// Carrega filiais vinculadas para este usuário nessa empresa
 			fRows, err := db.Query(`
@@ -271,6 +283,15 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 		if len(req.Modulos) > 0 {
 			modulosArg = pq.StringArray(req.Modulos)
 		}
+		// Lista vazia = "todas as indústrias" (volta a NULL).
+		var industriasArg interface{}
+		if req.IndustriasPermitidas != nil && len(*req.IndustriasPermitidas) > 0 {
+			ids := make([]int64, len(*req.IndustriasPermitidas))
+			for i, v := range *req.IndustriasPermitidas {
+				ids[i] = int64(v)
+			}
+			industriasArg = pq.Array(ids)
+		}
 		res, err := db.Exec(
 			`UPDATE users SET
 			    sp_role        = $1,
@@ -278,10 +299,12 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 			    trial_ends_at  = CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE trial_ends_at END,
 			    tipo_persona   = COALESCE(NULLIF($5, ''), tipo_persona),
 			    cod_referencia = COALESCE(NULLIF($6, ''), cod_referencia),
-			    modulos        = CASE WHEN $7::TEXT[] IS NOT NULL THEN $7::TEXT[] ELSE modulos END
+			    modulos        = CASE WHEN $7::TEXT[] IS NOT NULL THEN $7::TEXT[] ELSE modulos END,
+			    industrias_permitidas = CASE WHEN $8::boolean THEN $9::INT[] ELSE industrias_permitidas END
 			 WHERE id = $3`,
 			req.SpRole, req.FullName, targetID, trialEnds,
 			req.TipoPersona, req.CodReferencia, modulosArg,
+			req.IndustriasPermitidas != nil, industriasArg,
 		)
 		if err != nil {
 			log.Printf("SpUpdateRole: DB error updating user %s: %v", targetID, err)
@@ -335,20 +358,21 @@ func SpUpdateRoleHandler(db *sql.DB) http.HandlerFunc {
 
 // SpCriarUsuarioRequest — payload para POST /api/sp/usuarios
 type SpCriarUsuarioRequest struct {
-	FullName      string   `json:"full_name"`
-	Email         string   `json:"email"`
-	Password      string   `json:"password"`
-	SpRole        string   `json:"sp_role"`        // gestor_geral | gestor_filial | somente_leitura
-	TipoPersona   string   `json:"tipo_persona"`   // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
-	CodReferencia string   `json:"cod_referencia"` // código operacional
-	TrialDias     int      `json:"trial_dias"`     // fallback: 0 = 365 dias
-	TrialEndsAt   string   `json:"trial_ends_at"`  // "2006-01-02" — tem prioridade sobre trial_dias
-	AllFiliais    bool     `json:"all_filiais"`
-	FilialIDs     []int    `json:"filial_ids"`
-	EnvironmentID string   `json:"environment_id"` // opcional — override do auto-detect
-	GroupID       string   `json:"group_id"`       // opcional
-	CompanyID     string   `json:"company_id"`     // opcional — override da empresa ativa para filiais
-	Modulos       []string `json:"modulos"`        // módulos habilitados (default: ['vendas'])
+	FullName             string   `json:"full_name"`
+	Email                string   `json:"email"`
+	Password             string   `json:"password"`
+	SpRole               string   `json:"sp_role"`        // gestor_geral | gestor_filial | somente_leitura
+	TipoPersona          string   `json:"tipo_persona"`   // diretor | gerente_geral | ggv | supervisor | rca | ti | analista_negocios | admin
+	CodReferencia        string   `json:"cod_referencia"` // código operacional
+	TrialDias            int      `json:"trial_dias"`     // fallback: 0 = 365 dias
+	TrialEndsAt          string   `json:"trial_ends_at"`  // "2006-01-02" — tem prioridade sobre trial_dias
+	AllFiliais           bool     `json:"all_filiais"`
+	FilialIDs            []int    `json:"filial_ids"`
+	EnvironmentID        string   `json:"environment_id"`        // opcional — override do auto-detect
+	GroupID              string   `json:"group_id"`              // opcional
+	CompanyID            string   `json:"company_id"`            // opcional — override da empresa ativa para filiais
+	Modulos              []string `json:"modulos"`               // painéis habilitados (default: vendas, unilever, relatorios)
+	IndustriasPermitidas []int    `json:"industrias_permitidas"` // opcional; vazio = todas
 }
 
 // SpCriarUsuarioHandler cria um novo usuário vinculado à empresa ativa.
@@ -427,14 +451,22 @@ func SpCriarUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		// Cria usuário na tabela pública
 		modulos := req.Modulos
 		if len(modulos) == 0 {
-			modulos = []string{"vendas"}
+			modulos = []string{"vendas", "unilever", "relatorios"}
+		}
+		var industriasNovo interface{}
+		if len(req.IndustriasPermitidas) > 0 {
+			ids := make([]int64, len(req.IndustriasPermitidas))
+			for i, v := range req.IndustriasPermitidas {
+				ids[i] = int64(v)
+			}
+			industriasNovo = pq.Array(ids)
 		}
 		var userID string
 		err = db.QueryRow(`
-			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia, modulos)
-			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, NULLIF($6,''), NULLIF($7,''), $8)
+			INSERT INTO users (email, password_hash, full_name, trial_ends_at, is_verified, role, sp_role, tipo_persona, cod_referencia, modulos, industrias_permitidas)
+			VALUES ($1, $2, $3, $4, TRUE, 'user', $5, NULLIF($6,''), NULLIF($7,''), $8, $9::INT[])
 			RETURNING id
-		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole, req.TipoPersona, req.CodReferencia, pq.StringArray(modulos)).Scan(&userID)
+		`, req.Email, hash, req.FullName, trialEndsAt, req.SpRole, req.TipoPersona, req.CodReferencia, pq.StringArray(modulos), industriasNovo).Scan(&userID)
 		if err != nil {
 			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 				http.Error(w, "E-mail já cadastrado", http.StatusConflict)

@@ -20,6 +20,10 @@ interface AuthContextType {
   spRole: string | null;
   tipoPersona: string | null;
   modulos: string[];
+  /** ids de indústrias que o usuário vê; null = todas */
+  industriasPermitidas: number[] | null;
+  /** true depois que /api/sp/me respondeu (painéis/indústrias já conhecidos) */
+  acessoCarregado: boolean;
   canManageUsers: boolean;
   loading: boolean;
   login: (data: any) => void;
@@ -42,6 +46,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [spRole, setSpRole] = useState<string | null>(null);
   const [tipoPersona, setTipoPersona] = useState<string | null>(null);
   const [modulos, setModulos] = useState<string[]>(['vendas']);
+  const [industriasPermitidas, setIndustriasPermitidas] = useState<number[] | null>(null);
+  const [acessoCarregado, setAcessoCarregado] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -52,9 +58,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (d?.sp_role) setSpRole(d.sp_role)
         if (d?.tipo_persona) setTipoPersona(d.tipo_persona)
         if (Array.isArray(d?.modulos) && d.modulos.length > 0) setModulos(d.modulos)
+        setIndustriasPermitidas(Array.isArray(d?.industrias_permitidas) ? d.industrias_permitidas : null)
         setCanManageUsers(!!d?.can_manage_users)
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setAcessoCarregado(true));
   };
 
   // Refs para o interceptor de fetch (sem stale closure)
@@ -263,6 +271,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setCnpj(null);
     setSpRole(null);
     setModulos(['vendas']);
+    setIndustriasPermitidas(null);
+    setAcessoCarregado(false);
     window.location.href = '/login';
   };
 
@@ -302,6 +312,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       spRole,
       tipoPersona,
       modulos,
+      industriasPermitidas,
+      acessoCarregado,
       canManageUsers,
       loading,
       login,

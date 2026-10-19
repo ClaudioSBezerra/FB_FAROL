@@ -51,7 +51,7 @@ interface RailItem {
 }
 
 const mainItems: RailItem[] = [
-  { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false },
+  { id: 'farol',          icon: Lightbulb,   label: 'Painel Vendas',       path: '/farol/v2',             dev: false, requiredModulo: 'vendas' },
   // Painel BI — desabilitado no rail (pedido do Claudio 24/09/2026: "o CEO
   // não usa computador"). Não apagado: a tela e o módulo continuam
   // existindo, só reordene esta linha de volta pra reativar no menu.
@@ -62,15 +62,15 @@ const mainItems: RailItem[] = [
   // (/farol/metas-industria) chegava na tela. Sem requiredModulo: qualquer
   // usuário Farol autenticado já podia acessar via URL (ProtectedRoute
   // simples); isto só torna visível o que já era alcançável.
-  { id: 'metas_industria', icon: Factory,    label: 'Painel Unilever',     path: '/farol/metas-industria', dev: false },
+  { id: 'metas_industria', icon: Factory,    label: 'Painel Unilever',     path: '/farol/metas-industria', dev: false, requiredModulo: 'unilever' },
   // Painel Reckitt (Segmento Foco) — 19/10/2026: um item de menu por indústria/programa.
-  { id: 'reckitt',        icon: PackageCheck, label: 'Painel Reckitt',    path: '/farol/segmento-foco',  dev: false, adminOnly: true },
+  { id: 'reckitt',        icon: PackageCheck, label: 'Painel Reckitt',    path: '/farol/segmento-foco',  dev: false, requiredModulo: 'reckitt' },
   { id: 'importar',       icon: UploadCloud, label: 'Importar dados',      path: '/farol/importar',       dev: false, adminOrTI: true },
   // Relatórios: visível pra QUALQUER usuário (Comparativo REL 322 é de uso
   // geral, pedido do Claudio em 28/08/2026) — o recorte admin/TI só se
   // aplica às outras duas abas (Extrato de Produtos por Cliente, CNPJ
   // irregular), escondidas dentro de FarolRelatorios.tsx pra quem não é.
-  { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false },
+  { id: 'relatorios',     icon: FileText,     label: 'Relatórios',          path: '/farol/relatorios',     dev: false, requiredModulo: 'relatorios' },
   // Objetivo RCA/Objetivo Supervisor (placeholders "(DEV)") removidos do
   // rail — pedido do Claudio 24/09/2026: "estão sem funcionalidades" (nunca
   // tiveram rota/página de verdade, só o ícone com badge DEV).
@@ -126,7 +126,7 @@ export function AppRail() {
         (!it.adminOnly || isAdmin) &&
         (!it.adminOrTI || canImport) &&
         (!it.fbtaxOnly || spRole === 'admin_fbtax') &&
-        (!it.requiredModulo || hasModulo(it.requiredModulo))
+        (!it.requiredModulo || isAdmin || hasModulo(it.requiredModulo))
       )
   const active = getActiveModule(location.pathname)
 

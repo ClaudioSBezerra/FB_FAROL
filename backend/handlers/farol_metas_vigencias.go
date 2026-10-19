@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
@@ -142,18 +144,20 @@ func MetasVigenciasHandler(db *sql.DB) http.HandlerFunc {
 					FROM farol.metas_vigencias v
 					JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 					JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
-					WHERE v.empresa_id = $1 AND v.vinculo_id = $2 AND ($3 OR tm.formula_codigo <> 'positivacao_grupos')
+					WHERE v.empresa_id = $1 AND v.vinculo_id = $2 AND NOT (tm.formula_codigo = ANY($3))
+					  AND ($4::int[] IS NULL OR mv.industria_id = ANY($4::int[]))
 					ORDER BY v.data_inicio DESC
-				`, spCtx.EmpresaID, vinculoIDStr, hasSpRole(spCtx.SpRole, "admin_fbtax"))
+				`, spCtx.EmpresaID, vinculoIDStr, pq.Array(spCtx.FormulasBloqueadas()), spCtx.industriasFiltro())
 			} else {
 				rows, err = db.Query(`
 					SELECT v.id, v.vinculo_id, v.data_inicio::text, v.data_fim::text, v.status, v.created_at
 					FROM farol.metas_vigencias v
 					JOIN farol.metas_vinculos mv ON mv.id = v.vinculo_id
 					JOIN farol.tipos_metrica tm ON tm.id = mv.tipo_metrica_id
-					WHERE v.empresa_id = $1 AND ($2 OR tm.formula_codigo <> 'positivacao_grupos')
+					WHERE v.empresa_id = $1 AND NOT (tm.formula_codigo = ANY($2))
+					  AND ($3::int[] IS NULL OR mv.industria_id = ANY($3::int[]))
 					ORDER BY v.data_inicio DESC
-				`, spCtx.EmpresaID, hasSpRole(spCtx.SpRole, "admin_fbtax"))
+				`, spCtx.EmpresaID, pq.Array(spCtx.FormulasBloqueadas()), spCtx.industriasFiltro())
 			}
 			if err != nil {
 				http.Error(w, "Database error", http.StatusInternalServerError)

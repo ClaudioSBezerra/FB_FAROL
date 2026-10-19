@@ -121,15 +121,30 @@ function AdminOrTIRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// AdminOuFbtaxRoute — admin de plataforma OU admin_fbtax. Painel Reckitt
-// (Segmento Foco), 19/10/2026: visível só pra admin até validar com a JC.
-function AdminOuFbtaxRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading, user, spRole } = useAuth()
+// PainelRoute — painel liberado pro usuário (users.modulos). Admin sempre passa.
+// Espera /api/sp/me responder antes de decidir (senão o 1º render, com os
+// módulos padrão, mandaria um usuário só-Unilever embora da própria tela).
+function PainelRoute({ modulo, children }: { modulo: string; children: React.ReactNode }) {
+  const { isAuthenticated, loading, user, spRole, hasModulo, acessoCarregado } = useAuth()
   const location = useLocation()
   if (loading) return null
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />
-  if (user?.role !== 'admin' && spRole !== 'admin_fbtax') return <Navigate to="/" replace />
+  if (!acessoCarregado) return null
+  const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+  if (!isAdmin && !hasModulo(modulo)) return <Navigate to="/" replace />
   return <>{children}</>
+}
+
+// Landing — "/" leva pro primeiro painel que o usuário pode ver.
+function Landing() {
+  const { loading, user, spRole, hasModulo, acessoCarregado, isAuthenticated } = useAuth()
+  if (loading || (isAuthenticated && !acessoCarregado)) return null
+  const isAdmin = user?.role === 'admin' || spRole === 'admin_fbtax'
+  const ordem: Array<[string, string]> = [
+    ['vendas', '/farol/v2'], ['unilever', '/farol/metas-industria'], ['reckitt', '/farol/segmento-foco'], ['relatorios', '/farol/relatorios'],
+  ]
+  const destino = isAdmin ? '/farol/v2' : (ordem.find(([m]) => hasModulo(m))?.[1] ?? '/farol/v2')
+  return <Navigate to={destino} replace />
 }
 
 // FbtaxAdminRoute — restrito a admin_fbtax (só o Claudio, por enquanto).
@@ -284,7 +299,7 @@ function AppLayout() {
           <div className="p-4">
             <TIOnlyRoute>
               <Routes>
-              <Route path="/" element={<Navigate to="/farol/v2" replace />} />
+              <Route path="/" element={<Landing />} />
 
               {/* Painel de Calibragem */}
               <Route path="/dashboard/ampliar"    element={<ProtectedRoute><SpDashboard /></ProtectedRoute>} />
@@ -321,7 +336,7 @@ function AppLayout() {
 
               {/* Objetivos — Em Desenvolvimento (rotas mantidas para compatibilidade) */}
               {/* Farol V2 — novo sistema de vendas (Reescrita 2026) */}
-              <Route path="/farol/v2"         element={<ProtectedRoute><FarolV2Dashboard /></ProtectedRoute>} />
+              <Route path="/farol/v2"         element={<PainelRoute modulo="vendas"><FarolV2Dashboard /></PainelRoute>} />
               {/* Página que o resumo semanal linka. Protegida: o quadro da empresa
                   inteira não fica atrás de URL que circula em conversa. */}
               <Route path="/farol/dinheiro-na-mesa" element={<ProtectedRoute><FarolDinheiroNaMesa /></ProtectedRoute>} />
@@ -336,7 +351,7 @@ function AppLayout() {
                   Clientes com CNPJ irregular continuam admin/TI-only, mas esse
                   recorte agora é feito DENTRO de FarolRelatorios.tsx (abas
                   escondidas + aba padrão), não mais no gate da rota. */}
-              <Route path="/farol/relatorios" element={<ProtectedRoute><FarolRelatorios /></ProtectedRoute>} />
+              <Route path="/farol/relatorios" element={<PainelRoute modulo="relatorios"><FarolRelatorios /></PainelRoute>} />
               <Route path="/farol/comparativo-fechamento" element={<ProtectedRoute><FarolComparativoFechamento /></ProtectedRoute>} />
 
               {/* Farol legado — versão web (mesma visão do mobile, autenticada) */}
@@ -354,8 +369,8 @@ function AppLayout() {
               <Route path="/gestao/tipos-metrica" element={<ProtectedRoute><ConfigTiposMetrica /></ProtectedRoute>} />
               <Route path="/gestao/carga-mes" element={<ProtectedRoute><ConfigCargaMes /></ProtectedRoute>} />
               <Route path="/gestao/metas-vinculos" element={<ProtectedRoute><ConfigMetasVinculos /></ProtectedRoute>} />
-              <Route path="/farol/metas-industria" element={<ProtectedRoute><FarolPainelMetas /></ProtectedRoute>} />
-              <Route path="/farol/segmento-foco" element={<AdminOuFbtaxRoute><FarolSegmentoFoco /></AdminOuFbtaxRoute>} />
+              <Route path="/farol/metas-industria" element={<PainelRoute modulo="unilever"><FarolPainelMetas /></PainelRoute>} />
+              <Route path="/farol/segmento-foco" element={<PainelRoute modulo="reckitt"><FarolSegmentoFoco /></PainelRoute>} />
               <Route path="/farol/gamificacao" element={<FbtaxAdminRoute><FarolGamificacao /></FbtaxAdminRoute>} />
 
               {/* Configurações (admin) */}

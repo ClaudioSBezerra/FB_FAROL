@@ -567,6 +567,20 @@ func main() {
 		}
 	}
 
+	// withSPPainel — como withSP, mas só deixa passar se os vínculos citados na query
+	// (vinculo_id, vinculo_cobertura_id, vinculo_sortimento_id) forem de uma indústria
+	// e de um painel liberados pro usuário (users.modulos / industrias_permitidas).
+	withSPPainel := func(handlerFactory func(*sql.DB) http.HandlerFunc, requiredSpRole string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			database := getDB()
+			if database == nil {
+				http.Error(w, "Database initializing...", http.StatusServiceUnavailable)
+				return
+			}
+			handlers.FarolAuthMiddleware(database, handlers.ExigeVinculoPermitido(database, handlerFactory(database)), requiredSpRole)(w, r)
+		}
+	}
+
 	// ── Objetivos — Import CSV de objetivos de vendas ────────────────────────
 	http.HandleFunc("/api/objetivos/upload-csv", withSP(handlers.ObjetivosImportHandler, "gestor_filial"))
 	http.HandleFunc("/api/objetivos/periodos", withSP(handlers.ObjetivosPeriosHandler, "gestor_filial"))
@@ -657,11 +671,11 @@ func main() {
 	http.HandleFunc("/api/farol/metas-vigencias/", withSP(handlers.MetaVigenciaItemHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-carga-status", withSP(handlers.MetasCargaStatusHandler, "gestor_geral"))
 	// Segmento Foco (Reckitt, 19/10/2026) — positivação de grupos de produtos.
-	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSP(handlers.SegmentoFocoGruposImportarHandler, "admin_fbtax"))
-	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSP(handlers.SegmentoFocoObjetivosImportarHandler, "admin_fbtax"))
-	http.HandleFunc("/api/farol/segmento-foco", gz(withSP(handlers.SegmentoFocoPainelHandler, "admin_fbtax")))
-	http.HandleFunc("/api/farol/segmento-foco/uf", withSP(handlers.SegmentoFocoUFHandler, "admin_fbtax"))
-	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSP(handlers.SegmentoFocoDetalheHandler, "admin_fbtax")))
+	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSPPainel(handlers.SegmentoFocoGruposImportarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSPPainel(handlers.SegmentoFocoObjetivosImportarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/segmento-foco", gz(withSPPainel(handlers.SegmentoFocoPainelHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/segmento-foco/uf", withSPPainel(handlers.SegmentoFocoUFHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSPPainel(handlers.SegmentoFocoDetalheHandler, "somente_leitura")))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.
 	http.HandleFunc("/api/farol/metas-vinculos-importar-csv", withSP(handlers.MetasImportarCSVHandler, "gestor_geral"))
@@ -686,7 +700,7 @@ func main() {
 	// (Épico 5/6, painel de visualização) também precisam acessar, então
 	// somente_leitura (o nível mais permissivo), diferente da configuração
 	// admin acima (NFR2: edição restrita, visualização ampla).
-	http.HandleFunc("/api/farol/metas-realizado", gz(withSP(handlers.MetasRealizadoHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-realizado", gz(withSPPainel(handlers.MetasRealizadoHandler, "somente_leitura")))
 	http.HandleFunc("/api/farol/metas-realizado/reprocessar", withSP(handlers.MetasRealizadoReprocessarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-itens-realizado/reprocessar", withSP(handlers.MetasItensRealizadoReprocessarHandler, "gestor_geral"))
 
@@ -704,21 +718,21 @@ func main() {
 	http.HandleFunc("/api/farol/gamif-extratos-excel", withSP(handlers.GamifExtratoExcelHandler, "admin_fbtax"))
 
 	// Painel de indicadores oficiais (Meta × Realizado × delta) — Épico 5 Story 5.1.
-	http.HandleFunc("/api/farol/metas-painel", gz(withSP(handlers.MetasPainelHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-painel", gz(withSPPainel(handlers.MetasPainelHandler, "somente_leitura")))
 
 	// Painel combinado Cobertura + Sortimento numa linha por Rede — pedido
 	// da JC em 2026-09-03 (formato igual à planilha "Resumo Redes" da Unilever).
-	http.HandleFunc("/api/farol/metas-painel-combinado", gz(withSP(handlers.MetasPainelCombinadoHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-painel-combinado", gz(withSPPainel(handlers.MetasPainelCombinadoHandler, "somente_leitura")))
 
 	// Painel combinado pra Numérica (Épico 7, pedido do Claudio 30/09/2026)
 	// — mesmo princípio acima, grão único Cliente/CNPJ (sem Rede).
-	http.HandleFunc("/api/farol/metas-painel-combinado-numerica", gz(withSP(handlers.MetasPainelCombinadoNumericaHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-painel-combinado-numerica", gz(withSPPainel(handlers.MetasPainelCombinadoNumericaHandler, "somente_leitura")))
 
 	// Drill-down de itens (Sortimento): vendeu/não vendeu, Qtd, Valor — por
 	// Rede (cod_princ) ou por Loja (cnpj) — pedido do Claudio em 10/09/2026.
-	http.HandleFunc("/api/farol/metas-painel-itens", gz(withSP(handlers.MetasPainelItensHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-painel-itens", gz(withSPPainel(handlers.MetasPainelItensHandler, "somente_leitura")))
 	// PPAs que um cliente da Numérica comprou/não comprou — Correção 2 do Heverton 08/10/2026.
-	http.HandleFunc("/api/farol/metas-painel-ppas", gz(withSP(handlers.MetasPainelPPAsHandler, "somente_leitura")))
+	http.HandleFunc("/api/farol/metas-painel-ppas", gz(withSPPainel(handlers.MetasPainelPPAsHandler, "somente_leitura")))
 
 	// Comparativo Fechamento Comercial (Painel Vendas) — pedido do Claudio
 	// 14/09/2026: compara o fechamento que o fornecedor manda por fora com
