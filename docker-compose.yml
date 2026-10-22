@@ -42,17 +42,12 @@ services:
         aliases:
           - farol-api
       coolify: {}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
-      - "traefik.http.routers.farol-api.rule=Host(`farol.fbtax.cloud`) && PathPrefix(`/api/`)"
-      - "traefik.http.routers.farol-api.entrypoints=https"
-      - "traefik.http.routers.farol-api.tls=true"
-      - "traefik.http.routers.farol-api.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.farol-api.priority=10"
-      - "traefik.http.services.farol-api.loadbalancer.server.port=8087"
 
-  # Frontend (React/Nginx) — Traefik roteia tudo que NÃO é /api/* pra cá
+  # Frontend (React/Nginx) — rota pro Cloudflare Tunnel abaixo (labels
+  # traefik.* removidos em 22/10: o túnel já está validado e ativo desde
+  # 21/10 — "farol.fbtax.cloud" e "farol.fbtax.cloud/^/api" nas Routes do
+  # túnel fb-farol-prod — manter o fallback do Traefik continuava expondo
+  # o IP de origem da VPS como caminho alternativo, direto, sem WAF/DDoS).
   web:
     build:
       context: ./frontend
@@ -61,15 +56,6 @@ services:
     restart: always
     expose:
       - "80"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
-      - "traefik.http.routers.farol.rule=Host(`farol.fbtax.cloud`)"
-      - "traefik.http.routers.farol.entrypoints=https"
-      - "traefik.http.routers.farol.tls=true"
-      - "traefik.http.routers.farol.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.farol.priority=1"
-      - "traefik.http.services.farol.loadbalancer.server.port=80"
     depends_on:
       - api
     networks:
@@ -162,25 +148,9 @@ services:
     networks:
       - fb_net
 
-  # Cloudflare Tunnel (21/10, migração de segurança) — scaffold DORMENTE.
-  # IMPORTANTE (21/10): este serviço só pode viver AQUI, em docker-compose.yml
-  # — não em docker-compose.prod.yml, que o Coolify nunca usa (ver comentário
-  # em `db` acima: "o 'P3' ... foi aplicado só no docker-compose.prod.yml,
-  # que o Coolify NÃO usa — nunca chegou a valer", mesmo achado confirmado
-  # pelo log de deploy real: só api/web aparecem buildados). Sem
-  # CLOUDFLARE_TUNNEL_TOKEN setado no Coolify, este container só reinicia
-  # sozinho, sem afetar os demais.
-  #
-  # Passo a passo (manual, painel Cloudflare):
-  #   1. Zero Trust -> Networks -> Tunnels -> Create a tunnel, nome ex.
-  #      "fb-farol-prod".
-  #   2. Copiar o token gerado e setar CLOUDFLARE_TUNNEL_TOKEN no Coolify.
-  #   3. Public Hostname/Route: Subdomain=farol, Domain=fbtax.cloud,
-  #      Service=http://web:80.
-  #   4. Apagar o registro DNS A antigo de farol.fbtax.cloud ANTES de criar
-  #      a rota (senão o Cloudflare não cria o CNAME do túnel sozinho — erro
-  #      1016 "Origin DNS error" se isso já tiver acontecido; aí só criar o
-  #      CNAME manual pra <tunnel-id>.cfargotunnel.com).
+  # Cloudflare Tunnel (21/10, ativado e validado em 22/10) — único caminho
+  # público pra farol.fbtax.cloud agora (rotas no painel: hostname raiz ->
+  # http://web:80, hostname+path ^/api -> http://api:8087).
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: fb_farol-cloudflared-prod
