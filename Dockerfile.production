@@ -17,7 +17,9 @@ ENV VITE_APP_MODULE=$VITE_APP_MODULE
 RUN npm run build
 
 # ── Stage 2: build backend ────────────────────────────────────────────────────
-FROM golang:1.26-alpine AS backend-builder
+# Pinado em patch exato (22/10, migração de segurança) — mesmo motivo do
+# backend/Dockerfile: 15 vulnerabilidades de stdlib corrigidas até 1.26.10.
+FROM golang:1.26.10-alpine AS backend-builder
 WORKDIR /app/backend
 
 RUN apk add --no-cache git
