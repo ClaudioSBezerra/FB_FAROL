@@ -1,5 +1,11 @@
 # Build Stage — FB_FAROL
-FROM golang:1.26-alpine AS builder
+# Pinado em patch exato (22/10, migração de segurança) — a tag flutuante
+# "1.26-alpine" ficava sujeita ao cache local do Docker nunca puxar a
+# versão nova; fixar o patch garante o pull. 1.26.10 corrige 15
+# vulnerabilidades da biblioteca padrão do Go (net/http, crypto/tls,
+# crypto/x509, net/url) achadas via `govulncheck` — nenhuma em
+# dependência terceira.
+FROM golang:1.26.10-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 
