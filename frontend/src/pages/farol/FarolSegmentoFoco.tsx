@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import TabelaComColunas from '@/components/farol/TabelaComColunas'
@@ -67,7 +67,11 @@ function CelulasResultado({ obj, real, realComObj }: { obj: number | null; real:
           <div className="text-[10px] font-normal text-slate-400">{fmt(real - realComObj)} em UF sem objetivo</div>
         )}
       </td>
-      <td className={`${celula} ${gap == null ? '' : cor}`}>{gap == null ? '—' : bateu ? 'Atingido' : fmt(gap)}</td>
+      <td className={`${celula} ${gap == null ? '' : cor}`}>
+        {gap == null ? '—' : bateu
+          ? <Check className="inline w-5 h-5 text-green-600" strokeWidth={3.5} aria-label="Atingido" />
+          : fmt(gap)}
+      </td>
       <td className={`${celula} ${obj ? cor : ''}`}>{obj ? `${fmt((base / obj) * 100)}%` : '—'}</td>
     </>
   )
