@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -16,7 +16,7 @@ interface Vinculo { id: number; industria_nome: string; formula_codigo: string }
 interface MesValor { mes: string; objetivo: number | null; realizado: number }
 interface GrupoLinha { grupo: string; meses: MesValor[]; objetivo_tri: number | null; realizado_tri: number }
 interface UFBloco { uf: string; grupos: GrupoLinha[] }
-interface Painel { ufs_ocultas?: string[]; trimestre: string; meses: string[]; meses_sem_vigencia: string[] | null; grupos: string[]; ufs: UFBloco[] }
+interface Painel { meses_disponiveis?: string[]; ufs_ocultas?: string[]; trimestre: string; meses: string[]; meses_sem_vigencia: string[] | null; grupos: string[]; ufs: UFBloco[] }
 interface DetLinha { cod: string; nome: string; cod_pai?: string; nome_pai?: string; grupos: number[]; total: number; geral: number }
 interface DetProduto { grupo: string; cod_prod: string; produto: string; qtd: number; positivou: boolean }
 interface Detalhe { nivel: 'ggv' | 'crv' | 'rca' | 'cliente' | 'produto'; grupos: string[]; linhas?: DetLinha[]; produtos?: DetProduto[] }
@@ -162,6 +162,15 @@ export default function FarolSegmentoFoco() {
       return r.json()
     },
   })
+
+  // Abre no último mês com vigência carregada (o mês corrente pode não ter carga ainda).
+  const [ajustouMes, setAjustouMes] = useState(false)
+  useEffect(() => {
+    if (!painel || ajustouMes) return
+    setAjustouMes(true)
+    const disp = painel.meses_disponiveis ?? []
+    if (disp.length && !disp.includes(mes)) setMes(disp[disp.length - 1])
+  }, [painel, ajustouMes, mes])
 
   const idxMes = painel ? Math.max(0, painel.meses.indexOf(mes)) : 0
   const todasUFs = useMemo(() => [...(painel?.ufs ?? [])].sort((a, b) =>

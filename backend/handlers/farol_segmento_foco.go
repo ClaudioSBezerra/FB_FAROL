@@ -401,6 +401,8 @@ type SegPainelResp struct {
 	Grupos      []string `json:"grupos"`
 	UFs         []SegUF  `json:"ufs"`
 	UFsOcultas  []string `json:"ufs_ocultas"`
+	// MesesDisponiveis — meses (AAAA-MM) com vigência carregada, pra tela abrir no último mês com dados.
+	MesesDisponiveis []string `json:"meses_disponiveis"`
 }
 
 // segMesesDoTrimestre devolve os 3 meses (AAAA-MM) do trimestre civil de `mes`.
@@ -444,6 +446,16 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 	}
 	ocultas := segUFsOcultas(db, empresaID, vinculoID)
 	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas)}
+	resp.MesesDisponiveis = []string{}
+	if rows, err := db.Query(`SELECT to_char(data_inicio, 'YYYY-MM') FROM farol.metas_vigencias WHERE vinculo_id = $1 AND empresa_id = $2 ORDER BY data_inicio`, vinculoID, empresaID); err == nil {
+		for rows.Next() {
+			var m string
+			if rows.Scan(&m) == nil {
+				resp.MesesDisponiveis = append(resp.MesesDisponiveis, m)
+			}
+		}
+		rows.Close()
+	}
 	t0, _ := time.Parse("2006-01", meses[0])
 	resp.Trimestre = fmt.Sprintf("%dº tri/%d", (int(t0.Month())-1)/3+1, t0.Year())
 
