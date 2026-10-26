@@ -503,6 +503,8 @@ export default function FarolPainelMetas() {
   const industrias = useMemo<Industria[]>(() => {
     const porID = new Map<number, Industria>()
     for (const v of vinculos) {
+      // Segmento Foco (Reckitt) tem painel próprio — não entra na lista do Painel Unilever.
+      if (v.formula_codigo === 'positivacao_grupos') continue
       if (!porID.has(v.industria_id)) porID.set(v.industria_id, { id: v.industria_id, nome: v.industria_nome })
       const ind = porID.get(v.industria_id)!
       if (v.formula_codigo === 'cobertura_rede') ind.cobertura = v
