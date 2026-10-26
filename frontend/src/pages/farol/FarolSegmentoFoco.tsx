@@ -132,6 +132,69 @@ function LinhasFilhas({ ctx, filtro, recuo }: { ctx: Ctx; filtro: Filtro; recuo:
   )
 }
 
+// Linha do medidor: RCA → (clique) segmentos → (clique) clientes do segmento.
+function LinhaMedidorRCA({ l, grupos, ctx, uf }: { l: DetLinha; grupos: string[]; ctx: Ctx; uf: string }) {
+  const [aberta, setAberta] = useState(false)
+  const [grupoAberto, setGrupoAberto] = useState<string | null>(null)
+  const { data, isLoading } = useQuery<Detalhe>({
+    queryKey: ['seg-medidor-cli', ctx.vinculoId, ctx.mes, ctx.fluxo, ctx.periodo, l.cod, uf, grupoAberto],
+    enabled: !!grupoAberto,
+    queryFn: async () => {
+      const p = new URLSearchParams({ vinculo_id: String(ctx.vinculoId), mes: ctx.mes, fluxo: ctx.fluxo, periodo: ctx.periodo, cod_rca: l.cod })
+      if (uf) p.set('uf', uf)
+      const r = await fetch(`/api/farol/segmento-foco/detalhe?${p}`, { headers: ctx.headers })
+      if (!r.ok) throw new Error()
+      return r.json()
+    },
+  })
+  const span = grupos.length + 1
+  return (
+    <>
+      <tr className="border-t cursor-pointer hover:bg-slate-50" onClick={() => setAberta(a => !a)}>
+        <td className="px-3 py-2 text-left whitespace-nowrap">
+          <span className="inline-flex items-center gap-1">
+            <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${aberta ? '' : '-rotate-90'}`} />{l.cod} — {l.nome}
+          </span>
+        </td>
+        <td className={`${celula} whitespace-nowrap`}>{l.cod_pai}</td>
+        <td className={`${celula} font-semibold`}>{fmt(l.geral)}</td>
+        {l.grupos.map((n, i) => <td key={i} className={`${celula} ${n ? '' : 'text-slate-300'}`}>{fmt(n)}</td>)}
+      </tr>
+      {aberta && grupos.map((g, i) => {
+        const n = l.grupos[i]
+        const ab = grupoAberto === g
+        return (
+          <Fragment key={g}>
+            <tr className="border-t bg-slate-50/60 cursor-pointer hover:bg-slate-100" onClick={() => n && setGrupoAberto(ab ? null : g)}>
+              <td className="py-2 text-left" style={{ paddingLeft: 36 }}>
+                <span className="inline-flex items-center gap-1">
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${ab ? '' : '-rotate-90'}`} />
+                  <span className="text-[10px] uppercase text-slate-400 mr-1">Segmento</span>{g}
+                </span>
+              </td>
+              <td className={celula}></td>
+              <td className={`${celula} font-semibold ${n ? '' : 'text-slate-300'}`} colSpan={span}>{fmt(n)} cliente(s)</td>
+            </tr>
+            {ab && isLoading && <tr><td colSpan={span + 2} className="py-2 text-xs text-slate-400" style={{ paddingLeft: 60 }}>Carregando...</td></tr>}
+            {ab && data && data.nivel === 'cliente' && (() => {
+              const idx = data.grupos.indexOf(g)
+              const cl = (data.linhas ?? []).filter(x => idx >= 0 && x.grupos[idx] > 0)
+              if (!cl.length) return <tr><td colSpan={span + 2} className="py-2 text-xs text-slate-400" style={{ paddingLeft: 60 }}>Nenhum cliente neste segmento</td></tr>
+              return cl.map(c => (
+                <tr key={c.cod} className="border-t cursor-pointer hover:bg-slate-100" onClick={() => ctx.onCliente(c.cod, c.nome, { cod_rca: l.cod, uf })}>
+                  <td className="py-2 text-left" style={{ paddingLeft: 60 }} colSpan={span + 2}>
+                    <span className="text-[10px] uppercase text-slate-400 mr-1">Cliente</span>{c.cod} — {c.nome}
+                  </td>
+                </tr>
+              ))
+            })()}
+          </Fragment>
+        )
+      })}
+    </>
+  )
+}
+
 export default function FarolSegmentoFoco() {
   const { token } = useAuth()
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
@@ -405,7 +468,7 @@ export default function FarolSegmentoFoco() {
           {medidor && (
             <TabelaComColunas id="segfoco-medidor" className="overflow-auto max-h-[70vh]">
               <p className="px-4 pt-2 text-xs text-muted-foreground">
-                Clientes positivados por grupo. “Clientes c/ algum grupo” = clientes que positivaram pelo menos um grupo (não é a “Positivação Geral” da planilha do fornecedor){periodo === 'trimestre' ? ' (somado mês a mês)' : ''}.
+                Clique no RCA pra ver os segmentos e no segmento pra ver os clientes. Um cliente atendido por 2 RCAs aparece em cada um, mas conta 1 só no total. “Clientes c/ algum grupo” = clientes que positivaram pelo menos um grupo (não é a “Positivação Geral” da planilha do fornecedor){periodo === 'trimestre' ? ' (somado mês a mês)' : ''}.
               </p>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white shadow-[0_1px_0_0_#e2e8f0]">
@@ -417,14 +480,7 @@ export default function FarolSegmentoFoco() {
                   </tr>
                 </thead>
                 <tbody>
-                  {linhasMedidor.map(l => (
-                    <tr key={l.cod} className="border-t hover:bg-slate-50">
-                      <td className="px-3 py-2 text-left whitespace-nowrap">{l.cod} — {l.nome}</td>
-                      <td className={`${celula} whitespace-nowrap`}>{l.cod_pai}</td>
-                      <td className={`${celula} font-semibold`}>{fmt(l.geral)}</td>
-                      {l.grupos.map((n, i) => <td key={i} className={`${celula} ${n ? '' : 'text-slate-300'}`}>{fmt(n)}</td>)}
-                    </tr>
-                  ))}
+                  {linhasMedidor.map(l => <LinhaMedidorRCA key={l.cod} l={l} grupos={medidor.grupos ?? []} ctx={ctxBase('')} uf={ufParam} />)}
                   {linhasMedidor.length === 0 && <tr><td colSpan={(medidor.grupos ?? []).length + 3} className="py-8 text-center text-slate-500">Nenhum RCA neste recorte</td></tr>}
                 </tbody>
               </table>
