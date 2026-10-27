@@ -26,7 +26,10 @@ RUN apk --no-cache add tzdata ca-certificates && \
 # diretório de trabalho continue gravável pelo novo usuário. WORKDIR
 # continua /root/ de propósito — é o path que o volume `api_uploads` do
 # docker-compose.prod.yml já monta; só o dono muda.
-RUN adduser -D -u 1000 appuser && chown appuser:appuser /root
+# /root/uploads/imports é criado já com o dono certo: sem isso o Docker cria o
+# ponto de montagem do volume `api_uploads` como root e o appuser não consegue
+# gravar (causou falha no import de CSV após a migração de 21/10).
+RUN adduser -D -u 1000 appuser && mkdir -p /root/uploads/imports && chown -R appuser:appuser /root
 WORKDIR /root/
 COPY --from=builder --chown=appuser:appuser /app/server .
 COPY --from=builder --chown=appuser:appuser /app/migrations ./migrations
