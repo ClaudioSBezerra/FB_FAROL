@@ -83,6 +83,8 @@ func listarVinculosAtivosComVigenciaAberta(db *sql.DB, empresaID string) ([]vinc
 // próximas — uma Indústria com Cliente Válido faltando não pode travar o
 // prewarm das outras.
 func PrewarmMetasRealizados(db *sql.DB, empresaID string) {
+	// Segmento Foco calcula ao vivo; aqui só aquece o cache em memória dele.
+	PrewarmSegmentoFoco(db, empresaID)
 	t0 := time.Now()
 	vinculos, err := listarVinculosAtivosComVigenciaAberta(db, empresaID)
 	if err != nil {

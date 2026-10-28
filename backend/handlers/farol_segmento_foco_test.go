@@ -215,6 +215,17 @@ func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
 	if err != nil || d.Nivel != "crv" || len(d.Linhas) != 2 || d.Linhas[0].Total != 1 || d.Linhas[1].Total != 1 {
 		t.Errorf("equipes: %+v err=%v, quero 2 equipes com 1 cada (cliente nas duas)", d, err)
 	}
+	// Prewarm: deixa os 3 fluxos da vigência no cache.
+	segInvalidarCache()
+	if ok, falhas := segAquecer(db, empresaID, vinculoID, vig); ok != 3 || falhas != 0 {
+		t.Errorf("segAquecer: ok=%d falhas=%d, quero 3 e 0", ok, falhas)
+	}
+	segCacheMu.Lock()
+	aquecidos := len(segCache)
+	segCacheMu.Unlock()
+	if aquecidos != 3 {
+		t.Errorf("cache aquecido tem %d entradas, quero 3 (faturado, transmitido, soma)", aquecidos)
+	}
 	// Cliente que o RCA vendeu de outro produto do fornecedor (fora dos grupos) aparece com zero;
 	// venda de OUTRO fornecedor não entra.
 	db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)

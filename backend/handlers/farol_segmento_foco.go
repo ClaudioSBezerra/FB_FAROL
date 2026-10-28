@@ -20,7 +20,7 @@ package handlers
 // O fluxo (Faturado, Emitido, Faturado+Emitido) vem como nos demais painéis; no
 // Faturado abate devolução/cancelamento (vendas_ccd), igual ao resto do
 // sistema. Sem snapshot por enquanto: a conta roda ao vivo (~40 mil linhas de
-// venda por mês do fornecedor) com cache curto em memória.
+// venda por mês do fornecedor) com cache em memória aquecido pelo prewarm.
 //
 // Rotas (sp_role >= somente_leitura, escopo GGV/CRV/RCA do login):
 //   GET /api/farol/segmento-foco          ?vinculo_id=&mes=YYYY-MM&fluxo=
@@ -81,7 +81,9 @@ type segCacheEntry struct {
 	at    time.Time
 }
 
-const segCacheTTL = 2 * time.Minute
+// TTL longo porque o prewarm (PrewarmSegmentoFoco) limpa e refaz o cache a cada
+// carga/importação; o prazo só limita o dado velho se algum prewarm falhar.
+const segCacheTTL = 6 * time.Hour
 
 func segInvalidarCache() {
 	segCacheMu.Lock()
