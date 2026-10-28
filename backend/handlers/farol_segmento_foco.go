@@ -397,24 +397,21 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 	return out, nil
 }
 
-// segUnidadesPorVolume — quantas unidades vale 1 do volume vendido: só a CAIXA
-// multiplica (caixa de 12 = 12 unidades); UN, PT (pacote) e demais valem 1. O
-// mínimo de 3 unidades vale pra qualquer embalagem (Igor/Reckitt, 28/10/2026:
-// 1 pacote de Vanish Pó não positiva; a regra do Numérica positivava).
-// As unidades da caixa vêm do texto da embalagem ("CX/0012/UN" = 12), não de
-// qt_unit_cx: em PRD essa coluna vem 1 na caixa e 12/24 na unidade (visto em
-// 28/10/2026), então só serve de reserva quando a embalagem não traz o número.
+// segUnidadesPorVolume — quantas unidades vale 1 do volume vendido, lido do
+// número do meio do texto da embalagem: "CX/0012/UN" = 12, "DP/0003/UN" (display)
+// = 3, "UN/0001/UN" e "PT/0001/UN" = 1. O mínimo de 3 unidades vale pra qualquer
+// embalagem (Igor/Reckitt, 28/10/2026: 1 pacote de Vanish Pó não positiva, 1
+// display de Harpic positiva). Não usa qt_unit_cx: em PRD essa coluna vem 1 na
+// caixa e 12/24 na unidade (visto em 28/10/2026), então só serve de reserva
+// quando a embalagem vem vazia ou só "CX", sem o número.
 func segUnidadesPorVolume(embalagem string, qtUnitCx float64) float64 {
-	partes := strings.Split(strings.ToUpper(strings.TrimSpace(embalagem)), "/")
-	if tok := partes[0]; tok != "CX" && tok != "" {
-		return 1
-	}
+	partes := strings.Split(strings.TrimSpace(embalagem), "/")
 	if len(partes) > 1 {
-		if n, err := strconv.Atoi(strings.TrimSpace(partes[1])); err == nil && n > 1 {
+		if n, err := strconv.Atoi(strings.TrimSpace(partes[1])); err == nil && n > 0 {
 			return float64(n)
 		}
 	}
-	if qtUnitCx > 1 {
+	if tok := strings.ToUpper(partes[0]); (tok == "" || tok == "CX") && qtUnitCx > 1 {
 		return qtUnitCx
 	}
 	return 1

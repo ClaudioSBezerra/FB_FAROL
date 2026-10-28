@@ -120,7 +120,7 @@ func TestSegUnidadesPorVolume(t *testing.T) {
 		want float64
 	}{
 		{"CX/0012/UN", 12, 12}, {"CX/0024/UN", 1, 24}, {"CX/0012/UN", 1, 12}, {"CX", 6, 6},
-		{"CX", 1, 1}, {"UN/0001/UN", 24, 1}, {"PT/0012/UN", 12, 1}, {"DP/0003/UN", 3, 1}, {"", 1, 1},
+		{"CX", 1, 1}, {"UN/0001/UN", 24, 1}, {"PT/0001/UN", 12, 1}, {"DP/0003/UN", 1, 3}, {"UN/0001/UN", 24, 1}, {"", 1, 1}, {"", 6, 6},
 	}
 	for _, c := range casos {
 		if got := segUnidadesPorVolume(c.emb, c.cx); got != c.want {
