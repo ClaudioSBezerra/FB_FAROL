@@ -339,6 +339,11 @@ func onDBConnected() {
 		for _, id := range empresaIDs {
 			handlers.PrewarmStartup(database, id)
 		}
+		// Segmento Foco: cache em memória nasce vazio a cada deploy; sem isso o
+		// 1º acesso paga a conta inteira (8-28 s medidos em PRD, 28/10/2026).
+		for _, id := range empresaIDs {
+			handlers.PrewarmSegmentoFoco(database, id)
+		}
 	}()
 
 	// Aquecimento DIÁRIO (default 07:30, FAROL_PREWARM_HORA ajusta). O prewarm

@@ -85,6 +85,25 @@ type segCacheEntry struct {
 // carga/importação; o prazo só limita o dado velho se algum prewarm falhar.
 const segCacheTTL = 6 * time.Hour
 
+// segInvalidarCacheEmpresa — descarta só o cache de uma empresa (o prewarm roda empresa por empresa).
+func segInvalidarCacheEmpresa(empresaID string) {
+	segCacheMu.Lock()
+	for k := range segCache {
+		if strings.HasPrefix(k, empresaID+"|") {
+			delete(segCache, k)
+		}
+	}
+	segCacheMu.Unlock()
+}
+
+type segEmVoo struct {
+	pronto chan struct{}
+	dados  *segDados
+	err    error
+}
+
+var segVoo = map[string]*segEmVoo{} // protegido por segCacheMu
+
 func segInvalidarCache() {
 	segCacheMu.Lock()
 	segCache = map[string]segCacheEntry{}
@@ -118,6 +137,9 @@ func segLerGrupos(db *sql.DB, empresaID string, vigenciaID int) (map[string]segG
 
 // segCalcular monta, pra uma vigência (mês) e um fluxo, quem comprou o quê e
 // quais grupos cada cliente positivou.
+//
+// Cálculos iguais pedidos ao mesmo tempo (o painel e o detalhe abrem juntos)
+// esperam o mesmo resultado em vez de rodar a conta em dobro.
 func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo string) (*segDados, error) {
 	chave := fmt.Sprintf("%s|%d|%d|%s", empresaID, vinculoID, vigenciaID, fluxo)
 	segCacheMu.Lock()
@@ -125,7 +147,23 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 		segCacheMu.Unlock()
 		return e.dados, nil
 	}
+	if v, ok := segVoo[chave]; ok {
+		segCacheMu.Unlock()
+		<-v.pronto
+		return v.dados, v.err
+	}
+	v := &segEmVoo{pronto: make(chan struct{})}
+	segVoo[chave] = v
 	segCacheMu.Unlock()
+	v.dados, v.err = segCalcularSemCache(db, empresaID, vinculoID, vigenciaID, fluxo, chave)
+	segCacheMu.Lock()
+	delete(segVoo, chave)
+	segCacheMu.Unlock()
+	close(v.pronto)
+	return v.dados, v.err
+}
+
+func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, chave string) (*segDados, error) {
 
 	var dataInicio, dataFim string
 	var industriaID int

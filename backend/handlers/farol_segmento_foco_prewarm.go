@@ -62,7 +62,7 @@ func PrewarmSegmentoFoco(db *sql.DB, empresaID string) {
 	if len(pares) == 0 {
 		return
 	}
-	segInvalidarCache() // dado novo (carga/importação): descarta o que estava aquecido
+	segInvalidarCacheEmpresa(empresaID) // dado novo (carga/importação): descarta o que estava aquecido
 	n, falhas := 0, 0
 	for _, p := range pares {
 		ok, f := segAquecer(db, empresaID, p.vinculo, p.vigencia)
