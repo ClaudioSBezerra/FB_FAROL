@@ -382,6 +382,46 @@ func segLerHierarquia(db *sql.DB, empresaID string, vinculoID int) map[string]se
 	return out
 }
 
+// segClientesVendidosDoRCA — cod_cli → nome dos clientes a quem o RCA vendeu (qualquer
+// fornecedor/produto, tipos de venda do vínculo) na vigência, no fluxo escolhido.
+func segClientesVendidosDoRCA(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, codRCA string) map[string]string {
+	out := map[string]string{}
+	var ini, fim string
+	if db.QueryRow(`SELECT data_inicio::text, data_fim::text FROM farol.metas_vigencias WHERE id = $1 AND empresa_id = $2`, vigenciaID, empresaID).Scan(&ini, &fim) != nil {
+		return out
+	}
+	var tiposVenda []string
+	if scanTiposVendaValidos(db, empresaID, vinculoID, &tiposVenda) != nil {
+		return out
+	}
+	consulta := func(tabela, colData string) {
+		q := fmt.Sprintf(`SELECT v.cod_cli, MAX(v.nome_cli) FROM %s v WHERE v.empresa_id = $1 AND v.cod_rca = $2 AND v.%s BETWEEN $3 AND $4`, tabela, colData)
+		args := []any{empresaID, codRCA, ini, fim}
+		if len(tiposVenda) > 0 {
+			args = append(args, pq.Array(tiposVenda))
+			q += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args))
+		}
+		rows, err := db.Query(q+" GROUP BY v.cod_cli", args...)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cod, nome string
+			if rows.Scan(&cod, &nome) == nil && cod != "" {
+				out[cod] = nome
+			}
+		}
+	}
+	if fluxo != "transmitido" {
+		consulta("vendas_faturadas", "data_faturamento")
+	}
+	if fluxo == "transmitido" || fluxo == "soma" {
+		consulta("vendas_transmitidas", "data_transmissao")
+	}
+	return out
+}
+
 // segUFsOcultas — UFs fora do painel (flag "UF liberada?" do vínculo).
 func segUFsOcultas(db *sql.DB, empresaID string, vinculoID int) map[string]bool {
 	out := map[string]bool{}
@@ -784,6 +824,21 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 			if k := c.CodCli + "||" + m; len(c.Positivos) > 0 && !l.visto[k] {
 				l.visto[k] = true
 				l.geral++
+			}
+		}
+	}
+	// Lista do RCA = clientes que positivaram + os que ele vendeu no período
+	// (qualquer produto), com zero — é como o Painel Vendas monta a carteira.
+	if nivel == "cliente" && f.CodRCA != "" {
+		for _, m := range meses {
+			vig, ok := segVigenciaDoMes(db, empresaID, vinculoID, m)
+			if !ok {
+				continue
+			}
+			for cod, nome := range segClientesVendidosDoRCA(db, empresaID, vinculoID, vig, fluxo, f.CodRCA) {
+				if linhas[cod] == nil {
+					linhas[cod] = &linhaAc{nome: nome, porGrp: map[string]int{}, visto: map[string]bool{}}
+				}
 			}
 		}
 	}

@@ -213,6 +213,17 @@ func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
 	if err != nil || d.Nivel != "crv" || len(d.Linhas) != 2 || d.Linhas[0].Total != 1 || d.Linhas[1].Total != 1 {
 		t.Errorf("equipes: %+v err=%v, quero 2 equipes com 1 cada (cliente nas duas)", d, err)
 	}
+	// Cliente que o RCA vendeu (outro produto) sem positivar grupo aparece com zero.
+	db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
+		VALUES ($1,'2026-07-06','OUTRO','TH9','TH9','GO','XOUTRO','UN/0001/UN',1,1,10,'1','3','91','TR1')`, empresaID)
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_fornec = 'OUTRO'`, empresaID)
+	})
+	segInvalidarCache()
+	d, err = segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{CodGGV: "3", CodCRV: "91", CodRCA: "TR1"})
+	if err != nil || d.Nivel != "cliente" || len(d.Linhas) != 2 {
+		t.Errorf("clientes do RCA: %+v err=%v, quero TH1 e TH9 (zero)", d, err)
+	}
 	d, _ = segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{})
 	if len(d.Linhas) != 1 || d.Linhas[0].Total != 1 {
 		t.Errorf("GGV: %+v, quero 1 GGV com total 1 (cliente de 2 RCAs conta uma vez)", d.Linhas)
