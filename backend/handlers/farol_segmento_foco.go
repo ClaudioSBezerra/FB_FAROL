@@ -383,8 +383,13 @@ func segLerHierarquia(db *sql.DB, empresaID string, vinculoID int) map[string]se
 }
 
 // segClientesVendidosDoRCA — cod_cli → nome dos clientes a quem o RCA vendeu (qualquer
-// fornecedor/produto, tipos de venda do vínculo) na vigência, no fluxo escolhido.
+// produto do fornecedor da indústria, tipos de venda do vínculo) na vigência, no fluxo escolhido.
 func segClientesVendidosDoRCA(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo, codRCA string) map[string]string {
+	var industriaID int
+	if db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).Scan(&industriaID) != nil {
+		return map[string]string{}
+	}
+	codFornec, _ := codFornecDaIndustria(db, empresaID, industriaID)
 	out := map[string]string{}
 	var ini, fim string
 	if db.QueryRow(`SELECT data_inicio::text, data_fim::text FROM farol.metas_vigencias WHERE id = $1 AND empresa_id = $2`, vigenciaID, empresaID).Scan(&ini, &fim) != nil {
@@ -400,6 +405,10 @@ func segClientesVendidosDoRCA(db *sql.DB, empresaID string, vinculoID, vigenciaI
 		if len(tiposVenda) > 0 {
 			args = append(args, pq.Array(tiposVenda))
 			q += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(args))
+		}
+		if len(codFornec) > 0 {
+			args = append(args, pq.Array(codFornec))
+			q += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args))
 		}
 		rows, err := db.Query(q+" GROUP BY v.cod_cli", args...)
 		if err != nil {
@@ -828,7 +837,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 		}
 	}
 	// Lista do RCA = clientes que positivaram + os que ele vendeu no período
-	// (qualquer produto), com zero — é como o Painel Vendas monta a carteira.
+	// (qualquer produto da Reckitt, mesmo fora dos 8 grupos), com zero.
 	if nivel == "cliente" && f.CodRCA != "" {
 		for _, m := range meses {
 			vig, ok := segVigenciaDoMes(db, empresaID, vinculoID, m)
