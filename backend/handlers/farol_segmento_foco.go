@@ -332,7 +332,15 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 			if h, ok := hier[c.CodRCA]; ok {
 				c.UF, c.CodGGV, c.NomeGGV, c.CodCRV, c.NomeCRV = h.UF, h.CodGGV, h.NomeGGV, h.CodCRV, h.NomeCRV
 			} else {
-				c.UF = segUFPorGerenteVenda[c.CodGGV] // RCA fora da planilha: GGV da própria venda
+				// RCA fora da planilha: UF do cliente na venda, se for do programa.
+				// (O código de gerente da venda não serve: em PRD 71 RCAs de fora vêm
+				// com gerente 1. Testado contra o PRD de set/26: dá 1.121 contra 1.116 do
+				// fornecedor, sem abater devolução.)
+				if uf := strings.ToUpper(c.UF); segUFsPrograma[uf] {
+					c.UF = uf
+				} else {
+					c.UF = ""
+				}
 			}
 		}
 		for k, c := range clientes {
@@ -412,11 +420,8 @@ func segUnidadesPorVolume(embalagem string, qtUnitCx float64) float64 {
 	return 1
 }
 
-// segUFPorGerenteVenda — código de GGV como vem na linha de venda → UF do
-// programa. Só vale pro RCA que não está na planilha de hierarquia. Os códigos
-// da venda (ex.: 345 = TO) diferem dos da hierarquia (2 = TO); 1/346/350/2/4
-// (DF, MA, BA, MG, MT) ficam de fora: o programa só tem GO, MS, TO e PA.
-var segUFPorGerenteVenda = map[string]string{"3": "GO", "345": "TO", "347": "MS", "5": "PA"}
+// segUFsPrograma — o programa só tem estas UFs (Igor/Reckitt, 28/10/2026).
+var segUFsPrograma = map[string]bool{"GO": true, "MS": true, "TO": true, "PA": true}
 
 // segUFPorGGVHierarquia — código de GGV da planilha de hierarquia → UF.
 var segUFPorGGVHierarquia = map[string]string{"3": "GO", "4": "GO", "2": "TO", "347": "MS", "5": "PA"}
