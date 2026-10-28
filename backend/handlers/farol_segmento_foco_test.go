@@ -57,6 +57,8 @@ func TestSegmentoFoco_PositivacaoPorGrupo(t *testing.T) {
 	// C6: 2 caixas devolvidas por completo → não positiva.
 	venda("TC6", "TC6", "GO", "TSEGB", "CX/0012/UN", 12, 2, "1", "2026-07-08")
 	db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_fornec, cod_cli, cod_prod, qt) VALUES ($1,'2026-07-09','DEVOLVIDO',$2,'TC6','TSEGB',2)`, empresaID, forn)
+	// C9: 1 pacote (PT, 1 un.) não positiva — a regra do Numérica positivava.
+	venda("TC9", "TC9", "GO", "TSEGA", "PT/0001/UN", 1, 1, "1", "2026-07-10")
 	// C8: só 2 unidades → não positiva.
 	venda("TC8", "TC8", "GO", "TSEGA", "UN/0001/UN", 1, 2, "1", "2026-07-10")
 	// C7: só no transmitido.

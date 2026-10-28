@@ -6,9 +6,8 @@ package handlers
 // no mês quando compra o mínimo de 3 unidades de QUALQUER produto do grupo
 // (a regra por produto reproduziu 100% das flags que o fornecedor calcula na
 // planilha dele, em 7 dos 8 grupos de setembro/2026; somar as unidades do
-// grupo erra mais). Caixa conta pelas unidades: embalagem em caixa positiva
-// com 1 unidade vendida (mesma regra do Sortimento Numérica/PPA —
-// exigeQuantidadeMinima). Tipos de venda 1, 5 e 9 (vêm do vínculo); a
+// grupo erra mais). Caixa conta pelas unidades (1 caixa de 12 positiva); pacote
+// (PT) e unidade (UN) valem 1 cada — segUnidadesPorVolume. Tipos de venda 1, 5 e 9 (vêm do vínculo); a
 // bonificação (5) positiva mesmo com valor R$ 0 porque a regra é por
 // quantidade, nunca por valor.
 //
@@ -277,10 +276,7 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 			continue
 		}
 		gp := porProd[k.prod]
-		pos := a.qtd >= 1
-		if exigeQuantidadeMinima(a.embalagem, a.qtUnitCx) {
-			pos = a.qtd >= 3
-		}
+		pos := a.qtd*segUnidadesPorVolume(a.embalagem, a.qtUnitCx) >= 3
 		c := clientes[k.cli+"|"+k.rca]
 		c.Produtos = append(c.Produtos, SegProduto{Grupo: gp.Grupo, CodProd: k.prod, Produto: gp.Produto, Qtd: a.qtd, Positivou: pos})
 		if pos {
@@ -351,6 +347,21 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 	segCache[chave] = segCacheEntry{dados: out, at: time.Now()}
 	segCacheMu.Unlock()
 	return out, nil
+}
+
+// segUnidadesPorVolume — quantas unidades vale 1 do volume vendido: só a CAIXA
+// multiplica (caixa de 12 = 12 unidades); UN, PT (pacote) e demais valem 1. O
+// mínimo de 3 unidades vale pra qualquer embalagem (Igor/Reckitt, 28/10/2026:
+// 1 pacote de Vanish Pó não positiva; a regra do Numérica positivava).
+func segUnidadesPorVolume(embalagem string, qtUnitCx float64) float64 {
+	tok := strings.ToUpper(strings.TrimSpace(embalagem))
+	if i := strings.Index(tok, "/"); i >= 0 {
+		tok = tok[:i]
+	}
+	if (tok == "CX" || tok == "") && qtUnitCx > 1 {
+		return qtUnitCx
+	}
+	return 1
 }
 
 // segUFPorGerenteVenda — código de GGV como vem na linha de venda → UF do
