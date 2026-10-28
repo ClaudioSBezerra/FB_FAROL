@@ -112,6 +112,23 @@ func TestSegmentoFoco_PositivacaoPorGrupo(t *testing.T) {
 	}
 }
 
+// Caixa vale as unidades do texto da embalagem, mesmo com qt_unit_cx = 1 (como em PRD).
+func TestSegUnidadesPorVolume(t *testing.T) {
+	casos := []struct {
+		emb  string
+		cx   float64
+		want float64
+	}{
+		{"CX/0012/UN", 12, 12}, {"CX/0024/UN", 1, 24}, {"CX/0012/UN", 1, 12}, {"CX", 6, 6},
+		{"CX", 1, 1}, {"UN/0001/UN", 24, 1}, {"PT/0012/UN", 12, 1}, {"DP/0003/UN", 3, 1}, {"", 1, 1},
+	}
+	for _, c := range casos {
+		if got := segUnidadesPorVolume(c.emb, c.cx); got != c.want {
+			t.Errorf("segUnidadesPorVolume(%q, %v) = %v, quero %v", c.emb, c.cx, got, c.want)
+		}
+	}
+}
+
 func TestSegMesesDoTrimestre(t *testing.T) {
 	m, err := segMesesDoTrimestre("2026-08")
 	if err != nil || m[0] != "2026-07" || m[2] != "2026-09" {

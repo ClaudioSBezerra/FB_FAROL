@@ -393,12 +393,20 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 // multiplica (caixa de 12 = 12 unidades); UN, PT (pacote) e demais valem 1. O
 // mínimo de 3 unidades vale pra qualquer embalagem (Igor/Reckitt, 28/10/2026:
 // 1 pacote de Vanish Pó não positiva; a regra do Numérica positivava).
+// As unidades da caixa vêm do texto da embalagem ("CX/0012/UN" = 12), não de
+// qt_unit_cx: em PRD essa coluna vem 1 na caixa e 12/24 na unidade (visto em
+// 28/10/2026), então só serve de reserva quando a embalagem não traz o número.
 func segUnidadesPorVolume(embalagem string, qtUnitCx float64) float64 {
-	tok := strings.ToUpper(strings.TrimSpace(embalagem))
-	if i := strings.Index(tok, "/"); i >= 0 {
-		tok = tok[:i]
+	partes := strings.Split(strings.ToUpper(strings.TrimSpace(embalagem)), "/")
+	if tok := partes[0]; tok != "CX" && tok != "" {
+		return 1
 	}
-	if (tok == "CX" || tok == "") && qtUnitCx > 1 {
+	if len(partes) > 1 {
+		if n, err := strconv.Atoi(strings.TrimSpace(partes[1])); err == nil && n > 1 {
+			return float64(n)
+		}
+	}
+	if qtUnitCx > 1 {
 		return qtUnitCx
 	}
 	return 1
