@@ -12,7 +12,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { parseClientesNumericasXlsx, parseClientesValidosXlsx, parsePPAsXlsx, parseSegmentoFocoGruposXlsx, parseSegmentoFocoObjetivosXlsx } from '@/lib/metasXlsx'
+import { parseClientesNumericasXlsx, parseClientesValidosXlsx, parsePPAsXlsx, parseSegmentoFocoGruposXlsx, parseSegmentoFocoHierarquiaXlsx, parseSegmentoFocoObjetivosXlsx } from '@/lib/metasXlsx'
 
 // Carga do mês — tela única do administrador (pedido do Claudio 09/10/2026:
 // "menu o mais simples possível", uma ABA de carga por indústria, cada uma
@@ -459,6 +459,7 @@ function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
   const [ocupado, setOcupado] = useState('')
   const skuRef = useRef<HTMLInputElement>(null)
   const objRef = useRef<HTMLInputElement>(null)
+  const hierRef = useRef<HTMLInputElement>(null)
   const { inicio, fim } = limitesDoMes(mes)
   const pend = pendencias(v)
 
@@ -513,6 +514,14 @@ function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
     toast.success(`Objetivos importados: ${feitos.join(', ')}`)
   })
 
+  // A hierarquia vale pro vínculo todo; o endpoint só pede uma vigência aberta pra validar.
+  const enviarHierarquia = (file: File) => executar('hierarquia', async () => {
+    const csv = await parseSegmentoFocoHierarquiaXlsx(file)
+    const vig = await garantirVigencia(mes)
+    const d = await enviarCSV(`/api/farol/metas-rca-hierarquia-importar-csv?vinculo_id=${v.vinculo_id}&vigencia_id=${vig}`, csv, 'hierarquia.csv', headers)
+    toast.success(`${d.rcas_importados} RCAs importados${d.rcas_sem_uf ? ` (${d.rcas_sem_uf} de GGV fora do programa)` : ''}`)
+  })
+
   return (
     <div className="border rounded-xl bg-white">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b">
@@ -536,6 +545,11 @@ function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) enviarObjetivos(f) }} />
           <Button variant="outline" size="sm" disabled={ocupado !== ''} onClick={() => objRef.current?.click()}>
             <FileUp className="w-4 h-4 mr-1" />{ocupado === 'objetivos' ? 'Importando...' : 'Enviar objetivos (aba PAINEL FORMULA)'}
+          </Button>
+          <input ref={hierRef} type="file" accept=".xlsx,.xls" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) enviarHierarquia(f) }} />
+          <Button variant="outline" size="sm" disabled={ocupado !== ''} onClick={() => hierRef.current?.click()}>
+            <FileUp className="w-4 h-4 mr-1" />{ocupado === 'hierarquia' ? 'Importando...' : 'Enviar hierarquia RCA (GGV → UF)'}
           </Button>
         </div>
         <ul className="text-xs text-slate-600 space-y-0.5">

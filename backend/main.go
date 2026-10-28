@@ -673,6 +673,7 @@ func main() {
 	// Segmento Foco (Reckitt, 19/10/2026) — positivação de grupos de produtos.
 	http.HandleFunc("/api/farol/metas-grupos-produtos-importar-csv", withSPPainel(handlers.SegmentoFocoGruposImportarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/metas-grupos-objetivos-importar-csv", withSPPainel(handlers.SegmentoFocoObjetivosImportarHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/metas-rca-hierarquia-importar-csv", withSPPainel(handlers.SegmentoFocoHierarquiaImportarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco", gz(withSPPainel(handlers.SegmentoFocoPainelHandler, "somente_leitura")))
 	http.HandleFunc("/api/farol/segmento-foco/uf", withSPPainel(handlers.SegmentoFocoUFHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSPPainel(handlers.SegmentoFocoDetalheHandler, "somente_leitura")))

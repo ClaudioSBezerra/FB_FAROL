@@ -166,3 +166,55 @@ func TestSegmentoFoco_UFOcultaPA(t *testing.T) {
 		t.Errorf("PA liberada: UFs=%v, quero PA e GO", u)
 	}
 }
+
+// Hierarquia RCA → GGV → UF (Igor/Reckitt, 28/10/2026): a UF é a do GGV do RCA
+// (venda em Brasília de RCA do GGV 3 conta em GO); cliente com 2 RCAs conta uma
+// vez na UF/equipe e uma vez em cada RCA; RCA de UF fora do programa some.
+func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
+	db, empresaID := biTestDB(t)
+	forn := "TSEGH"
+	vinculoID, cleanup := criarVinculoComFormula(t, empresaID, "TSEGH Reckitt", "positivacao_grupos", "cliente", nil, nil)
+	t.Cleanup(cleanup)
+	var industriaID int
+	db.QueryRow(`SELECT industria_id FROM farol.metas_vinculos WHERE id = $1`, vinculoID).Scan(&industriaID)
+	db.Exec(`INSERT INTO farol.industria_fornecedores (empresa_id, industria_id, cod_fornec) VALUES ($1,$2,$3)`, empresaID, industriaID, forn)
+	db.Exec(`UPDATE farol.metas_vinculos SET tipos_venda_validos = '{1,5,9}' WHERE id = $1`, vinculoID)
+	vig := criarVigenciaFixture(t, db, empresaID, vinculoID, "2026-07-01", "2026-07-31")
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM vendas_faturadas WHERE empresa_id = $1 AND cod_fornec = $2`, empresaID, forn)
+		db.Exec(`DELETE FROM farol.industria_fornecedores WHERE industria_id = $1`, industriaID)
+	})
+	db.Exec(`INSERT INTO farol.metas_grupos_produtos (empresa_id, vinculo_id, vigencia_id, grupo, cod_prod, produto) VALUES ($1,$2,$3,'GRUPO UM','TSEGHA','A')`, empresaID, vinculoID, vig)
+	db.Exec(`INSERT INTO farol.metas_grupos_objetivos (empresa_id, vinculo_id, vigencia_id, uf, grupo, objetivo) VALUES ($1,$2,$3,'GO','GRUPO UM',10)`, empresaID, vinculoID, vig)
+	for _, h := range [][]string{{"TR1", "3", "91"}, {"TR2", "3", "92"}, {"TR3", "99", "93"}} {
+		db.Exec(`INSERT INTO farol.metas_rca_hierarquia (empresa_id, vinculo_id, cod_rca, cod_ggv, cod_crv, uf) VALUES ($1,$2,$3,$4,$5,$6)`,
+			empresaID, vinculoID, h[0], h[1], h[2], segUFPorGGVHierarquia[h[1]])
+	}
+	venda := func(cli, uf, rca string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
+			VALUES ($1,'2026-07-05',$2,$3,$3,$4,'TSEGHA','UN/0001/UN',1,3,0,'1','1','0',$5)`, empresaID, forn, cli, uf, rca); err != nil {
+			t.Fatalf("venda: %v", err)
+		}
+	}
+	venda("TH1", "DF", "TR1") // GGV 3 vendendo em Brasília → GO
+	venda("TH1", "DF", "TR2") // mesmo cliente por outro RCA → GO uma vez só
+	venda("TH2", "GO", "TR3") // GGV 99 fora do programa → some
+	segInvalidarCache()
+
+	p, err := segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.UFs) != 1 || p.UFs[0].UF != "GO" || p.UFs[0].Grupos[0].Meses[0].Realizado != 1 {
+		t.Errorf("painel: %+v, quero só GO com realizado 1 (TH1 uma vez; TH2 fora)", p.UFs)
+	}
+	d, err := segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{CodGGV: "3"})
+	if err != nil || d.Nivel != "crv" || len(d.Linhas) != 2 || d.Linhas[0].Total != 1 || d.Linhas[1].Total != 1 {
+		t.Errorf("equipes: %+v err=%v, quero 2 equipes com 1 cada (cliente nas duas)", d, err)
+	}
+	d, _ = segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{})
+	if len(d.Linhas) != 1 || d.Linhas[0].Total != 1 {
+		t.Errorf("GGV: %+v, quero 1 GGV com total 1 (cliente de 2 RCAs conta uma vez)", d.Linhas)
+	}
+}

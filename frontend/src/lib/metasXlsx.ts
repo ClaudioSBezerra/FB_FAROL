@@ -233,6 +233,38 @@ export async function parseSegmentoFocoGruposXlsx(file: File): Promise<string> {
   return out.join('\r\n')
 }
 
+// Hierarquia RCA ("HIERARQUIA RCA.xlsx"): 1ª coluna (sem título) = "GGV - 3",
+// EQP = código da equipe (CRV), SUPERVISOR = nome da equipe, RCA = código do RCA.
+// A UF do programa vem do GGV (o backend traduz: 3 e 4 = GO, 2 = TO, 347 = MS, 5 = PA).
+export async function parseSegmentoFocoHierarquiaXlsx(file: File): Promise<string> {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: false, cellDates: false })
+  const out = ['rca;ggv;crv;nome_crv;nome_ggv']
+  const vistos = new Set<string>()
+  for (const nome of wb.SheetNames) {
+    const linhas = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, raw: true, defval: '' })
+    if (linhas.length < 2) continue
+    const header = linhas[0].map(normalizaHeaderXlsx)
+    const iRca = acharColuna(header, ['RCA', 'COD RCA'])
+    const iEqp = acharColuna(header, ['EQP', 'CRV'])
+    const iSup = acharColuna(header, ['SUPERVISOR'])
+    if (iRca === -1 || iEqp === -1) continue
+    for (let r = 1; r < linhas.length; r++) {
+      const row = linhas[r]
+      const rca = String(row[iRca] ?? '').trim().replace(/\.0+$/, '')
+      const ggvTxt = String(row[0] ?? '').trim()
+      const ggv = (ggvTxt.match(/\d+/) ?? [''])[0]
+      if (!rca || !/^\d+$/.test(rca) || !ggv || vistos.has(rca)) continue
+      vistos.add(rca)
+      const crv = String(row[iEqp] ?? '').trim().replace(/\.0+$/, '')
+      out.push([rca, ggv, csvEscape(crv), csvEscape(iSup === -1 ? '' : String(row[iSup] ?? '').trim()), csvEscape(ggvTxt)].join(';'))
+    }
+    if (out.length > 1) break
+  }
+  if (out.length === 1) throw new Error('Nenhuma linha com GGV e RCA — é o arquivo HIERARQUIA RCA?')
+  return out.join('\r\n')
+}
+
 // A planilha chama o grupo de "Limpeza Pesada" de VLP no painel.
 const ALIAS_GRUPO: Record<string, string> = { 'VEJA VLP': 'VEJA LIMPEZA PESADA' }
 

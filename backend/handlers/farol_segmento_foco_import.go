@@ -246,3 +246,78 @@ func SegmentoFocoObjetivosImportarHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "objetivos_importados": len(rows)})
 	}
 }
+
+// SegmentoFocoHierarquiaImportarHandler — CSV ';': rca;ggv;crv;nome_crv[;nome_ggv;uf]
+// (obrigatórios: rca, ggv). Sem a coluna uf, vale o GGV → UF do programa
+// (3 e 4 = GO, 2 = TO, 347 = MS, 5 = PA). Vale pro vínculo todo, não por
+// vigência; reimportar SUBSTITUI.
+func SegmentoFocoHierarquiaImportarHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		spCtx, vinculoID, vigenciaID, linhas, nums, ok := segLerCSV(db, w, r, []string{"rca", "ggv"})
+		if !ok {
+			return
+		}
+		var erros []segLinhaErro
+		type row struct{ rca, ggv, nomeGGV, crv, nomeCRV, uf string }
+		var rows []row
+		vistos := map[string]bool{}
+		sem := 0
+		for i, l := range linhas {
+			rca := strings.TrimSuffix(l["rca"], ".0")
+			ggv := strings.TrimSuffix(l["ggv"], ".0")
+			if rca == "" || ggv == "" {
+				erros = append(erros, segLinhaErro{nums[i], "rca e ggv são obrigatórios"})
+				continue
+			}
+			if vistos[rca] {
+				continue
+			}
+			vistos[rca] = true
+			uf := strings.ToUpper(l["uf"])
+			if uf == "" {
+				uf = segUFPorGGVHierarquia[ggv]
+			}
+			if uf == "" {
+				sem++
+			}
+			rows = append(rows, row{rca, ggv, l["nome_ggv"], strings.TrimSuffix(l["crv"], ".0"), l["nome_crv"], uf})
+		}
+		if len(erros) > 0 {
+			segResponderErros(w, erros)
+			return
+		}
+		if len(rows) == 0 {
+			http.Error(w, `{"error":"CSV vazio — nenhuma linha de dado encontrada"}`, http.StatusBadRequest)
+			return
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`DELETE FROM farol.metas_rca_hierarquia WHERE vinculo_id = $1 AND empresa_id = $2`, vinculoID, spCtx.EmpresaID); err != nil {
+			http.Error(w, `{"error":"database error ao limpar hierarquia anterior"}`, http.StatusInternalServerError)
+			return
+		}
+		for _, x := range rows {
+			if _, err := tx.Exec(`INSERT INTO farol.metas_rca_hierarquia (empresa_id, vinculo_id, cod_rca, cod_ggv, nome_ggv, cod_crv, nome_crv, uf)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, spCtx.EmpresaID, vinculoID, x.rca, x.ggv, x.nomeGGV, x.crv, x.nomeCRV, x.uf); err != nil {
+				http.Error(w, `{"error":"database error: `+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := writeAuditLogTx(tx, spCtx.EmpresaID, spCtx.UserID, "metas_rca_hierarquia", strconv.Itoa(vigenciaID), "importar_csv",
+			map[string]any{"vinculo_id": vinculoID, "linhas": len(rows), "sem_uf": sem}); err != nil {
+			http.Error(w, `{"error":"erro ao gravar auditoria"}`, http.StatusInternalServerError)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			http.Error(w, `{"error":"commit error"}`, http.StatusInternalServerError)
+			return
+		}
+		segInvalidarCache()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "rcas_importados": len(rows), "rcas_sem_uf": sem})
+	}
+}

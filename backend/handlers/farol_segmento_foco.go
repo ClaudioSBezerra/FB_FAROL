@@ -154,7 +154,7 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 		codProds = append(codProds, c)
 	}
 
-	type chaveCP struct{ cli, prod string }
+	type chaveCP struct{ cli, rca, prod string }
 	type acum struct {
 		qtd       float64
 		embalagem string
@@ -165,9 +165,9 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 
 	somar := func(tabela, colData string) error {
 		q := fmt.Sprintf(`
-			SELECT v.cod_cli, v.cod_prod, SUM(v.qt), MAX(v.embalagem), COALESCE(MAX(v.qt_unit_cx),0),
+			SELECT v.cod_cli, v.cod_rca, v.cod_prod, SUM(v.qt), MAX(v.embalagem), COALESCE(MAX(v.qt_unit_cx),0),
 			       MAX(v.nome_cli), MAX(v.uf), MAX(v.cod_cliprinc),
-			       MAX(v.cod_gerente), MAX(v.nome_gerente), MAX(v.cod_supervisor), MAX(v.nome_supervisor), MAX(v.cod_rca), MAX(v.nome_rca)
+			       MAX(v.cod_gerente), MAX(v.nome_gerente), MAX(v.cod_supervisor), MAX(v.nome_supervisor), MAX(v.nome_rca)
 			FROM %s v
 			WHERE v.empresa_id = $1 AND v.%s BETWEEN $2 AND $3 AND v.cod_prod = ANY($4)`, tabela, colData)
 		args := []any{empresaID, dataInicio, dataFim, pq.Array(codProds)}
@@ -179,37 +179,37 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 			args = append(args, pq.Array(codFornec))
 			q += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args))
 		}
-		q += " GROUP BY v.cod_cli, v.cod_prod"
+		q += " GROUP BY v.cod_cli, v.cod_rca, v.cod_prod"
 		rows, err := db.Query(q, args...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var cli, prod, emb, nome, uf, princ, gger, ngger, gsup, nsup, grca, nrca string
+			var cli, rca, prod, emb, nome, uf, princ, gger, ngger, gsup, nsup, nrca string
 			var qtd, qtUnitCx float64
-			if err := rows.Scan(&cli, &prod, &qtd, &emb, &qtUnitCx, &nome, &uf, &princ, &gger, &ngger, &gsup, &nsup, &grca, &nrca); err != nil {
+			if err := rows.Scan(&cli, &rca, &prod, &qtd, &emb, &qtUnitCx, &nome, &uf, &princ, &gger, &ngger, &gsup, &nsup, &nrca); err != nil {
 				return err
 			}
-			k := chaveCP{cli, prod}
+			k := chaveCP{cli, rca, prod}
 			a := soma[k]
 			if a == nil {
 				a = &acum{embalagem: emb, qtUnitCx: qtUnitCx}
 				soma[k] = a
 			}
 			a.qtd += qtd
-			c := clientes[cli]
+			c := clientes[cli+"|"+rca]
 			if c == nil {
 				c = &segCliente{CodCli: cli, Nome: nome, UF: uf, CodCliPrinc: princ,
-					CodGGV: gger, NomeGGV: ngger, CodCRV: gsup, NomeCRV: nsup, CodRCA: grca, NomeRCA: nrca,
+					CodGGV: gger, NomeGGV: ngger, CodCRV: gsup, NomeCRV: nsup, CodRCA: rca, NomeRCA: nrca,
 					Positivos: map[string]bool{}}
-				clientes[cli] = c
+				clientes[cli+"|"+rca] = c
 			}
 		}
 		return rows.Err()
 	}
 	abater := func() error {
-		q := `SELECT v.cod_cli, v.cod_prod, SUM(v.qt) FROM vendas_ccd v
+		q := `SELECT v.cod_cli, v.cod_rca, v.cod_prod, SUM(v.qt) FROM vendas_ccd v
 			WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $2 AND $3 AND v.cod_prod = ANY($4)
 			  AND v.evento IN ('DEVOLVIDO','CANCELADO')`
 		args := []any{empresaID, dataInicio, dataFim, pq.Array(codProds)}
@@ -217,19 +217,28 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 			args = append(args, pq.Array(codFornec))
 			q += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args))
 		}
-		q += " GROUP BY v.cod_cli, v.cod_prod"
+		q += " GROUP BY v.cod_cli, v.cod_rca, v.cod_prod"
 		rows, err := db.Query(q, args...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var cli, prod string
+			var cli, rca, prod string
 			var qtd float64
-			if err := rows.Scan(&cli, &prod, &qtd); err != nil {
+			if err := rows.Scan(&cli, &rca, &prod, &qtd); err != nil {
 				return err
 			}
-			if a := soma[chaveCP{cli, prod}]; a != nil {
+			// Abate no RCA que vendeu; se a devolução veio por outro RCA, no que mais vendeu o produto pro cliente.
+			a := soma[chaveCP{cli, rca, prod}]
+			if a == nil {
+				for k, x := range soma {
+					if k.cli == cli && k.prod == prod && (a == nil || x.qtd > a.qtd) {
+						a = x
+					}
+				}
+			}
+			if a != nil {
 				a.qtd -= qtd
 			}
 		}
@@ -272,44 +281,63 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 		if exigeQuantidadeMinima(a.embalagem, a.qtUnitCx) {
 			pos = a.qtd >= 3
 		}
-		c := clientes[k.cli]
+		c := clientes[k.cli+"|"+k.rca]
 		c.Produtos = append(c.Produtos, SegProduto{Grupo: gp.Grupo, CodProd: k.prod, Produto: gp.Produto, Qtd: a.qtd, Positivou: pos})
 		if pos {
 			c.Positivos[gp.Grupo] = true
 		}
 	}
 
-	// UF da matriz: cliente que abre loja em outra UF entra na UF da matriz.
-	matrizes := map[string]bool{}
-	for _, c := range clientes {
-		if c.CodCliPrinc != "" && c.CodCliPrinc != c.CodCli {
-			matrizes[c.CodCliPrinc] = true
-		}
-	}
-	if len(matrizes) > 0 {
-		lista := make([]string, 0, len(matrizes))
-		for m := range matrizes {
-			lista = append(lista, m)
-		}
-		ini, _ := time.Parse("2006-01-02", dataInicio)
-		rows, err := db.Query(`SELECT cod_cli, MAX(uf) FROM vendas_faturadas
-			WHERE empresa_id = $1 AND cod_cli = ANY($2) AND data_faturamento >= $3 GROUP BY cod_cli`,
-			empresaID, pq.Array(lista), ini.AddDate(0, 0, -180).Format("2006-01-02"))
-		if err == nil {
-			ufMatriz := map[string]string{}
-			for rows.Next() {
-				var cod, uf string
-				if rows.Scan(&cod, &uf) == nil && uf != "" {
-					ufMatriz[cod] = uf
-				}
-			}
-			rows.Close()
-			for _, c := range clientes {
-				if uf, ok := ufMatriz[c.CodCliPrinc]; ok && c.CodCliPrinc != c.CodCli {
-					c.UF = uf
-				}
+	// UF pelo GGV do RCA (resposta do Igor/Reckitt, 28/10/2026): a UF do programa
+	// é a do GGV que atua no estado, não a do cadastro do cliente. Sem hierarquia
+	// carregada, mantém a regra antiga (UF da matriz).
+	if hier := segLerHierarquia(db, empresaID, vinculoID); len(hier) > 0 {
+		for _, c := range clientes {
+			if h, ok := hier[c.CodRCA]; ok {
+				c.UF, c.CodGGV, c.NomeGGV, c.CodCRV, c.NomeCRV = h.UF, h.CodGGV, h.NomeGGV, h.CodCRV, h.NomeCRV
+			} else {
+				c.UF = segUFPorGerenteVenda[c.CodGGV] // RCA fora da planilha: GGV da própria venda
 			}
 		}
+		for k, c := range clientes {
+			if c.UF == "" { // UF fora do programa (GO, MS, TO, PA)
+				delete(clientes, k)
+			}
+		}
+	} else {
+		// UF da matriz: cliente que abre loja em outra UF entra na UF da matriz.
+		matrizes := map[string]bool{}
+		for _, c := range clientes {
+			if c.CodCliPrinc != "" && c.CodCliPrinc != c.CodCli {
+				matrizes[c.CodCliPrinc] = true
+			}
+		}
+		if len(matrizes) > 0 {
+			lista := make([]string, 0, len(matrizes))
+			for m := range matrizes {
+				lista = append(lista, m)
+			}
+			ini, _ := time.Parse("2006-01-02", dataInicio)
+			rows, err := db.Query(`SELECT cod_cli, MAX(uf) FROM vendas_faturadas
+				WHERE empresa_id = $1 AND cod_cli = ANY($2) AND data_faturamento >= $3 GROUP BY cod_cli`,
+				empresaID, pq.Array(lista), ini.AddDate(0, 0, -180).Format("2006-01-02"))
+			if err == nil {
+				ufMatriz := map[string]string{}
+				for rows.Next() {
+					var cod, uf string
+					if rows.Scan(&cod, &uf) == nil && uf != "" {
+						ufMatriz[cod] = uf
+					}
+				}
+				rows.Close()
+				for _, c := range clientes {
+					if uf, ok := ufMatriz[c.CodCliPrinc]; ok && c.CodCliPrinc != c.CodCli {
+						c.UF = uf
+					}
+				}
+			}
+		}
+
 	}
 
 	out := &segDados{Grupos: ordem}
@@ -323,6 +351,35 @@ func segCalcular(db *sql.DB, empresaID string, vinculoID, vigenciaID int, fluxo 
 	segCache[chave] = segCacheEntry{dados: out, at: time.Now()}
 	segCacheMu.Unlock()
 	return out, nil
+}
+
+// segUFPorGerenteVenda — código de GGV como vem na linha de venda → UF do
+// programa. Só vale pro RCA que não está na planilha de hierarquia. Os códigos
+// da venda (ex.: 345 = TO) diferem dos da hierarquia (2 = TO); 1/346/350/2/4
+// (DF, MA, BA, MG, MT) ficam de fora: o programa só tem GO, MS, TO e PA.
+var segUFPorGerenteVenda = map[string]string{"3": "GO", "345": "TO", "347": "MS", "5": "PA"}
+
+// segUFPorGGVHierarquia — código de GGV da planilha de hierarquia → UF.
+var segUFPorGGVHierarquia = map[string]string{"3": "GO", "4": "GO", "2": "TO", "347": "MS", "5": "PA"}
+
+type segHier struct{ CodGGV, NomeGGV, CodCRV, NomeCRV, UF string }
+
+// segLerHierarquia — RCA → GGV/CRV/UF carregados do HIERARQUIA RCA (vazio se não houver carga).
+func segLerHierarquia(db *sql.DB, empresaID string, vinculoID int) map[string]segHier {
+	out := map[string]segHier{}
+	rows, err := db.Query(`SELECT cod_rca, cod_ggv, nome_ggv, cod_crv, nome_crv, uf FROM farol.metas_rca_hierarquia WHERE empresa_id = $1 AND vinculo_id = $2`, empresaID, vinculoID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rca string
+		var h segHier
+		if rows.Scan(&rca, &h.CodGGV, &h.NomeGGV, &h.CodCRV, &h.NomeCRV, &h.UF) == nil {
+			out[rca] = h
+		}
+	}
+	return out
 }
 
 // segUFsOcultas — UFs fora do painel (flag "UF liberada?" do vínculo).
@@ -426,10 +483,18 @@ func segVigenciaDoMes(db *sql.DB, empresaID string, vinculoID int, mes string) (
 	return id, err == nil
 }
 
+// segContarPorUF — na UF o cliente conta UMA vez por grupo, mesmo que dois RCAs
+// tenham vendido pra ele (Igor/Reckitt, 28/10/2026).
 func segContarPorUF(clientes []*segCliente) map[string]map[string]int {
 	out := map[string]map[string]int{}
+	visto := map[string]bool{}
 	for _, c := range clientes {
 		for g := range c.Positivos {
+			k := c.UF + "|" + c.CodCli + "|" + g
+			if visto[k] {
+				continue
+			}
+			visto[k] = true
 			if out[c.UF] == nil {
 				out[c.UF] = map[string]int{}
 			}
@@ -654,6 +719,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 		nome, codPai, nomePai string
 		porGrp                map[string]int
 		geral                 int
+		visto                 map[string]bool // cliente|grupo já contado na linha (2 RCAs no mesmo cliente)
 	}
 	linhas := map[string]*linhaAc{}
 	produtos := map[string]*SegProduto{}
@@ -701,16 +767,22 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 			}
 			l := linhas[cod]
 			if l == nil {
-				l = &linhaAc{nome: nome, porGrp: map[string]int{}}
+				l = &linhaAc{nome: nome, porGrp: map[string]int{}, visto: map[string]bool{}}
 				if nivel == "rca" {
 					l.codPai, l.nomePai = c.CodCRV, c.NomeCRV
 				}
 				linhas[cod] = l
 			}
+			// Cada linha (GGV, equipe, RCA) conta o cliente uma vez; o mesmo
+			// cliente em dois RCAs aparece em cada RCA e soma uma vez na equipe/GGV.
 			for g := range c.Positivos {
-				l.porGrp[g]++
+				if k := c.CodCli + "|" + g + "|" + m; !l.visto[k] {
+					l.visto[k] = true
+					l.porGrp[g]++
+				}
 			}
-			if len(c.Positivos) > 0 {
+			if k := c.CodCli + "||" + m; len(c.Positivos) > 0 && !l.visto[k] {
+				l.visto[k] = true
 				l.geral++
 			}
 		}
