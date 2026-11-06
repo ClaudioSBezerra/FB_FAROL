@@ -13,11 +13,12 @@ import {
 import { SearchableCombobox } from '@/components/ui/searchable-combobox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/AuthContext'
-import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon, Download } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, AlertTriangle, PackageSearch, Info, Check, X as XIcon, Download, FileText } from 'lucide-react'
 import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import { fmtBRL } from '@/lib/farolMoney'
 import { Button } from '@/components/ui/button'
 import { exportToExcel } from '@/lib/exportToExcel'
+import { exportToPdf, type CelulaPdf } from '@/lib/exportToPdf'
 import { opcoesMetrica, resumoNumerica, resumirRollup, type NivelRollup } from '@/lib/metricasObjetivos'
 import { toast } from 'sonner'
 
@@ -1124,6 +1125,113 @@ export default function FarolPainelMetas() {
     )
   }
 
+  // exportarPdf — pedido do Heverton 06/11/2026: além do Excel, baixar em PDF o
+  // que está na tela. Sai a ABA ABERTA da visão Combinada (Resumo GGVs, GGVs×CRVs,
+  // GGVs×CRVs×RCAs, Redes ou Rede×Cliente), com os filtros e o período aplicados e
+  // as mesmas colunas e totais da tabela.
+  async function exportarPdf() {
+    if (metrica !== 'combinado') return
+    const abaLabel = ABAS_COMBINADO.find(a => a.value === abaCombinado)?.label ?? ''
+    const ver = (n: number) => (n >= 0 ? 'verde' : 'vermelho') as 'verde' | 'vermelho'
+    const dataBR = (iso: string) => iso ? iso.split('-').reverse().join('/') : '—'
+    const rotulo = (opts: { v: string; l: string }[], v: string) => opts.find(o => o.v === v)?.l ?? v
+    const filtros = [
+      fGGV && `GGV: ${rotulo(optsGGV, fGGV)}`,
+      fCRV && `CRV: ${rotulo(optsCRV, fCRV)}`,
+      fRCA && `RCA: ${rotulo(optsRCA, fRCA)}`,
+      fUF && `UF: ${fUF}`,
+      fRede && `Rede: ${rotulo(optsRede, fRede)}`,
+      fCliente && `Cliente: ${rotulo(optsCliente, fCliente)}`,
+    ].filter(Boolean) as string[]
+    const contexto = [
+      `Indústria: ${industriaSelecionada?.nome ?? ''}  |  Visão: Ponderada (Cobertura + Sortimento)  |  Fluxo: ${FLUXOS.find(f => f.value === fluxo)?.label ?? fluxo}`,
+      `Período: ${dataBR(periodoManualInicio)} a ${dataBR(periodoManualFim)}  |  Filtros: ${filtros.length ? filtros.join(' · ') : 'nenhum'}`,
+      `Gerado em ${new Date().toLocaleString('pt-BR')}`,
+    ]
+    const n = redesVisiveis.length
+    const resumo = n > 0 ? [
+      `Cobertura — redes cobertas: ${fmt(totComb.cob)} / ${fmt(n)} redes  (média ${fmtBRL(totComb.somaCobertura / n)} / objetivo ${fmtBRL(redesVisiveis[0].cobertura_objetivo)})`,
+      `Sortimento — redes no objetivo de EANs: ${fmt(totComb.sort)} / ${fmt(n)}  (objetivo ${fmt(redesVisiveis[0].sortimento_objetivo)} EANs · média ${fmt(totComb.qtMedEan / n)})`,
+    ] : undefined
+    const arquivo = `Painel_${(industriaSelecionada?.nome ?? '').replace(/\s+/g, '_')}_${abaLabel.replace(/[^\w×]+/g, '_')}_${periodoManualInicio}_a_${periodoManualFim}`
+    const status = (ok: boolean): CelulaPdf => ({ texto: ok ? 'Atingiu' : 'Abaixo', cor: ok ? 'verde' : 'vermelho' })
+    const base = { titulo: `Painel de Objetivos por Indústria — ${abaLabel}`, contexto, resumo, arquivo }
+
+    try {
+      if (abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') {
+        await exportToPdf({
+          ...base,
+          colunas: [
+            { header: 'GGV' },
+            ...(abaCombinado !== 'ggv' ? [{ header: 'CRV' }] : []),
+            ...(abaCombinado === 'ggv_crv_rca' ? [{ header: 'RCA' }] : []),
+            { header: 'Qt Redes', align: 'center' },
+            { header: 'Redes atingindo Cobertura', align: 'center' },
+            { header: 'Redes abaixo da Cobertura', align: 'center' },
+            { header: 'Redes atingindo Sortimento', align: 'center' },
+            { header: 'Redes abaixo do Sortimento', align: 'center' },
+          ],
+          linhas: gruposAtivos.map(g => [
+            `${g.cod_ggv} — ${g.nome_ggv}`,
+            ...(abaCombinado !== 'ggv' ? [`${g.cod_crv} — ${g.nome_crv}`] : []),
+            ...(abaCombinado === 'ggv_crv_rca' ? [`${g.cod_rca} — ${g.nome_rca}`] : []),
+            fmt(g.qtd_redes),
+            { texto: fmt(g.qtd_atingindo_cobertura), cor: 'verde' as const },
+            { texto: fmt(g.qtd_falta_cobertura), cor: 'vermelho' as const },
+            { texto: fmt(g.qtd_atingindo_sortimento), cor: 'verde' as const },
+            { texto: fmt(g.qtd_falta_sortimento), cor: 'vermelho' as const },
+          ]),
+        })
+      } else if (abaCombinado === 'rede') {
+        await exportToPdf({
+          ...base,
+          colunas: [
+            { header: 'Cód. Princ.' }, { header: 'Razão' }, { header: 'Fantasia' }, { header: 'Qt Lojas', align: 'center' },
+            { header: 'UF' }, { header: 'GGV' }, { header: 'CRV' }, { header: 'RCA' },
+            { header: 'Obj. Cobertura', align: 'right' }, { header: 'Valor Venda', align: 'right' }, { header: 'Venda Média', align: 'right' },
+            { header: 'Falta (R$)', align: 'right' }, { header: 'Status', align: 'center' },
+            { header: 'Obj. EANs', align: 'center' }, { header: 'Qt Méd. EANs', align: 'center' }, { header: 'Falta EANs', align: 'center' },
+          ],
+          linhas: redesVisiveis.map(r => {
+            const faltaCob = r.cobertura_valor - r.cobertura_objetivo
+            const faltaEan = r.sortimento_valor - r.sortimento_objetivo
+            return [
+              r.cod_princ, r.razao, r.fantasia, fmt(r.qt_lojas), r.uf || '—',
+              `${r.cod_ggv} — ${r.nome_ggv}`, `${r.cod_crv} — ${r.nome_crv}`, `${r.cod_rca} — ${r.nome_rca}`,
+              fmtBRL(r.cobertura_objetivo), fmtBRL(r.cobertura_valor_total), fmtBRL(r.cobertura_valor),
+              { texto: fmtBRL(faltaCob), cor: ver(faltaCob) }, status(r.cobertura_atingiu),
+              fmt(r.sortimento_objetivo), fmt(r.sortimento_valor), { texto: fmt(faltaEan), cor: ver(faltaEan) },
+            ]
+          }),
+          total: n > 0 ? ['TOTAL', '', '', '', '', '', '', '', fmtBRL(totComb.objCob), fmtBRL(totComb.valorVenda), '', '', '',
+            fmt(totComb.objEan), fmt(totComb.qtMedEan), { texto: fmt(totComb.faltaEan), cor: ver(totComb.faltaEan) }] : undefined,
+        })
+      } else {
+        await exportToPdf({
+          ...base,
+          colunas: [
+            { header: 'Cód. Princ.' }, { header: 'Cód. Cliente' }, { header: 'CNPJ' }, { header: 'Razão' }, { header: 'Fantasia' },
+            { header: 'UF' }, { header: 'GGV' }, { header: 'CRV' }, { header: 'RCA' },
+            { header: 'Obj. Cobertura', align: 'right' }, { header: 'Valor Venda', align: 'right' }, { header: 'Falta (R$)', align: 'right' },
+            { header: 'Status', align: 'center' }, { header: 'Obj. EANs', align: 'center' }, { header: 'Qt EANs', align: 'center' }, { header: 'Falta EANs', align: 'center' },
+          ],
+          linhas: clientesVisiveis.map(c => {
+            const faltaCob = c.cobertura_valor - c.cobertura_objetivo
+            const faltaEan = c.sortimento_valor - c.sortimento_objetivo
+            return [
+              c.cod_princ, c.cod_cli || '—', c.cnpj, c.razao, c.fantasia, c.uf || '—',
+              `${c.cod_ggv} — ${c.nome_ggv}`, `${c.cod_crv} — ${c.nome_crv}`, `${c.cod_rca} — ${c.nome_rca}`,
+              fmtBRL(c.cobertura_objetivo), fmtBRL(c.cobertura_valor), { texto: fmtBRL(faltaCob), cor: ver(faltaCob) },
+              status(faltaCob >= 0), fmt(c.sortimento_objetivo), fmt(c.sortimento_valor), { texto: fmt(faltaEan), cor: ver(faltaEan) },
+            ]
+          }),
+        })
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
   return (
     <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
       <div className="flex items-start justify-between gap-3">
@@ -1250,6 +1358,12 @@ export default function FarolPainelMetas() {
           <Button variant="outline" size="sm" className="gap-2" onClick={exportarPainel}>
             <Download className="w-4 h-4" />
             Exportar Excel
+          </Button>
+        )}
+        {industriaID && metrica === 'combinado' && (
+          <Button variant="outline" size="sm" className="gap-2" onClick={exportarPdf}>
+            <FileText className="w-4 h-4" />
+            Exportar PDF
           </Button>
         )}
       </div>
