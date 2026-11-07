@@ -1160,6 +1160,7 @@ export default function FarolPainelMetas() {
     try {
       if (abaCombinado === 'ggv' || abaCombinado === 'ggv_crv' || abaCombinado === 'ggv_crv_rca') {
         await exportToPdf({
+          token,
           ...base,
           colunas: [
             { header: 'GGV' },
@@ -1184,6 +1185,7 @@ export default function FarolPainelMetas() {
         })
       } else if (abaCombinado === 'rede') {
         await exportToPdf({
+          token,
           ...base,
           colunas: [
             { header: 'Cód. Princ.' }, { header: 'Razão' }, { header: 'Fantasia' }, { header: 'Qt Lojas', align: 'center' },
@@ -1208,6 +1210,7 @@ export default function FarolPainelMetas() {
         })
       } else {
         await exportToPdf({
+          token,
           ...base,
           colunas: [
             { header: 'Cód. Princ.' }, { header: 'Cód. Cliente' }, { header: 'CNPJ' }, { header: 'Razão' }, { header: 'Fantasia' },

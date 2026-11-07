@@ -23,6 +23,38 @@ export interface TabelaPdf {
   // linha final em negrito (TOTAL)
   total?: CelulaPdf[]
   arquivo: string // sem extensão
+  // token do usuário: busca a logo da empresa (a mesma do menu lateral)
+  token?: string | null
+}
+
+interface LogoPdf { dataUrl: string; w: number; h: number; fmt: 'PNG' | 'JPEG' }
+
+async function carregarLogo(token?: string | null): Promise<LogoPdf | null> {
+  const tentar = async (url: string, auth: boolean): Promise<LogoPdf | null> => {
+    try {
+      const res = await fetch(url, { headers: auth && token ? { Authorization: `Bearer ${token}` } : undefined, cache: 'no-store' })
+      if (!res.ok) return null
+      const blob = await res.blob()
+      if (!blob.type.startsWith('image/') || blob.type.includes('svg')) return null
+      const dataUrl = await new Promise<string>((ok, err) => {
+        const r = new FileReader()
+        r.onload = () => ok(String(r.result))
+        r.onerror = () => err(r.error)
+        r.readAsDataURL(blob)
+      })
+      const dim = await new Promise<{ w: number; h: number }>((ok, err) => {
+        const im = new Image()
+        im.onload = () => ok({ w: im.naturalWidth, h: im.naturalHeight })
+        im.onerror = () => err(new Error('img'))
+        im.src = dataUrl
+      })
+      if (!dim.w || !dim.h) return null
+      return { dataUrl, ...dim, fmt: blob.type.includes('jpeg') || blob.type.includes('jpg') ? 'JPEG' : 'PNG' }
+    } catch {
+      return null
+    }
+  }
+  return (token ? await tentar('/api/config/empresa/logo', true) : null) ?? (await tentar('/logo-fb.png', false))
 }
 
 const VERDE: [number, number, number] = [21, 128, 61]
@@ -34,6 +66,17 @@ export async function exportToPdf(t: TabelaPdf) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   const margem = 28
   let y = 34
+
+  // Logo no canto superior direito (máx. 46pt de altura, 130pt de largura)
+  const logo = await carregarLogo(t.token)
+  if (logo) {
+    const esc = Math.min(46 / logo.h, 130 / logo.w)
+    const w = logo.w * esc
+    const h = logo.h * esc
+    try {
+      doc.addImage(logo.dataUrl, logo.fmt, doc.internal.pageSize.getWidth() - margem - w, 22, w, h)
+    } catch { /* logo inválida: segue sem */ }
+  }
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
