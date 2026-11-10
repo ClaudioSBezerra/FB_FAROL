@@ -329,15 +329,19 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 	// carregada, mantém a regra antiga (UF da matriz).
 	if hier := segLerHierarquia(db, empresaID, vinculoID); len(hier) > 0 {
 		for _, c := range clientes {
-			if h, ok := hier[c.CodRCA]; ok {
-				c.UF, c.CodGGV, c.NomeGGV, c.CodCRV, c.NomeCRV = h.UF, h.CodGGV, h.NomeGGV, h.CodCRV, h.NomeCRV
-			} else {
-				// RCA fora da planilha: UF do cliente na venda, se for do programa.
-				// (O código de gerente da venda não serve: em PRD 71 RCAs de fora vêm
-				// com gerente 1. Testado contra o PRD de set/26: dá 1.121 contra 1.116 do
-				// fornecedor, sem abater devolução.)
-				if uf := strings.ToUpper(c.UF); segUFsPrograma[uf] {
-					c.UF = uf
+			equipe, ufCli := c.CodCRV, strings.ToUpper(c.UF) // antes de sobrescrever
+			h, ok := hier[c.CodRCA]
+			if !ok {
+				// RCA/equipe fora da planilha de hierarquia não conta (Igor, 10/11/2026).
+				c.UF = ""
+				continue
+			}
+			c.UF, c.CodGGV, c.NomeGGV, c.CodCRV, c.NomeCRV = h.UF, h.CodGGV, h.NomeGGV, h.CodCRV, h.NomeCRV
+			// Televendas da matriz (equipes 1009 e 1010): a UF do cliente decide em
+			// qual base a positivação cai (Igor, 10/11/2026).
+			if segEquipesUFCliente[equipe] {
+				if segUFsPrograma[ufCli] {
+					c.UF = ufCli
 				} else {
 					c.UF = ""
 				}
@@ -418,6 +422,9 @@ func segUnidadesPorVolume(embalagem string, qtUnitCx float64) float64 {
 }
 
 // segUFsPrograma — o programa só tem estas UFs (Igor/Reckitt, 28/10/2026).
+// segEquipesUFCliente — equipes cuja UF de apuração é a do cliente, não a do GGV.
+var segEquipesUFCliente = map[string]bool{"1009": true, "1010": true}
+
 var segUFsPrograma = map[string]bool{"GO": true, "MS": true, "TO": true, "PA": true}
 
 // segUFPorGGVHierarquia — código de GGV da planilha de hierarquia → UF.

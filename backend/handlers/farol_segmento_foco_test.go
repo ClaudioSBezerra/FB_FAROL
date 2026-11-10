@@ -264,4 +264,17 @@ func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
 	if len(d.Linhas) != 1 || d.Linhas[0].Total != 1 {
 		t.Errorf("GGV: %+v, quero 1 GGV com total 1 (cliente de 2 RCAs conta uma vez)", d.Linhas)
 	}
+	// Igor, 10/11/2026: RCA fora da planilha não conta; televendas 1009/1010 usa a UF do cliente.
+	db.Exec(`INSERT INTO farol.metas_rca_hierarquia (empresa_id, vinculo_id, cod_rca, cod_ggv, cod_crv, uf) VALUES ($1,$2,'TR5','2','1009','TO')`, empresaID, vinculoID)
+	venda("TH5", "GO", "TR4") // fora da planilha → não conta
+	db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
+		VALUES ($1,'2026-07-05',$2,'TH6','TH6','GO','TSEGHA','UN/0001/UN',1,3,0,'1','2','1009','TR5')`, empresaID, forn)
+	segInvalidarCache()
+	p, err = segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.UFs) != 1 || p.UFs[0].UF != "GO" || p.UFs[0].Grupos[0].Meses[0].Realizado != 2 {
+		t.Errorf("painel pós-Igor: %+v, quero GO=2 (TH1 + TH6 da equipe 1009 pela UF do cliente; TH5 fora da planilha)", p.UFs)
+	}
 }
