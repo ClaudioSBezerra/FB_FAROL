@@ -1235,6 +1235,92 @@ export default function FarolPainelMetas() {
     }
   }
 
+  // exportarPdfNumerica — mesma ideia da Ponderada, pra visão Numérica (4 abas:
+  // Resumo GGVs, GGVs×CRVs, GGVs×CRVs×RCAs e Clientes), com os filtros aplicados.
+  async function exportarPdfNumerica() {
+    if (metrica !== 'combinado_numerica' || !periodoSelecionadoNum) return
+    const abaLabel = { ggv: 'Resumo GGVs', ggv_crv: 'Resumo GGVs × CRVs', ggv_crv_rca: 'Resumo GGVs × CRVs × RCAs', cliente: 'Resumo Clientes' }[abaNumerica]
+    const ver = (n: number) => (n >= 0 ? 'verde' : 'vermelho') as 'verde' | 'vermelho'
+    const dataBR = (iso: string) => iso ? iso.split('-').reverse().join('/') : '—'
+    const filtros = [
+      filtroGGV && `GGV: ${filtroGGV.codigo} — ${filtroGGV.nome}`,
+      filtroCRV && `CRV: ${filtroCRV.codigo} — ${filtroCRV.nome}`,
+      filtroRCA && `RCA: ${filtroRCA.codigo} — ${filtroRCA.nome}`,
+      filtroClienteNumerica && `Cliente: ${filtroClienteNumerica}`,
+    ].filter(Boolean) as string[]
+    const r = resumoNumerica(clientesCombinadoNum)
+    const sortRealizado = painelCombinadoNum?.sortimento.realizado_total ?? 0
+    const contexto = [
+      `Indústria: ${industriaSelecionada?.nome ?? ''}  |  Visão: Numérica (Cobertura + Sortimento)  |  Fluxo: ${FLUXOS.find(f => f.value === fluxo)?.label ?? fluxo}`,
+      `Período: ${dataBR(periodoSelecionadoNum.cobertura.data_inicio)} a ${dataBR(periodoSelecionadoNum.cobertura.data_fim)}  |  Filtros: ${filtros.length ? filtros.join(' · ') : 'nenhum'}`,
+      `Gerado em ${new Date().toLocaleString('pt-BR')}`,
+    ]
+    const resumo = [
+      `Cobertura Numérica — clientes cobertos: ${fmt(r.cobertos)} / ${fmt(r.totalClientes)} clientes`,
+      `Sortimento Numérica — média de PPAs: ${fmt(sortRealizado)}${r.objetivoSortimento > 0 ? ` / ${fmt(r.objetivoSortimento)}  (${fmt(r.bateramSortimento)} de ${fmt(r.totalAplicaveis)} clientes bateram)` : ''}`,
+    ]
+    const arquivo = `Painel_${(industriaSelecionada?.nome ?? '').replace(/\s+/g, '_')}_Numerica_${abaLabel.replace(/[^\w×]+/g, '_')}_${periodoSelecionadoNum.cobertura.data_inicio}_a_${periodoSelecionadoNum.cobertura.data_fim}`
+    const base = { token, titulo: `Painel de Objetivos por Indústria (Numérica) — ${abaLabel}`, contexto, resumo, arquivo }
+    try {
+      if (abaNumerica !== 'cliente') {
+        const nivel: NivelRollup = abaNumerica
+        await exportToPdf({
+          ...base,
+          colunas: [
+            { header: 'GGV' },
+            ...(nivel !== 'ggv' ? [{ header: 'CRV' }] : []),
+            ...(nivel === 'ggv_crv_rca' ? [{ header: 'RCA' }] : []),
+            { header: 'Qt Clientes', align: 'center' },
+            { header: 'Clientes atingindo Cobertura', align: 'center' },
+            { header: 'Clientes abaixo da Cobertura', align: 'center' },
+            { header: 'Objetivo Sortimento (PPAs)', align: 'center' },
+            { header: 'Média de PPAs', align: 'center' },
+            { header: 'Clientes atingindo Sortimento', align: 'center' },
+            { header: 'Clientes abaixo do Sortimento', align: 'center' },
+          ],
+          linhas: resumirRollup(clientesCombinadoNum, nivel).map(g => [
+            `${g.cod_ggv} — ${g.nome_ggv}`,
+            ...(nivel !== 'ggv' ? [`${g.cod_crv} — ${g.nome_crv}`] : []),
+            ...(nivel === 'ggv_crv_rca' ? [`${g.cod_rca} — ${g.nome_rca}`] : []),
+            fmt(g.qt),
+            { texto: fmt(g.cobertas), cor: 'verde' as const },
+            { texto: fmt(g.falta), cor: 'vermelho' as const },
+            g.objetivoSortimento > 0 ? fmt(g.objetivoSortimento) : '—',
+            fmt(g.realSortimento),
+            { texto: fmt(g.atingindoSortimento), cor: 'verde' as const },
+            { texto: fmt(g.faltaSortimento), cor: 'vermelho' as const },
+          ]),
+        })
+      } else {
+        await exportToPdf({
+          ...base,
+          colunas: [
+            { header: 'Cód. Cliente' }, { header: 'CNPJ' }, { header: 'Razão' }, { header: 'Fantasia' }, { header: 'Classif.', align: 'center' },
+            { header: 'GGV' }, { header: 'CRV' }, { header: 'RCA' },
+            { header: 'Obj. Cobertura', align: 'right' }, { header: 'Valor Venda', align: 'right' }, { header: 'Falta (R$)', align: 'right' }, { header: 'Cobertura', align: 'center' },
+            { header: 'Obj. PPAs', align: 'center' }, { header: 'Qt PPAs', align: 'center' }, { header: 'Falta PPAs', align: 'center' }, { header: 'Sortimento', align: 'center' },
+          ],
+          linhas: [...clientesCombinadoNum].sort((a, b) => b.cobertura_valor - a.cobertura_valor).map(c => {
+            const faltaCob = c.cobertura_valor - c.cobertura_objetivo
+            const faltaPpa = c.sortimento_valor - c.sortimento_objetivo
+            return [
+              c.cod_cl || '—', c.cnpj, c.razao, c.fantasia, c.classificacao_pdv || '—',
+              `${c.cod_ggv} — ${c.nome_ggv}`, `${c.cod_crv} — ${c.nome_crv}`, `${c.cod_rca} — ${c.nome_rca}`,
+              fmtBRL(c.cobertura_objetivo), fmtBRL(c.cobertura_valor), { texto: fmtBRL(faltaCob), cor: ver(faltaCob) },
+              { texto: c.cobertura_atingiu ? 'Atingiu' : 'Abaixo', cor: c.cobertura_atingiu ? 'verde' as const : 'vermelho' as const },
+              c.sortimento_aplicavel ? fmt(c.sortimento_objetivo) : 'N/A',
+              c.sortimento_aplicavel ? fmt(c.sortimento_valor) : 'N/A',
+              c.sortimento_aplicavel ? { texto: fmt(faltaPpa), cor: ver(faltaPpa) } : 'N/A',
+              c.sortimento_aplicavel ? { texto: c.sortimento_atingiu ? 'Atingiu' : 'Abaixo', cor: c.sortimento_atingiu ? 'verde' as const : 'vermelho' as const } : 'N/A',
+            ]
+          }),
+        })
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
   return (
     <div className="p-6 space-y-4 uppercase text-sm [&_*]:uppercase">
       <div className="flex items-start justify-between gap-3">
@@ -1363,8 +1449,8 @@ export default function FarolPainelMetas() {
             Exportar Excel
           </Button>
         )}
-        {industriaID && metrica === 'combinado' && (
-          <Button variant="outline" size="sm" className="gap-2" onClick={exportarPdf}>
+        {industriaID && (metrica === 'combinado' || metrica === 'combinado_numerica') && (
+          <Button variant="outline" size="sm" className="gap-2" onClick={metrica === 'combinado' ? exportarPdf : exportarPdfNumerica}>
             <FileText className="w-4 h-4" />
             Exportar PDF
           </Button>

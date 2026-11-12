@@ -60,11 +60,52 @@ async function carregarLogo(token?: string | null): Promise<LogoPdf | null> {
 const VERDE: [number, number, number] = [21, 128, 61]
 const VERMELHO: [number, number, number] = [185, 28, 28]
 
+const FONTE = 8.5 // corpo da tabela
+const PAD = 4 // folga horizontal de cada célula
+
+// Texto de uma célula (a mesma regra do desenho), pra medir a largura.
+const textoCelula = (c: CelulaPdf) => (typeof c === 'object' ? String(c.texto) : String(c))
+const negritoCelula = (c: CelulaPdf) => typeof c === 'object' && !!c.negrito
+
 export async function exportToPdf(t: TabelaPdf) {
   const [{ jsPDF }, autoTableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
   const autoTable = autoTableMod.default
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   const margem = 28
+
+  // 1) Mede a largura de cada coluna pelo MAIOR texto dela (cabeçalho, linhas e
+  // total): nenhuma célula quebra linha. Pedido do Heverton (12/11/2026): o PDF
+  // não pode "quebrar" o texto; se a tabela é larga, a PÁGINA cresce.
+  const med = new jsPDF({ unit: 'pt' })
+  const largura = (txt: string, bold: boolean) => {
+    med.setFont('helvetica', bold ? 'bold' : 'normal')
+    med.setFontSize(FONTE)
+    return med.getTextWidth(txt)
+  }
+  const larguras = t.colunas.map((c, i) => {
+    let w = largura(c.header, true)
+    for (const l of t.linhas) {
+      const cel = l[i]
+      if (cel !== undefined) w = Math.max(w, largura(textoCelula(cel), negritoCelula(cel)))
+    }
+    if (t.total?.[i] !== undefined) w = Math.max(w, largura(textoCelula(t.total[i]), true))
+    return Math.ceil(w + PAD * 2 + 2)
+  })
+  const larguraTabela = larguras.reduce((a, b) => a + b, 0)
+
+  // Linhas de título/contexto/resumo também não quebram: a página acomoda a maior.
+  med.setFont('helvetica', 'bold')
+  med.setFontSize(14)
+  let maiorTexto = med.getTextWidth(t.titulo)
+  med.setFontSize(9.5)
+  for (const l of t.resumo ?? []) maiorTexto = Math.max(maiorTexto, med.getTextWidth(l))
+  med.setFont('helvetica', 'normal')
+  med.setFontSize(8.5)
+  for (const l of t.contexto) maiorTexto = Math.max(maiorTexto, med.getTextWidth(l))
+
+  // 2) Página: no mínimo A4 paisagem; cresce em largura, mantendo a proporção do A4.
+  const pw = Math.max(842, Math.ceil(Math.max(larguraTabela, maiorTexto + 170) + margem * 2))
+  const ph = Math.round(pw * (595 / 842))
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [pw, ph] })
   let y = 34
 
   // Logo no canto superior direito (máx. 46pt de altura, 130pt de largura)
@@ -111,13 +152,14 @@ export async function exportToPdf(t: TabelaPdf) {
     return { content: String(c) }
   }
 
-  const columnStyles: Record<number, { halign: 'left' | 'center' | 'right'; cellWidth?: number }> = {}
+  const columnStyles: Record<number, { halign: 'left' | 'center' | 'right'; cellWidth: number }> = {}
   t.colunas.forEach((c, i) => {
-    columnStyles[i] = { halign: c.align ?? 'left', ...(c.largura ? { cellWidth: c.largura } : {}) }
+    columnStyles[i] = { halign: c.align ?? 'left', cellWidth: larguras[i] }
   })
 
   autoTable(doc, {
     startY: y + 4,
+    tableWidth: 'wrap',
     margin: { left: margem, right: margem, bottom: 28 },
     head: [t.colunas.map(c => ({ content: c.header, styles: { halign: c.align ?? 'left' as const } }))],
     body: [
@@ -128,8 +170,8 @@ export async function exportToPdf(t: TabelaPdf) {
       })] : []),
     ],
     columnStyles,
-    styles: { font: 'helvetica', fontSize: 7, cellPadding: 3, overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.3 },
-    headStyles: { fillColor: [51, 65, 85], textColor: 255, fontSize: 7, fontStyle: 'bold' },
+    styles: { font: 'helvetica', fontSize: FONTE, cellPadding: { top: 3, bottom: 3, left: PAD, right: PAD }, overflow: 'visible', lineColor: [226, 232, 240], lineWidth: 0.3 },
+    headStyles: { fillColor: [51, 65, 85], textColor: 255, fontSize: FONTE, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [250, 250, 252] },
     showHead: 'everyPage',
   })

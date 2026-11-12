@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
+import { toast } from 'sonner'
+import { exportToPdf, type CelulaPdf } from '@/lib/exportToPdf'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import TabelaComColunas from '@/components/farol/TabelaComColunas'
@@ -312,6 +314,75 @@ export default function FarolSegmentoFoco() {
     return !b || `${l.cod} ${l.nome} ${l.cod_pai ?? ''} ${l.nome_pai ?? ''}`.toLowerCase().includes(b)
   }).sort((a, b) => (a.cod_pai ?? '').localeCompare(b.cod_pai ?? '', 'pt-BR', { numeric: true }) || b.geral - a.geral)
 
+  // PDF do que está na tela (pedido do Heverton, 12/11/2026): aba "Por grupo" sai
+  // com os grupos e a abertura por UF; "Por RCA" sai o medidor filtrado. Sem quebra
+  // de linha — a página cresce se precisar.
+  async function exportarPdf() {
+    if (!vinculo || !painel) return
+    const ufTxt = ufsSel.size ? [...ufsSel].sort().join(', ') : 'todas as UFs'
+    const contextoBase = [
+      `Programa: ${vinculo.industria_nome}  |  Período: ${periodoRotulo}  |  Fluxo: ${FLUXOS.find(f => f.value === fluxo)?.label ?? fluxo}  |  UF: ${ufTxt}`,
+    ]
+    const stamp = `Gerado em ${new Date().toLocaleString('pt-BR')}`
+    const nomeArq = `Segmento_Foco_${vinculo.industria_nome.replace(/\s+/g, '_')}_${periodo === 'mes' ? mes : `tri_${painel.trimestre}`}`
+    const resultado = (obj: number | null, real: number, base: number): CelulaPdf[] => {
+      const gap = obj != null ? base - obj : null
+      const bateu = obj != null && base >= obj
+      return [
+        obj != null ? fmt(obj) : '—',
+        { texto: fmt(real), negrito: true },
+        gap == null ? '—' : bateu ? { texto: 'Atingido', cor: 'verde' } : { texto: fmt(gap), cor: 'vermelho' },
+        obj ? { texto: `${fmt((base / obj) * 100)}%`, cor: bateu ? 'verde' : 'vermelho' } : '—',
+      ]
+    }
+    try {
+      if (aba === 'grupos') {
+        const linhas: CelulaPdf[][] = []
+        for (const l of porGrupo) {
+          linhas.push([{ texto: l.grupo, negrito: true }, 'Todas as selecionadas', ...resultado(l.obj, l.real, l.realComObj)])
+          for (const u of ufsVisiveis) {
+            const g = u.grupos.find(x => x.grupo === l.grupo)
+            if (!g) continue
+            const v = valor(g)
+            linhas.push(['', u.uf, ...resultado(v.obj, v.real, v.real)])
+          }
+        }
+        await exportToPdf({
+          token,
+          titulo: `Segmento Foco — ${vinculo.industria_nome} — Por grupo`,
+          contexto: [...contextoBase, stamp],
+          colunas: [
+            { header: 'Grupo' }, { header: 'UF' },
+            { header: periodo === 'mes' ? 'Objetivo' : 'Meta trimestre', align: 'center' },
+            { header: 'Realizado', align: 'center' }, { header: 'Gap', align: 'center' }, { header: '%', align: 'center' },
+          ],
+          linhas,
+          total: ['Total', '', ...resultado(tot.temObj ? tot.obj : null, tot.real, tot.realComObj)],
+          arquivo: `${nomeArq}_por_grupo`,
+        })
+      } else {
+        if (!medidor) { toast.error('Aguarde o medidor carregar'); return }
+        const grupos = medidor.grupos ?? []
+        await exportToPdf({
+          token,
+          titulo: `Segmento Foco — ${vinculo.industria_nome} — Medidor por RCA`,
+          contexto: [...contextoBase, `Filtro: ${busca.trim() || 'nenhum'}  |  ${linhasMedidor.length} RCA(s)  |  ${stamp}`],
+          colunas: [
+            { header: 'RCA' }, { header: 'Equipe', align: 'center' }, { header: 'Clientes c/ algum grupo', align: 'center' },
+            ...grupos.map(g => ({ header: g, align: 'center' as const })),
+          ],
+          linhas: linhasMedidor.map((l): CelulaPdf[] => [
+            `${l.cod} — ${l.nome}`, `${l.cod_pai ?? ''}${l.nome_pai ? ` — ${l.nome_pai}` : ''}`, { texto: fmt(l.geral), negrito: true },
+            ...l.grupos.map(n => fmt(n)),
+          ]),
+          arquivo: `${nomeArq}_por_RCA`,
+        })
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
   return (
     <div className="space-y-5 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -320,6 +391,12 @@ export default function FarolSegmentoFoco() {
           <p className="text-sm text-muted-foreground">Positivação de grupos de produtos por cliente: objetivo × realizado, mensal e trimestral.</p>
         </div>
         <div className="flex items-center gap-1">
+          {vinculo && painel && (
+            <Button variant="outline" size="sm" className="gap-2 mr-3" onClick={exportarPdf}>
+              <FileText className="w-4 h-4" />
+              Exportar PDF
+            </Button>
+          )}
           <Button variant="outline" size="icon" onClick={() => setMes(m => somaMes(m, -1))} aria-label="Mês anterior"><ChevronLeft className="w-4 h-4" /></Button>
           <div className="w-28 text-center text-sm font-semibold">{rotuloMes(mes)}</div>
           <Button variant="outline" size="icon" onClick={() => setMes(m => somaMes(m, 1))} aria-label="Próximo mês"><ChevronRight className="w-4 h-4" /></Button>

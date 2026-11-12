@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, Download, FileUp, Scale, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileText, FileUp, Scale, Upload } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { exportToExcel } from '@/lib/exportToExcel'
+import { exportToPdf, type CelulaPdf } from '@/lib/exportToPdf'
 import { BotaoComoFunciona } from '@/components/ComoFuncionaIndicadores'
 import type * as XLSXType from 'xlsx'
 
@@ -320,6 +321,46 @@ export default function FarolComparativoFechamento() {
     )
   }
 
+  // PDF do que está na tela (pedido do Heverton, 12/11/2026): mesmas colunas da tabela,
+  // sem quebra de linha — a página cresce se precisar.
+  async function exportarPdf() {
+    if (!linhas || linhas.length === 0) { toast.error('Nada pra exportar ainda — busque o comparativo primeiro'); return }
+    const industriaNome = industrias.find(i => String(i.id) === industriaID)?.nome ?? industriaID
+    const dataBR = (iso: string) => iso ? iso.split('-').reverse().join('/') : '—'
+    const corStatus = (st: ComparativoLinha['status']) => (st === 'OK' ? 'verde' : st === 'DIVERGE' ? 'vermelho' : undefined)
+    try {
+      await exportToPdf({
+        token,
+        titulo: 'Comparativo Fechamento Comercial',
+        contexto: [
+          `Indústria: ${industriaNome}  |  Período: ${dataBR(dataInicio)} a ${dataBR(dataFim)}`,
+          `${linhas.length} rede(s) · ${totais.ok} OK · ${totais.diverge} divergência(s) · ${totais.soExterno + totais.soFarol} órfã(s)  |  Gerado em ${new Date().toLocaleString('pt-BR')}`,
+        ],
+        resumo: [
+          `Valor Venda — Fechamento: ${fmtBRL(totais.valorExt)}  ·  Farol: ${fmtBRL(totais.valorFarol)}  ·  Diferença: ${fmtBRL(totais.valorFarol - totais.valorExt)} (${fmtPct(totais.valorExt ? (totais.valorFarol - totais.valorExt) / totais.valorExt * 100 : 0)})`,
+        ],
+        colunas: [
+          { header: 'Cód. Princ.' }, { header: 'Razão' }, { header: 'Fantasia' }, { header: 'Qt Lojas', align: 'center' },
+          { header: 'GGV' }, { header: 'CRV' }, { header: 'RCA' },
+          { header: 'Valor Venda (Fech.)', align: 'right' }, { header: 'Valor Venda (Farol)', align: 'right' }, { header: 'Dif. R$', align: 'right' }, { header: 'Dif. %', align: 'right' },
+          { header: 'EANs (Fech.)', align: 'right' }, { header: 'EANs (Farol)', align: 'right' }, { header: 'Dif. EANs', align: 'right' },
+          { header: 'Status', align: 'center' },
+        ],
+        linhas: linhas.map((l): CelulaPdf[] => [
+          l.cod_princ, l.razao || '—', l.fantasia || '—', fmtNum(l.qt_lojas),
+          `${l.cod_ggv} — ${l.nome_ggv}`, `${l.cod_crv} — ${l.nome_crv}`, `${l.cod_rca} — ${l.nome_rca}`,
+          fmtBRL(l.valor_venda_externo), fmtBRL(l.valor_venda_farol), fmtBRL(l.diferenca_valor), fmtPct(l.diferenca_valor_pct),
+          fmtNum(l.eans_externo), fmtNum(l.eans_farol), fmtNum(l.diferenca_eans),
+          { texto: seloStatus(l.status).texto, cor: corStatus(l.status) },
+        ]),
+        total: ['TOTAL', '', '', '', '', '', '', fmtBRL(totais.valorExt), fmtBRL(totais.valorFarol), fmtBRL(totais.valorFarol - totais.valorExt), '', fmtNum(totais.eansExt), fmtNum(totais.eansFarol), '', ''],
+        arquivo: `Comparativo_Fechamento_${industriaNome.replace(/\s+/g, '_')}_${dataInicio}_a_${dataFim}`,
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -390,6 +431,10 @@ export default function FarolComparativoFechamento() {
           <Button variant="outline" onClick={exportar} disabled={!linhas || linhas.length === 0} className="gap-2">
             <Download className="h-4 w-4" />
             Exportar Excel
+          </Button>
+          <Button variant="outline" onClick={exportarPdf} disabled={!linhas || linhas.length === 0} className="gap-2">
+            <FileText className="h-4 w-4" />
+            Exportar PDF
           </Button>
         </div>
       </div>
