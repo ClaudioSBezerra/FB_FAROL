@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, Users, Package, TrendingUp, TrendingDown, Minus, Factory } from 'lucide-react'
+import { ChevronDown, Users, Package, TrendingUp, TrendingDown, Minus, Factory, FileText } from 'lucide-react'
+import { toast } from 'sonner'
+import { exportToPdf, type CelulaPdf } from '@/lib/exportToPdf'
 import type { Cor } from '@/components/farol/Semaforo'
 import { useAuth } from '@/contexts/AuthContext'
 import { FilialSelector } from '@/components/FilialSelector'
@@ -524,7 +526,7 @@ export function Breadcrumb({
 // ─── FarolV2Dashboard ─────────────────────────────────────────────────────────
 
 export default function FarolV2Dashboard() {
-  const { tipoPersona, spRole, user } = useAuth()
+  const { tipoPersona, spRole, user, token } = useAuth()
   const canImport = user?.role === 'admin' || spRole === 'admin_fbtax' || tipoPersona === 'ti'
   const navigate = useNavigate()
 
@@ -589,6 +591,47 @@ export default function FarolV2Dashboard() {
     useSortedCards(data?.cards ?? [], 'farol.sort.dashboard', { field: 'valor', direction: 'desc' })
 
   if (isExecutivo) return <FarolExecutivo />
+
+  // PDF do que está na tela (pedido do Heverton, 12/11/2026): as linhas do nível
+  // aberto, com período, visão e drill. Sem quebra de linha — a página cresce.
+  async function exportarPdf() {
+    if (!data || sortedCards.length === 0) { toast.error('Nada pra exportar ainda'); return }
+    const VISOES: Record<string, string> = { V01: 'Por FORN.GERAL', V03: 'Por Gerência', V02: 'Por Equipe' }
+    const MODOS: Record<string, string> = { yoy: 'Ano a Ano', ytd: 'Projeção Anual', mom: 'Mês a Mês' }
+    const cor = (c: Cor): 'verde' | 'vermelho' | undefined => (c === 'verde' ? 'verde' : c === 'vermelho' ? 'vermelho' : undefined)
+    const nivel = data.next_level_label
+    const k = data.kpi
+    const linha = (c: CardItem): CelulaPdf[] => [
+      `${c.key} - ${c.label}`, fmtBRL(c.valor_ant), fmtBRL(c.valor_atual), { texto: fmtPct(c.pct), cor: cor(c.cor) },
+      fmtBRL(c.faturado), fmtBRL(c.transmitido),
+      fmtInt(c.base_cli), fmtInt(c.positivados_ant), fmtInt(c.positivados), fmtPct(c.positpct), fmtNum(c.mix),
+    ]
+    try {
+      await exportToPdf({
+        token,
+        titulo: `Painel de Vendas — ${nivel}`,
+        contexto: [
+          `Visão: ${VISOES[view] ?? view}  |  Comparação: ${MODOS[compMode] ?? compMode}${drillPath.length ? `  |  Drill: ${drillPath.map(d => d.label).join(' › ')}` : ''}${somenteIndustria ? '  |  Somente Indústrias' : ''}`,
+          `Período: ${data.periodo.label}`,
+          `${sortedCards.length} linha(s)  |  Gerado em ${new Date().toLocaleString('pt-BR')}`,
+        ],
+        colunas: [
+          { header: 'Nome' }, { header: 'Venda Anterior', align: 'right' }, { header: 'Venda Atual', align: 'right' }, { header: '%', align: 'center' },
+          { header: 'Faturado', align: 'right' }, { header: 'Transmitido', align: 'right' },
+          { header: 'Clientes Ativos', align: 'center' }, { header: 'Posit. Anterior', align: 'center' }, { header: 'Posit. Atual', align: 'center' },
+          { header: '% Posit.', align: 'center' }, { header: 'Mix Médio', align: 'center' },
+        ],
+        linhas: sortedCards.map(linha),
+        total: ['TOTAL', fmtBRL(k.total_ant), fmtBRL(k.total_atual), { texto: fmtPct(k.total_pct), cor: cor(k.total_cor) },
+          fmtBRL(k.total_faturado), fmtBRL(k.total_transmitido), fmtInt(k.total_base_cli), fmtInt(k.total_positivados_ant), fmtInt(k.total_positivados),
+          fmtPct(k.total_positpct), fmtNum(k.avg_mix)],
+        arquivo: `Painel_Vendas_${(VISOES[view] ?? view).replace(/[^\w]+/g, '_')}_${data.periodo.ref_ano}-${String(data.periodo.ref_mes).padStart(2, '0')}`,
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
 
   return (
     <div className="min-h-full uppercase text-sm [&_*]:uppercase">
@@ -675,11 +718,19 @@ export default function FarolV2Dashboard() {
           ))}
         </div>
 
+        <button
+          onClick={exportarPdf}
+          disabled={!data || sortedCards.length === 0}
+          className="ml-auto h-8 px-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 shrink-0"
+        >
+          <FileText className="h-3.5 w-3.5" /> Exportar PDF
+        </button>
+
         {/* Botão importar — somente admin/TI */}
         {canImport && (
           <button
             onClick={() => navigate('/farol/importar')}
-            className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 text-sm text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
+            className="h-8 px-3 rounded-lg border border-dashed border-slate-300 text-sm text-slate-500 hover:border-primary hover:text-primary transition-colors shrink-0"
           >
             + Importar dados
           </button>

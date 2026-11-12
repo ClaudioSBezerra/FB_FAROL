@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ChevronLeft, Search, X, Calendar, Filter, ChevronDown, Factory,
+  ChevronLeft, Search, X, Calendar, Filter, ChevronDown, Factory, FileText,
 } from 'lucide-react'
+import { toast } from 'sonner'
+import { exportToPdf, type CelulaPdf } from '@/lib/exportToPdf'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { BRLValue } from '@/lib/farolMoney'
@@ -199,6 +201,10 @@ function fmtPct(v: number) {
 function fmtInt(v: number) {
   if (v === 0) return '—'
   return v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+}
+// Mesmo texto do BRLValue na tela, sem os pontos de quebra (<wbr/>).
+function fmtBRLtxt(v: number) {
+  return v === 0 ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 function fmtMix(v: number) {
   if (v === 0) return '—'
@@ -980,7 +986,7 @@ export default function FarolExecutivo() {
   // navigate / canImport / refreshing removidos junto com os botões
   // "Importar" e "Consolidar" — gestor pediu pra retirar do painel (usuários
   // clicavam sem querer). Ações administrativas seguem disponíveis no menu.
-  const { spRole, tipoPersona } = useAuth()
+  const { spRole, tipoPersona, token } = useAuth()
   void spRole; void tipoPersona // mantidos pra futuras gates de UI
 
   const [view, setView] = useState<'V01' | 'V02' | 'V03' | 'V06' | 'V07'>('V01')
@@ -1204,6 +1210,68 @@ export default function FarolExecutivo() {
 
   const totalFiltersActive = Object.values(filters).reduce((n, vs) => n + vs.length, 0)
 
+  // PDF do que está na tela (pedido do Heverton, 12/11/2026): TOTAL + as linhas do
+  // nível aberto, com período, filtros, drill e busca aplicados. Sem quebra de
+  // linha — a página cresce se precisar.
+  async function exportarPdf() {
+    if (visibleCards.length === 0) { toast.error('Nada pra exportar ainda'); return }
+    const dataBR = (iso: string) => iso ? iso.split('-').reverse().join('/') : '—'
+    const VISOES: Record<string, string> = { V01: 'Por FORN.GERAL', V03: 'Por Gerência', V02: 'Por Equipe', V06: 'Por Rede', V07: 'Por Departamento' }
+    const FLUXOS_TXT: Record<string, string> = { faturado: 'Faturado', transmitido: 'Transmitido', cancdev: 'Cancelado/Devolvido', cortado: 'Cortado' }
+    const filtrosTxt = FILTER_DIMS.map(d => {
+      const sel = filters[d.col] ?? []
+      if (!sel.length) return ''
+      const opts = optionsFor(d.from)
+      return `${d.label}: ${sel.map(k => opts.find(o => o.key === k)?.label ?? k).join(', ')}`
+    }).filter(Boolean)
+    if (somenteIndustria) filtrosTxt.push('Somente Indústrias')
+    if (incluir.size) filtrosTxt.push(`Incluindo: ${INCLUIR_CATS.filter(c => incluir.has(c.key)).map(c => c.label).join(', ')}`)
+    if (search.trim()) filtrosTxt.push(`Busca: "${search.trim()}"`)
+    const nivel = data?.next_level_label ?? ''
+    const contexto = [
+      `Visão: ${VISOES[view] ?? view}  |  Nível: ${nivel}${drillPath.length ? `  |  Drill: ${drillPath.map(d => d.label).join(' › ')}` : ''}  |  Fluxo: ${FLUXOS_TXT[fluxo] ?? fluxo}`,
+      `Atual: ${dataBR(refInicio)} a ${dataBR(refFim)}  |  Anterior: ${dataBR(compInicio)} a ${dataBR(compFim)}`,
+      `Filtros: ${filtrosTxt.length ? filtrosTxt.join(' · ') : 'nenhum'}`,
+      `${visibleCards.length}${data?.truncado ? ` de ${(data.total_filtrados ?? 0).toLocaleString('pt-BR')}` : ''} linha(s)${data?.truncado ? ' (o TOTAL considera todas)' : ''}  |  Gerado em ${new Date().toLocaleString('pt-BR')}`,
+    ]
+    const cor = (c: Cor): 'verde' | 'vermelho' | undefined => (c === 'verde' ? 'verde' : c === 'vermelho' ? 'vermelho' : undefined)
+    const linha = (c: CardItem, total = false): CelulaPdf[] => {
+      const nome: CelulaPdf = total ? 'TOTAL' : `${c.key} - ${c.label}`
+      const cresc = pctCresc(c.positivados, c.positivados_ant)
+      return [
+        nome,
+        fmtBRLtxt(c.valor_ant), fmtBRLtxt(c.valor_atual), { texto: fmtPct(c.pct), cor: cor(c.cor) },
+        ...(hidePosit ? [] : [
+          fmtInt(c.base_cli), { texto: fmtPct(c.positpct), cor: cor(c.posit_cor) }, fmtInt(c.positivados_ant), fmtInt(c.positivados),
+          { texto: fmtPct(cresc), cor: cor(corCrescPosit(c)) },
+        ] as CelulaPdf[]),
+        total ? fmtMix(c.mix) : { texto: fmtMix(c.mix), cor: cor(c.mix_cor) },
+      ]
+    }
+    try {
+      await exportToPdf({
+        token,
+        titulo: `Painel de Vendas — ${nivel || VISOES[view]}`,
+        contexto,
+        colunas: [
+          { header: 'Nome' },
+          { header: 'Venda Anterior', align: 'right' }, { header: 'Venda Atual', align: 'right' }, { header: '%', align: 'center' },
+          ...(hidePosit ? [] : [
+            { header: 'Clientes Ativos', align: 'center' as const }, { header: '% Posit. Atual', align: 'center' as const },
+            { header: 'Posit. Anterior', align: 'center' as const }, { header: 'Posit. Atual', align: 'center' as const },
+            { header: '% Posit. Atual x Anterior', align: 'center' as const },
+          ]),
+          { header: 'Mix Médio', align: 'center' },
+        ],
+        linhas: visibleCards.map(c => linha(c)),
+        total: totalCard ? linha(totalCard, true) : undefined,
+        arquivo: `Painel_Vendas_${(VISOES[view] ?? view).replace(/[^\w]+/g, '_')}_${refInicio}_a_${refFim}`,
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? `Erro ao gerar o PDF: ${e.message}` : 'Erro ao gerar o PDF')
+    }
+  }
+
   return (
     <div className="min-h-full p-4 md:p-6 bg-slate-50 uppercase text-sm [&_*]:uppercase">
 
@@ -1419,6 +1487,14 @@ export default function FarolExecutivo() {
             <X className="h-3 w-3" /> Limpar filtros ({totalFiltersActive})
           </button>
         )}
+
+        <button
+          onClick={exportarPdf}
+          disabled={visibleCards.length === 0}
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          <FileText className="h-3.5 w-3.5" /> Exportar PDF
+        </button>
 
         {/* Busca foi movida pra DENTRO do header do GRID (coluna Nome) —
             antes ficava perdida no fim da toolbar entre os filtros. */}
