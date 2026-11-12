@@ -328,13 +328,22 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 	// é a do GGV que atua no estado, não a do cadastro do cliente. Sem hierarquia
 	// carregada, mantém a regra antiga (UF da matriz).
 	if hier := segLerHierarquia(db, empresaID, vinculoID); len(hier) > 0 {
+		hierPorEquipe := map[string]segHier{}
+		for _, h := range hier {
+			hierPorEquipe[h.CodCRV] = h
+		}
 		for _, c := range clientes {
 			equipe, ufCli := c.CodCRV, strings.ToUpper(c.UF) // antes de sobrescrever
 			h, ok := hier[c.CodRCA]
 			if !ok {
-				// RCA/equipe fora da planilha de hierarquia não conta (Igor, 10/11/2026).
-				c.UF = ""
-				continue
+				// RCA que saiu da planilha (vendedor inativo hoje, ativo no mês — caso do
+				// RCA 5805, equipe 524, Igor 13/11/2026): vale a equipe dele, se a equipe
+				// está na hierarquia (cada equipe tem um GGV só). Equipe fora da planilha
+				// não conta (Igor, 10/11/2026).
+				if h, ok = hierPorEquipe[equipe]; !ok {
+					c.UF = ""
+					continue
+				}
 			}
 			c.UF, c.CodGGV, c.NomeGGV, c.CodCRV, c.NomeCRV = h.UF, h.CodGGV, h.NomeGGV, h.CodCRV, h.NomeCRV
 			// Televendas da matriz (equipes 1009 e 1010): a UF do cliente decide em

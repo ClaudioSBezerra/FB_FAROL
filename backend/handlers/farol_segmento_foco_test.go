@@ -269,12 +269,15 @@ func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
 	venda("TH5", "GO", "TR4") // fora da planilha → não conta
 	db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
 		VALUES ($1,'2026-07-05',$2,'TH6','TH6','GO','TSEGHA','UN/0001/UN',1,3,0,'1','2','1009','TR5')`, empresaID, forn)
+	// RCA inativo (fora da planilha) de equipe que está na planilha: vale a equipe (91 → GGV 3 → GO).
+	db.Exec(`INSERT INTO vendas_faturadas (empresa_id, data_faturamento, cod_fornec, cod_cli, cod_cliprinc, uf, cod_prod, embalagem, qt_unit_cx, qt, pvenda, tipo_venda, cod_gerente, cod_supervisor, cod_rca)
+		VALUES ($1,'2026-07-05',$2,'TH7','TH7','MS','TSEGHA','UN/0001/UN',1,3,0,'1','3','91','TR6')`, empresaID, forn)
 	segInvalidarCache()
 	p, err = segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.UFs) != 1 || p.UFs[0].UF != "GO" || p.UFs[0].Grupos[0].Meses[0].Realizado != 2 {
-		t.Errorf("painel pós-Igor: %+v, quero GO=2 (TH1 + TH6 da equipe 1009 pela UF do cliente; TH5 fora da planilha)", p.UFs)
+	if len(p.UFs) != 1 || p.UFs[0].UF != "GO" || p.UFs[0].Grupos[0].Meses[0].Realizado != 3 {
+		t.Errorf("painel pós-Igor: %+v, quero GO=3 (TH1 + TH6 da equipe 1009 pela UF do cliente + TH7 de RCA inativo da equipe 91; TH5 de equipe fora da planilha não conta)", p.UFs)
 	}
 }
