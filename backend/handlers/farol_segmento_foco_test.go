@@ -280,4 +280,25 @@ func TestSegmentoFoco_HierarquiaUFeDoisRCAs(t *testing.T) {
 	if len(p.UFs) != 1 || p.UFs[0].UF != "GO" || p.UFs[0].Grupos[0].Meses[0].Realizado != 3 {
 		t.Errorf("painel pós-Igor: %+v, quero GO=3 (TH1 + TH6 da equipe 1009 pela UF do cliente + TH7 de RCA inativo da equipe 91; TH5 de equipe fora da planilha não conta)", p.UFs)
 	}
+	// Parâmetro "equipe entra no painel?" (Igor, 17/11/2026): equipe 1009 fora → TH6 some, sem recalcular.
+	db.Exec(`UPDATE farol.metas_vinculos SET equipes_ocultas = '{1009}' WHERE id = $1`, vinculoID)
+	t.Cleanup(func() { db.Exec(`UPDATE farol.metas_vinculos SET equipes_ocultas = '{}' WHERE id = $1`, vinculoID) })
+	p, err = segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.UFs) != 1 || p.UFs[0].Grupos[0].Meses[0].Realizado != 2 || len(p.EquipesOcultas) != 1 || p.EquipesOcultas[0] != "1009" {
+		t.Errorf("equipe 1009 oculta: %+v ocultas=%v, quero GO=2 (TH6 saiu)", p.UFs, p.EquipesOcultas)
+	}
+	d, _ = segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{})
+	for _, l := range d.Linhas {
+		if l.Cod == "2" && l.Total != 0 {
+			t.Errorf("GGV 2 (só a equipe 1009) devia estar zerado com a equipe oculta: %+v", l)
+		}
+	}
+	db.Exec(`UPDATE farol.metas_vinculos SET equipes_ocultas = '{}' WHERE id = $1`, vinculoID)
+	p, _ = segPainel(db, empresaID, vinculoID, "2026-07", "faturado", segEscopo{})
+	if p.UFs[0].Grupos[0].Meses[0].Realizado != 3 {
+		t.Errorf("equipe liberada de novo: GO=%d, quero 3", p.UFs[0].Grupos[0].Meses[0].Realizado)
+	}
 }

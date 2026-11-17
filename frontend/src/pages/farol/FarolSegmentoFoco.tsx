@@ -18,7 +18,7 @@ interface Vinculo { id: number; industria_nome: string; formula_codigo: string }
 interface MesValor { mes: string; objetivo: number | null; realizado: number }
 interface GrupoLinha { grupo: string; meses: MesValor[]; objetivo_tri: number | null; realizado_tri: number }
 interface UFBloco { uf: string; grupos: GrupoLinha[] }
-interface Painel { meses_disponiveis?: string[]; ufs_ocultas?: string[]; trimestre: string; meses: string[]; meses_sem_vigencia: string[] | null; grupos: string[]; ufs: UFBloco[] }
+interface Painel { meses_disponiveis?: string[]; ufs_ocultas?: string[]; equipes_ocultas?: string[]; trimestre: string; meses: string[]; meses_sem_vigencia: string[] | null; grupos: string[]; ufs: UFBloco[] }
 interface DetLinha { cod: string; nome: string; cod_pai?: string; nome_pai?: string; grupos: number[]; total: number; geral: number }
 interface DetProduto { grupo: string; cod_prod: string; produto: string; qtd: number; positivou: boolean }
 interface Detalhe { nivel: 'ggv' | 'crv' | 'rca' | 'cliente' | 'produto'; grupos: string[]; linhas?: DetLinha[]; produtos?: DetProduto[] }
@@ -458,6 +458,9 @@ export default function FarolSegmentoFoco() {
       {error && <p className="text-sm text-red-700">{(error as Error).message}</p>}
       {painel && (painel.ufs_ocultas ?? []).length > 0 && (
         <p className="text-xs text-muted-foreground">UF oculta no painel: {(painel.ufs_ocultas ?? []).join(', ')} (aguardando a carga da base; libere em Configurações → Carga do mês).</p>
+      )}
+      {painel && (painel.equipes_ocultas ?? []).length > 0 && (
+        <p className="text-xs text-muted-foreground">Equipe fora do painel: {(painel.equipes_ocultas ?? []).join(', ')} (parâmetro em Configurações → Carga do mês).</p>
       )}
       {painel && painel.meses_sem_vigencia && painel.meses_sem_vigencia.length > 0 && (
         <div className="text-xs border border-amber-300 bg-amber-50 rounded-lg p-3 text-amber-900">

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -449,6 +449,64 @@ const MESES_TRI = (mes: string) => {
   return [0, 1, 2].map(i => `${a}-${String(q * 3 + i + 1).padStart(2, '0')}`)
 }
 
+// ─── Equipes no painel do Segmento Foco ("equipe entra no painel?") ──────────
+// Parâmetro por vínculo (Igor/Reckitt, 17/11/2026: tirar a equipe 92). A equipe sai/volta
+// do painel na hora, em todos os níveis; reimportar a hierarquia não desfaz a escolha.
+interface EquipePainel { equipe: string; nome: string; cod_ggv: string; nome_ggv: string; uf: string; rcas: number; entra: boolean }
+
+function EquipesNoPainel({ vinculoId, headers }: { vinculoId: number; headers: Record<string, string> }) {
+  const [equipes, setEquipes] = useState<EquipePainel[] | null>(null)
+  const [aberto, setAberto] = useState(false)
+  const [salvando, setSalvando] = useState('')
+  const url = `/api/farol/segmento-foco/equipes?vinculo_id=${vinculoId}`
+
+  const carregar = useCallback(async () => {
+    try {
+      const r = await fetch(url, { headers })
+      if (r.ok) setEquipes((await r.json()).equipes ?? [])
+    } catch { /* sem lista: o bloco só não mostra nada */ }
+  }, [url, headers])
+  useEffect(() => { carregar() }, [carregar])
+
+  async function alternar(e: EquipePainel, entra: boolean) {
+    setSalvando(e.equipe)
+    try {
+      const r = await fetch(url, {
+        method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ equipe: e.equipe, entra }),
+      })
+      if (!r.ok) throw new Error(await r.text())
+      toast.success(entra ? `Equipe ${e.equipe} volta ao painel` : `Equipe ${e.equipe} fora do painel`)
+      await carregar()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao salvar')
+    } finally { setSalvando('') }
+  }
+
+  if (!equipes || equipes.length === 0) return null
+  const fora = equipes.filter(e => !e.entra)
+  return (
+    <div className="pt-1">
+      <button type="button" onClick={() => setAberto(a => !a)} className="text-sm font-medium text-slate-700 hover:underline">
+        Equipes no painel ({equipes.length - fora.length} de {equipes.length}){fora.length > 0 && ` — fora: ${fora.map(e => e.equipe).join(', ')}`} {aberto ? '▲' : '▼'}
+      </button>
+      {aberto && (
+        <div className="mt-2 border rounded-md p-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 max-h-72 overflow-auto">
+          {equipes.map(e => (
+            <label key={e.equipe} className="flex items-center gap-2 text-xs cursor-pointer">
+              <Checkbox checked={e.entra} disabled={salvando !== ''} onCheckedChange={c => alternar(e, c === true)} />
+              <span className={e.entra ? '' : 'line-through text-muted-foreground'}>
+                <span className="font-semibold">{e.equipe}</span> — {e.nome}{e.uf ? ` (${e.uf})` : ''}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground mt-1">Desmarcada, a equipe some do painel (realizado e RCAs) na hora, sem reprocessar. Vale também depois de reenviar a hierarquia.</p>
+    </div>
+  )
+}
+
 function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
   mes: string
   vinculos: CargaVinculo[]
@@ -581,6 +639,7 @@ function SegmentoFocoCard({ mes, vinculos, headers, onMudou }: {
           />
           <span>Pará (PA) liberado no painel <span className="text-xs text-muted-foreground">— deixe desmarcado até a base do Pará subir</span></span>
         </label>
+        <EquipesNoPainel vinculoId={v.vinculo_id} headers={headers} />
         <p className="text-xs text-muted-foreground">O painel calcula ao vivo a partir das vendas: não há reprocessar nem fechar. O trimestre soma os 3 meses automaticamente.</p>
       </div>
     </div>

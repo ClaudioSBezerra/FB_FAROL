@@ -520,6 +520,31 @@ func segUFsOcultas(db *sql.DB, empresaID string, vinculoID int) map[string]bool 
 	return out
 }
 
+// segEquipesOcultas — equipes (CRV) fora do painel (parâmetro "equipe entra no painel?" do vínculo).
+func segEquipesOcultas(db *sql.DB, empresaID string, vinculoID int) map[string]bool {
+	out := map[string]bool{}
+	var arr pq.StringArray
+	if err := db.QueryRow(`SELECT equipes_ocultas FROM farol.metas_vinculos WHERE id = $1 AND empresa_id = $2`, vinculoID, empresaID).Scan(&arr); err == nil {
+		for _, e := range arr {
+			out[strings.TrimSpace(e)] = true
+		}
+	}
+	return out
+}
+
+func segSemEquipesOcultas(in []*segCliente, ocultas map[string]bool) []*segCliente {
+	if len(ocultas) == 0 {
+		return in
+	}
+	out := make([]*segCliente, 0, len(in))
+	for _, c := range in {
+		if !ocultas[strings.TrimSpace(c.CodCRV)] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func segSemUFsOcultas(in []*segCliente, ocultas map[string]bool) []*segCliente {
 	if len(ocultas) == 0 {
 		return in
@@ -584,6 +609,8 @@ type SegPainelResp struct {
 	Grupos      []string `json:"grupos"`
 	UFs         []SegUF  `json:"ufs"`
 	UFsOcultas  []string `json:"ufs_ocultas"`
+	// EquipesOcultas — equipes (CRV) fora do painel pelo parâmetro "equipe entra no painel?".
+	EquipesOcultas []string `json:"equipes_ocultas"`
 	// MesesDisponiveis — meses (AAAA-MM) com vigência carregada, pra tela abrir no último mês com dados.
 	MesesDisponiveis []string `json:"meses_disponiveis"`
 }
@@ -636,7 +663,8 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 		return nil, err
 	}
 	ocultas := segUFsOcultas(db, empresaID, vinculoID)
-	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas)}
+	eqOcultas := segEquipesOcultas(db, empresaID, vinculoID)
+	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas), EquipesOcultas: sortedKeys(eqOcultas)}
 	resp.MesesDisponiveis = []string{}
 	if rows, err := db.Query(`SELECT to_char(data_inicio, 'YYYY-MM') FROM farol.metas_vigencias WHERE vinculo_id = $1 AND empresa_id = $2 ORDER BY data_inicio`, vinculoID, empresaID); err == nil {
 		for rows.Next() {
@@ -681,7 +709,7 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 			// vigência sem lista de produtos: mostra só o objetivo, sem realizado.
 			dados[i].real = map[string]map[string]int{}
 		} else {
-			dados[i].real = segContarPorUF(segSemUFsOcultas(f.filtrar(d.Clientes), ocultas))
+			dados[i].real = segContarPorUF(segSemEquipesOcultas(segSemUFsOcultas(f.filtrar(d.Clientes), ocultas), eqOcultas))
 			for _, g := range d.Grupos {
 				if !ordemVista[g] {
 					ordemVista[g] = true
@@ -837,6 +865,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 		nivel = "crv"
 	}
 	ocultasDet := segUFsOcultas(db, empresaID, vinculoID)
+	eqOcultasDet := segEquipesOcultas(db, empresaID, vinculoID)
 	resp := &SegDetalheResp{Nivel: nivel, Grupos: []string{}}
 
 	var ordem []string
@@ -865,7 +894,7 @@ func segDetalhe(db *sql.DB, empresaID string, vinculoID int, mes, periodo, fluxo
 				ordem = append(ordem, g)
 			}
 		}
-		for _, c := range segSemUFsOcultas(f.filtrar(d.Clientes), ocultasDet) {
+		for _, c := range segSemEquipesOcultas(segSemUFsOcultas(f.filtrar(d.Clientes), ocultasDet), eqOcultasDet) {
 			if nivel == "produto" {
 				resp.Linhas = nil
 				for _, p := range c.Produtos {
@@ -1096,5 +1125,92 @@ func SegmentoFocoUFHandler(db *sql.DB) http.HandlerFunc {
 		writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "metas_vinculos", strconv.Itoa(vinculoID), "segmento_foco_uf", map[string]any{"uf": uf, "liberada": body.Liberada})
 		segInvalidarCache()
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "uf": uf, "liberada": body.Liberada})
+	}
+}
+
+// SegmentoFocoEquipesHandler — parâmetro "equipe entra no painel?" (Igor, 17/11/2026).
+//
+//	GET /api/farol/segmento-foco/equipes?vinculo_id=  → equipes da hierarquia carregada, com entra=true|false
+//	PUT /api/farol/segmento-foco/equipes?vinculo_id=  body {"equipe":"92","entra":false}
+//
+// A equipe sai/volta do painel na hora (o filtro vale na leitura; nada é recalculado).
+func SegmentoFocoEquipesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		spCtx := GetSpContext(r)
+		if spCtx == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !hasSpRole(spCtx.SpRole, "gestor_geral") {
+			http.Error(w, `{"error":"Forbidden: gestor_geral necessário"}`, http.StatusForbidden)
+			return
+		}
+		vinculoID, err := strconv.Atoi(r.URL.Query().Get("vinculo_id"))
+		if err != nil {
+			http.Error(w, `{"error":"vinculo_id é obrigatório"}`, http.StatusBadRequest)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			ocultas := segEquipesOcultas(db, spCtx.EmpresaID, vinculoID)
+			rows, err := db.Query(`SELECT cod_crv, MAX(nome_crv), MAX(cod_ggv), MAX(nome_ggv), MAX(uf), COUNT(*)
+				FROM farol.metas_rca_hierarquia WHERE empresa_id = $1 AND vinculo_id = $2
+				GROUP BY cod_crv ORDER BY MAX(uf), cod_crv`, spCtx.EmpresaID, vinculoID)
+			if err != nil {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+				return
+			}
+			defer rows.Close()
+			type eq struct {
+				Equipe  string `json:"equipe"`
+				Nome    string `json:"nome"`
+				CodGGV  string `json:"cod_ggv"`
+				NomeGGV string `json:"nome_ggv"`
+				UF      string `json:"uf"`
+				RCAs    int    `json:"rcas"`
+				Entra   bool   `json:"entra"`
+			}
+			out := []eq{}
+			vistas := map[string]bool{}
+			for rows.Next() {
+				var e eq
+				if rows.Scan(&e.Equipe, &e.Nome, &e.CodGGV, &e.NomeGGV, &e.UF, &e.RCAs) == nil {
+					e.Entra = !ocultas[strings.TrimSpace(e.Equipe)]
+					vistas[strings.TrimSpace(e.Equipe)] = true
+					out = append(out, e)
+				}
+			}
+			// equipe oculta que não está (mais) na hierarquia continua listada, pra poder voltar.
+			for k := range ocultas {
+				if !vistas[k] {
+					out = append(out, eq{Equipe: k, Nome: "(fora da hierarquia carregada)", Entra: false})
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"equipes": out})
+		case http.MethodPut:
+			var body struct {
+				Equipe string `json:"equipe"`
+				Entra  bool   `json:"entra"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Equipe) == "" {
+				http.Error(w, `{"error":"{equipe, entra} são obrigatórios"}`, http.StatusBadRequest)
+				return
+			}
+			eqp := strings.TrimSpace(body.Equipe)
+			q := `UPDATE farol.metas_vinculos SET equipes_ocultas = array_remove(equipes_ocultas, $3) WHERE id = $1 AND empresa_id = $2`
+			if !body.Entra {
+				q = `UPDATE farol.metas_vinculos SET equipes_ocultas = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(array_append(equipes_ocultas, $3)) x)) WHERE id = $1 AND empresa_id = $2`
+			}
+			if _, err := db.Exec(q, vinculoID, spCtx.EmpresaID, eqp); err != nil {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+				return
+			}
+			writeAuditLog(db, spCtx.EmpresaID, spCtx.UserID, "metas_vinculos", strconv.Itoa(vinculoID), "segmento_foco_equipe", map[string]any{"equipe": eqp, "entra": body.Entra})
+			// sem segInvalidarCache: o filtro vale na leitura, o cache guarda os dados antes dele.
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "equipe": eqp, "entra": body.Entra})
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
 	}
 }

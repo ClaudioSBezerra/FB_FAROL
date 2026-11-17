@@ -681,6 +681,7 @@ func main() {
 	http.HandleFunc("/api/farol/metas-rca-hierarquia-importar-csv", withSPPainel(handlers.SegmentoFocoHierarquiaImportarHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco", gz(withSPPainel(handlers.SegmentoFocoPainelHandler, "somente_leitura")))
 	http.HandleFunc("/api/farol/segmento-foco/uf", withSPPainel(handlers.SegmentoFocoUFHandler, "gestor_geral"))
+	http.HandleFunc("/api/farol/segmento-foco/equipes", withSPPainel(handlers.SegmentoFocoEquipesHandler, "gestor_geral"))
 	http.HandleFunc("/api/farol/segmento-foco/detalhe", gz(withSPPainel(handlers.SegmentoFocoDetalheHandler, "somente_leitura")))
 
 	// Importação de metas via CSV — Épico 3 Story 3.1.
