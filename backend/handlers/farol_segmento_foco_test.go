@@ -57,6 +57,13 @@ func TestSegmentoFoco_PositivacaoPorGrupo(t *testing.T) {
 	// C6: 2 caixas devolvidas por completo → não positiva.
 	venda("TC6", "TC6", "GO", "TSEGB", "CX/0012/UN", 12, 2, "1", "2026-07-08")
 	db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_fornec, cod_cli, cod_prod, qt) VALUES ($1,'2026-07-09','DEVOLVIDO',$2,'TC6','TSEGB',2)`, empresaID, forn)
+	// C10: 3 un. em julho, 2 devolvidas em AGOSTO → a devolução abate a venda de julho (Igor, 18/11/2026) → não positiva.
+	venda("TC10", "TC10", "GO", "TSEGA", "UN/0001/UN", 1, 3, "1", "2026-07-15")
+	db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_fornec, cod_cli, cod_prod, qt) VALUES ($1,'2026-08-04','DEVOLVIDO',$2,'TC10','TSEGA',2)`, empresaID, forn)
+	// C11: venda de junho devolvida em julho + nova venda em julho → a devolução abate junho, julho segue positivo.
+	venda("TC11", "TC11", "GO", "TSEGA", "UN/0001/UN", 1, 3, "1", "2026-06-20")
+	venda("TC11", "TC11", "GO", "TSEGA", "UN/0001/UN", 1, 3, "1", "2026-07-12")
+	db.Exec(`INSERT INTO vendas_ccd (empresa_id, data_evento, evento, cod_fornec, cod_cli, cod_prod, qt) VALUES ($1,'2026-07-02','DEVOLVIDO',$2,'TC11','TSEGA',3)`, empresaID, forn)
 	// C9: 1 pacote (PT, 1 un.) não positiva — a regra do Numérica positivava.
 	venda("TC9", "TC9", "GO", "TSEGA", "PT/0001/UN", 1, 1, "1", "2026-07-10")
 	// C8: só 2 unidades → não positiva.
@@ -88,8 +95,8 @@ func TestSegmentoFoco_PositivacaoPorGrupo(t *testing.T) {
 		return 0, nil
 	}
 
-	if r, obj := realizado("faturado", "GRUPO UM"); r != 3 || obj == nil || *obj != 10 {
-		t.Errorf("faturado GRUPO UM: realizado=%d obj=%v, quero 3 (C1, C2, C5-matriz GO) e objetivo 10", r, obj)
+	if r, obj := realizado("faturado", "GRUPO UM"); r != 4 || obj == nil || *obj != 10 {
+		t.Errorf("faturado GRUPO UM: realizado=%d obj=%v, quero 4 (C1, C2, C5-matriz GO, C11) e objetivo 10", r, obj)
 	}
 	if r, _ := realizado("faturado", "GRUPO DOIS"); r != 1 {
 		t.Errorf("faturado GRUPO DOIS: %d, quero 1 (C3 bonificação; C4 tipo 10 fora)", r)
@@ -97,14 +104,14 @@ func TestSegmentoFoco_PositivacaoPorGrupo(t *testing.T) {
 	if r, _ := realizado("transmitido", "GRUPO UM"); r != 1 {
 		t.Errorf("transmitido GRUPO UM: %d, quero 1 (só C7)", r)
 	}
-	if r, _ := realizado("soma", "GRUPO UM"); r != 4 {
-		t.Errorf("soma GRUPO UM: %d, quero 4 (faturado 3 + transmitido 1)", r)
+	if r, _ := realizado("soma", "GRUPO UM"); r != 5 {
+		t.Errorf("soma GRUPO UM: %d, quero 5 (faturado 4 + transmitido 1)", r)
 	}
 
 	// Drill: GGV → CRV → RCA → cliente → produto.
 	d, err := segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{})
-	if err != nil || d.Nivel != "ggv" || len(d.Linhas) != 1 || d.Linhas[0].Total != 4 {
-		t.Errorf("detalhe nível GGV: %+v err=%v, quero 1 GGV com total 4 (3 do grupo um + 1 do dois)", d, err)
+	if err != nil || d.Nivel != "ggv" || len(d.Linhas) != 1 || d.Linhas[0].Total != 5 {
+		t.Errorf("detalhe nível GGV: %+v err=%v, quero 1 GGV com total 5 (4 do grupo um + 1 do dois)", d, err)
 	}
 	d, err = segDetalhe(db, empresaID, vinculoID, "2026-07", "mes", "faturado", segEscopo{CodGGV: "3", CodCRV: "91", CodRCA: "4132", CodCli: "TC1"})
 	if err != nil || d.Nivel != "produto" || len(d.Produtos) != 1 || d.Produtos[0].Qtd != 3 || !d.Produtos[0].Positivou {

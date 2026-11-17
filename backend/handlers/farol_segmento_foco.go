@@ -247,41 +247,21 @@ func segCalcularSemCache(db *sql.DB, empresaID string, vinculoID, vigenciaID int
 		}
 		return rows.Err()
 	}
+	// Devolução/cancelamento abate a VENDA a que se refere, no mês da venda (Igor, 18/11/2026:
+	// o relatório 8047 zera o item devolvido na venda original, mesmo que a devolução seja de
+	// outro mês). Ver segDevolucoesPorVenda.
 	abater := func() error {
-		q := `SELECT v.cod_cli, v.cod_rca, v.cod_prod, SUM(v.qt) FROM vendas_ccd v
-			WHERE v.empresa_id = $1 AND v.data_evento BETWEEN $2 AND $3 AND v.cod_prod = ANY($4)
-			  AND v.evento IN ('DEVOLVIDO','CANCELADO')`
-		args := []any{empresaID, dataInicio, dataFim, pq.Array(codProds)}
-		if len(codFornec) > 0 {
-			args = append(args, pq.Array(codFornec))
-			q += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args))
-		}
-		q += " GROUP BY v.cod_cli, v.cod_rca, v.cod_prod"
-		rows, err := db.Query(q, args...)
+		ded, err := segDevolucoesPorVenda(db, empresaID, codProds, codFornec, tiposVenda, dataInicio, dataFim)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var cli, rca, prod string
-			var qtd float64
-			if err := rows.Scan(&cli, &rca, &prod, &qtd); err != nil {
-				return err
-			}
-			// Abate no RCA que vendeu; se a devolução veio por outro RCA, no que mais vendeu o produto pro cliente.
-			a := soma[chaveCP{cli, rca, prod}]
-			if a == nil {
-				for k, x := range soma {
-					if k.cli == cli && k.prod == prod && (a == nil || x.qtd > a.qtd) {
-						a = x
-					}
-				}
-			}
+		for k, q := range ded {
+			a := soma[chaveCP{k.cli, k.rca, k.prod}]
 			if a != nil {
-				a.qtd -= qtd
+				a.qtd -= q
 			}
 		}
-		return rows.Err()
+		return nil
 	}
 
 	switch fluxo {
@@ -506,6 +486,141 @@ func segClientesVendidosDoRCA(db *sql.DB, empresaID string, vinculoID, vigenciaI
 		consulta("vendas_transmitidas", "data_transmissao")
 	}
 	return out
+}
+
+// segDevDedKey — chave (cliente, RCA, produto) do abatimento de devolução.
+type segDevDedKey struct{ cli, rca, prod string }
+
+// segDevolucoesPorVenda — quanto abater, por (cliente, RCA, produto), das vendas da janela
+// [dataInicio, dataFim], vindo de devolução/cancelamento de QUALQUER data posterior ao início
+// da janela. O vendas_ccd não guarda a venda original, então cada devolução é casada com a
+// venda mais recente, anterior (ou do mesmo dia) à data do evento, do mesmo cliente e produto
+// — no RCA que vendeu; se a devolução veio por outro RCA, no que mais vendeu o produto ao
+// cliente. A baixa conta no mês da venda casada: devolução de Outubro de uma venda de
+// Setembro abate Setembro, e devolução de Setembro de uma venda de Agosto não abate Setembro.
+func segDevolucoesPorVenda(db *sql.DB, empresaID string, codProds, codFornec, tiposVenda []string, dataInicio, dataFim string) (map[segDevDedKey]float64, error) {
+	type ev struct {
+		data string
+		rca  string
+		qt   float64
+	}
+	// 1) eventos de devolução desde o início da janela (sem teto: o relatório do fornecedor também não tem).
+	q := `SELECT v.cod_cli, v.cod_rca, v.cod_prod, to_char(v.data_evento, 'YYYY-MM-DD'), SUM(v.qt) FROM vendas_ccd v
+		WHERE v.empresa_id = $1 AND v.data_evento >= $2 AND v.cod_prod = ANY($3)
+		  AND v.evento IN ('DEVOLVIDO','CANCELADO')`
+	args := []any{empresaID, dataInicio, pq.Array(codProds)}
+	if len(codFornec) > 0 {
+		args = append(args, pq.Array(codFornec))
+		q += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(args))
+	}
+	q += " GROUP BY 1, 2, 3, 4 ORDER BY 4"
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	eventos := map[[2]string][]ev{} // (cliente, produto) → eventos por data
+	clis := map[string]bool{}
+	var maxData string
+	for rows.Next() {
+		var cli, rca, prod, d string
+		var qt float64
+		if err := rows.Scan(&cli, &rca, &prod, &d, &qt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		k := [2]string{cli, prod}
+		eventos[k] = append(eventos[k], ev{d, rca, qt})
+		clis[cli] = true
+		if d > maxData {
+			maxData = d
+		}
+	}
+	rows.Close()
+	if len(eventos) == 0 {
+		return map[segDevDedKey]float64{}, nil
+	}
+	cliList := make([]string, 0, len(clis))
+	for c := range clis {
+		cliList = append(cliList, c)
+	}
+
+	// 2) vendas faturadas desses clientes/produtos, de 120 dias antes da janela até o último evento.
+	qv := `SELECT v.cod_cli, v.cod_rca, v.cod_prod, to_char(v.data_faturamento, 'YYYY-MM-DD'), SUM(v.qt) FROM vendas_faturadas v
+		WHERE v.empresa_id = $1 AND v.data_faturamento BETWEEN ($2::date - 120) AND $3::date
+		  AND v.cod_prod = ANY($4) AND v.cod_cli = ANY($5)`
+	argsV := []any{empresaID, dataInicio, maxData, pq.Array(codProds), pq.Array(cliList)}
+	if len(tiposVenda) > 0 {
+		argsV = append(argsV, pq.Array(tiposVenda))
+		qv += fmt.Sprintf(" AND v.tipo_venda = ANY($%d)", len(argsV))
+	}
+	if len(codFornec) > 0 {
+		argsV = append(argsV, pq.Array(codFornec))
+		qv += fmt.Sprintf(" AND v.cod_fornec = ANY($%d)", len(argsV))
+	}
+	qv += " GROUP BY 1, 2, 3, 4"
+	rv, err := db.Query(qv, argsV...)
+	if err != nil {
+		return nil, err
+	}
+	type venda struct {
+		data string
+		rca  string
+		rest float64 // quanto ainda pode ser abatido
+	}
+	vendas := map[[2]string][]*venda{} // (cliente, produto) → vendas
+	totalPorRCA := map[[3]string]float64{}
+	for rv.Next() {
+		var cli, rca, prod, d string
+		var qt float64
+		if err := rv.Scan(&cli, &rca, &prod, &d, &qt); err != nil {
+			rv.Close()
+			return nil, err
+		}
+		k := [2]string{cli, prod}
+		vendas[k] = append(vendas[k], &venda{d, rca, qt})
+		totalPorRCA[[3]string{cli, prod, rca}] += qt
+	}
+	rv.Close()
+
+	out := map[segDevDedKey]float64{}
+	for k, evs := range eventos {
+		vs := vendas[k]
+		if len(vs) == 0 {
+			continue
+		}
+		sort.Slice(vs, func(i, j int) bool { return vs[i].data < vs[j].data })
+		for _, e := range evs { // eventos já vêm em ordem de data
+			rcaAlvo := e.rca
+			if totalPorRCA[[3]string{k[0], k[1], rcaAlvo}] <= 0 {
+				// devolução por outro RCA: o que mais vendeu o produto pro cliente.
+				rcaAlvo, melhor := "", 0.0
+				for _, v := range vs {
+					if t := totalPorRCA[[3]string{k[0], k[1], v.rca}]; t > melhor {
+						melhor, rcaAlvo = t, v.rca
+					}
+				}
+				_ = melhor
+				e.rca = rcaAlvo
+			}
+			restante := e.qt
+			for i := len(vs) - 1; i >= 0 && restante > 0; i-- {
+				v := vs[i]
+				if v.rca != e.rca || v.data > e.data || v.rest <= 0 {
+					continue
+				}
+				take := restante
+				if v.rest < take {
+					take = v.rest
+				}
+				v.rest -= take
+				restante -= take
+				if v.data >= dataInicio && v.data <= dataFim {
+					out[segDevDedKey{k[0], v.rca, k[1]}] += take
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // segUFsOcultas — UFs fora do painel (flag "UF liberada?" do vínculo).
