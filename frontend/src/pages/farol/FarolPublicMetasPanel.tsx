@@ -6,6 +6,8 @@ import { Target, TrendingDown, TrendingUp, AlertTriangle, ChevronDown, Trophy, A
 import { formatCNPJ } from '@/lib/formatFilial'
 import { opcoesMetrica, resumoNumerica, resumirEquipe, type UnidadeEquipe } from '@/lib/metricasObjetivos'
 import { CabecalhoEquipe, LinhaTabelaEquipe } from '@/components/farol/TabelaEquipe'
+import { ChipRow, StatusIcon, nomeOuCodigo } from '@/components/farol/mobileUi'
+import SegmentoFocoMobile from './SegmentoFocoMobile'
 
 // Religado a pedido do Claudio 23/09/2026 (a surpresa do José Costa já
 // pode ser revelada). Ficou escondido brevemente (23/09/2026) porque o
@@ -215,60 +217,6 @@ const FLUXOS = [
 ]
 
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
-
-// ─── ChipRow — seleção por toque (pedido do Claudio 11/09/2026: "se possível
-// ele tocar em vez de filtrar, tem que ser seleção touch") — substitui os
-// <select> nativos, ruins de mirar com o dedo e que escondem as opções atrás
-// de mais um toque. Com só 1 opção nem chip mostra (nada pra escolher).
-// Alvo de toque generoso (padding vertical ~12px, min ~44px de altura) e
-// scroll horizontal quando a lista não cabe na tela (ex: histórico de
-// vigências fechadas).
-function ChipRow<T extends string>({ label, options, value, onChange, sempre }: {
-  label: React.ReactNode
-  options: Array<{ value: T; label: string }>
-  value: T
-  onChange: (v: T) => void
-  // sempre — mostra mesmo com 1 opção só (Período da Numérica, Heverton
-  // 08/10/2026: "manter o formato período, como na Ponderada").
-  sempre?: boolean
-}) {
-  if (!sempre && options.length <= 1) return null
-  return (
-    <div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground px-0.5 mb-1.5 flex items-center gap-2">{label}</div>
-      <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none">
-        {options.map(opt => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-3 text-sm font-medium leading-none transition-colors active:scale-[0.97] ${
-              value === opt.value
-                ? 'border-slate-900 bg-slate-900 text-white'
-                : 'border-slate-300 bg-white text-slate-700'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// nomeOuCodigo — Rede/Cliente pelo nome (fantasia > razão), com o código
-// como fallback só se não houver nome nenhum cadastrado. Mesma prioridade
-// da versão web (FarolPainelMetas.tsx).
-const nomeOuCodigo = (fantasia: string, razao: string, codigo: string) => fantasia || razao || codigo
-
-// StatusIcon — pedido do Heverton 25/09/2026: no lugar do descritivo
-// "Coberta"/"Não coberta", um símbolo (ticado verde / X vermelho) — mais
-// rápido de ler numa lista longa de Redes/Clientes/Itens no celular.
-function StatusIcon({ atingiu, size = 'w-4 h-4' }: { atingiu: boolean; size?: string }) {
-  return atingiu
-    ? <Check className={`${size} shrink-0 text-green-700`} strokeWidth={3} aria-label="Atingiu" />
-    : <XIcon className={`${size} shrink-0 text-red-700`} strokeWidth={3} aria-label="Não atingiu" />
-}
 
 // ClienteDrillDown — 1 linha de Cliente dentro de uma Rede aberta, com o
 // drill-down de Produtos embutido (nível 6) quando o próprio Cliente está
@@ -536,6 +484,18 @@ export default function FarolPublicMetasPanel() {
     enabled: !!cnpj,
   })
 
+  // Segmento Foco (Reckitt): programas que este link enxerga — só quem está nos dados da Reckitt
+  // (equipe/RCA/GGV da planilha de hierarquia). Lista vazia = sem acesso, a tela segue só com a Unilever.
+  const { data: segVinculos = [] } = useQuery<{ id: number; industria_id: number; industria_nome: string }[]>({
+    queryKey: ['public-seg-vinculos', cnpj, scope, scopeCod],
+    queryFn: async () => {
+      const r = await fetch(`/api/farol/public/segmento-foco/vinculos?cnpj=${cnpj}&scope=${scope}&cod=${scopeCod}`)
+      if (!r.ok) return []
+      return r.json()
+    },
+    enabled: !!cnpj,
+  })
+
   const industrias = useMemo<Industria[]>(() => {
     const porID = new Map<number, Industria>()
     for (const v of vinculos) {
@@ -553,10 +513,16 @@ export default function FarolPublicMetasPanel() {
   // 11/09/2026: "o SUPV/RCA tem que entrar já carregando... sem ter que
   // informar") — com 2+ indústrias ainda mostra os chips de toque pra
   // escolher, mas nunca deixa a tela vazia esperando 1 escolha óbvia.
+  // Chips de Indústria = Unilever (objetivos) + Reckitt (Segmento Foco, valor "seg:<vínculo>").
+  const chipsIndustria = useMemo(() => [
+    ...industrias.map(i => ({ value: String(i.id), label: i.nome })),
+    ...segVinculos.map(v => ({ value: `seg:${v.id}`, label: v.industria_nome })),
+  ], [industrias, segVinculos])
   useEffect(() => {
-    if (!industriaID && industrias.length === 1) setIndustriaID(String(industrias[0].id))
-  }, [industrias, industriaID])
+    if (!industriaID && chipsIndustria.length === 1) setIndustriaID(chipsIndustria[0].value)
+  }, [chipsIndustria, industriaID])
 
+  const segSelecionado = segVinculos.find(v => `seg:${v.id}` === industriaID)
   const industriaSelecionada = industrias.find(i => String(i.id) === industriaID)
   const metricasDisponiveis = useMemo(() => {
     // Só a visão combinada de cada família (Heverton 08/10/2026) — ver
@@ -948,7 +914,7 @@ export default function FarolPublicMetasPanel() {
       <div className="space-y-3">
         <ChipRow
           label="Indústria"
-          options={industrias.map(i => ({ value: String(i.id), label: i.nome }))}
+          options={chipsIndustria}
           value={industriaID}
           onChange={v => { setIndustriaID(v); setVigenciaID(''); setVigenciaCombinadaKey(''); fecharDrillDown() }}
         />
@@ -1008,6 +974,10 @@ export default function FarolPublicMetasPanel() {
           />
         )}
       </div>
+
+      {segSelecionado && (
+        <SegmentoFocoMobile cnpj={cnpj} scope={scope} cod={scopeCod} vinculoId={segSelecionado.id} industriaNome={segSelecionado.industria_nome} />
+      )}
 
       {(isLoading || isLoadingCombinado || isLoadingCombinadoNum) && <p className="text-center text-sm text-muted-foreground py-8">Carregando...</p>}
 

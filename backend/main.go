@@ -797,6 +797,10 @@ func main() {
 	// de acesso público (sem login) do painel de vendas acima, sempre
 	// recortado pro Supervisor/RCA da URL (nunca a empresa toda).
 	http.HandleFunc("/api/farol/public/metas-vinculos", publicHandler(handlers.MetasPublicVinculosHandler))
+	// Segmento Foco (Reckitt) no mobile — escopo sempre da URL (farol_segmento_foco_public.go).
+	http.HandleFunc("/api/farol/public/segmento-foco/vinculos", publicHandler(handlers.SegmentoFocoPublicVinculosHandler))
+	http.HandleFunc("/api/farol/public/segmento-foco/painel", gz(publicHandler(handlers.SegmentoFocoPublicPainelHandler)))
+	http.HandleFunc("/api/farol/public/segmento-foco/detalhe", gz(publicHandler(handlers.SegmentoFocoPublicDetalheHandler)))
 	http.HandleFunc("/api/farol/public/metas-vigencias", publicHandler(handlers.MetasPublicVigenciasHandler))
 	http.HandleFunc("/api/farol/public/metas-painel", gz(publicHandler(handlers.MetasPublicPainelHandler)))
 	http.HandleFunc("/api/farol/public/metas-painel-combinado", gz(publicHandler(handlers.MetasPublicPainelCombinadoHandler)))
