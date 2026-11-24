@@ -720,10 +720,12 @@ type SegPainelResp struct {
 	Trimestre   string   `json:"trimestre"`
 	Meses       []string `json:"meses"`
 	MesesSemVig []string `json:"meses_sem_vigencia"`
-	Fluxo       string   `json:"fluxo"`
-	Grupos      []string `json:"grupos"`
-	UFs         []SegUF  `json:"ufs"`
-	UFsOcultas  []string `json:"ufs_ocultas"`
+	// MesesSemProdutos — meses com vigência mas sem a lista de produtos dos grupos (sem ela não há realizado).
+	MesesSemProdutos []string `json:"meses_sem_produtos"`
+	Fluxo            string   `json:"fluxo"`
+	Grupos           []string `json:"grupos"`
+	UFs              []SegUF  `json:"ufs"`
+	UFsOcultas       []string `json:"ufs_ocultas"`
 	// EquipesOcultas — equipes (CRV) fora do painel pelo parâmetro "equipe entra no painel?".
 	EquipesOcultas []string `json:"equipes_ocultas"`
 	// MesesDisponiveis — meses (AAAA-MM) com vigência carregada, pra tela abrir no último mês com dados.
@@ -779,9 +781,13 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 	}
 	ocultas := segUFsOcultas(db, empresaID, vinculoID)
 	eqOcultas := segEquipesOcultas(db, empresaID, vinculoID)
-	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas), EquipesOcultas: sortedKeys(eqOcultas)}
+	resp := &SegPainelResp{Meses: meses, Fluxo: fluxo, MesesSemVig: []string{}, MesesSemProdutos: []string{}, Grupos: []string{}, UFs: []SegUF{}, UFsOcultas: sortedKeys(ocultas), EquipesOcultas: sortedKeys(eqOcultas)}
 	resp.MesesDisponiveis = []string{}
-	if rows, err := db.Query(`SELECT to_char(data_inicio, 'YYYY-MM') FROM farol.metas_vigencias WHERE vinculo_id = $1 AND empresa_id = $2 ORDER BY data_inicio`, vinculoID, empresaID); err == nil {
+	// meses com vigência E lista de produtos carregada (vigência sem produtos não calcula nada).
+	if rows, err := db.Query(`SELECT to_char(v.data_inicio, 'YYYY-MM') FROM farol.metas_vigencias v
+		WHERE v.vinculo_id = $1 AND v.empresa_id = $2
+		  AND EXISTS (SELECT 1 FROM farol.metas_grupos_produtos p WHERE p.vigencia_id = v.id)
+		ORDER BY v.data_inicio`, vinculoID, empresaID); err == nil {
 		for rows.Next() {
 			var m string
 			if rows.Scan(&m) == nil {
@@ -823,6 +829,7 @@ func segPainel(db *sql.DB, empresaID string, vinculoID int, mes, fluxo string, f
 		if err != nil {
 			// vigência sem lista de produtos: mostra só o objetivo, sem realizado.
 			dados[i].real = map[string]map[string]int{}
+			resp.MesesSemProdutos = append(resp.MesesSemProdutos, m)
 		} else {
 			dados[i].real = segContarPorUF(segSemEquipesOcultas(segSemUFsOcultas(f.filtrar(d.Clientes), ocultas), eqOcultas))
 			for _, g := range d.Grupos {

@@ -13,7 +13,7 @@ import { ChipRow, StatusIcon } from '@/components/farol/mobileUi'
 type Scope = 'sup' | 'rca' | 'ggv'
 interface MesValor { mes: string; realizado: number }
 interface GrupoLinha { grupo: string; meses: MesValor[]; realizado_tri: number }
-interface Painel { meses: string[]; meses_disponiveis?: string[]; trimestre: string; grupos: string[]; ufs: { uf: string; grupos: GrupoLinha[] }[] }
+interface Painel { meses: string[]; meses_disponiveis?: string[]; meses_sem_produtos?: string[]; meses_sem_vigencia?: string[]; trimestre: string; grupos: string[]; ufs: { uf: string; grupos: GrupoLinha[] }[] }
 interface DetLinha { cod: string; nome: string; cod_pai?: string; nome_pai?: string; grupos: number[]; total: number; geral: number }
 interface DetProduto { grupo: string; cod_prod: string; produto: string; qtd: number; positivou: boolean }
 interface Detalhe { nivel: string; grupos: string[]; linhas?: DetLinha[]; produtos?: DetProduto[] }
@@ -26,6 +26,10 @@ const FLUXOS = [
 const MESES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 const mesAtual = () => new Date().toISOString().slice(0, 7)
+// Primeiro mês (AAAA-MM) do trimestre civil que contém `m`.
+const iniTri = (m: string) => `${m.slice(0, 4)}-${String(Math.floor((Number(m.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}`
+const rotuloTri = (m: string) => `${Math.floor((Number(m.slice(5, 7)) - 1) / 3) + 1}º tri/${m.slice(2, 4)}`
+const somaMeses = (m: string, d: number) => { const t = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + d, 1); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}` }
 const NIVEL_ROTULO: Record<string, string> = { crv: 'Equipe', rca: 'RCA', cliente: 'Cliente' }
 
 interface Ctx { cnpj: string; scope: Scope; cod: string; vinculoId: number; mes: string; fluxo: string; periodo: 'mes' | 'trimestre' }
@@ -176,6 +180,26 @@ export default function SegmentoFocoMobile({ cnpj, scope, cod, vinculoId, indust
     if (disp.length && !disp.includes(mes)) setMes(disp[disp.length - 1])
   }, [painel, ajustou, mes])
 
+  // Trimestres selecionáveis: do primeiro com carga (ou o corrente) até o corrente — dá pra voltar a
+  // qualquer trimestre e ir até o corrente mesmo sem carga (a tela avisa).
+  const trimestres = useMemo(() => {
+    const disp = painel?.meses_disponiveis ?? []
+    const fim = iniTri(mesAtual())
+    let t = iniTri(disp.length ? disp[0] : fim)
+    const out: string[] = []
+    while (t <= fim && out.length < 8) { out.push(t); t = somaMeses(t, 3) }
+    if (!out.includes(iniTri(mes))) out.push(iniTri(mes))
+    return out.sort()
+  }, [painel, mes])
+  const irParaTrimestre = (ini: string) => {
+    const disp = (painel?.meses_disponiveis ?? []).filter(m => iniTri(m) === ini)
+    setPeriodo('mes')
+    setMes(disp.length ? disp[disp.length - 1] : ini)
+  }
+  const semProdutos = painel
+    ? (periodo === 'mes' ? [mes] : painel.meses).filter(m => (painel.meses_sem_produtos ?? []).includes(m) || (painel.meses_sem_vigencia ?? []).includes(m))
+    : []
+
   const idxMes = painel ? Math.max(0, painel.meses.indexOf(mes)) : 0
   const totais = useMemo(() => (painel?.grupos ?? []).map(g => {
     let n = 0
@@ -202,6 +226,12 @@ export default function SegmentoFocoMobile({ cnpj, scope, cod, vinculoId, indust
     <div className="space-y-4">
       <div className="space-y-3">
         <ChipRow
+          label="Trimestre"
+          options={trimestres.map(t => ({ value: t, label: rotuloTri(t) }))}
+          value={iniTri(mes)}
+          onChange={irParaTrimestre}
+        />
+        <ChipRow
           label="Período"
           sempre
           options={[...(painel?.meses ?? [mes]).map(m => ({ value: m, label: MESES[Number(m.slice(5, 7)) - 1] })), { value: 'tri', label: 'Trimestre' }]}
@@ -217,6 +247,12 @@ export default function SegmentoFocoMobile({ cnpj, scope, cod, vinculoId, indust
       {painel && (
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground flex items-center gap-1"><Target className="w-3.5 h-3.5" /> {industriaNome} — clientes positivados por segmento · {periodoRotulo}</div>
+          {semProdutos.length > 0 && (
+            <div className="text-xs border border-amber-300 bg-amber-50 rounded-lg p-3 text-amber-900">
+              Sem carga da lista de produtos dos segmentos em {semProdutos.map(m => MESES[Number(m.slice(5, 7)) - 1]).join(', ')}.
+              Os números deste período aparecem quando a lista do trimestre for carregada.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             {totais.map(t => (
               <div key={t.grupo} className="bg-white border rounded-xl p-3">
